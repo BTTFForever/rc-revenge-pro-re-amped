@@ -26,8 +26,6 @@ stubs = [
   "memcpy@0x001B7C60",
   "memset@0x001B7D10",
   "__malloc_unlock@0x001B7DD8",
-  "srand@0x001B8808",
-  "rand@0x001B8818",
   "sprintf@0x001B8910",
   "strcat@0x001B8AF0",
   "strcmp@0x001B8C1C",

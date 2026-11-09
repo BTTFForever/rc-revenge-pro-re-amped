@@ -235,10 +235,19 @@ index 0000000..436162c
 +    }
 +}
 diff --git a/ps2xRuntime/include/runtime/gs/gs_frontend.h b/ps2xRuntime/include/runtime/gs/gs_frontend.h
-index c2823cd..3fdb30b 100644
+index c2823cd..5de2ad2 100644
 --- a/ps2xRuntime/include/runtime/gs/gs_frontend.h
 +++ b/ps2xRuntime/include/runtime/gs/gs_frontend.h
-@@ -192,6 +192,22 @@ private:
+@@ -107,6 +107,8 @@ public:
+     void setRasterBackend(std::unique_ptr<GSRasterBackend> backend);
+ 
+     void processGIFPacket(const uint8_t *data, uint32_t sizeBytes);
++    // When set, receives every GIF packet before it is parsed.
++    static inline void (*s_rawGifSink)(const uint8_t *data, uint32_t sizeBytes) = nullptr;
+     bool processNativePackedGIFPacket(const uint8_t *data, uint32_t sizeBytes);
+     void uploadImageNative(uint64_t bitbltbuf,
+                            uint64_t trxpos,
+@@ -192,6 +194,22 @@ private:
  
      uint8_t m_curR = 0x80, m_curG = 0x80, m_curB = 0x80, m_curA = 0x80;
      float m_curQ = 1.0f;
@@ -311,6 +320,19 @@ index 0000000..4f28b05
 +    struct Impl;
 +    std::unique_ptr<Impl> m_impl;
 +};
+diff --git a/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h b/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h
+index 2538d57..367de1a 100644
+--- a/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h
++++ b/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h
+@@ -18,6 +18,8 @@ public:
+     explicit GSThreadedBackend(std::unique_ptr<GSRasterBackend> inner);
+     ~GSThreadedBackend() override;
+ 
++    // Set before the GS is created to replace the default backend.
++    static std::unique_ptr<GSRasterBackend> (*s_backendFactory)();
+     static std::unique_ptr<GSRasterBackend> MakeDefault();
+     static void SetEnabledByDefault(bool enabled);
+     static void SetGpuByDefault(bool enabled);
 diff --git a/ps2xRuntime/include/runtime/gs/gs_tri_groups.h b/ps2xRuntime/include/runtime/gs/gs_tri_groups.h
 new file mode 100644
 index 0000000..2f5de58
@@ -972,10 +994,10 @@ index 8f874c8..9df5ab8 100644
              return;
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
 new file mode 100644
-index 0000000..b32aea7
+index 0000000..ed24e8f
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
-@@ -0,0 +1,2825 @@
+@@ -0,0 +1,2861 @@
 +// GOW-Port: render-target GS renderer, see include/runtime/gs/gs_hw_backend.h.
 +#include "runtime/gs/gs_tri_groups.h"
 +#include "runtime/gs/gs_colour_runs.h" // GOW-Port: ps2recomp-gs-sombras-tramos
@@ -1174,6 +1196,7 @@ index 0000000..b32aea7
 +uniform int uFailTint; // debug: GOW_GS_HW_FAILTINT paints alpha-test failing fragments magenta
 +uniform int uPass; // 0 = no alpha test, 1 = keep passing fragments, 2 = keep failing fragments
 +uniform float uBlendScale; // 1/128 style: alpha factor = min(a * scale, 1)
++uniform int uPabe; // PABE: pixels with alpha below 128 are written without blending
 +
 +float clamp255(float v) { return clamp(floor(v), 0.0, 255.0); }
 +
@@ -1301,7 +1324,8 @@ index 0000000..b32aea7
 +        if (uPass == 2 && pass) discard;
 +        if (uPass == 2 && uFailTint != 0) { rgb = vec3(255.0, 0.0, 255.0); a = 128.0; }
 +    }
-+    if (uSwBlend != 0)
++    bool unblended = uPabe != 0 && a < 128.0;
++    if (uSwBlend != 0 && !unblended)
 +    {
 +        vec4 d = floor(texelFetch(uDest, ivec2(gl_FragCoord.xy), 0) * 255.0 + 0.5);
 +        vec3 cs = floor(rgb);
@@ -1312,7 +1336,7 @@ index 0000000..b32aea7
 +    if (uZAlias != 0 && uZAliasWrite != 0)
 +        rgb = vec3(float(zFrag & 255u), float((zFrag >> 8) & 255u), float((zFrag >> 16) & 255u));
 +    oColor = vec4(rgb / 255.0, a / 255.0);
-+    float f = min(a * uBlendScale, 1.0);
++    float f = unblended ? 1.0 : min(a * uBlendScale, 1.0);
 +    oBlend = vec4(f);
 +}
 +)";
@@ -1474,6 +1498,7 @@ index 0000000..b32aea7
 +          locAte = -1, locFailTint = -1, locAtst = -1, locAref = -1, locPass = -1, locBlendScale = -1, locRtTex24 = -1, locTa0 = -1, locTa1 = -1, locReinterp = -1, locDate = -1, locDatm = -1, locDest = -1, locZTex = -1, locZMax = -1, locTables = -1, locRtColor = -1, locPalette = -1, locTexFmt = -1, locTexFmt2 = -1,
 +          locRtFmt = -1, locRtFmt2 = -1, locTex0 = -1, locRtPx = -1, locAem = -1;
 +    GLint locIndexed = -1, locLinear = -1, locWrap = -1, locIdxPalette = -1;
++    GLint locPabe = -1;
 +    GLint locSwBlend = -1, locColClamp = -1, locAbcd = -1, locFix = -1, locZAlias = -1, locZAliasWrite = -1, locZAliasMax = -1;
 +
 +    GLuint tableTex = 0, paletteTex = 0;
@@ -1657,7 +1682,7 @@ index 0000000..b32aea7
 +        const auto loc = [&](const char *name) { return g.GetUniformLocation(program, name); };
 +        locInvSize = loc("uInvSize"); locTex = loc("uTex"); locTexSize = loc("uTexSize"); locTexDim = loc("uTexDim"); locTme = loc("uTme");
 +        locFst = loc("uFst"); locTfx = loc("uTfx"); locTcc = loc("uTcc"); locIip = loc("uIip"); locAte = loc("uAte");
-+        locAtst = loc("uAtst"); locFailTint = loc("uFailTint"); locAref = loc("uAref"); locPass = loc("uPass"); locBlendScale = loc("uBlendScale");
++        locAtst = loc("uAtst"); locFailTint = loc("uFailTint"); locAref = loc("uAref"); locPass = loc("uPass"); locBlendScale = loc("uBlendScale"); locPabe = loc("uPabe");
 +        locReinterp = loc("uReinterp"); locDate = loc("uDate"); locDatm = loc("uDatm"); locDest = loc("uDest"); locZTex = loc("uZTex"); locZMax = loc("uZMax"); locTables = loc("uTables"); locRtColor = loc("uRtColor"); locPalette = loc("uPalette");
 +        locTexFmt = loc("uTexFmt"); locTexFmt2 = loc("uTexFmt2"); locRtFmt = loc("uRtFmt"); locRtFmt2 = loc("uRtFmt2");
 +        locTex0 = loc("uTex0"); locRtPx = loc("uRtPx");
@@ -3029,6 +3054,10 @@ index 0000000..b32aea7
 +                }
 +            }
 +        }
++        // PABE needs per-pixel control. Cs*As + Cd*(1-As) gets it from the second output; other equations go through the shader.
++        const bool pabe = s.prim.abe && s.pabe;
++        if (pabe && blend && !(sf == kSrc1Alpha && df == kOneMinusSrc1Alpha))
++            softBlend = true;
 +        if (softBlend || zAliasWrite) // the shader produces the final colour (a Z write replaces the colour word)
 +            blend = false;
 +        if (blend)
@@ -3051,6 +3080,7 @@ index 0000000..b32aea7
 +            g.Uniform1i(locDatm, ((c.test >> 15) & 1u) != 0u ? 1 : 0);
 +            const uint64_t al = c.alpha;
 +            g.Uniform1i(locSwBlend, softBlend && !zAliasWrite ? 1 : 0);
++            g.Uniform1i(locPabe, pabe ? 1 : 0);
 +            g.Uniform1i(locColClamp, (s.colclamp & 1u) != 0u ? 1 : 0);
 +            g.Uniform4i(locAbcd, static_cast<GLint>(al & 3u), static_cast<GLint>((al >> 2) & 3u), static_cast<GLint>((al >> 4) & 3u), static_cast<GLint>((al >> 6) & 3u));
 +            g.Uniform1f(locFix, static_cast<float>((al >> 32) & 0xFFu));
@@ -3623,6 +3653,34 @@ index 0000000..b32aea7
 +    const uint32_t fbp = ok1 ? fbp1 : fbp2, w = ok1 ? w1 : w2, h = std::min(ok1 ? h1 : h2, kTvLines);
 +    frame.displayFbp = fbp;
 +    frame.sourceFbp = fbp;
++    // Videos and full-screen images are uploaded straight into the displayed buffer, so no render target holds them.
++    {
++        const uint32_t fbw = ok1 ? fbw1 : fbw2, dbx = ok1 ? dbx1 : dbx2, dby = ok1 ? dby1 : dby2;
++        const uint64_t dispfb = ok1 ? request.dispfb1 : request.dispfb2;
++        const uint32_t psm = static_cast<uint32_t>((dispfb >> 15) & 0x1Fu);
++        RenderTarget *shown = d.findTarget(fbp);
++        const bool uploaded = !shown || d.uploadedSinceDraw(*shown, fbp * 32u);
++        const GSSwizzle::Format &format = GSSwizzle::GetFormat(psm);
++        if (uploaded && d.vram && format.table)
++        {
++            const bool sixteen = format.kind == GSSwizzle::Kind::Bits16;
++            frame.pixels.resize(static_cast<size_t>(w) * h * 4u);
++            uint32_t *out = reinterpret_cast<uint32_t *>(frame.pixels.data());
++            for (uint32_t y = 0; y < h; ++y)
++            {
++                const GSSwizzle::AxisPart row = GSSwizzle::RowPart(format, fbp * 32u, fbw, y + dby);
++                for (uint32_t x = 0; x < w; ++x)
++                {
++                    const GSSwizzle::Location at = GSSwizzle::Combine(format, row, GSSwizzle::ColumnPart(format, x + dbx));
++                    const uint32_t raw = GSSwizzle::LoadAt(format, d.vram + at.byte, at.shift);
++                    out[static_cast<size_t>(y) * w + x] = (sixteen ? GSCpuInternal::Rgba5551ToRgba8888(static_cast<uint16_t>(raw)) : raw) | 0xFF000000u;
++                }
++            }
++            frame.width = w;
++            frame.height = h;
++            return frame;
++        }
++    }
 +    // GOW_GS_HW_DISPDUMP=<n>: the n-th present after the displayed buffer's size changed (e.g. a movie starts) writes that
 +    // whole render target to gs_hw_disp_<fbp>_<w>x<h>.ppm (what the read circuit can reach, beyond the displayed area)
 +    static const int dispDumpAt = std::getenv("GOW_GS_HW_DISPDUMP") ? std::atoi(std::getenv("GOW_GS_HW_DISPDUMP")) : -1;
@@ -4211,7 +4269,7 @@ index 0000000..ed807df
 +    GSUpload24State m_upload24{};
 +};
 diff --git a/ps2xRuntime/src/lib/gs/gs_frontend.cpp b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
-index f78d7be..dde787a 100644
+index f78d7be..3a7d8ea 100644
 --- a/ps2xRuntime/src/lib/gs/gs_frontend.cpp
 +++ b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
 @@ -663,14 +663,31 @@ void GS::latchHostPresentationFrame()
@@ -4249,7 +4307,7 @@ index f78d7be..dde787a 100644
          }
      }
  
-@@ -747,110 +764,99 @@ bool GS::copyLatchedHostPresentationFrame(std::vector<uint8_t> &outPixels,
+@@ -747,110 +764,101 @@ bool GS::copyLatchedHostPresentationFrame(std::vector<uint8_t> &outPixels,
      return true;
  }
  
@@ -4295,6 +4353,8 @@ index f78d7be..dde787a 100644
 +
  void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
  {
++    if (s_rawGifSink)
++        s_rawGifSink(data, sizeBytes);
      std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
      if (!data || sizeBytes < 16 || !m_backend)
          return;
@@ -4718,7 +4778,7 @@ index 0000000..fb5ad7b
 +    }
 +}
 diff --git a/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp b/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
-index c5a6f78..689013a 100644
+index c5a6f78..d271984 100644
 --- a/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
 +++ b/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
 @@ -1,6 +1,7 @@
@@ -4729,10 +4789,20 @@ index c5a6f78..689013a 100644
  #include "runtime/gs/gs_shared_present.h"
  #include "ThreadPriority.h"
  #include "ThreadNaming.h"
-@@ -83,6 +84,9 @@ std::unique_ptr<GSRasterBackend> GSThreadedBackend::MakeDefault()
+@@ -77,12 +78,19 @@ GSThreadedBackend::~GSThreadedBackend()
+         m_worker.join();
+ }
+ 
++std::unique_ptr<GSRasterBackend> (*GSThreadedBackend::s_backendFactory)() = nullptr;
++
+ std::unique_ptr<GSRasterBackend> GSThreadedBackend::MakeDefault()
+ {
+     const char *value = std::getenv("PS2X_GS_THREAD");
      const bool enabled = (value && *value) ? *value != '0' : s_enabledByDefault.load();
      const char *gpu = std::getenv("PS2X_GS_GPU");
      const bool useGpu = (gpu && *gpu) ? *gpu != '0' : s_gpuByDefault.load();
++    if (s_backendFactory)
++        return s_backendFactory();
 +    const char *hw = std::getenv("PS2X_GS_HW");
 +    if (hw && *hw == '1')
 +        return std::make_unique<GSThreadedBackend>(std::make_unique<GSHwBackend>());

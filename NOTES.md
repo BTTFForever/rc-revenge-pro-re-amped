@@ -103,21 +103,27 @@ for the next one.
 - Measured performance comes from the attract-mode demo race, not from driven races.
 - Game speed is tied to frame rate, so the game runs slower below 60 fps (reported by the user).
 
+### Stub audit (2026-11-09)
+`config.toml` replaces 304 game functions with runtime stubs. A counting run through the intro, menu and demo called 52 of them. `sqrt` is the only math stub left: its stub reads a float from f12 while the game's takes a soft-float double in $a0/$a1, but no generated code calls it. `memcpy`, `memset`, `memmove` and `strncpy` were read and look right; the pad, CD, memory card and SIF stubs were not reviewed line by line, and memory card saving is still untested.
+
 ### Graphical bugs to check later
-- Main menu: the butterfly model in the foreground should flap its wings, but the animation does not play properly.
+- Main menu butterflies and random effect values: fixed 2026-11-09. The runtime `rand` stub returned 15 bits while the game expects 31 and uses `rand() >> 15`, so every random value was stuck. `rand` and `srand` now run the game's own code.
 - Races: 2D effects behind vehicles, such as water spray, tire dirt and skid marks, are not drawn properly.
 - Other minor graphical bugs the user has seen since the start; details still to be collected.
 
 ### State of `PS2X_GS_HW=1`
-Runs at the requested scale at about the speed of the default renderer and fills the frame. Unsolved:
-- Most 3D surfaces are black. Sky, logos and menu panels are correct. Most world draws are T4 or T8 textures whose CT32
-  palette alpha is 0, drawn first with ALPHA 0x44 and ABE on, then a pass of about 3,000 batches with ABE off.
-- Ruled out: palette contents (identical to the default renderer through `ReadVram`), depth test, alpha test, palette
-  textures being mistaken for render targets (almost all T4/T8 draws take the indexed path).
-- Replacing indexed colours with a debug colour did not make the black surfaces appear, so those pixels are not being
-  written or are overwritten later. Next step: dump the render target after each batch (`GOW_GS_HW_RTDUMP*`).
-- The opening video and logos are black, probably because the game writes video frames directly into the display buffer.
-- The renderer contains God of War-specific rules, such as the 448-line cap and Z inversion passes.
+The God of War render-target renderer now draws this game correctly at 1x and 3x: videos, logos, menu and races. Two fixes were needed:
+PABE support (the game's zero-alpha textures rely on it to draw opaque), and presenting from video memory when the displayed buffer was last written by an upload.
+Menu speed: about 53-56 fps at 1x and 48-50 fps at 3x, against 60 fps on the default renderer, so the game runs slightly slow on it. The window opens at 640x480 and is resizable;
+it must be enlarged to show the extra detail. One run stopped at 0 fps during a demo with the heap reading 576 bytes free, like the parked freeze.
+
+### State of `PS2X_GS_VK=1` (ps2-port-engine's Vulkan renderer)
+`third_party/port_engine` holds a subset of that engine (MIT), and `rc_backend.cpp` feeds it the raw GIF packets. `PS2X_GS_VK_SCALE=<n>` sets the
+internal resolution. On 2026-11-09 the logos, video, loading screen, menu and a race rendered correctly at 1x and 2x.
+It is too slow to use yet. With a synchronous read-back: about 22 fps at 1x, 4 fps at 2x. With the asynchronous read-back now in place
+(`ReadTargetAsync`): about 27 fps at 1x, 5 fps at 2x, with audio starving at 2x. Each present still blocks for 12 ms at 1x and 46 ms at 2x, so the copy was
+not the main cost; where that time goes (recording, or waiting for the GPU) has not been measured. Set aside on 2026-11-09 until more bugs are fixed.
+Presenting straight to the window was not tried. The window is a GLFW X11 window under Wayland, so a Vulkan surface would need a child X11 window.
 
 ## Other projects consulted
 - github.com/LightVelox/sotc-vibe-pc: settings and performance notes. Most switches are already on by default in the fork.
