@@ -994,10 +994,10 @@ index 8f874c8..9df5ab8 100644
              return;
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
 new file mode 100644
-index 0000000..1fb0d09
+index 0000000..5e8dc90
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
-@@ -0,0 +1,2959 @@
+@@ -0,0 +1,2984 @@
 +// GOW-Port: render-target GS renderer, see include/runtime/gs/gs_hw_backend.h.
 +#include "runtime/gs/gs_tri_groups.h"
 +#include "runtime/gs/gs_colour_runs.h" // GOW-Port: ps2recomp-gs-sombras-tramos
@@ -1198,6 +1198,7 @@ index 0000000..1fb0d09
 +uniform int uPass; // 0 = no alpha test, 1 = keep passing fragments, 2 = keep failing fragments
 +uniform float uBlendScale; // 1/128 style: alpha factor = min(a * scale, 1)
 +uniform int uPabe; // PABE: pixels with alpha below 128 are written without blending
++uniform float uPabeF; // the second output on such a pixel: whichever factor leaves Cs alone
 +
 +float clamp255(float v) { return clamp(floor(v), 0.0, 255.0); }
 +
@@ -1337,7 +1338,7 @@ index 0000000..1fb0d09
 +    if (uZAlias != 0 && uZAliasWrite != 0)
 +        rgb = vec3(float(zFrag & 255u), float((zFrag >> 8) & 255u), float((zFrag >> 16) & 255u));
 +    oColor = vec4(rgb / 255.0, a / 255.0);
-+    float f = unblended ? 1.0 : min(a * uBlendScale, 1.0);
++    float f = unblended ? uPabeF : min(a * uBlendScale, 1.0);
 +    oBlend = vec4(f);
 +}
 +)";
@@ -1499,7 +1500,7 @@ index 0000000..1fb0d09
 +          locAte = -1, locFailTint = -1, locAtst = -1, locAref = -1, locPass = -1, locBlendScale = -1, locRtTex24 = -1, locTa0 = -1, locTa1 = -1, locReinterp = -1, locDate = -1, locDatm = -1, locDest = -1, locZTex = -1, locZMax = -1, locTables = -1, locRtColor = -1, locPalette = -1, locTexFmt = -1, locTexFmt2 = -1,
 +          locRtFmt = -1, locRtFmt2 = -1, locTex0 = -1, locRtPx = -1, locAem = -1;
 +    GLint locIndexed = -1, locLinear = -1, locWrap = -1, locIdxPalette = -1;
-+    GLint locPabe = -1;
++    GLint locPabe = -1, locPabeF = -1;
 +    GLint locSwBlend = -1, locColClamp = -1, locAbcd = -1, locFix = -1, locZAlias = -1, locZAliasWrite = -1, locZAliasMax = -1;
 +
 +    GLuint tableTex = 0, paletteTex = 0;
@@ -1683,7 +1684,7 @@ index 0000000..1fb0d09
 +        const auto loc = [&](const char *name) { return g.GetUniformLocation(program, name); };
 +        locInvSize = loc("uInvSize"); locTex = loc("uTex"); locTexSize = loc("uTexSize"); locTexDim = loc("uTexDim"); locTme = loc("uTme");
 +        locFst = loc("uFst"); locTfx = loc("uTfx"); locTcc = loc("uTcc"); locIip = loc("uIip"); locAte = loc("uAte");
-+        locAtst = loc("uAtst"); locFailTint = loc("uFailTint"); locAref = loc("uAref"); locPass = loc("uPass"); locBlendScale = loc("uBlendScale"); locPabe = loc("uPabe");
++        locAtst = loc("uAtst"); locFailTint = loc("uFailTint"); locAref = loc("uAref"); locPass = loc("uPass"); locBlendScale = loc("uBlendScale"); locPabe = loc("uPabe"); locPabeF = loc("uPabeF");
 +        locReinterp = loc("uReinterp"); locDate = loc("uDate"); locDatm = loc("uDatm"); locDest = loc("uDest"); locZTex = loc("uZTex"); locZMax = loc("uZMax"); locTables = loc("uTables"); locRtColor = loc("uRtColor"); locPalette = loc("uPalette");
 +        locTexFmt = loc("uTexFmt"); locTexFmt2 = loc("uTexFmt2"); locRtFmt = loc("uRtFmt"); locRtFmt2 = loc("uRtFmt2");
 +        locTex0 = loc("uTex0"); locRtPx = loc("uRtPx");
@@ -2836,10 +2837,16 @@ index 0000000..1fb0d09
 +        else if (a == 0 && b == 2 && d == 2) { sf = cs; df = kZero; }    // Cs*C
 +        else if (a == 2 && b == 0 && d == 2) { sf = kZero; df = kZero; } // 0
 +        else if (a == 2 && b == 0 && d == 1) { sf = cs; df = kOne; equation = kFuncReverseSubtract; } // Cd - Cs*C
++        else if (a == 1 && b == 2 && d == 0 && c != 1) { sf = kOne; df = cs; }    // Cd*C + Cs
++        else if (a == 1 && b == 0 && d == 0 && c != 1) { sf = cd; df = cs; }      // Cs*(1-C) + Cd*C
 +        else { soft = true; sf = cs; df = cd; }
 +        if (soft)
 +            ++stats.unsupportedBlend;
 +    }
++
++    bool lastClutValid = false, lastClutFromTarget = false;
++    uint64_t lastClutKey = 0u, uploadEpoch = 0u, lastClutUploads = 0u;
++    uint32_t lastClutPlace = 0u;
 +
 +    // Last values sent to the main program's uniforms, so unchanged ones are not sent again.
 +    struct UniformSlot { bool set = false; int32_t v[4] = {}; };
@@ -3136,7 +3143,9 @@ index 0000000..1fb0d09
 +        }
 +        // PABE needs per-pixel control. Cs*As + Cd*(1-As) gets it from the second output; other equations go through the shader.
 +        const bool pabe = s.prim.abe && s.pabe;
-+        if (pabe && blend && !(sf == kSrc1Alpha && df == kOneMinusSrc1Alpha))
++        const bool pabeSource = sf == kSrc1Alpha && df == kOneMinusSrc1Alpha;           // Cs*f + Cd*(1-f): f = 1 keeps Cs
++        const bool pabeDest = (sf == kOne || sf == kOneMinusSrc1Alpha) && df == kSrc1Alpha; // Cd*f + Cs*(...): f = 0 keeps Cs
++        if (pabe && blend && !pabeSource && !pabeDest)
 +            softBlend = true;
 +        if (softBlend || zAliasWrite) // the shader produces the final colour (a Z write replaces the colour word)
 +            blend = false;
@@ -3161,6 +3170,7 @@ index 0000000..1fb0d09
 +            const uint64_t al = c.alpha;
 +            setUniform1i(g, locSwBlend, softBlend && !zAliasWrite ? 1 : 0);
 +            setUniform1i(g, locPabe, pabe ? 1 : 0);
++            setUniform1f(g, locPabeF, pabeDest ? 0.0f : 1.0f);
 +            setUniform1i(g, locColClamp, (s.colclamp & 1u) != 0u ? 1 : 0);
 +            setUniform4i(g, locAbcd, static_cast<GLint>(al & 3u), static_cast<GLint>((al >> 2) & 3u), static_cast<GLint>((al >> 4) & 3u), static_cast<GLint>((al >> 6) & 3u));
 +            setUniform1f(g, locFix, static_cast<float>((al >> 32) & 0xFFu));
@@ -3560,10 +3570,24 @@ index 0000000..1fb0d09
 +void GSHwBackend::LoadClut(const GSTex0Reg &tex0, const GSTexClutReg &texclut)
 +{
 +    Impl &d = *m_impl;
++    // Reloading the same palette with no upload since changes nothing, and flushing for it splits the draw batches.
++    const uint64_t clutKey = (static_cast<uint64_t>(tex0.cbp) << 32) | (static_cast<uint64_t>(tex0.cpsm) << 24) | (static_cast<uint64_t>(tex0.csm) << 22) |
++                             (static_cast<uint64_t>(tex0.csa) << 16) | (static_cast<uint64_t>(tex0.cld) << 13) | (static_cast<uint64_t>(tex0.psm) << 6) | texclut.cbw;
++    const uint32_t clutPlace = (static_cast<uint32_t>(texclut.cou) << 8) | texclut.cov;
++    if (d.lastClutValid && !d.lastClutFromTarget && d.lastClutKey == clutKey && d.lastClutPlace == clutPlace && d.lastClutUploads == d.uploadEpoch)
++        return;
++    d.lastClutValid = true;
++    d.lastClutFromTarget = false;
++    d.lastClutKey = clutKey;
++    d.lastClutPlace = clutPlace;
++    d.lastClutUploads = d.uploadEpoch;
 +    d.flushPending();
 +    if (d.initialized)
 +        d.store.LoadClut(tex0, texclut, [&d](const GSTex0Reg &t, uint32_t width, const uint16_t *xy, uint32_t count, uint32_t *words)
-+                         { return d.clutFromTarget(t, width, xy, count, words); });
++                         {
++                             const bool used = d.clutFromTarget(t, width, xy, count, words);
++                             d.lastClutFromTarget = d.lastClutFromTarget || used;
++                             return used; });
 +    else
 +        d.store.LoadClut(tex0, texclut);
 +    d.clutHash = d.store.ClutHash();
@@ -3612,6 +3636,7 @@ index 0000000..1fb0d09
 +    const bool watched = d.xferWatchHit;
 +    d.xferWatchHit = false;
 +    d.store.Upload(data, sizeBytes);
++    ++d.uploadEpoch;
 +    if (watched && d.vram)
 +    {
 +        static const long block = std::strtol(std::getenv("GOW_GS_HW_XFERWATCH"), nullptr, 16);

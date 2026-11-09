@@ -197,6 +197,47 @@ namespace
 
     // The game runs its own heap from 0x500000 to 0x1FF0000. The runtime's allocations stay below
     // 0x500000 so they cannot overwrite the game's block headers.
+    // RC_BOOT_LEVEL=<n> skips the intro and menus and starts the attract-mode demo on level n, then repeats it.
+    // It writes what FrontEndProcess writes when it picks a demo. mainClass is at 0x1ED900.
+    int bootLevel()
+    {
+        static const int level = []
+        {
+            const char *value = std::getenv("RC_BOOT_LEVEL");
+            return value ? std::atoi(value) : 0;
+        }();
+        return level;
+    }
+
+    void bootFrontEnd(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        if (bootLevel() <= 0)
+        {
+            MainFrontProcess_0x12f500(rdram, ctx, runtime);
+            return;
+        }
+        constexpr uint32_t kMain = 0x001ED900u;
+        const auto word = [rdram](uint32_t address, uint32_t value) { std::memcpy(rdram + address, &value, 4u); };
+        word(kMain + 0x34Cu, 0x100001FCu);
+        word(kMain + 0x4u, 4u);  // toDo: demo
+        word(kMain + 0x0u, 0x10u);
+        rdram[kMain + 0x349u] = 0u;
+        rdram[kMain + 0x34Au] = static_cast<uint8_t>(bootLevel());
+        rdram[kMain + 0x368u] = 0u; // not split screen
+        rdram[kMain + 0x369u] = 0u;
+        rdram[kMain + 0x36Au] = 8u; // cars
+        std::memcpy(rdram + 0x001EDAC0u, "TEST", 5u);
+        ctx->pc = getRegU32(ctx, 31);
+    }
+
+    void bootSkipIntro(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        if (bootLevel() <= 0)
+            BackdropDoInitialScreens_0x111138(rdram, ctx, runtime);
+        else
+            ctx->pc = getRegU32(ctx, 31);
+    }
+
     void memBlockInitWithSeparateRuntimeHeap(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         const uint32_t base = getRegU32(ctx, 4);
@@ -522,6 +563,8 @@ namespace
         PS2Runtime::setIoPaths(paths);
         runtime.replaceFunction(kSceCdSearchFileAddr, &searchFileOnIso);
         runtime.replaceFunction(kMemBlockInitAddr, &memBlockInitWithSeparateRuntimeHeap);
+        runtime.replaceFunction(0x12F500u, &bootFrontEnd);
+        runtime.replaceFunction(0x111138u, &bootSkipIntro);
         runtime.replaceFunction(kMainAddr, &mainOnTopOfRamStack);
         runtime.replaceFunction(0x001CE9A0u, &mpegAddBsInChunks);
         runtime.replaceFunction(0x001C3D90u, &gsSyncV);

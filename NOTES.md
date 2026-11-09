@@ -5,6 +5,15 @@ A native Linux build of the PS2 game, made with PS2Recomp. Start it with `./run.
 Status on 2026-11-09: boots, plays video and music, renders the menus and races correctly, and runs
 at a steady 60 fps at the main menu and mostly 50-60 fps in the attract-mode race. Game speed follows the frame rate.
 
+## Where to pick up (2026-11-09)
+`./run.sh` uses the default renderer at native 240 lines and 60 fps at the menu. `PS2X_GS_HW=1 PS2X_GS_HW_SCALE=3 ./run.sh` gives the sharper God of War renderer; enlarge the window to see it.
+Open decisions and work:
+1. Make the God of War renderer at 3x the default, and decide whether to lock heavy levels to a steady 30 fps. With `PS2X_VU1_TIMING=1`, level 18 runs at about 30 fps, so a real PS2 probably did too.
+2. A real race and a memory card save have not been tested. The memory card stubs are unreviewed.
+3. The rain-level freeze has not recurred since `rand` was fixed, but that is not proven. `RC_BOOT_LEVEL=3` reaches that level directly.
+4. Dynamic resolution and widescreen are still to do. Vulkan (`PS2X_GS_VK=1`) renders correctly but is slow.
+5. A faster VU1 generator without the cycle-accurate timing might gain 20-30%.
+
 ## What lives where
 | Path | Contents | Keep? |
 |---|---|---|
@@ -124,6 +133,10 @@ It is too slow to use yet. With a synchronous read-back: about 22 fps at 1x, 4 f
 (`ReadTargetAsync`): about 27 fps at 1x, 5 fps at 2x, with audio starving at 2x. Each present still blocks for 12 ms at 1x and 46 ms at 2x, so the copy was
 not the main cost; where that time goes (recording, or waiting for the GPU) has not been measured. Set aside on 2026-11-09 until more bugs are fixed.
 Presenting straight to the window was not tried. The window is a GLFW X11 window under Wayland, so a Vulkan surface would need a child X11 window.
+
+### Level testing (2026-11-09)
+`RC_BOOT_LEVEL=<n> ./run.sh` skips the intro and menus and loops the attract-mode demo on level n. `tools/level_sweep.sh <first> <last> <seconds> [VAR=value ...]` prints each level's frame rate.
+Sweep of levels 1-24 on the God of War renderer at 3x: 1, 3, 4, 10, 15, 16 and 22 hold about 55-60 fps; 6, 8, 9, 12, 17, 18 and 24 ran about 25-35 fps before the blend and palette fixes. On level 18 the default renderer reaches 35-43 fps with VU1 87% busy at 14.5 ms per field, so those levels are limited by VU1 on both renderers. About half the VU time is one block of program C3952C0FAEB52EAD; its cost is spread evenly over its instructions.
 
 ## Other projects consulted
 - github.com/LightVelox/sotc-vibe-pc: settings and performance notes. Most switches are already on by default in the fork.
