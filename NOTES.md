@@ -29,6 +29,7 @@ The goal is a full behaviour-matching decompilation in the style of ico-pc (`../
 - Checking: `RC_SHADOW=1` compares sampled live calls against the recompiled originals, including all of guest RAM; `RC_SHADOW_FUZZ=<n>` also runs each function on n random inputs; `RC_SHADOW_LOG=<file>` keeps totals; `RC_DECOMP=0` turns every decompiled function off. Pass `RC_BOOT_LEVEL=<n>` to reach a race quickly.
 - The random test fills guest pointers with random bytes, so a function that follows pointers stored in its data needs a hand-written setup instead.
 - Function sizes in `functions_filtered.csv` are cut short at internal labels. Use `symbols.json`.
+- VU1: `tools/vu1dis.py ../disc/SLUS_201.53 decomp/generated/vusrc` writes a labelled listing of each microprogram, keeping the labels in the ELF. The plan follows ico-pc's: a checked C reference of each program, then one shader per program driven by the data the game already uploads. Programs and their recompiled files: `Rdr_VUShapeProg` 6ec8b9ff8fa44221, `TRdr_VUShapeProg` (track) c3952c0faeb52ead, `TERdr_VUShapeProg` bac581270f262987, `EnvRdr_VUShapeProg` ab0e7743a9ba7393, `Rdr_VUSkinProg` ec08b22243d4dc8c, `Rdr_VUWaterProg` e96770e4143d2da7.
 - File formats stay as they are during the decompilation. Modern assets can come later as an optional override layer.
 
 ## What lives where
