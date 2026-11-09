@@ -14,6 +14,17 @@ Open decisions and work:
 4. Dynamic resolution and widescreen are still to do. Vulkan (`PS2X_GS_VK=1`) renders correctly but is slow.
 5. A faster VU1 generator without the cycle-accurate timing might gain 20-30%.
 
+## Decompilation (started 2026-11-10)
+The goal is a full behaviour-matching decompilation in the style of ico-pc (`../ico-pc`): native C with no recompiled code left. Decompiled functions replace recompiled ones one at a time in the running game.
+- `tools/stabs2c.py ../disc/SLUS_201.53 decomp/generated` writes the types, globals and per-file signatures from the ELF's debug data. `decomp/generated/symbols/<file>.txt` is the reference to read while decompiling.
+- `tools/decomp_order.py ../disc/SLUS_201.53 functions_filtered.csv decomp/generated/symbols.json decomp/generated/order.txt` lists the functions that are safe to replace now, leaf first.
+- `decomp/src/*.cpp` holds the decompiled code. Add `RC_DECOMP_FN(name, 0xaddress)` under each function. Build with `ninja -C build-decomp rc_revenge_pro`; `build/` stays the profile-guided recompiled build.
+- Rules: structs keep the PS2 layout (`ptr32`, `ee_float`), globals are `G(name)`, and a decompiled function must not reach anything that blocks or switches guest threads, because the runtime switches threads by unwinding the host stack. The blocking top of the call graph waits until the scheduler is replaced with fibers.
+- Checking: `RC_SHADOW=1` compares sampled live calls against the recompiled originals, including all of guest RAM; `RC_SHADOW_FUZZ=<n>` also runs each function on n random inputs; `RC_SHADOW_LOG=<file>` keeps totals; `RC_DECOMP=0` turns every decompiled function off. Pass `RC_BOOT_LEVEL=<n>` to reach a race quickly.
+- The random test fills guest pointers with random bytes, so a function that follows pointers stored in its data needs a hand-written setup instead.
+- Function sizes in `functions_filtered.csv` are cut short at internal labels. Use `symbols.json`.
+- File formats stay as they are during the decompilation. Modern assets can come later as an optional override layer.
+
 ## What lives where
 | Path | Contents | Keep? |
 |---|---|---|
