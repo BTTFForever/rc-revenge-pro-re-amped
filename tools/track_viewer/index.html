@@ -47,6 +47,7 @@ canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block
       <button id="tex" class="on">Textures</button>
       <button id="lit" class="on">Lighting</button>
       <button id="wire">Wireframe</button>
+      <button id="cull" class="on">Hide back faces</button>
     </div>
     <div id="help">Drag to orbit. Right-drag or Shift-drag to pan. Wheel to zoom. W A S D to move.</div>
     <div id="status"></div>
@@ -66,21 +67,28 @@ const gl = canvas.getContext('webgl2', { antialias: true, preserveDrawingBuffer:
 if (!gl) document.getElementById('status').textContent = 'This browser cannot run WebGL 2.';
 
 const vertexSource = `#version 300 es
-in vec3 pos; in vec3 uv; in vec4 col;
-uniform mat4 viewProj;
-out vec3 vUv; out vec4 vCol;
-void main() { vUv = uv; vCol = col; gl_Position = viewProj * vec4(pos, 1.0); }`;
+in vec3 pos; in vec3 uv; in vec4 col; in vec4 nrm;
+uniform mat4 viewProj; uniform vec3 eye;
+out vec3 vUv; out vec4 vCol; out float vFace;
+void main() {
+  vUv = uv; vCol = col;
+  // The game's own facing test: which side of the triangle's plane the viewer is on, with a flag per triangle.
+  float side = dot(pos - eye, nrm.xyz);
+  vFace = nrm.w > 0.5 ? side : -side;
+  gl_Position = viewProj * vec4(pos, 1.0);
+}`;
 const fragmentSource = `#version 300 es
 precision highp float;
-in vec3 vUv; in vec4 vCol;
-uniform sampler2D tex; uniform bool useTex, useLight, wire;
+in vec3 vUv; in vec4 vCol; in float vFace;
+uniform sampler2D tex; uniform bool useTex, useLight, wire, cull; uniform int mode;
 out vec4 outColor;
 void main() {
+  if (cull && vFace < 0.0) discard;
   if (wire) { outColor = vec4(0.98, 0.72, 0.24, 1.0); return; }
   vec4 base = useTex ? texture(tex, vUv.xy / vUv.z) : vec4(0.72, 0.74, 0.78, 1.0);
-  if (useTex && base.a < 0.5) discard;
+  if (useTex && mode == 1 && base.a < 0.5) discard;
   vec3 light = useLight ? vCol.rgb * (255.0 / 128.0) : vec3(1.0);
-  outColor = vec4(min(base.rgb * light, 1.0), 1.0);
+  outColor = vec4(min(base.rgb * light, 1.0), mode == 2 && useTex ? base.a : 1.0);
 }`;
 
 function compile(type, source) {
@@ -96,10 +104,11 @@ gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fragmentSource));
 gl.bindAttribLocation(program, 0, 'pos');
 gl.bindAttribLocation(program, 1, 'uv');
 gl.bindAttribLocation(program, 2, 'col');
+gl.bindAttribLocation(program, 3, 'nrm');
 gl.linkProgram(program);
 gl.useProgram(program);
 const uniforms = {};
-for (const name of ['viewProj', 'tex', 'useTex', 'useLight', 'wire']) uniforms[name] = gl.getUniformLocation(program, name);
+for (const name of ['viewProj', 'eye', 'tex', 'useTex', 'useLight', 'wire', 'cull', 'mode']) uniforms[name] = gl.getUniformLocation(program, name);
 gl.enable(gl.DEPTH_TEST);
 gl.clearColor(0.05, 0.06, 0.09, 1);
 
@@ -124,7 +133,7 @@ function buffer(data, slot, size, type, normalized) {
 }
 
 let world = null, requested = 0;
-const state = { textures: true, lit: true, wire: false };
+const state = { textures: true, lit: true, wire: false, cull: true };
 const cam = { target: [0, 0, 0], yaw: 0.7, pitch: 0.6, dist: 1000, radius: 1000 };
 
 function clearWorld() {
@@ -149,8 +158,9 @@ function buildWorld(level) {
       buffer(pos, 0, 3, gl.FLOAT),
       buffer(bytesOf(source.u), 1, 3, gl.FLOAT),
       buffer(bytesOf(source.c), 2, 4, gl.UNSIGNED_BYTE, true),
+      buffer(bytesOf(source.n), 3, 4, gl.FLOAT),
     ];
-    const group = { vao, count, buffers, texture: null, lines: null };
+    const group = { vao, count, buffers, texture: null, lines: null, mode: source.m };
     if (source.t) {
       const image = new Image();
       image.onload = () => {
@@ -189,10 +199,10 @@ function ensureLines(group) {
   gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
 }
 
-// The game's coordinates have y pointing down, so "up" is -y throughout.
+const worldUp = [0, 1, 0];
 const eyeOf = () => {
   const c = Math.cos(cam.pitch);
-  return [cam.target[0] + cam.dist * c * Math.sin(cam.yaw), cam.target[1] - cam.dist * Math.sin(cam.pitch), cam.target[2] + cam.dist * c * Math.cos(cam.yaw)];
+  return [cam.target[0] + cam.dist * c * Math.sin(cam.yaw), cam.target[1] + cam.dist * Math.sin(cam.pitch), cam.target[2] + cam.dist * c * Math.cos(cam.yaw)];
 };
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -202,7 +212,7 @@ const unit = a => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / 
 function viewProjection() {
   const eye = eyeOf();
   const back = unit(sub(eye, cam.target));
-  const right = unit(cross([0, -1, 0], back));
+  const right = unit(cross(worldUp, back));
   const up = cross(back, right);
   const aspect = canvas.width / canvas.height;
   const near = Math.max(cam.dist / 400, 2), far = cam.radius * 40 + cam.dist * 4;
@@ -234,14 +244,27 @@ function draw() {
     if (!world) return;
     gl.uniformMatrix4fv(uniforms.viewProj, false, viewProjection());
     gl.uniform1i(uniforms.useLight, state.lit);
+    gl.uniform1i(uniforms.cull, state.cull);
+    gl.uniform3fv(uniforms.eye, eyeOf());
+    gl.uniform1i(uniforms.wire, false);
     gl.activeTexture(gl.TEXTURE0);
-    for (const g of world.groups) {
-      gl.bindVertexArray(g.vao);
-      gl.uniform1i(uniforms.useTex, state.textures && !!g.texture);
-      gl.bindTexture(gl.TEXTURE_2D, g.texture || white);
-      gl.uniform1i(uniforms.wire, false);
-      gl.drawArrays(gl.TRIANGLES, 0, g.count);
-    }
+    const drawGroups = translucent => {
+      for (const g of world.groups) {
+        if ((g.mode === 2) !== translucent) continue;
+        gl.bindVertexArray(g.vao);
+        gl.uniform1i(uniforms.useTex, state.textures && !!g.texture);
+        gl.uniform1i(uniforms.mode, g.mode);
+        gl.bindTexture(gl.TEXTURE_2D, g.texture || white);
+        gl.drawArrays(gl.TRIANGLES, 0, g.count);
+      }
+    };
+    drawGroups(false);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.depthMask(false);
+    drawGroups(true);
+    gl.depthMask(true);
+    gl.disable(gl.BLEND);
     if (state.wire) {
       gl.uniform1i(uniforms.wire, true);
       for (const g of world.groups) {
@@ -321,6 +344,7 @@ function toggle(id, key) {
 toggle('tex', 'textures');
 toggle('lit', 'lit');
 toggle('wire', 'wire');
+toggle('cull', 'cull');
 document.getElementById('all').onclick = () => { document.getElementById('grid').style.display = 'block'; };
 document.getElementById('overview').onclick = () => world && frameOverview();
 document.getElementById('top').onclick = () => world && frameTop();
@@ -334,7 +358,7 @@ canvas.addEventListener('pointermove', e => {
   const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
   drag.x = e.clientX; drag.y = e.clientY;
   if (drag.pan) {
-    const eye = eyeOf(), back = unit(sub(eye, cam.target)), right = unit(cross([0, -1, 0], back)), up = cross(back, right);
+    const eye = eyeOf(), back = unit(sub(eye, cam.target)), right = unit(cross(worldUp, back)), up = cross(back, right);
     const speed = cam.dist * 0.0016;
     for (let i = 0; i < 3; ++i) cam.target[i] += (-right[i] * dx + up[i] * dy) * speed;
   } else {
@@ -360,7 +384,7 @@ function pump() {
     if (keys.has('d')) strafe += 1;
     if (keys.has('a')) strafe -= 1;
     if (!forward && !strafe) { pumping = false; return; }
-    const eye = eyeOf(), back = unit(sub(eye, cam.target)), right = unit(cross([0, -1, 0], back));
+    const eye = eyeOf(), back = unit(sub(eye, cam.target)), right = unit(cross(worldUp, back));
     const speed = cam.dist * 0.018;
     for (let i = 0; i < 3; ++i) cam.target[i] += (-back[i] * forward + right[i] * strafe) * speed;
     draw();

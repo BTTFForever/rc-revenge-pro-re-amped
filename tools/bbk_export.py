@@ -156,6 +156,24 @@ def vif_runs(level, start, limit=200000):
         yield bytes(memory)
 
 
+def add_triangle(group, buffer, offset, rotation, translation):
+    """Adds the ten-quadword triangle at a byte offset in buffer."""
+    normal = np.array(struct.unpack_from('<3f', buffer, offset), np.float32)
+    winding = struct.unpack_from('<h', buffer, offset + 12)[0]
+    if rotation is not None:
+        normal = rotation[0] * normal[0] + rotation[1] * normal[1] + rotation[2] * normal[2]
+    for corner in range(3):
+        p = struct.unpack_from('<3f', buffer, offset + (1 + corner) * 16)
+        st = struct.unpack_from('<3f', buffer, offset + (4 + corner) * 16)
+        c = struct.unpack_from('<4i', buffer, offset + (7 + corner) * 16)
+        if rotation is not None:
+            p = rotation[0] * p[0] + rotation[1] * p[1] + rotation[2] * p[2] + translation
+        group['pos'].append(p)
+        group['uv'].append(st if abs(st[2]) > 1e-9 else (st[0], st[1], 1.0))
+        group['col'].append(c)
+        group['nrm'].append((normal[0], normal[1], normal[2], 1.0 if winding != 0 else 0.0))
+
+
 def read_triangles(level, shape, groups, rotation=None, translation=None):
     """Adds a shape's triangles to groups, keyed by texture. rotation and translation place a prop."""
     triangles = 0
@@ -176,23 +194,25 @@ def read_triangles(level, shape, groups, rotation=None, translation=None):
                 continue
             # The block starts with the GS TEX0 value, whose low bits are the texture's address.
             texture = by_base.get(struct.unpack_from('<I', memory, at * 16)[0] & 0x3FFF, 0)
-            group = groups.setdefault(texture, {'pos': [], 'uv': [], 'col': []})
+            group = groups.setdefault(texture, {'pos': [], 'uv': [], 'col': [], 'nrm': []})
             tri = at + 4
             for _ in range(count):
                 if tri + 10 > 1024:
                     break
-                for corner in range(3):
-                    p = struct.unpack_from('<3f', memory, (tri + 1 + corner) * 16)
-                    st = struct.unpack_from('<3f', memory, (tri + 4 + corner) * 16)
-                    c = struct.unpack_from('<4i', memory, (tri + 7 + corner) * 16)
-                    if rotation is not None:
-                        p = rotation[0] * p[0] + rotation[1] * p[1] + rotation[2] * p[2] + translation
-                    group['pos'].append(p)
-                    group['uv'].append(st if abs(st[2]) > 1e-9 else (st[0], st[1], 1.0))
-                    group['col'].append(c)
+                add_triangle(group, memory, tri * 16, rotation, translation)
                 tri += 10
                 triangles += 1
             at += 4 + count * 10
+
+    # Translucent polygons are kept in their own list: four quadwords of GS state, then one triangle each.
+    alpha = level.u32(shape + 0x54)
+    if 0x100000 <= alpha < 0x2000000:
+        for index in range(min(level.u32(alpha), 65536)):
+            start = (alpha + 16 + index * 14 * 16) & 0x1FFFFFF
+            texture = by_base.get(struct.unpack_from('<I', level.data, start)[0] & 0x3FFF, 0)
+            group = groups.setdefault(texture, {'pos': [], 'uv': [], 'col': [], 'nrm': []})
+            add_triangle(group, level.data, start + 4 * 16, rotation, translation)
+            triangles += 1
     return triangles
 
 
@@ -216,6 +236,27 @@ def place_props(level, header, groups):
     return placed
 
 
+def bleed_colour(rgba, passes=24):
+    """Spreads colour into fully transparent texels so that filtering does not darken the edges of cut-outs."""
+    filled = rgba[..., 3] > 0
+    if filled.all() or not filled.any():
+        return
+    colour = rgba[..., :3].astype(np.float32)
+    for _ in range(passes):
+        if filled.all():
+            break
+        total = np.zeros_like(colour)
+        count = np.zeros(filled.shape, np.float32)
+        for axis, step in ((0, 1), (0, -1), (1, 1), (1, -1)):
+            total += np.roll(colour * filled[..., None], step, axis)
+            count += np.roll(filled, step, axis)
+        grow = ~filled & (count > 0)
+        colour[grow] = total[grow] / count[grow][:, None]
+        filled = filled | grow
+    colour[~filled] = colour[filled].mean(axis=0)
+    rgba[..., :3] = colour.astype(np.uint8)
+
+
 def decode_texture(level, texture):
     width, height, fmt = level.i32(texture + 8), level.i32(texture + 12), level.i32(texture + 16)
     if width <= 0 or height <= 0 or width > 1024 or height > 1024:
@@ -223,12 +264,19 @@ def decode_texture(level, texture):
     rgba = level.gs.texture(fmt, level.i32(texture + 0x2C), width, height, level.i32(texture + 0x14))
     if rgba is None:
         return None
-    # Most textures have zero alpha on opaque pixels; the game draws them through the GS's per-pixel blend
-    # enable. Only fully black zero-alpha texels are holes.
-    hole = (rgba[..., 3] == 0) & (rgba[..., :3].sum(axis=2) == 0)
-    rgba[..., 3] = 255
-    rgba[hole, 3] = 0
-    return rgba
+    # Alpha here is how much of what is behind shows through, on a scale where 128 is all of it, so a texture
+    # that is all zero is solid. Two values mark a cut-out's background; anything else needs blending.
+    values = np.unique(rgba[..., 3])
+    if len(values) == 1 and values[0] == 0:
+        rgba[..., 3] = 255
+        return rgba, 0
+    mode = 1 if len(values) <= 2 else 2
+    if mode == 1:
+        rgba[..., 3] = np.where(rgba[..., 3] == values[0], 255, 0)
+    else:
+        rgba[..., 3] = 255 - np.minimum(rgba[..., 3].astype(np.uint16) * 255 // 128, 255).astype(np.uint8)
+    bleed_colour(rgba)
+    return rgba, mode
 
 
 def thumbnail(pos, colours, low, high, size=320):
@@ -236,9 +284,9 @@ def thumbnail(pos, colours, low, high, size=320):
     draw = ImageDraw.Draw(image)
     span = max(high[0] - low[0], high[2] - low[2], 1.0)
     scale = (size - 16) / span
-    # World y grows downward, so the lowest parts are drawn first.
-    for i in np.argsort(-pos[:, :, 1].mean(axis=1)):
-        draw.polygon([(8 + (v[0] - low[0]) * scale, size - 8 - (v[2] - low[2]) * scale) for v in pos[i]], fill=tuple(int(c) for c in colours[i]))
+    # Seen from above, so the lowest parts are drawn first, with +z towards the bottom of the picture.
+    for i in np.argsort(pos[:, :, 1].mean(axis=1)):
+        draw.polygon([(8 + (v[0] - low[0]) * scale, 8 + (v[2] - low[2]) * scale) for v in pos[i]], fill=tuple(int(c) for c in colours[i]))
     buffer = io.BytesIO()
     image.save(buffer, 'PNG')
     return 'data:image/png;base64,' + base64.b64encode(buffer.getvalue()).decode()
@@ -258,7 +306,7 @@ def main():
     world_triangles = read_triangles(level, world, groups)
     props = place_props(level, level.u32(header + 4), groups)
 
-    parts, positions, colours = [], [], []
+    parts, positions, colours, facing = [], [], [], []
     digest = hashlib.sha1()
     total = 0
     for texture, group in sorted(groups.items()):
@@ -267,25 +315,32 @@ def main():
         pos = np.array(group['pos'], np.float32)
         uv = np.array(group['uv'], np.float32)
         col = np.clip(np.array(group['col'], np.int32), 0, 255).astype(np.uint8)
+        nrm = np.array(group['nrm'], np.float32)
         total += len(pos) // 3
         digest.update(pos.tobytes())
         image, average = '', np.array([128.0, 128.0, 128.0])
-        rgba = decode_texture(level, texture) if texture else None
-        if rgba is not None:
+        decoded = decode_texture(level, texture) if texture else None
+        mode = 0
+        if decoded is not None:
+            rgba, mode = decoded
             buffer = io.BytesIO()
             Image.fromarray(rgba, 'RGBA').save(buffer, 'PNG')
             image = 'data:image/png;base64,' + base64.b64encode(buffer.getvalue()).decode()
             average = rgba[..., :3].reshape(-1, 3).mean(axis=0)
         positions.append(pos.reshape(-1, 3, 3))
         colours.append(np.clip(col[:, :3].reshape(-1, 3, 3).mean(axis=1) * average / 128.0, 0, 255))
-        parts.append('{p:"%s",u:"%s",c:"%s",t:"%s"}' % (base64.b64encode(pos.tobytes()).decode(), base64.b64encode(uv.tobytes()).decode(),
-                                                     base64.b64encode(col.tobytes()).decode(), image))
+        # Visible from straight above, by the game's own facing rule, and not translucent.
+        triangle_normals = nrm[::3]
+        facing.append(((triangle_normals[:, 3] < 0.5) == (triangle_normals[:, 1] > 0)) & (mode != 2))
+        parts.append('{p:"%s",u:"%s",c:"%s",n:"%s",m:%d,t:"%s"}' % (base64.b64encode(pos.tobytes()).decode(), base64.b64encode(uv.tobytes()).decode(),
+                                                     base64.b64encode(col.tobytes()).decode(), base64.b64encode(nrm.tobytes()).decode(), mode, image))
 
     all_pos = np.concatenate(positions)
     points = all_pos.reshape(-1, 3)
     low, high = points.min(axis=0), points.max(axis=0)
     core_low, core_high = np.percentile(points, 3, axis=0), np.percentile(points, 97, axis=0)
     inside = np.all((all_pos[:, :, [0, 2]] >= core_low[[0, 2]] - 1) & (all_pos[:, :, [0, 2]] <= core_high[[0, 2]] + 1), axis=(1, 2))
+    inside &= np.concatenate(facing)
     thumb = thumbnail(all_pos[inside], np.concatenate(colours)[inside], core_low, core_high)
     print(f'{name}: {world_triangles} world triangles, {total} with {props} props, {len(parts)} textures')
 
