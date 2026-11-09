@@ -72,10 +72,13 @@ uniform mat4 viewProj; uniform vec3 eye;
 out vec3 vUv; out vec4 vCol; out float vFace;
 void main() {
   vUv = uv; vCol = col;
+  // The game's world is left-handed and WebGL's is right-handed, so z is mirrored here. The camera works in
+  // the mirrored space.
+  vec3 world = vec3(pos.xy, -pos.z);
   // The game's own facing test: which side of the triangle's plane the viewer is on, with a flag per triangle.
-  float side = dot(pos - eye, nrm.xyz);
+  float side = dot(world - eye, vec3(nrm.xy, -nrm.z));
   vFace = nrm.w > 0.5 ? side : -side;
-  gl_Position = viewProj * vec4(pos, 1.0);
+  gl_Position = viewProj * vec4(world, 1.0);
 }`;
 const fragmentSource = `#version 300 es
 precision highp float;
@@ -286,7 +289,7 @@ function frameOverview() {
   const l = world.level;
   const span = Math.hypot(l.cmax[0] - l.cmin[0], l.cmax[2] - l.cmin[2]);
   cam.radius = Math.max(span, Math.hypot(l.max[0] - l.min[0], l.max[2] - l.min[2]));
-  cam.target = [(l.cmin[0] + l.cmax[0]) / 2, (l.cmin[1] + l.cmax[1]) / 2, (l.cmin[2] + l.cmax[2]) / 2];
+  cam.target = [(l.cmin[0] + l.cmax[0]) / 2, (l.cmin[1] + l.cmax[1]) / 2, -(l.cmin[2] + l.cmax[2]) / 2];
   cam.dist = span * 0.85;
   cam.yaw = 0.7;
   cam.pitch = 0.75;

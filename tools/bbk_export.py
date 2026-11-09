@@ -284,9 +284,9 @@ def thumbnail(pos, colours, low, high, size=320):
     draw = ImageDraw.Draw(image)
     span = max(high[0] - low[0], high[2] - low[2], 1.0)
     scale = (size - 16) / span
-    # Seen from above, so the lowest parts are drawn first, with +z towards the bottom of the picture.
+    # Seen from above, so the lowest parts are drawn first. The world is left-handed: +x is right and +z is up.
     for i in np.argsort(pos[:, :, 1].mean(axis=1)):
-        draw.polygon([(8 + (v[0] - low[0]) * scale, 8 + (v[2] - low[2]) * scale) for v in pos[i]], fill=tuple(int(c) for c in colours[i]))
+        draw.polygon([(8 + (v[0] - low[0]) * scale, size - 8 - (v[2] - low[2]) * scale) for v in pos[i]], fill=tuple(int(c) for c in colours[i]))
     buffer = io.BytesIO()
     image.save(buffer, 'PNG')
     return 'data:image/png;base64,' + base64.b64encode(buffer.getvalue()).decode()
