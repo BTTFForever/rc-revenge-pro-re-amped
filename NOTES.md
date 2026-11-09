@@ -173,3 +173,20 @@ Sweep of levels 1-24 on the God of War renderer at 3x: 1, 3, 4, 10, 15, 16 and 2
 - Shadow of the Colossus port and PS2Recomp fork, by LightVelox: VU1 recompiler, GPU GS backend, VU1/GIF threads,
   the policy of keeping GS/DMA libraries as original code (GPL-3.0)
 - God of War recomp, by KIexster: Linux EGL context code and the render-target renderer (GPL-3.0)
+
+### VU1 programs converted (2026-11-10)
+
+All shape programs share their clipping text at different addresses. `decomp/vu1/vu_shape.{h,cpp}` holds it, and `ShapeLayout` records how each program differs (addresses, buffers, which registers leak `w` lanes into GS packets, wrap behaviour).
+
+| Program | C++ | Check against VU1 | In the game (`RC_TRACK_SHADER=1`) |
+|---|---|---|---|
+| TRdr (track) | `trdr_shape.cpp` | 0 differences | vertex shader |
+| EnvRdr (shiny pass) | `env_shape.cpp` | 0 differences, 33M packets, env map on in 19,710 runs | vertex shader, `shapeMode` 1 and 2 |
+| Water | `water_shape.cpp` | 0 differences, 18.8M packets, 13,380 water runs | C++ in place of VU1 |
+| Skin, Rdr_VUShape, TERdr | not yet | | |
+
+- Water stays C++ because each triangle is three passes with GS state changes between them. Batching those for a shader would change how overlapping water blends.
+- EnvRdr's reflection is per-component (`n*n*eye*2-eye`, then each lane times the sum of that column), not a textbook reflection. Kept as is.
+- The runtime gives a VU1 run 65,536 cycles and never resumes one that hits the limit (`ps2_runtime.cpp`, MSCAL callback). The largest water batches are cut short by this in the recomp: 76 of 13,380 runs on level 18. The C++ version finishes them, as hardware would. The checker counts these as "cut short".
+- `RC_VU1_REF=1` prints runs per program. `RC_VU1_CAPTURE_HASH=<hex>` picks which program `RC_VU1_CAPTURE` records; `tools/shader_check --env` checks EnvRdr captures.
+- Measured load before conversion, 30 s demo, level 18: TRdr 14.81 s, Water 2.36 s, Env 2.24 s, Skin 0.96 s. Rdr_VUShape and TERdr did not run in the demos tried, so they need another way to exercise them.
