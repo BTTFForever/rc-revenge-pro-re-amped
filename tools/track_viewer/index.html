@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RC Revenge Pro Tracks</title>
+<style>
+:root { --bg: #0d0f14; --panel: #151922; --line: #262c39; --text: #e6e9ef; --dim: #929bab; --accent: #f2b33d; }
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, sans-serif; }
+button { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 11px; cursor: pointer; }
+button:hover { border-color: var(--dim); }
+button.on { border-color: var(--accent); color: var(--accent); }
+#grid { position: fixed; inset: 0; overflow: auto; padding: 20px 24px 40px; z-index: 2; background: var(--bg); }
+#grid h1 { margin: 0 0 4px; font-size: 22px; }
+#grid p { margin: 0 0 18px; color: var(--dim); }
+#tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px; }
+.tile { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; cursor: pointer; display: block; padding: 0; text-align: left; width: 100%; }
+.tile:hover { border-color: var(--accent); }
+.tile img { display: block; width: 100%; aspect-ratio: 1; background: #0e1016; }
+.tile div { padding: 8px 10px; }
+.tile b { display: block; font-weight: 600; }
+.tile span { color: var(--dim); font-size: 12px; }
+#view { position: fixed; inset: 0; display: flex; }
+#side { width: 216px; flex: none; background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; padding: 10px; }
+#side button { display: block; width: 100%; text-align: left; margin-bottom: 4px; }
+#stage { position: relative; flex: 1; min-width: 0; }
+canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+#bar { position: absolute; left: 12px; right: 12px; top: 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; pointer-events: none; }
+#bar > * { pointer-events: auto; }
+#title { font-size: 16px; font-weight: 600; margin-right: 10px; text-shadow: 0 1px 3px #000; }
+#help, #status { position: absolute; left: 12px; bottom: 10px; color: var(--dim); font-size: 12px; text-shadow: 0 1px 3px #000; }
+#status { left: auto; right: 12px; }
+@media (max-width: 640px) { #side { display: none; } }
+</style>
+</head>
+<body>
+<div id="view">
+  <nav id="side" aria-label="Tracks"></nav>
+  <main id="stage">
+    <canvas id="c"></canvas>
+    <div id="bar">
+      <span id="title"></span>
+      <button id="all">All tracks</button>
+      <button id="overview">Overview</button>
+      <button id="top">Top down</button>
+      <button id="tex" class="on">Textures</button>
+      <button id="lit" class="on">Lighting</button>
+      <button id="wire">Wireframe</button>
+    </div>
+    <div id="help">Drag to orbit. Right-drag or Shift-drag to pan. Wheel to zoom. W A S D to move.</div>
+    <div id="status"></div>
+  </main>
+</div>
+<section id="grid"><h1>RC Revenge Pro tracks</h1><p>Choose a track to fly around it. Built from your own game disc.</p><div id="tiles"></div></section>
+
+<script>
+const RCVIEW = { index: [], loaded: {}, waiting: null, add(level) { this.loaded[level.name] = level; if (this.waiting) { const go = this.waiting; this.waiting = null; go(level); } } };
+</script>
+<script src="data/index.js"></script>
+<script>
+const canvas = document.getElementById('c');
+// ?shot draws straight away and holds the page's load event until textures arrive, for automatic screenshots.
+const shot = location.search.includes('shot');
+const gl = canvas.getContext('webgl2', { antialias: true, preserveDrawingBuffer: shot });
+if (!gl) document.getElementById('status').textContent = 'This browser cannot run WebGL 2.';
+
+const vertexSource = `#version 300 es
+in vec3 pos; in vec3 uv; in vec4 col;
+uniform mat4 viewProj;
+out vec3 vUv; out vec4 vCol;
+void main() { vUv = uv; vCol = col; gl_Position = viewProj * vec4(pos, 1.0); }`;
+const fragmentSource = `#version 300 es
+precision highp float;
+in vec3 vUv; in vec4 vCol;
+uniform sampler2D tex; uniform bool useTex, useLight, wire;
+out vec4 outColor;
+void main() {
+  if (wire) { outColor = vec4(0.98, 0.72, 0.24, 1.0); return; }
+  vec4 base = useTex ? texture(tex, vUv.xy / vUv.z) : vec4(0.72, 0.74, 0.78, 1.0);
+  if (useTex && base.a < 0.5) discard;
+  vec3 light = useLight ? vCol.rgb * (255.0 / 128.0) : vec3(1.0);
+  outColor = vec4(min(base.rgb * light, 1.0), 1.0);
+}`;
+
+function compile(type, source) {
+  const shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader));
+  return shader;
+}
+const program = gl.createProgram();
+gl.attachShader(program, compile(gl.VERTEX_SHADER, vertexSource));
+gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fragmentSource));
+gl.bindAttribLocation(program, 0, 'pos');
+gl.bindAttribLocation(program, 1, 'uv');
+gl.bindAttribLocation(program, 2, 'col');
+gl.linkProgram(program);
+gl.useProgram(program);
+const uniforms = {};
+for (const name of ['viewProj', 'tex', 'useTex', 'useLight', 'wire']) uniforms[name] = gl.getUniformLocation(program, name);
+gl.enable(gl.DEPTH_TEST);
+gl.clearColor(0.05, 0.06, 0.09, 1);
+
+const white = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, white);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
+
+function bytesOf(text) {
+  const binary = atob(text);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; ++i) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
+function buffer(data, slot, size, type, normalized) {
+  const id = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, id);
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(slot);
+  gl.vertexAttribPointer(slot, size, type, !!normalized, 0, 0);
+  return id;
+}
+
+let world = null, requested = 0;
+const state = { textures: true, lit: true, wire: false };
+const cam = { target: [0, 0, 0], yaw: 0.7, pitch: 0.6, dist: 1000, radius: 1000 };
+
+function clearWorld() {
+  if (!world) return;
+  for (const g of world.groups) {
+    gl.deleteVertexArray(g.vao);
+    for (const b of g.buffers) gl.deleteBuffer(b);
+    if (g.lines) gl.deleteBuffer(g.lines);
+    if (g.texture) gl.deleteTexture(g.texture);
+  }
+  world = null;
+}
+
+function buildWorld(level) {
+  clearWorld();
+  const groups = level.groups.map(source => {
+    const vao = gl.createVertexArray();
+    gl.bindVertexArray(vao);
+    const pos = bytesOf(source.p);
+    const count = pos.length / 12;
+    const buffers = [
+      buffer(pos, 0, 3, gl.FLOAT),
+      buffer(bytesOf(source.u), 1, 3, gl.FLOAT),
+      buffer(bytesOf(source.c), 2, 4, gl.UNSIGNED_BYTE, true),
+    ];
+    const group = { vao, count, buffers, texture: null, lines: null };
+    if (source.t) {
+      const image = new Image();
+      image.onload = () => {
+        if (!world || !world.groups.includes(group)) return;
+        const texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+        gl.generateMipmap(gl.TEXTURE_2D);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        group.texture = texture;
+        draw();
+      };
+      image.src = source.t;
+      if (shot) { image.hidden = true; document.body.appendChild(image); }
+    }
+    return group;
+  });
+  gl.bindVertexArray(null);
+  world = { groups, level };
+  document.getElementById('title').textContent = level.name;
+  document.getElementById('status').textContent = level.tris.toLocaleString() + ' triangles';
+  frameOverview();
+}
+
+function ensureLines(group) {
+  if (group.lines) return;
+  const indices = new Uint32Array(group.count * 2);
+  for (let t = 0; t < group.count / 3; ++t) {
+    const a = t * 3;
+    indices.set([a, a + 1, a + 1, a + 2, a + 2, a], t * 6);
+  }
+  gl.bindVertexArray(group.vao);
+  group.lines = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, group.lines);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+}
+
+// The game's coordinates have y pointing down, so "up" is -y throughout.
+const eyeOf = () => {
+  const c = Math.cos(cam.pitch);
+  return [cam.target[0] + cam.dist * c * Math.sin(cam.yaw), cam.target[1] - cam.dist * Math.sin(cam.pitch), cam.target[2] + cam.dist * c * Math.cos(cam.yaw)];
+};
+const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const unit = a => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+
+function viewProjection() {
+  const eye = eyeOf();
+  const back = unit(sub(eye, cam.target));
+  const right = unit(cross([0, -1, 0], back));
+  const up = cross(back, right);
+  const aspect = canvas.width / canvas.height;
+  const near = Math.max(cam.dist / 400, 2), far = cam.radius * 40 + cam.dist * 4;
+  const f = 1 / Math.tan(0.45);
+  const p00 = f / aspect, p11 = f, p22 = (far + near) / (near - far), p32 = 2 * far * near / (near - far);
+  const v = [right[0], up[0], back[0], 0, right[1], up[1], back[1], 0, right[2], up[2], back[2], 0, -dot(right, eye), -dot(up, eye), -dot(back, eye), 1];
+  const out = new Float32Array(16);
+  for (let c = 0; c < 4; ++c) {
+    out[c * 4] = v[c * 4] * p00;
+    out[c * 4 + 1] = v[c * 4 + 1] * p11;
+    out[c * 4 + 2] = v[c * 4 + 2] * p22 + v[c * 4 + 3] * p32;
+    out[c * 4 + 3] = -v[c * 4 + 2];
+  }
+  return out;
+}
+
+let pending = false;
+function draw() {
+  if (pending) return;
+  pending = true;
+  const paint = () => {
+    pending = false;
+    const rect = canvas.getBoundingClientRect();
+    const ratio = Math.min(window.devicePixelRatio || 1, 2);
+    const width = Math.max(1, Math.round(rect.width * ratio)), height = Math.max(1, Math.round(rect.height * ratio));
+    if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+    gl.viewport(0, 0, width, height);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    if (!world) return;
+    gl.uniformMatrix4fv(uniforms.viewProj, false, viewProjection());
+    gl.uniform1i(uniforms.useLight, state.lit);
+    gl.activeTexture(gl.TEXTURE0);
+    for (const g of world.groups) {
+      gl.bindVertexArray(g.vao);
+      gl.uniform1i(uniforms.useTex, state.textures && !!g.texture);
+      gl.bindTexture(gl.TEXTURE_2D, g.texture || white);
+      gl.uniform1i(uniforms.wire, false);
+      gl.drawArrays(gl.TRIANGLES, 0, g.count);
+    }
+    if (state.wire) {
+      gl.uniform1i(uniforms.wire, true);
+      for (const g of world.groups) {
+        ensureLines(g);
+        gl.bindVertexArray(g.vao);
+        gl.drawElements(gl.LINES, g.count * 2, gl.UNSIGNED_INT, 0);
+      }
+    }
+    gl.bindVertexArray(null);
+  };
+  if (shot) {
+    paint();
+    if (!draw.copy) { draw.copy = new Image(); draw.copy.style.cssText = 'position:absolute;inset:0;width:100%;height:100%'; canvas.parentNode.insertBefore(draw.copy, canvas.nextSibling); }
+    draw.copy.src = canvas.toDataURL();
+  } else requestAnimationFrame(paint);
+}
+
+function frameOverview() {
+  const l = world.level;
+  const span = Math.hypot(l.cmax[0] - l.cmin[0], l.cmax[2] - l.cmin[2]);
+  cam.radius = Math.max(span, Math.hypot(l.max[0] - l.min[0], l.max[2] - l.min[2]));
+  cam.target = [(l.cmin[0] + l.cmax[0]) / 2, (l.cmin[1] + l.cmax[1]) / 2, (l.cmin[2] + l.cmax[2]) / 2];
+  cam.dist = span * 0.85;
+  cam.yaw = 0.7;
+  cam.pitch = 0.75;
+  draw();
+}
+
+function frameTop() {
+  frameOverview();
+  cam.pitch = 1.56;
+  cam.yaw = 0;
+  cam.dist *= 1.25;
+  draw();
+}
+
+function open(entry) {
+  document.getElementById('grid').style.display = 'none';
+  for (const b of document.querySelectorAll('#side button')) b.classList.toggle('on', b.dataset.file === entry.file);
+  const id = ++requested;
+  const show = level => { if (id === requested) buildWorld(level); };
+  if (RCVIEW.loaded[entry.name]) return show(RCVIEW.loaded[entry.name]);
+  document.getElementById('title').textContent = 'Loading ' + entry.name + '...';
+  RCVIEW.waiting = show;
+  const script = document.createElement('script');
+  script.src = 'data/' + entry.file;
+  document.head.appendChild(script);
+}
+
+const tiles = document.getElementById('tiles'), side = document.getElementById('side');
+for (const entry of RCVIEW.index) {
+  const tile = document.createElement('button');
+  tile.className = 'tile';
+  const img = new Image();
+  img.src = entry.thumb;
+  img.alt = entry.name + ' from above';
+  const caption = document.createElement('div');
+  const b = document.createElement('b');
+  b.textContent = entry.name;
+  const small = document.createElement('span');
+  small.textContent = entry.tris.toLocaleString() + ' triangles' + (entry.also ? ', same world as ' + entry.also : '');
+  caption.append(b, small);
+  tile.append(img, caption);
+  tile.onclick = () => open(entry);
+  tiles.appendChild(tile);
+  const link = document.createElement('button');
+  link.textContent = entry.name;
+  link.dataset.file = entry.file;
+  link.onclick = () => open(entry);
+  side.appendChild(link);
+}
+
+function toggle(id, key) {
+  const button = document.getElementById(id);
+  button.onclick = () => { state[key] = !state[key]; button.classList.toggle('on', state[key]); draw(); };
+}
+toggle('tex', 'textures');
+toggle('lit', 'lit');
+toggle('wire', 'wire');
+document.getElementById('all').onclick = () => { document.getElementById('grid').style.display = 'block'; };
+document.getElementById('overview').onclick = () => world && frameOverview();
+document.getElementById('top').onclick = () => world && frameTop();
+
+let drag = null;
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('pointerdown', e => { canvas.setPointerCapture(e.pointerId); drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey }; });
+canvas.addEventListener('pointerup', () => { drag = null; });
+canvas.addEventListener('pointermove', e => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  drag.x = e.clientX; drag.y = e.clientY;
+  if (drag.pan) {
+    const eye = eyeOf(), back = unit(sub(eye, cam.target)), right = unit(cross([0, -1, 0], back)), up = cross(back, right);
+    const speed = cam.dist * 0.0016;
+    for (let i = 0; i < 3; ++i) cam.target[i] += (-right[i] * dx + up[i] * dy) * speed;
+  } else {
+    cam.yaw -= dx * 0.006;
+    cam.pitch = Math.max(-1.5, Math.min(1.56, cam.pitch + dy * 0.006));
+  }
+  draw();
+});
+canvas.addEventListener('wheel', e => { e.preventDefault(); cam.dist = Math.max(40, Math.min(cam.radius * 6, cam.dist * Math.exp(e.deltaY * 0.001))); draw(); }, { passive: false });
+
+const keys = new Set();
+window.addEventListener('keydown', e => { keys.add(e.key.toLowerCase()); pump(); });
+window.addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
+window.addEventListener('blur', () => keys.clear());
+let pumping = false;
+function pump() {
+  if (pumping) return;
+  pumping = true;
+  const step = () => {
+    let forward = 0, strafe = 0;
+    if (keys.has('w')) forward += 1;
+    if (keys.has('s')) forward -= 1;
+    if (keys.has('d')) strafe += 1;
+    if (keys.has('a')) strafe -= 1;
+    if (!forward && !strafe) { pumping = false; return; }
+    const eye = eyeOf(), back = unit(sub(eye, cam.target)), right = unit(cross([0, -1, 0], back));
+    const speed = cam.dist * 0.018;
+    for (let i = 0; i < 3; ++i) cam.target[i] += (-back[i] * forward + right[i] * strafe) * speed;
+    draw();
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+window.addEventListener('resize', draw);
+
+const direct = location.hash.slice(1);
+const start = RCVIEW.index.find(e => e.file === direct + '.js');
+if (start) open(start);
+if (location.search.includes('view=top')) { const wait = () => world ? frameTop() : setTimeout(wait, 100); wait(); }
+</script>
+</body>
+</html>

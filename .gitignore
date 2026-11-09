@@ -12,3 +12,4 @@ mc1/
 imgui.ini
 *.log
 dump_*.txt
+__pycache__/
