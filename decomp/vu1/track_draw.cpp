@@ -1,0 +1,136 @@
+// Draws track geometry with a vertex shader instead of running TRdr_VUShapeProg.
+//
+// Enable with RC_TRACK_SHADER=1 and PS2X_GS_HW=1. The program's non-triangle packets still go to the GS as they did,
+// and each texture block's triangles become one batch in the GS command stream, drawn with the state in force at that
+// point. decomp/shaders/trdr_shape.vert is the same file tools/shader_check.cpp checks against the VU1 program.
+#include <cstdlib>
+#include <cstring>
+#include <vector>
+
+#include "ps2_vu1_impl.inl"
+#include "runtime/gs/gs_track_batch.h"
+#include "vu1_ref.h"
+
+namespace {
+
+constexpr uint64_t kOriginalTrack = 0xC3952C0FAEB52EADull;
+constexpr uint64_t kShaderTrack = 0x5243545241434B31ull; // Not a real image hash: only a template argument.
+
+const char *const kTrackShader =
+#include "trdr_shape_glsl.h"
+    ;
+
+int16_t loadCount(const uint8_t *memory, int quad)
+{
+    int16_t value;
+    std::memcpy(&value, memory + (quad & 0x3FF) * 16 + 8, 2);
+    return value;
+}
+
+void sendPacket(PS2Memory *memory, const uint8_t *data, size_t bytes)
+{
+    memory->submitGifPacket(GifPathId::Path1, data, static_cast<uint32_t>(bytes));
+}
+
+void kickPacket(PS2Memory *memory, const uint8_t *vu, int quad)
+{
+    std::vector<uint8_t> packet;
+    rc::vu1::copyGifPacket(vu, quad, packet);
+    sendPacket(memory, packet.data(), packet.size());
+}
+
+// One texture block's triangles, as a GS packet writing PRIM and then the batch's pointer.
+void sendTriangles(PS2Memory *memory, const uint8_t *vu, int first, int triangles)
+{
+    auto *batch = static_cast<GSTrackBatch *>(std::malloc(offsetof(GSTrackBatch, quads) + triangles * 160u));
+    batch->triangles = static_cast<uint32_t>(triangles);
+    std::memset(batch->draw, 0, sizeof(batch->draw));
+    std::memcpy(batch->draw, vu + 18 * 16, 64);
+    std::memcpy(batch->draw + 16, vu + 16 * 16, 16);
+    std::memcpy(batch->draw + 20, vu + 17 * 16, 16);
+    std::memcpy(batch->draw + 24, vu + 15 * 16, 16);
+    std::memcpy(batch->draw + 28, vu + 12 * 16, 16);
+    std::memcpy(batch->draw + 32, vu + 11 * 16, 16);
+    for (int i = 0; i < triangles * 10; ++i)
+        std::memcpy(batch->quads + i * 4, vu + ((first + i) & 0x3FF) * 16, 16);
+
+    // The per-triangle GIF tag the original would have used sets PRIM only if its PRE bit is on.
+    uint64_t triangleTag;
+    std::memcpy(&triangleTag, vu + 25 * 16, 8);
+    const bool setPrim = ((triangleTag >> 46) & 1u) != 0u;
+    const uint64_t prim = (triangleTag >> 47) & 0x7FFu;
+    const uint64_t pointer = reinterpret_cast<uint64_t>(batch);
+    if (setPrim)
+    {
+        const uint64_t packet[6] = {2u | (1ull << 15) | (1ull << 60), 0xEu, prim, 0x00u, pointer, kGSTrackBatchRegister};
+        sendPacket(memory, reinterpret_cast<const uint8_t *>(packet), sizeof(packet));
+    }
+    else
+    {
+        const uint64_t packet[4] = {1u | (1ull << 15) | (1ull << 60), 0xEu, pointer, kGSTrackBatchRegister};
+        sendPacket(memory, reinterpret_cast<const uint8_t *>(packet), sizeof(packet));
+    }
+}
+
+} // namespace
+
+template <>
+VU1InterpreterAccess::StepResult VU1InterpreterAccess::runImage<kOriginalTrack>(VU1Interpreter &, const Vu1RunArgs &);
+
+template <>
+VU1InterpreterAccess::StepResult VU1InterpreterAccess::runImage<kShaderTrack>(VU1Interpreter &vu, const Vu1RunArgs &args)
+{
+    if (vu.m_state.pc != 0u || args.memory == nullptr)
+        return runImage<kOriginalTrack>(vu, args); // Another entry point, or a run already in progress.
+
+    uint8_t *const memory = args.vuData;
+    kickPacket(args.memory, memory, 247);
+
+    int reader = static_cast<int>(vu.m_state.top & 0x3FFu);
+    int16_t count = loadCount(memory, reader);
+    for (;;)
+    {
+        while (count < 0)
+        {
+            kickPacket(args.memory, memory, reader + 1);
+            reader += 1 - count;
+            count = loadCount(memory, reader);
+        }
+        if (count == 0)
+            break;
+        // Four quadwords of texture state go out through a packet at the start of VU memory.
+        std::memcpy(memory + 3 * 16, memory + reader * 16, 64);
+        reader += 4;
+        kickPacket(args.memory, memory, 0);
+        sendTriangles(args.memory, memory, reader, count);
+        reader += count * 10;
+        count = loadCount(memory, reader);
+    }
+    return StepResult::Ended;
+}
+
+namespace {
+
+// The GS backend builds its shaders during start-up, before the game's overrides run.
+const bool g_shaderProvided = []
+{
+    const char *enabled = std::getenv("RC_TRACK_SHADER");
+    if (enabled && enabled[0] == '1')
+        g_gsTrackVertexShader = kTrackShader;
+    return true;
+}();
+
+} // namespace
+
+namespace rc::vu1 {
+
+void installTrackDraw()
+{
+    const char *enabled = std::getenv("RC_TRACK_SHADER");
+    if (!enabled || enabled[0] != '1')
+        return;
+    registerVu1CompiledProgram(kOriginalTrack, &VU1InterpreterAccess::runImage<kShaderTrack>);
+    std::fprintf(stderr, "[decomp] drawing track geometry with the vertex shader\n");
+}
+
+} // namespace rc::vu1

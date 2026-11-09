@@ -402,6 +402,32 @@ index 2538d57..367de1a 100644
      static std::unique_ptr<GSRasterBackend> MakeDefault();
      static void SetEnabledByDefault(bool enabled);
      static void SetGpuByDefault(bool enabled);
+diff --git a/ps2xRuntime/include/runtime/gs/gs_track_batch.h b/ps2xRuntime/include/runtime/gs/gs_track_batch.h
+new file mode 100644
+index 0000000..41407a1
+--- /dev/null
++++ b/ps2xRuntime/include/runtime/gs/gs_track_batch.h
+@@ -0,0 +1,20 @@
++#pragma once
++// A batch of track triangles drawn by a vertex shader instead of VU1 (decomp/vu1/track_draw.cpp).
++//
++// It travels through the GS command stream as a GS register write to an unused address, carrying a pointer, so it
++// stays in order with everything else. The backend frees it after drawing it.
++#include <cstddef>
++#include <cstdint>
++
++constexpr uint8_t kGSTrackBatchRegister = 0x7Eu;
++constexpr uint8_t kGSTrackBatchMarker = 0xEEu; // In GSPrimitiveBatch::vertexCount; the pointer is in vertices[0].z.
++
++struct GSTrackBatch
++{
++    uint32_t triangles;
++    float draw[44]; // The shader's TrackDraw block; the backend fills in gsToClip and gsDepthRange.
++    float quads[1]; // triangles * 40 floats: ten quadwords each, as the game sends them to VU1.
++};
++
++// GLSL for the track vertex shader, set before the backend first builds its program.
++extern const char *g_gsTrackVertexShader;
 diff --git a/ps2xRuntime/include/runtime/gs/gs_tri_groups.h b/ps2xRuntime/include/runtime/gs/gs_tri_groups.h
 new file mode 100644
 index 0000000..2f5de58
@@ -1256,10 +1282,10 @@ index 8f874c8..9df5ab8 100644
              return;
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
 new file mode 100644
-index 0000000..5e8dc90
+index 0000000..becabc4
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
-@@ -0,0 +1,2984 @@
+@@ -0,0 +1,3107 @@
 +// GOW-Port: render-target GS renderer, see include/runtime/gs/gs_hw_backend.h.
 +#include "runtime/gs/gs_tri_groups.h"
 +#include "runtime/gs/gs_colour_runs.h" // GOW-Port: ps2recomp-gs-sombras-tramos
@@ -1285,6 +1311,10 @@ index 0000000..5e8dc90
 +#include <string>
 +#include <unordered_map>
 +#include <vector>
++
++#include "runtime/gs/gs_track_batch.h"
++
++const char *g_gsTrackVertexShader = nullptr;
 +
 +namespace
 +{
@@ -1323,11 +1353,18 @@ index 0000000..5e8dc90
 +uniform vec2 uInvSize;
 +noperspective out vec4 vCol;
 +flat out vec4 vColFlat;
-+noperspective out vec3 vSTQ;
-+noperspective out vec2 vUV;
++smooth out vec3 vSTQ;
++smooth out vec2 vUV;
 +flat out vec4 vUVClamp;
++)";
++    const char *kVsMain = R"(uniform int uTrack;
 +void main()
 +{
++    if (uTrack != 0)
++    {
++        trackMain();
++        return;
++    }
 +    gl_Position = vec4(aPos * uInvSize * 2.0 - 1.0, aZ * 2.0 - 1.0, 1.0);
 +    vCol = aCol;
 +    vColFlat = aCol;
@@ -1340,8 +1377,8 @@ index 0000000..5e8dc90
 +    const char *kFsSource = R"(#version 430 core
 +noperspective in vec4 vCol;
 +flat in vec4 vColFlat;
-+noperspective in vec3 vSTQ;
-+noperspective in vec2 vUV;
++smooth in vec3 vSTQ;
++smooth in vec2 vUV;
 +flat in vec4 vUVClamp;
 +layout(location = 0, index = 0) out vec4 oColor;
 +layout(location = 0, index = 1) out vec4 oBlend;
@@ -1921,7 +1958,8 @@ index 0000000..5e8dc90
 +            return false;
 +        }
 +        const Api &g = gl();
-+        const GLuint v = compile(GSGL::kVertexShader, kVsSource);
++        const GLuint v = compile(GSGL::kVertexShader,
++                                 {kVsSource, g_gsTrackVertexShader ? g_gsTrackVertexShader : "void trackMain() { gl_Position = vec4(2.0); }\n", kVsMain});
 +        const GLuint f = compile(GSGL::kFragmentShader, {kFsSource, kReinterpretSource, kFsTail});
 +        if (!v || !f)
 +        {
@@ -2889,6 +2927,7 @@ index 0000000..5e8dc90
 +
 +    void submit(const GSPrimitiveBatch &b)
 +    {
++        flushTrack();
 +        const GSDrawState &s = b.state;
 +        const GSPrimType type = s.prim.type;
 +        const bool tri = type == GS_PRIM_TRIANGLE || type == GS_PRIM_TRISTRIP || type == GS_PRIM_TRIFAN;
@@ -3045,6 +3084,7 @@ index 0000000..5e8dc90
 +
 +    void flushPending()
 +    {
++        flushTrack();
 +        ++batchSerial; // the next sprite starts a new batch: no seam with the previous one
 +        flushShuffle();
 +        if (!havePending || pending.empty())
@@ -3249,6 +3289,59 @@ index 0000000..5e8dc90
 +            }
 +        }
 +        drawOne(s, verts);
++    }
++
++    GSTrackBatch *trackDraw = nullptr;
++    GLuint trackTriangles = 0, trackConstants = 0;
++    GLintptr trackTriangleRing = 0, trackConstantRing = 0;
++    GSTrackBatch *trackPending = nullptr;
++    GSDrawState trackPendingState{};
++    GLint locTrack = -1;
++
++    // Draws a batch through the current GS state. The placeholder triangle tells the common path which part of the
++    // target this batch can touch; the triangles themselves come from the batch.
++    void drawTrack(const GSPrimitiveBatch &b)
++    {
++        GSTrackBatch *batch = nullptr;
++        std::memcpy(&batch, &b.vertices[0].z, sizeof(batch));
++        // Consecutive batches with the same state and constants are one draw.
++        if (trackPending != nullptr && sameState(trackPendingState, b.state) &&
++            std::memcmp(trackPending->draw, batch->draw, 36u * sizeof(float)) == 0)
++        {
++            const size_t have = trackPending->triangles * 160u, add = batch->triangles * 160u;
++            trackPending = static_cast<GSTrackBatch *>(std::realloc(trackPending, offsetof(GSTrackBatch, quads) + have + add));
++            std::memcpy(reinterpret_cast<uint8_t *>(trackPending->quads) + have, batch->quads, add);
++            trackPending->triangles += batch->triangles;
++            std::free(batch);
++            return;
++        }
++        flushPending(); // Also draws the previous batch.
++        trackPending = batch;
++        trackPendingState = b.state;
++    }
++
++    void flushTrack()
++    {
++        if (trackPending == nullptr)
++            return;
++        GSTrackBatch *batch = trackPending;
++        trackPending = nullptr;
++        if (ensure())
++        {
++            const GSContext &c = trackPendingState.context;
++            std::vector<HwVertex> extent(3);
++            extent[1].x = static_cast<float>(c.scissor.x1) + 1.0f;
++            extent[2].y = static_cast<float>(c.scissor.y1) + 1.0f;
++            batch->draw[36] = static_cast<float>(c.xyoffset.ofx) / 16.0f;
++            batch->draw[37] = static_cast<float>(c.xyoffset.ofy) / 16.0f;
++            batch->draw[38] = 0.5f / scale;
++            batch->draw[40] = zMaxFor(c.zbuf.psm);
++            trackDraw = batch;
++            draw(trackPendingState, extent);
++            trackDraw = nullptr;
++        }
++        std::free(batch);
++        ++stats.draws;
 +    }
 +
 +    void drawOne(const GSDrawState &s, const std::vector<HwVertex> &verts)
@@ -3556,6 +3649,52 @@ index 0000000..5e8dc90
 +            vboRing += static_cast<uint32_t>(dverts.size());
 +        }
 +
++        bool trackBound = false;
++        const auto issueDraw = [&](GLint first, GLsizei count)
++        {
++            if (trackDraw == nullptr)
++            {
++                g.DrawArrays(kTriangles, first, count);
++                return;
++            }
++            if (!trackBound)
++            {
++                constexpr GLenum kStorage = 0x90D2u, kUniform = 0x8A11u, kStream = 0x88E0u, kClipDistance0 = 0x3000u;
++                constexpr GLsizeiptr kRingBytes = 64 * 1024 * 1024, kConstantRingBytes = 4 * 1024 * 1024, kAlign = 256;
++                constexpr GLbitfield kMapFlags = 0x2u | 0x4u | 0x20u; // WRITE | INVALIDATE_RANGE | UNSYNCHRONIZED
++                if (trackTriangles == 0u)
++                {
++                    g.GenBuffers(1, &trackTriangles);
++                    g.GenBuffers(1, &trackConstants);
++                    locTrack = g.GetUniformLocation(program, "uTrack");
++                }
++                trackDraw->draw[39] = zInv ? 1.0f : 0.0f;
++                // Two streaming rings: re-specifying a buffer for each of the ~1500 batches a frame is far more driver work.
++                const auto put = [&](GLenum target, GLuint id, GLintptr &ring, GLsizeiptr capacity, GLuint binding, const void *data, GLsizeiptr bytes)
++                {
++                    g.BindBuffer(target, id);
++                    if (ring == 0 || ring + bytes > capacity)
++                    {
++                        g.BufferData(target, capacity, nullptr, kStream);
++                        ring = 0;
++                    }
++                    if (void *to = g.MapBufferRange(target, ring, bytes, kMapFlags))
++                    {
++                        std::memcpy(to, data, static_cast<size_t>(bytes));
++                        g.UnmapBuffer(target);
++                    }
++                    g.BindBufferRange(target, binding, id, ring, bytes);
++                    ring += (bytes + kAlign - 1) / kAlign * kAlign;
++                };
++                put(kStorage, trackTriangles, trackTriangleRing, kRingBytes, 0, trackDraw->quads, static_cast<GLsizeiptr>(trackDraw->triangles * 160u));
++                put(kUniform, trackConstants, trackConstantRing, kConstantRingBytes, 1, trackDraw->draw, static_cast<GLsizeiptr>(sizeof(trackDraw->draw)));
++                g.Uniform1i(locTrack, 1);
++                g.Enable(kClipDistance0);
++                trackBound = true;
++            }
++            g.DrawArrays(kTriangles, 0, static_cast<GLsizei>(trackDraw->triangles * 3u));
++        };
++
 +        const bool ate = (c.test & 1u) != 0u;
 +        const uint32_t atst = static_cast<uint32_t>((c.test >> 1) & 7u), aref = static_cast<uint32_t>((c.test >> 4) & 0xFFu);
 +        const uint32_t afail = static_cast<uint32_t>((c.test >> 12) & 3u);
@@ -3634,12 +3773,12 @@ index 0000000..5e8dc90
 +            {
 +                if (gi != 0)
 +                    g.TextureBarrier();
-+                g.DrawArrays(kTriangles, ringFirst + static_cast<GLint>(first * 3u), static_cast<GLsizei>((triGroups[gi] - first) * 3u));
++                issueDraw(ringFirst + static_cast<GLint>(first * 3u), static_cast<GLsizei>((triGroups[gi] - first) * 3u));
 +                first = triGroups[gi];
 +            }
 +        }
 +        else
-+            g.DrawArrays(kTriangles, ringFirst, static_cast<GLsizei>(verts.size()));
++            issueDraw(ringFirst, static_cast<GLsizei>(verts.size()));
 +        if (volBox[1] >= volBox[0] && volBox[3] >= volBox[2])
 +        {
 +            const int w = volBox[1] - volBox[0] + 1, h = volBox[3] - volBox[2] + 1;
@@ -3661,7 +3800,12 @@ index 0000000..5e8dc90
 +            if (afail == 1u) { g.DepthMask(kFalse); }
 +            else if (afail == 2u) { g.ColorMask(kFalse, kFalse, kFalse, kFalse); }
 +            else { g.DepthMask(kFalse); g.ColorMask(mr, mg, mb, kFalse); }
-+            g.DrawArrays(kTriangles, ringFirst, static_cast<GLsizei>(verts.size()));
++            issueDraw(ringFirst, static_cast<GLsizei>(verts.size()));
++        }
++        if (trackBound)
++        {
++            g.Disable(0x3000u); // GL_CLIP_DISTANCE0
++            g.Uniform1i(locTrack, 0);
 +        }
 +        ++stats.batches;
 +        g.Disable(kScissorTest);
@@ -3824,6 +3968,11 @@ index 0000000..5e8dc90
 +    if (batch.vertexCount == 0u)
 +        return;
 +    Impl &d = *m_impl;
++    if (batch.vertexCount == kGSTrackBatchMarker)
++    {
++        d.drawTrack(batch);
++        return;
++    }
 +    if (!d.ensure())
 +        return;
 +    d.submit(batch);
@@ -4654,10 +4803,15 @@ index 0000000..ed807df
 +    GSUpload24State m_upload24{};
 +};
 diff --git a/ps2xRuntime/src/lib/gs/gs_frontend.cpp b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
-index f78d7be..3a7d8ea 100644
+index f78d7be..8f073b3 100644
 --- a/ps2xRuntime/src/lib/gs/gs_frontend.cpp
 +++ b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
-@@ -663,14 +663,31 @@ void GS::latchHostPresentationFrame()
+@@ -1,3 +1,4 @@
++#include "runtime/gs/gs_track_batch.h"
+ #include "runtime/gs/gs_frontend.h"
+ #include "runtime/gs/gs_cpu_backend.h"
+ #include "runtime/gs/gs_recording.h"
+@@ -663,14 +664,31 @@ void GS::latchHostPresentationFrame()
          request = buildPresentationRequestUnlocked();
      }
  
@@ -4692,7 +4846,7 @@ index f78d7be..3a7d8ea 100644
          }
      }
  
-@@ -747,110 +764,101 @@ bool GS::copyLatchedHostPresentationFrame(std::vector<uint8_t> &outPixels,
+@@ -747,110 +765,101 @@ bool GS::copyLatchedHostPresentationFrame(std::vector<uint8_t> &outPixels,
      return true;
  }
  
@@ -4869,6 +5023,26 @@ index f78d7be..3a7d8ea 100644
      }
      m_backend->Flush();
  }
+@@ -1189,6 +1198,19 @@ void GS::writeRegister(uint8_t regAddr, uint64_t value)
+ 
+ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
+ {
++#if PS2X_EE_FIBERS
++    if (regAddr == kGSTrackBatchRegister)
++    {
++        if (m_backend)
++        {
++            GSPrimitiveBatch batch = buildDrawBatch(1);
++            batch.vertexCount = kGSTrackBatchMarker;
++            std::memcpy(&batch.vertices[0].z, &value, sizeof(value));
++            m_backend->Submit(batch);
++        }
++        return;
++    }
++#endif
+     const bool interestingReg =
+         regAddr == GS_REG_PRIM ||
+         regAddr == GS_REG_RGBAQ ||
 diff --git a/ps2xRuntime/src/lib/gs/gs_gpu_helpers.h b/ps2xRuntime/src/lib/gs/gs_gpu_helpers.h
 new file mode 100644
 index 0000000..fb5ad7b

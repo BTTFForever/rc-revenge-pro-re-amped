@@ -82,7 +82,7 @@ int main(int argc, char **argv)
     std::stringstream shaderText;
     shaderText << shaderFile.rdbuf();
     const GLuint program = glCreateProgram();
-    glAttachShader(program, compileShader(shaderText.str()));
+    glAttachShader(program, compileShader("#version 430 core\n#define TRDR_STANDALONE\n" + shaderText.str()));
     const char *varyings[] = {"gsPosition", "stq", "colour", "keep", "viewZ"};
     glTransformFeedbackVaryings(program, 5, varyings, GL_INTERLEAVED_ATTRIBS);
     glLinkProgram(program);

@@ -196,34 +196,12 @@ void Program::subTo(V &dst, const V &a, const V &b, int lanes)
             dst.f[i] = fsub(a.f[i], b.f[i]).value;
 }
 
-// Copies out one GIF packet as the hardware would send it: tags and data up to the end-of-packet tag.
 void Program::kick(int quad)
 {
     std::vector<uint8_t> packet;
-    int at = quad & 0x3FF;
-    for (;;)
-    {
-        uint64_t tag[2];
-        std::memcpy(tag, mem + at * 16, 16);
-        const uint32_t nloop = tag[0] & 0x7FFFu;
-        const bool endOfPacket = (tag[0] >> 15) & 1u;
-        const uint32_t format = (tag[0] >> 58) & 3u;
-        uint32_t nreg = (tag[0] >> 60) & 15u;
-        if (nreg == 0u)
-            nreg = 16u;
-        const uint32_t quads = format == 0u ? nloop * nreg : format == 1u ? (nloop * nreg + 1u) / 2u : nloop;
-        const uint32_t count = quads + 1u;
-        for (uint32_t i = 0u; i < count; ++i)
-        {
-            packet.insert(packet.end(), mem + at * 16, mem + at * 16 + 16);
-            at = (at + 1) & 0x3FF;
-        }
-        if (endOfPacket)
-            break;
-    }
+    copyGifPacket(mem, quad, packet);
     kicks->push_back(std::move(packet));
 }
-
 void Program::clip(int reg)
 {
     const uint32_t wBits = bits(r[9].f[3]);
@@ -589,6 +567,30 @@ void Program::clipTwoInFront()
 }
 
 } // namespace
+
+void copyGifPacket(const uint8_t *memory, int quad, std::vector<uint8_t> &packet)
+{
+    int at = quad & 0x3FF;
+    for (;;)
+    {
+        uint64_t tag[2];
+        std::memcpy(tag, memory + at * 16, 16);
+        const uint32_t nloop = tag[0] & 0x7FFFu;
+        const bool endOfPacket = (tag[0] >> 15) & 1u;
+        const uint32_t format = (tag[0] >> 58) & 3u;
+        uint32_t nreg = (tag[0] >> 60) & 15u;
+        if (nreg == 0u)
+            nreg = 16u;
+        const uint32_t quads = format == 0u ? nloop * nreg : format == 1u ? (nloop * nreg + 1u) / 2u : nloop;
+        for (uint32_t i = 0u; i < quads + 1u; ++i)
+        {
+            packet.insert(packet.end(), memory + at * 16, memory + at * 16 + 16);
+            at = (at + 1) & 0x3FF;
+        }
+        if (endOfPacket)
+            break;
+    }
+}
 
 void runTrdrShape(uint8_t *memory, const float registers[32][4], uint32_t startPc, uint32_t top,
                   std::vector<std::vector<uint8_t>> &kicks)

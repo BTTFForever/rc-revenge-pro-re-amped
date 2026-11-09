@@ -69,6 +69,13 @@ set_source_files_properties(${DECOMP_SOURCES} PROPERTIES SKIP_UNITY_BUILD_INCLUS
     COMPILE_OPTIONS "-O2;-fwrapv;-fno-strict-aliasing"
     INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/decomp;${CMAKE_CURRENT_SOURCE_DIR}/decomp/generated;${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1;${PS2RECOMP_DIR}/ps2xRuntime/src/lib/vu")
 
+# The track shader is compiled into the game from the same file tools/shader_check.cpp tests.
+set(RC_TRACK_SHADER "${CMAKE_CURRENT_SOURCE_DIR}/decomp/shaders/trdr_shape.vert")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${RC_TRACK_SHADER}")
+file(READ "${RC_TRACK_SHADER}" RC_TRACK_SHADER_TEXT)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/trdr_shape_glsl.h" "R\"RCGLSL(${RC_TRACK_SHADER_TEXT})RCGLSL\"\n")
+set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1/track_draw.cpp" APPEND PROPERTY INCLUDE_DIRECTORIES "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
 file(GLOB VU1_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/vu1/*.cpp")
 if(VU1_SOURCES)
     add_library(rc_vu1_code STATIC ${VU1_SOURCES})
