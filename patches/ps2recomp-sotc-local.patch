@@ -404,10 +404,10 @@ index 2538d57..367de1a 100644
      static void SetGpuByDefault(bool enabled);
 diff --git a/ps2xRuntime/include/runtime/gs/gs_track_batch.h b/ps2xRuntime/include/runtime/gs/gs_track_batch.h
 new file mode 100644
-index 0000000..e160bd9
+index 0000000..ef5d934
 --- /dev/null
 +++ b/ps2xRuntime/include/runtime/gs/gs_track_batch.h
-@@ -0,0 +1,20 @@
+@@ -0,0 +1,21 @@
 +#pragma once
 +// A batch of track triangles drawn by a vertex shader instead of VU1 (decomp/vu1/track_draw.cpp).
 +//
@@ -422,6 +422,7 @@ index 0000000..e160bd9
 +struct GSTrackBatch
 +{
 +    uint32_t triangles;
++    uint32_t quadBytes; // Size of quads, if not ten quadwords per triangle. Such a batch is never merged with another.
 +    float draw[64]; // The shader's TrackDraw block; the backend fills in gsToClip and gsDepthRange.
 +    float quads[1]; // triangles * 40 floats: ten quadwords each, as the game sends them to VU1.
 +};
@@ -1282,7 +1283,7 @@ index 8f874c8..9df5ab8 100644
              return;
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
 new file mode 100644
-index 0000000..e917d8c
+index 0000000..61516fd
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
 @@ -0,0 +1,3108 @@
@@ -3305,7 +3306,7 @@ index 0000000..e917d8c
 +        GSTrackBatch *batch = nullptr;
 +        std::memcpy(&batch, &b.vertices[0].z, sizeof(batch));
 +        // Consecutive batches with the same state and constants are one draw.
-+        if (trackPending != nullptr && sameState(trackPendingState, b.state) &&
++        if (trackPending != nullptr && trackPending->quadBytes == 0u && batch->quadBytes == 0u && sameState(trackPendingState, b.state) &&
 +            std::memcmp(trackPending->draw, batch->draw, 36u * sizeof(float)) == 0 &&
 +            std::memcmp(trackPending->draw + 41, batch->draw + 41, 23u * sizeof(float)) == 0)
 +        {
@@ -3687,7 +3688,7 @@ index 0000000..e917d8c
 +                    g.BindBufferRange(target, binding, id, ring, bytes);
 +                    ring += (bytes + kAlign - 1) / kAlign * kAlign;
 +                };
-+                put(kStorage, trackTriangles, trackTriangleRing, kRingBytes, 0, trackDraw->quads, static_cast<GLsizeiptr>(trackDraw->triangles * 160u));
++                put(kStorage, trackTriangles, trackTriangleRing, kRingBytes, 0, trackDraw->quads, static_cast<GLsizeiptr>(trackDraw->quadBytes != 0u ? trackDraw->quadBytes : trackDraw->triangles * 160u));
 +                put(kUniform, trackConstants, trackConstantRing, kConstantRingBytes, 1, trackDraw->draw, static_cast<GLsizeiptr>(sizeof(trackDraw->draw)));
 +                g.Uniform1i(locTrack, 1);
 +                g.Enable(kClipDistance0);

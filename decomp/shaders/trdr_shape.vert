@@ -1,4 +1,4 @@
-// TRdr_VUShapeProg and EnvRdr_VUShapeProg as a vertex shader (shapeMode selects which). The buffer holds the triangle data exactly as the game sends it to VU1,
+// TRdr_VUShapeProg, EnvRdr_VUShapeProg and Rdr_VUSkinProg as a vertex shader (shapeMode selects which). The buffer holds the triangle data exactly as the game sends it to VU1,
 // ten quadwords per triangle: normal (w: a winding flag), three positions, three (s, t, q), three integer colours.
 //
 // Draw 3 * triangles vertices with no attributes. Cutting at the near plane uses gl_ClipDistance[0] and the screen
@@ -17,10 +17,10 @@ layout(std140, binding = 1) uniform TrackDraw
     vec4 tint;         // VU memory 11: colour * tint.w + tint.rgb.
     vec4 gsToClip;     // Set by the backend: target offset x, y, sampling offset, and 1 if depth is inverted.
     float gsDepthRange;
-    int shapeMode;     // 0: track, colours are integers. 1: EnvRdr, colours are floats. 2: EnvRdr with its environment map on.
-    vec4 envRows[3];   // VU memory 7..9.
+    int shapeMode;     // 0: track, colours are integers. 1: EnvRdr, colours are floats. 2: EnvRdr with its environment map on. 3: skin.
+    vec4 envRows[3];   // VU memory 7..9. Skin: [0] is VU memory 12, subtracted from each blended position.
     vec4 envSettings;  // VU memory 10: w is the reflection strength.
-    vec4 envBlock;     // The first quadword of this batch's texture block: w scales the reflection strength.
+    vec4 envBlock;     // The first quadword of this batch's texture block: w scales the reflection strength. Skin: x is the first triangle's quadword address, and the buffer is all of VU memory.
 };
 
 struct TrdrVertex
@@ -33,25 +33,40 @@ struct TrdrVertex
     float viewZ;
 };
 
+// A skinned corner: its position through one bone matrix, and a second position through another, blended.
+vec4 skinnedPosition(int weights, int corner, vec4 position)
+{
+    const vec4 blend = quad[weights + corner * 2];
+    const vec4 second = quad[weights + corner * 2 + 1];
+    const int matrixA = floatBitsToInt(blend.z) & 0x3FF;
+    const int matrixB = floatBitsToInt(blend.w) & 0x3FF;
+    const vec4 first = quad[matrixA] * position.x + quad[matrixA + 1] * position.y + quad[matrixA + 2] * position.z + quad[matrixA + 3] * position.w;
+    const vec3 other = (quad[matrixB] * second.x + quad[matrixB + 1] * second.y + quad[matrixB + 2] * second.z + quad[matrixB + 3] * second.w).xyz;
+    return vec4(first.xyz * blend.x + other * blend.y, first.w) - envRows[0];
+}
+
 TrdrVertex trdrVertex(int index)
 {
     const int triangle = index / 3;
     const int corner = index % 3;
-    const int base = triangle * 10;
+    const int base = shapeMode == 3 ? int(envBlock.x) + triangle * 16 : triangle * 10;
 
     const vec4 normal = quad[base];
-    const vec4 position = quad[base + 1 + corner];
+    vec4 position = quad[base + 1 + corner];
+    if (shapeMode == 3)
+        position = skinnedPosition(base + 10, corner, position);
     const vec4 stored = quad[base + 7 + corner];
-    ivec4 rawColour = shapeMode == 0 ? floatBitsToInt(stored) : ivec4(trunc(stored));
+    ivec4 rawColour = (shapeMode == 0 || shapeMode == 3) ? floatBitsToInt(stored) : ivec4(trunc(stored));
 
     TrdrVertex o;
     // The facing test uses the triangle's first corner, before it is transformed.
     const float facing = dot(quad[base + 1].xyz - lightPos.xyz, normal.xyz);
     const int winding = (floatBitsToInt(normal.w) << 16) >> 16;
-    o.keep = winding == (facing < 0.0 ? 128 : 0) ? 0.0 : 1.0;
+    o.keep = shapeMode == 3 || winding != (facing < 0.0 ? 128 : 0) ? 1.0 : 0.0; // Skinned triangles have no facing test.
 
     vec4 view = matrix[0] * position.x + matrix[1] * position.y + matrix[2] * position.z + matrix[3] * position.w;
-    view.z += quad[base + 4].w; // A depth bias stored in the first corner's texture coordinate w.
+    if (shapeMode != 3)
+        view.z += quad[base + 4].w; // A depth bias stored in the first corner's texture coordinate w.
     o.viewZ = view.z;
 
     const float q = 1.0 / view.z;

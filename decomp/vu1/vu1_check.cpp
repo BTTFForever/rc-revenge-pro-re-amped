@@ -95,7 +95,7 @@ using RunFn = void (*)(uint8_t *, const float[32][4], uint32_t, uint32_t, std::v
 
 uint64_t g_captureHash = 0xC3952C0FAEB52EADull;
 std::atomic<uint64_t> g_cutShort{0}; // Runs the runtime stopped at its cycle limit and never resumed.
-std::atomic<uint64_t> g_trackRuns{0}, g_envRuns{0}, g_envMappedRuns{0}, g_waterRuns{0}; // What the comparison has actually covered.
+std::atomic<uint64_t> g_trackRuns{0}, g_envRuns{0}, g_envMappedRuns{0}, g_waterRuns{0}, g_skinRuns{0}; // What the comparison has actually covered.
 
 // `Entries` are the program counters at which the C++ version can start. Anything else continues a run already begun.
 template <uint64_t Hash, RunFn Run, uint32_t SecondEntry, uint32_t DirectEntry>
@@ -133,6 +133,8 @@ VU1InterpreterAccess::StepResult checked(VU1Interpreter &vu, const Vu1RunArgs &a
         }
         else if (Hash == 0xE96770E4143D2DA7ull)
             g_waterRuns.fetch_add(1u);
+        else if (Hash == 0xEC08B22243D4DC8Cull)
+            g_skinRuns.fetch_add(1u);
         else
             g_trackRuns.fetch_add(1u);
     }
@@ -211,6 +213,7 @@ void installChecks()
         g_captureHash = std::strtoull(hash, nullptr, 16);
     registerVu1CompiledProgram(0xC3952C0FAEB52EADull, &checked<0xC3952C0FAEB52EADull, &runTrdrShape, 0xFFFFFFFFu, 0x2050u>);
     registerVu1CompiledProgram(0xE96770E4143D2DA7ull, &checked<0xE96770E4143D2DA7ull, &checkedWater, 0xFFFFFFFFu, 0xFFFFFFFFu>);
+    registerVu1CompiledProgram(0xEC08B22243D4DC8Cull, &checked<0xEC08B22243D4DC8Cull, &runSkinShape, 0xFFFFFFFFu, 0xFFFFFFFFu>);
     registerVu1CompiledProgram(0xAB0E7743A9BA7393ull, &checked<0xAB0E7743A9BA7393ull, &runEnvShape, 0x78u, 0x2370u>);
     std::thread(
         []
@@ -218,9 +221,9 @@ void installChecks()
             for (;;)
             {
                 std::this_thread::sleep_for(std::chrono::seconds(5));
-                std::fprintf(stderr, "[vu1 ref] runs %llu (track %llu, env %llu, env-mapped %llu, water %llu) packets %llu cut short %llu | mismatches: packets %llu, memory %llu, counts %llu\n",
+                std::fprintf(stderr, "[vu1 ref] runs %llu (track %llu, env %llu, env-mapped %llu, water %llu, skin %llu) packets %llu cut short %llu | mismatches: packets %llu, memory %llu, counts %llu\n",
                              (unsigned long long)g_runs.load(), (unsigned long long)g_trackRuns.load(), (unsigned long long)g_envRuns.load(),
-                             (unsigned long long)g_envMappedRuns.load(), (unsigned long long)g_waterRuns.load(), (unsigned long long)g_packets.load(), (unsigned long long)g_cutShort.load(),
+                             (unsigned long long)g_envMappedRuns.load(), (unsigned long long)g_waterRuns.load(), (unsigned long long)g_skinRuns.load(), (unsigned long long)g_packets.load(), (unsigned long long)g_cutShort.load(),
                              (unsigned long long)g_packetMismatches.load(), (unsigned long long)g_memoryMismatches.load(),
                              (unsigned long long)g_countMismatches.load());
             }

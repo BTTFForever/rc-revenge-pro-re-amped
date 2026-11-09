@@ -20,6 +20,10 @@ void runEnvShape(uint8_t *memory, const float registers[32][4], uint32_t startPc
 void runWaterShape(uint8_t *memory, const float registers[32][4], uint32_t startPc, uint32_t top,
                    std::vector<std::vector<uint8_t>> &kicks, float (*after)[4] = nullptr);
 
+// The same for Rdr_VUSkinProg.
+void runSkinShape(uint8_t *memory, const float registers[32][4], uint32_t startPc, uint32_t top,
+                  std::vector<std::vector<uint8_t>> &kicks);
+
 // Copies one GIF packet, starting at a VU memory quadword: tags and data up to the end-of-packet tag.
 void copyGifPacket(const uint8_t *memory, int quad, std::vector<uint8_t> &packet);
 

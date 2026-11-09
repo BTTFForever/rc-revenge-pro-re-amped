@@ -1,8 +1,8 @@
 // Compares the track vertex shader with the exact C++ version of the VU1 program, on runs captured from the game.
 //
 // Every triangle runs through decomp/shaders/trdr_shape.vert on the GPU and, on its own, through runTrdrShape.
-// Build: g++ -std=c++20 -O2 -I decomp/vu1 tools/shader_check.cpp decomp/vu1/trdr_shape.cpp decomp/vu1/env_shape.cpp decomp/vu1/vu_shape.cpp -lEGL -lOpenGL
-// Usage: shader_check [--env] <shader> <capture>...   (--env: captures of EnvRdr_VUShapeProg)
+// Build: g++ -std=c++20 -O2 -I decomp/vu1 tools/shader_check.cpp decomp/vu1/trdr_shape.cpp decomp/vu1/env_shape.cpp decomp/vu1/vu_shape.cpp decomp/vu1/skin_shape.cpp decomp/vu1/water_shape.cpp -lEGL -lOpenGL
+// Usage: shader_check [--env|--skin] <shader> <capture>...   (captures of EnvRdr_VUShapeProg or Rdr_VUSkinProg)
 #define GL_GLEXT_PROTOTYPES
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -61,7 +61,13 @@ GLuint compileShader(const std::string &source)
 int main(int argc, char **argv)
 {
     _mm_setcsr(_mm_getcsr() | 0x6000u); // The VU rounds toward zero.
-    bool envProgram = false;
+    bool envProgram = false, skinProgram = false;
+    if (argc > 1 && std::strcmp(argv[1], "--skin") == 0)
+    {
+        skinProgram = true;
+        --argc;
+        ++argv;
+    }
     if (argc > 1 && std::strcmp(argv[1], "--env") == 0)
     {
         envProgram = true;
@@ -140,6 +146,20 @@ int main(int argc, char **argv)
             std::memcpy(draw + 24, quad(15), 16);
             std::memcpy(draw + 28, quad(12), 16);
             std::memcpy(draw + 32, quad(11), 16);
+            if (skinProgram)
+            {
+                std::memcpy(draw, quad(21), 64);
+                std::memcpy(draw + 16, quad(15), 16);
+                std::memcpy(draw + 20, quad(16), 16);
+                std::memcpy(draw + 24, quad(14), 16);
+                std::memcpy(draw + 28, quad(10), 16);
+                std::memset(draw + 32, 0, 16);
+                draw[35] = 1.0f;
+                draw[12] = draw[13] = draw[14] = 0.0f - draw[30];
+                const int32_t mode = 3;
+                std::memcpy(draw + 41, &mode, 4);
+                std::memcpy(draw + 44, quad(12), 16);
+            }
             draw[36] = 2048.0f, draw[37] = 2048.0f, draw[38] = 320.0f, draw[39] = 240.0f;
             draw[40] = 16777216.0f;
             if (envProgram)
@@ -155,11 +175,20 @@ int main(int argc, char **argv)
             // Find every triangle, keeping the block each one came from.
             struct Item { int headerAt; int at; };
             std::vector<Item> allItems;
-            int reader = static_cast<int>(top & 0x3FFu);
+            int reader = skinProgram ? 512 : static_cast<int>(top & 0x3FFu);
             for (int guard = 0; guard < 64; ++guard)
             {
                 int16_t count;
                 std::memcpy(&count, memory + (reader & 0x3FF) * 16 + 8, 2);
+                if (skinProgram)
+                {
+                    if (count <= 0 || reader + 1 + count * 16 > 1024)
+                        break;
+                    for (int t = 0; t < count; ++t)
+                        allItems.push_back({reader, reader + 1 + t * 16});
+                    reader += 1 + count * 16;
+                    continue;
+                }
                 if (count < 0)
                 {
                     reader += 1 - count;
@@ -183,13 +212,18 @@ int main(int argc, char **argv)
                 const std::vector<Item> items(allItems.begin() + first, allItems.begin() + last);
                 first = last;
                 std::memcpy(draw + 60, quad(items[0].headerAt), 16);
+                if (skinProgram)
+                    draw[60] = static_cast<float>(items[0].at);
                 glBindBuffer(GL_UNIFORM_BUFFER, uniforms);
                 glBufferData(GL_UNIFORM_BUFFER, sizeof(draw), draw, GL_STREAM_DRAW);
                 glBindBufferBase(GL_UNIFORM_BUFFER, 1, uniforms);
 
-                std::vector<uint8_t> triangles(items.size() * 160u);
-                for (size_t i = 0; i < items.size(); ++i)
-                    std::memcpy(triangles.data() + i * 160u, memory + items[i].at * 16, 160u);
+                std::vector<uint8_t> triangles(skinProgram ? 0x4000u : items.size() * 160u);
+                if (skinProgram)
+                    std::memcpy(triangles.data(), memory, 0x4000u);
+                else
+                    for (size_t i = 0; i < items.size(); ++i)
+                        std::memcpy(triangles.data() + i * 160u, memory + items[i].at * 16, 160u);
                 glBindBuffer(GL_SHADER_STORAGE_BUFFER, input);
                 glBufferData(GL_SHADER_STORAGE_BUFFER, triangles.size(), triangles.data(), GL_STREAM_DRAW);
                 glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, input);
@@ -207,19 +241,31 @@ int main(int argc, char **argv)
                     ++stats.triangles;
                     // Run this triangle alone through the exact version.
                     std::memcpy(single.data(), memory, 0x4000);
-                    const int at = static_cast<int>(top & 0x3FFu);
-                    std::memcpy(single.data() + at * 16, memory + items[i].headerAt * 16, 64);
-                    const int16_t one = 1;
-                    std::memcpy(single.data() + at * 16 + 8, &one, 2);
-                    std::memcpy(single.data() + (at + 4) * 16, memory + items[i].at * 16, 160);
-                    std::memset(single.data() + (at + 14) * 16, 0, 16);
                     std::vector<std::vector<uint8_t>> kicks;
-                    (envProgram ? rc::vu1::runEnvShape : rc::vu1::runTrdrShape)(single.data(), registers, 0u, top, kicks);
+                    if (skinProgram)
+                    {
+                        std::memcpy(single.data() + 512 * 16, memory + items[i].headerAt * 16, 16);
+                        const int16_t one = 1;
+                        std::memcpy(single.data() + 512 * 16 + 8, &one, 2);
+                        std::memcpy(single.data() + 513 * 16, memory + items[i].at * 16, 256);
+                        std::memset(single.data() + 529 * 16, 0, 16);
+                        rc::vu1::runSkinShape(single.data(), registers, 0u, top, kicks);
+                    }
+                    else
+                    {
+                        const int at = static_cast<int>(top & 0x3FFu);
+                        std::memcpy(single.data() + at * 16, memory + items[i].headerAt * 16, 64);
+                        const int16_t one = 1;
+                        std::memcpy(single.data() + at * 16 + 8, &one, 2);
+                        std::memcpy(single.data() + (at + 4) * 16, memory + items[i].at * 16, 160);
+                        std::memset(single.data() + (at + 14) * 16, 0, 16);
+                        (envProgram ? rc::vu1::runEnvShape : rc::vu1::runTrdrShape)(single.data(), registers, 0u, top, kicks);
+                    }
 
                     const Output *out = &outputs[i * 3u];
-                    const float nearZ = quad(12)[2];
+                    const float nearZ = quad(skinProgram ? 10 : 12)[2];
                     const bool behind = out[0].viewZ < nearZ || out[1].viewZ < nearZ || out[2].viewZ < nearZ;
-                    const int packetsBefore = envProgram ? 1 : 2; // The texture block, and the track program's header.
+                    const int packetsBefore = envProgram || skinProgram ? 1 : 2; // The texture block, and the track program's header.
                     const int drawn = static_cast<int>(kicks.size()) - packetsBefore;
 
                     if (out[0].keep == 0.0f)
@@ -241,10 +287,11 @@ int main(int argc, char **argv)
                         continue;
                     }
                     // A triangle past the guard band goes through the original's clipper even if one piece comes out.
-                    const float guard = quad(16)[3];
+                    const float *const screen = quad(skinProgram ? 15 : 16);
+                    const float guard = screen[3];
                     bool crosses = false;
                     for (int corner = 0; corner < 3; ++corner)
-                        crosses = crosses || std::fabs(out[corner].gs[0] - quad(16)[0]) > guard || std::fabs(out[corner].gs[1] - quad(16)[1]) > guard;
+                        crosses = crosses || std::fabs(out[corner].gs[0] - screen[0]) > guard || std::fabs(out[corner].gs[1] - screen[1]) > guard;
                     if (crosses || drawn != 1 || kicks[packetsBefore].size() != 160u)
                     {
                         ++stats.screenClipped; // Crosses the screen edge: the GPU cuts it instead.
