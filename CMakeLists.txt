@@ -62,12 +62,12 @@ target_sources(rc_revenge_pro PRIVATE ${OVERRIDE_SOURCES})
 set_source_files_properties(${OVERRIDE_SOURCES} PROPERTIES SKIP_UNITY_BUILD_INCLUSION TRUE)
 
 # Decompiled game code. Its headers are generated from the game's debug data: see tools/stabs2c.py.
-file(GLOB DECOMP_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/decomp/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/*.cpp")
+file(GLOB DECOMP_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/decomp/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1/*.cpp")
 list(APPEND DECOMP_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/decomp/generated/rc_layout_check.cpp")
 target_sources(rc_revenge_pro PRIVATE ${DECOMP_SOURCES})
 set_source_files_properties(${DECOMP_SOURCES} PROPERTIES SKIP_UNITY_BUILD_INCLUSION TRUE
     COMPILE_OPTIONS "-O2;-fwrapv;-fno-strict-aliasing"
-    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/decomp;${CMAKE_CURRENT_SOURCE_DIR}/decomp/generated")
+    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/decomp;${CMAKE_CURRENT_SOURCE_DIR}/decomp/generated;${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1;${PS2RECOMP_DIR}/ps2xRuntime/src/lib/vu")
 
 file(GLOB VU1_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/vu1/*.cpp")
 if(VU1_SOURCES)

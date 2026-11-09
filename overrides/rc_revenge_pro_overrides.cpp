@@ -37,6 +37,10 @@ namespace rc
     void installDecomp(PS2Runtime &runtime);
     using RecompFn = void (*)(uint8_t *, R5900Context *, PS2Runtime *);
     RecompFn decompOr(uint32_t address, RecompFn fallback);
+    namespace vu1
+    {
+        void installChecks();
+    }
 }
 
 #ifdef RC_PGO_GEN
@@ -558,6 +562,7 @@ namespace
     void applyRcRevengePro(PS2Runtime &runtime)
     {
         registerGeneratedVu1Programs();
+        rc::vu1::installChecks();
         rc::installDecomp(runtime);
         PS2Runtime::IoPaths paths = PS2Runtime::getIoPaths();
         const std::filesystem::path isoPath = paths.elfDirectory.parent_path() / kIsoName;

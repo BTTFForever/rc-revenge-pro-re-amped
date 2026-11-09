@@ -3,7 +3,7 @@ build/
 build-decomp/
 decomp/generated/
 output/
-vu1/
+/vu1/
 vu1_images/
 gs_shaders/
 functions_filtered.csv

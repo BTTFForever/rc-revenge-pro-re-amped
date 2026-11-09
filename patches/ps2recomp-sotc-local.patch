@@ -5354,10 +5354,19 @@ index 43f67b0..8a33442 100644
      if (GSSharedPresent::Active())
      {
 diff --git a/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp b/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
-index 0b08639..7435ec0 100644
+index 0b08639..aee6ae0 100644
 --- a/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
 +++ b/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
-@@ -1180,6 +1180,8 @@ bool VU1InterpreterAccess::runVerifiedWith(VU1Interpreter &vu, uint8_t *vuCode,
+@@ -6,6 +6,8 @@
+ #define VU1_FORCE_INLINE inline
+ #include "ps2_vu1_impl.inl"
+ 
++void (*g_vu1KickObserver)(const uint8_t *, size_t) = nullptr;
++
+ #include <algorithm>
+ #include <bit>
+ #include <cfenv>
+@@ -1180,6 +1182,8 @@ bool VU1InterpreterAccess::runVerifiedWith(VU1Interpreter &vu, uint8_t *vuCode,
      packetSink = nullptr;
  
      std::string diff;
@@ -5366,7 +5375,7 @@ index 0b08639..7435ec0 100644
      const auto note = [&diff](const std::string &text)
      {
          if (diff.size() < 1500u)
-@@ -1205,11 +1207,11 @@ bool VU1InterpreterAccess::runVerifiedWith(VU1Interpreter &vu, uint8_t *vuCode,
+@@ -1205,11 +1209,11 @@ bool VU1InterpreterAccess::runVerifiedWith(VU1Interpreter &vu, uint8_t *vuCode,
          note("r");
      if (a.pc != b.pc)
          note("pc");
@@ -5380,7 +5389,7 @@ index 0b08639..7435ec0 100644
          note("status");
      if (a.ebit != b.ebit || a.haltAfterDelaySlot != b.haltAfterDelaySlot || a.stoppedByD != b.stoppedByD ||
          a.stoppedByT != b.stoppedByT)
-@@ -1247,7 +1249,7 @@ bool VU1InterpreterAccess::runVerifiedWith(VU1Interpreter &vu, uint8_t *vuCode,
+@@ -1247,7 +1251,7 @@ bool VU1InterpreterAccess::runVerifiedWith(VU1Interpreter &vu, uint8_t *vuCode,
          std::sort(entries.begin(), entries.end());
          return entries;
      };
@@ -5390,10 +5399,32 @@ index 0b08639..7435ec0 100644
      const auto scalarEqual = [](const auto &x, const auto &y)
      {
 diff --git a/ps2xRuntime/src/lib/vu/ps2_vu1_impl.inl b/ps2xRuntime/src/lib/vu/ps2_vu1_impl.inl
-index 518cf91..88b296f 100644
+index 518cf91..35b7282 100644
 --- a/ps2xRuntime/src/lib/vu/ps2_vu1_impl.inl
 +++ b/ps2xRuntime/src/lib/vu/ps2_vu1_impl.inl
-@@ -3334,6 +3334,21 @@ struct VU1InterpreterAccess
+@@ -16,6 +16,10 @@
+ #include <string>
+ #include <vector>
+ 
++#if PS2X_EE_FIBERS
++extern void (*g_vu1KickObserver)(const uint8_t *, size_t); // Sees each PATH1 packet, for comparing VU1 programs.
++#endif
++
+ #ifndef VU1_FORCE_INLINE
+ #if defined(_MSC_VER)
+ #define VU1_FORCE_INLINE __forceinline
+@@ -945,6 +949,10 @@ inline void VU1Interpreter::finishXgkick()
+             return;
+         }
+     }
++#if PS2X_EE_FIBERS
++    if (g_vu1KickObserver)
++        g_vu1KickObserver(m_xgkick.packet.data(), m_xgkick.totalBytes);
++#endif
+     if (m_activeMemory)
+         m_activeMemory->submitGifPacket(GifPathId::Path1, m_xgkick.packet.data(), m_xgkick.totalBytes);
+     else if (m_activeGs)
+@@ -3334,6 +3342,21 @@ struct VU1InterpreterAccess
          return c.result;
      }
  
