@@ -1,0 +1,12 @@
+# Generated, or derived from the game disc. Regenerate with the steps in NOTES.md.
+build/
+output/
+vu1/
+vu1_images/
+gs_shaders/
+functions_filtered.csv
+mc0/
+mc1/
+imgui.ini
+*.log
+dump_*.txt
