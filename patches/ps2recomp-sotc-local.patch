@@ -191,6 +191,75 @@ index b9933d5..18d9a35 100644
      bool m_showRegisters = true;
      unsigned int m_memoryAddress = 0x00100000u;
      unsigned int m_memoryBytes = 0x100u;
+diff --git a/ps2xRuntime/include/runtime/ee_scheduler.h b/ps2xRuntime/include/runtime/ee_scheduler.h
+index a9d47b1..16811e4 100644
+--- a/ps2xRuntime/include/runtime/ee_scheduler.h
++++ b/ps2xRuntime/include/runtime/ee_scheduler.h
+@@ -8,6 +8,7 @@
+ #include <condition_variable>
+ #include <cstdint>
+ #include <deque>
++#include <exception>
+ #include <functional>
+ #include <mutex>
+ #include <optional>
+@@ -16,6 +17,12 @@
+ #include <variant>
+ #include <vector>
+ 
++#if PS2X_EE_FIBERS
++extern "C" {
++typedef struct IcoFiber IcoFiber;
++}
++#endif
++
+ // This exception is the EE equivalent of a longjmp to the dispatcher.  It is
+ // not an error and must only be caught at EeScheduler::run().
+ struct EeDispatcherTransfer final
+@@ -335,6 +342,16 @@ public:
+         bool m_previous;
+     };
+ 
++#if PS2X_EE_FIBERS
++    // Runs guest code at `target` from native code and returns when it returns. The native caller's
++    // frames survive anything the guest code does, because each guest thread has its own host stack.
++    // Clobbers $ra and the caller-saved registers, as a real call does.
++    void callGuestFromNative(R5900Context &ctx, uint32_t target);
++
++    // The context of the guest thread now running.
++    [[nodiscard]] R5900Context &runningContext();
++#endif
++
+     [[nodiscard]] bool transferPending() const noexcept
+     {
+         return m_transferPending;
+@@ -471,6 +488,26 @@ private:
+     uint8_t *m_rdram = nullptr;
+     std::array<std::deque<int>, kPriorityCount> m_readyQueues{};
+     std::unordered_map<int, GuestThread> m_threads;
++
++#if PS2X_EE_FIBERS
++    // Guest code runs on one fiber per thread. The dispatcher, on the host stack, decides what runs next
++    // and leaves it here; the fiber runs it and yields.
++    struct FiberJob
++    {
++        void (*function)(uint8_t *, R5900Context *, PS2Runtime *) = nullptr;
++        R5900Context *context = nullptr;
++        bool insideInterrupt = false;
++    };
++    static void fiberEntry(void *scheduler);
++    bool executeFiberJob(); // True when the job blocked or switched threads.
++    static constexpr uint32_t kNativeReturnPc = 0xFFFFFFF0u; // No guest code has this address.
++    void resumeThreadFiber(const GuestThread &item);
++    void retireThreadFiber(const GuestThread &item);
++    FiberJob m_fiberJob{};
++    std::exception_ptr m_fiberError;
++    std::unordered_map<int, IcoFiber *> m_fibers;
++    std::vector<IcoFiber *> m_retiredFibers;
++#endif
+     std::unordered_map<int, EeSemaphore> m_semaphores;
+     std::unordered_map<int, EeEventFlag> m_eventFlags;
+     std::unordered_map<int, EeAlarm> m_alarms;
 diff --git a/ps2xRuntime/include/runtime/gs/gs_colour_runs.h b/ps2xRuntime/include/runtime/gs/gs_colour_runs.h
 new file mode 100644
 index 0000000..436162c
@@ -507,10 +576,22 @@ index e671f2f..b9da579 100644
  	u32 ReadZ32(u8* data, u32 bp, u32 bw, u32 x, u32 y);
  
 diff --git a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
-index 6784aca..8533cd3 100644
+index 6784aca..92e9af8 100644
 --- a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
 +++ b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
-@@ -143,7 +143,7 @@ void EeScheduler::setHostPacingDefault(bool enabled) noexcept
+@@ -1,5 +1,11 @@
+ #include "runtime/ee_scheduler.h"
+ 
++#if PS2X_EE_FIBERS
++extern "C" {
++#include "fiber.h"
++}
++#endif
++
+ #include "ps2_log.h"
+ #include "ps2_runtime_macros.h"
+ #include "runtime/ps2_async_vif.h"
+@@ -143,7 +149,7 @@ void EeScheduler::setHostPacingDefault(bool enabled) noexcept
  void EeScheduler::hostCatchUp() noexcept
  {
      m_pacingCheckCycle = m_eeCycle + kHostPacingCheckCycles;
@@ -519,6 +600,187 @@ index 6784aca..8533cd3 100644
          return;
      const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - m_pacingRefTime).count();
      if (elapsed <= 0.0)
+@@ -369,6 +375,23 @@ void EeScheduler::run()
+             continue;
+         }
+ 
++#if PS2X_EE_FIBERS
++        if (context.pc == kNativeReturnPc)
++        {
++            // Finished waiting, with the native caller waiting on this thread's fiber.
++            m_fiberJob = {};
++            resumeThreadFiber(*running);
++            if (m_fiberError)
++            {
++                m_running.store(false, std::memory_order_release);
++                publishSnapshotNow();
++                std::rethrow_exception(std::exchange(m_fiberError, nullptr));
++            }
++            processPendingEvents();
++            continue;
++        }
++#endif
++
+         if (!m_runtime.hasFunction(context.pc))
+         {
+             if (!running->invocations.empty())
+@@ -396,6 +419,18 @@ void EeScheduler::run()
+             continue;
+         }
+ 
++#if PS2X_EE_FIBERS
++        m_fiberJob.function = function;
++        m_fiberJob.context = &context;
++        m_fiberJob.insideInterrupt = !running->invocations.empty() && running->invocations.back().kind == GuestInvocationKind::Interrupt;
++        resumeThreadFiber(*running);
++        if (m_fiberError)
++        {
++            m_running.store(false, std::memory_order_release);
++            publishSnapshotNow();
++            std::rethrow_exception(std::exchange(m_fiberError, nullptr));
++        }
++#else
+         try
+         {
+             m_insideInterrupt = !running->invocations.empty() && running->invocations.back().kind == GuestInvocationKind::Interrupt;
+@@ -423,6 +458,7 @@ void EeScheduler::run()
+             publishSnapshotNow();
+             throw;
+         }
++#endif
+ 
+         processPendingEvents();
+         if (m_rescheduleRequested && m_currentThreadId != 0)
+@@ -442,6 +478,119 @@ void EeScheduler::run()
+     publishSnapshotNow();
+ }
+ 
++#if PS2X_EE_FIBERS
++void EeScheduler::fiberEntry(void *scheduler)
++{
++    auto *self = static_cast<EeScheduler *>(scheduler);
++    for (;;)
++    {
++        self->executeFiberJob();
++        ico_fiber_yield();
++    }
++}
++
++bool EeScheduler::executeFiberJob()
++{
++    const FiberJob job = m_fiberJob;
++    if (job.function == nullptr)
++    {
++        return false; // The dispatcher is only handing control back to a waiting native frame.
++    }
++    bool transferred = false;
++    try
++    {
++        m_insideInterrupt = job.insideInterrupt;
++        m_guestExecuting.store(true, std::memory_order_release);
++        m_unwinding = false;
++        loadSharedVu0Random(*job.context);
++        job.function(m_rdram, job.context, &m_runtime);
++        saveSharedVu0Random(*job.context);
++    }
++    catch (const EeDispatcherTransfer &)
++    {
++        saveSharedVu0Random(*job.context);
++        transferred = true;
++    }
++    catch (...)
++    {
++        m_fiberError = std::current_exception();
++    }
++    transferred = transferred || m_transferPending;
++    m_guestExecuting.store(false, std::memory_order_release);
++    m_insideInterrupt = false;
++    m_transferPending = false;
++    return transferred;
++}
++
++void EeScheduler::resumeThreadFiber(const GuestThread &item)
++{
++    IcoFiber *&fiber = m_fibers[item.id];
++    if (fiber == nullptr)
++    {
++        fiber = ico_fiber_create(&EeScheduler::fiberEntry, this, 0);
++        if (fiber == nullptr)
++        {
++            throw std::runtime_error("EE thread fiber pool exhausted");
++        }
++    }
++    if (ico_fiber_resume(fiber) != 0)
++    {
++        throw std::runtime_error("EE thread fiber could not be resumed");
++    }
++    for (IcoFiber *retired : m_retiredFibers)
++    {
++        ico_fiber_destroy(retired);
++    }
++    m_retiredFibers.clear();
++}
++
++// A thread that exits may be running on the fiber being retired, so it is destroyed from the dispatcher.
++void EeScheduler::retireThreadFiber(const GuestThread &item)
++{
++    const auto found = m_fibers.find(item.id);
++    if (found != m_fibers.end())
++    {
++        m_retiredFibers.push_back(found->second);
++        m_fibers.erase(found);
++    }
++}
++
++R5900Context &EeScheduler::runningContext()
++{
++    GuestThread *running = currentThread();
++    assert(running != nullptr);
++    return running->activeContext();
++}
++
++void EeScheduler::callGuestFromNative(R5900Context &ctx, uint32_t target)
++{
++    // Guest code "returns" to native code by leaving this address in pc.
++    const bool insideInterrupt = m_insideInterrupt;
++    ctx.pc = target;
++    SET_GPR_U32(&ctx, 31, kNativeReturnPc);
++    m_fiberJob.function = m_runtime.lookupFunction(target);
++    m_fiberJob.context = &ctx;
++    m_fiberJob.insideInterrupt = insideInterrupt;
++    for (;;)
++    {
++        // The dispatcher also uses this fiber to run interrupt handlers while the frame waits, so only
++        // work belonging to this context can finish the call.
++        const bool ownWork = m_fiberJob.function == nullptr || m_fiberJob.context == &ctx;
++        const bool transferred = executeFiberJob();
++        if (ownWork && ctx.pc == kNativeReturnPc && !transferred && !m_fiberError)
++        {
++            break;
++        }
++        // Blocked, preempted or interrupted. The dispatcher runs whatever it needs to and comes back
++        // here, with the native frames below still intact, carrying the next piece of work.
++        ico_fiber_yield();
++    }
++    m_insideInterrupt = insideInterrupt;
++    m_guestExecuting.store(true, std::memory_order_release);
++    m_unwinding = false;
++}
++#endif
++
+ void EeScheduler::requestStop()
+ {
+     m_stopRequested.store(true, std::memory_order_release);
+@@ -1915,6 +2064,9 @@ void EeScheduler::makeDormant(GuestThread &item)
+ {
+     removeReady(item);
+     removeFromWaitObject(item);
++#if PS2X_EE_FIBERS
++    retireThreadFiber(item);
++#endif
+     item.status = EeThreadStatus::Dormant;
+     item.wait = {};
+     item.resumeCompletion = {};
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_gl.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_gl.cpp
 index 5e04125..d10d51e 100644
 --- a/ps2xRuntime/src/lib/gs/gpu/gs_gl.cpp

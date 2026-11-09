@@ -34,6 +34,11 @@ endif()
 add_subdirectory("${PS2RECOMP_DIR}/ps2xIOP" ps2xIOP EXCLUDE_FROM_ALL)
 add_subdirectory("${PS2RECOMP_DIR}/ps2xRuntime" ps2xRuntime EXCLUDE_FROM_ALL)
 
+# Each EE thread runs on a fiber from ico-pc's platform layer.
+add_subdirectory(third_party/ico_platform EXCLUDE_FROM_ALL)
+target_link_libraries(ps2_runtime PUBLIC rc_ico_platform)
+target_compile_definitions(ps2_runtime PUBLIC PS2X_EE_FIBERS=1)
+
 file(GLOB GAME_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/output/*.cpp")
 
 add_executable(rc_revenge_pro

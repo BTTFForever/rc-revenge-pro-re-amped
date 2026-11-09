@@ -19,6 +19,7 @@ namespace rc {
 extern uint8_t *g_rdram; // Guest RAM, set once at start.
 
 inline void *guest_host(uint32_t address) { return g_rdram + (address & PS2_RAM_MASK); }
+inline uint32_t guest_addr(const void *host) { return static_cast<uint32_t>(static_cast<const uint8_t *>(host) - g_rdram); }
 
 template <typename T>
 struct ptr32

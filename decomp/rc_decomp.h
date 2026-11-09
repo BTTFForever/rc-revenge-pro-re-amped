@@ -4,8 +4,8 @@
 // address. With RC_SHADOW=1 in the environment, each sampled call runs the recompiled original and
 // the decompiled function on the same state and compares their results and every byte of guest RAM.
 //
-// A decompiled function must not reach anything that can block or switch guest threads: the runtime
-// does that by unwinding the host stack. tools/decomp_order.py lists the functions that are safe.
+// A function that can block uses RC_DECOMP_FN_BLOCKING instead, and calls guest code with guest_call.
+// tools/decomp_order.py lists the functions that cannot block, which are the ones that can be compared.
 #pragma once
 
 #include <atomic>
@@ -17,6 +17,7 @@
 
 #include "ps2_runtime.h"
 #include "ps2_recompiled_functions.h"
+#include "runtime/ee_scheduler.h"
 #include "rc_guest.h"
 #include "rc_globals.h"
 #include "rc_types.h"
@@ -45,6 +46,18 @@ void shadowCall(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, Entry &e
 
 // Called once when the game is loaded.
 void installDecomp(PS2Runtime &runtime);
+
+// The decompiled version of the function at an address, or fallback if it has none or decompilation is off.
+RecompFn decompOr(uint32_t address, RecompFn fallback);
+
+extern PS2Runtime *g_runtime;
+
+// Reads a hardware register, such as a timer, as the recompiled code does.
+uint32_t hw_read32(uint32_t address);
+
+// Calls guest code that has not been decompiled yet. It may block: this frame survives on the thread's fiber.
+template <typename R = void, typename... A>
+R guest_call(uint32_t address, A... args);
 
 template <typename T> struct is_ptr32 : std::false_type {};
 template <typename T> struct is_ptr32<ptr32<T>> : std::true_type {};
@@ -156,11 +169,12 @@ struct Thunk<Fn>
         g_rdram = rdram;
         ArgCursor cursor{ctx};
         std::tuple<A...> args{takeArg<A>(cursor)...};
+        const uint32_t returnAddress = getRegU32(ctx, 31); // Calls to guest code replace $ra.
         if constexpr (std::is_void_v<R>)
             std::apply(Fn, args);
         else
             storeReturn<R>(ctx, std::apply(Fn, args));
-        ctx->pc = getRegU32(ctx, 31);
+        ctx->pc = returnAddress;
     }
 };
 
@@ -168,6 +182,40 @@ struct Registrar
 {
     Registrar(Entry &entry, RecompFn shadow) { registerEntry(entry, shadow); }
 };
+
+template <typename R, typename... A>
+R guest_call(uint32_t address, A... args)
+{
+    EeScheduler &scheduler = g_runtime->eeScheduler();
+    R5900Context &ctx = scheduler.runningContext();
+    int gpr = 4, fpr = 12;
+    const auto put = [&](auto value)
+    {
+        using T = decltype(value);
+        if constexpr (std::is_same_v<T, ee_float> || std::is_same_v<T, float>)
+            ctx.f[fpr++] = value;
+        else if constexpr (is_ptr32<T>::value)
+        {
+            SET_GPR_S32((&ctx), gpr, static_cast<int32_t>(value.address));
+            ++gpr;
+        }
+        else
+        {
+            SET_GPR_S32((&ctx), gpr, static_cast<int32_t>(value));
+            ++gpr;
+        }
+    };
+    (put(args), ...);
+    scheduler.callGuestFromNative(ctx, address);
+    if constexpr (std::is_void_v<R>)
+        return;
+    else if constexpr (std::is_same_v<R, ee_float> || std::is_same_v<R, float>)
+        return R(ctx.f[0]);
+    else if constexpr (is_ptr32<R>::value)
+        return R(getRegU32(&ctx, 2));
+    else
+        return static_cast<R>(getRegU32(&ctx, 2));
+}
 
 // MIPS division: truncates, and does not trap on the cases x86 does.
 inline int32_t ee_div(int32_t a, int32_t b)
@@ -185,6 +233,14 @@ inline uint32_t ee_divu(uint32_t a, uint32_t b)
 }
 
 } // namespace rc
+
+// For a function that can block: it runs natively and cannot be compared call by call, because the
+// comparison needs to run it twice from one state.
+#define RC_DECOMP_FN_BLOCKING(name, address)                                                         \
+    static ::rc::Entry rc_entry_##name{#name, address, &::rc::Thunk<&::rc::name>::run,               \
+                                       &::name##_##address, ::rc::Thunk<&::rc::name>::returns,       \
+                                       nullptr};                                                     \
+    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &::rc::Thunk<&::rc::name>::run);
 
 #define RC_DECOMP_FN(name, address)                                                                  \
     static ::rc::Entry rc_entry_##name{#name, address, &::rc::Thunk<&::rc::name>::run,               \

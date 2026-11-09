@@ -35,6 +35,8 @@ void registerGeneratedVu1Programs();
 namespace rc
 {
     void installDecomp(PS2Runtime &runtime);
+    using RecompFn = void (*)(uint8_t *, R5900Context *, PS2Runtime *);
+    RecompFn decompOr(uint32_t address, RecompFn fallback);
 }
 
 #ifdef RC_PGO_GEN
@@ -353,7 +355,8 @@ namespace
     void countGameFrame(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         g_gameFrames.fetch_add(1u, std::memory_order_relaxed);
-        GfxP2_SwapBuffers_0x18e988(rdram, ctx, runtime);
+        static const auto swapBuffers = rc::decompOr(0x18e988u, &GfxP2_SwapBuffers_0x18e988);
+        swapBuffers(rdram, ctx, runtime);
     }
 
     // The real sceGsSyncV polls INTC_STAT, which the runtime does not model, so it returned

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Works out which game functions can be decompiled now, from the ELF's own code.
+"""Lists the game functions that cannot block, from the ELF's own code, leaf first.
 
-A decompiled function cannot be on the host stack while anything below it blocks or switches guest
-threads, because the runtime unwinds the host stack to do that. So a function is ready only when
-everything it can reach is already known not to block. Prints the ready functions leaf first.
+These can be compared against their recompiled originals call by call, because the comparison runs
+each call twice from one state. A function is listed only when everything it can reach is already
+known not to block.
 
 Usage: decomp_order.py <elf> <functions.csv> <symbols.json> <output.txt>
 """

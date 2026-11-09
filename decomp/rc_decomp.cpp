@@ -20,6 +20,12 @@
 namespace rc {
 
 uint8_t *g_rdram = nullptr;
+PS2Runtime *g_runtime = nullptr;
+
+uint32_t hw_read32(uint32_t address)
+{
+    return g_runtime->memory().read32(address);
+}
 
 namespace {
 
@@ -139,6 +145,8 @@ void fuzzAll(uint8_t *rdram, const R5900Context &live, PS2Runtime *runtime, int 
     for (const Registered &item : registry())
     {
         Entry &entry = *item.entry;
+        if (entry.randomiseArgs == nullptr)
+            continue;
         uint64_t state = 0x5EEDu + entry.address;
         uint64_t mismatches = 0u;
         for (int i = 0; i < iterations; ++i)
@@ -281,9 +289,23 @@ void shadowCall(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, Entry &e
     }
 }
 
+RecompFn decompOr(uint32_t address, RecompFn fallback)
+{
+    const char *enabled = std::getenv("RC_DECOMP");
+    if (enabled && enabled[0] == '0')
+        return fallback;
+    for (const Registered &item : registry())
+    {
+        if (item.entry->address == address)
+            return item.entry->native;
+    }
+    return fallback;
+}
+
 void installDecomp(PS2Runtime &runtime)
 {
     g_rdram = runtime.memory().getRDRAM();
+    g_runtime = &runtime;
     const char *enabled = std::getenv("RC_DECOMP");
     if (enabled && enabled[0] == '0')
     {
