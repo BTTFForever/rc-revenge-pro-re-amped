@@ -22,6 +22,8 @@ std::vector<std::vector<uint8_t>> g_expected;
 size_t g_next = 0u;
 bool g_active = false;
 std::unique_ptr<uint8_t[]> g_memory;
+::FILE *g_capture = nullptr; // RC_VU1_CAPTURE=<file>: real runs for tools/shader_check.cpp.
+int g_captureLeft = 0;
 
 std::atomic<uint64_t> g_runs{0}, g_packets{0}, g_packetMismatches{0}, g_memoryMismatches{0}, g_countMismatches{0};
 
@@ -69,6 +71,14 @@ VU1InterpreterAccess::StepResult checkedTrdr(VU1Interpreter &vu, const Vu1RunArg
         if (g_active && g_next != g_expected.size())
             g_countMismatches.fetch_add(1u);
         std::memcpy(g_memory.get(), args.vuData, args.dataSize);
+        if (g_capture != nullptr && g_captureLeft > 0 && state.pc == 0u && g_runs.load() % 61u == 0u)
+        {
+            std::fwrite(args.vuData, 1u, 0x4000u, g_capture);
+            std::fwrite(state.vf, sizeof(state.vf), 1u, g_capture);
+            std::fwrite(&state.top, sizeof(state.top), 1u, g_capture);
+            std::fflush(g_capture);
+            --g_captureLeft;
+        }
         g_expected.clear();
         g_next = 0u;
         runTrdrShape(g_memory.get(), state.vf, state.pc, state.top, g_expected);
@@ -104,6 +114,11 @@ void installChecks()
     if (!enabled || enabled[0] != '1')
         return;
     g_memory.reset(new uint8_t[0x4000]);
+    if (const char *capture = std::getenv("RC_VU1_CAPTURE"))
+    {
+        g_capture = std::fopen(capture, "wb");
+        g_captureLeft = 1500;
+    }
     g_vu1KickObserver = &observeKick;
     registerVu1CompiledProgram(0xC3952C0FAEB52EADull, &checkedTrdr);
     std::thread(
