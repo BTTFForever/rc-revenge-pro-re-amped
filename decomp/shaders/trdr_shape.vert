@@ -1,4 +1,4 @@
-// TRdr_VUShapeProg as a vertex shader. The buffer holds the triangle data exactly as the game sends it to VU1,
+// TRdr_VUShapeProg and EnvRdr_VUShapeProg as a vertex shader (shapeMode selects which). The buffer holds the triangle data exactly as the game sends it to VU1,
 // ten quadwords per triangle: normal (w: a winding flag), three positions, three (s, t, q), three integer colours.
 //
 // Draw 3 * triangles vertices with no attributes. Cutting at the near plane uses gl_ClipDistance[0] and the screen
@@ -17,6 +17,10 @@ layout(std140, binding = 1) uniform TrackDraw
     vec4 tint;         // VU memory 11: colour * tint.w + tint.rgb.
     vec4 gsToClip;     // Set by the backend: target offset x, y, sampling offset, and 1 if depth is inverted.
     float gsDepthRange;
+    int shapeMode;     // 0: track, colours are integers. 1: EnvRdr, colours are floats. 2: EnvRdr with its environment map on.
+    vec4 envRows[3];   // VU memory 7..9.
+    vec4 envSettings;  // VU memory 10: w is the reflection strength.
+    vec4 envBlock;     // The first quadword of this batch's texture block: w scales the reflection strength.
 };
 
 struct TrdrVertex
@@ -37,7 +41,8 @@ TrdrVertex trdrVertex(int index)
 
     const vec4 normal = quad[base];
     const vec4 position = quad[base + 1 + corner];
-    const ivec4 rawColour = floatBitsToInt(quad[base + 7 + corner]);
+    const vec4 stored = quad[base + 7 + corner];
+    ivec4 rawColour = shapeMode == 0 ? floatBitsToInt(stored) : ivec4(trunc(stored));
 
     TrdrVertex o;
     // The facing test uses the triangle's first corner, before it is transformed.
@@ -52,6 +57,20 @@ TrdrVertex trdrVertex(int index)
     const float q = 1.0 / view.z;
     o.gs = vec3(view.xy * q * screenScale.xy + screenOffset.xy, view.w * q * screenScale.z);
     o.st = quad[base + 4 + corner].xyz;
+    if (shapeMode == 2)
+    {
+        // The fraction of each colour lane holds a surface normal. These are the original's own per-component products,
+        // not a textbook reflection.
+        const vec3 surface = (stored.xyz - trunc(stored.xyz) - 0.5) * 2.0;
+        vec3 eye = view.xyz - lightPos.xyz;
+        const float eyeLength = length(eye);
+        eye *= eyeLength != 0.0 ? 1.0 / eyeLength : 0.0;
+        vec3 reflected = (surface * surface * eye * 2.0 - eye) * (envRows[0].xyz + envRows[1].xyz + envRows[2].xyz);
+        reflected.z += 1.0;
+        const float reflectedLength = length(reflected);
+        o.st = vec3(reflected.xy * (reflectedLength != 0.0 ? 1.0 / reflectedLength : 0.0) * 0.5 + 0.5, 1.0);
+        rawColour = ivec4(ivec3(vec3(min(127.0 * envSettings.w * envBlock.w, 127.0))), 128);
+    }
     o.stq = o.st * q;
     o.colour = vec4(trunc(vec3(rawColour.rgb) * tint.w + tint.rgb), float(rawColour.a));
     return o;

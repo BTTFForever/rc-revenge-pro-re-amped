@@ -1,4 +1,5 @@
-// Draws track geometry with a vertex shader instead of running TRdr_VUShapeProg.
+// Draws track geometry and the environment-mapped pass with a vertex shader instead of running TRdr_VUShapeProg and
+// EnvRdr_VUShapeProg.
 //
 // Enable with RC_TRACK_SHADER=1 and PS2X_GS_HW=1. The program's non-triangle packets still go to the GS as they did,
 // and each texture block's triangles become one batch in the GS command stream, drawn with the state in force at that
@@ -15,6 +16,8 @@ namespace {
 
 constexpr uint64_t kOriginalTrack = 0xC3952C0FAEB52EADull;
 constexpr uint64_t kShaderTrack = 0x5243545241434B31ull; // Not a real image hash: only a template argument.
+constexpr uint64_t kOriginalEnv = 0xAB0E7743A9BA7393ull;
+constexpr uint64_t kShaderEnv = 0x5243454E56534831ull; // Likewise.
 
 const char *const kTrackShader =
 #include "trdr_shape_glsl.h"
@@ -40,7 +43,7 @@ void kickPacket(PS2Memory *memory, const uint8_t *vu, int quad)
 }
 
 // One texture block's triangles, as a GS packet writing PRIM and then the batch's pointer.
-void sendTriangles(PS2Memory *memory, const uint8_t *vu, int first, int triangles)
+void sendTriangles(PS2Memory *memory, const uint8_t *vu, int first, int triangles, int32_t shapeMode = 0, const void *block = nullptr)
 {
     auto *batch = static_cast<GSTrackBatch *>(std::malloc(offsetof(GSTrackBatch, quads) + triangles * 160u));
     batch->triangles = static_cast<uint32_t>(triangles);
@@ -51,6 +54,13 @@ void sendTriangles(PS2Memory *memory, const uint8_t *vu, int first, int triangle
     std::memcpy(batch->draw + 24, vu + 15 * 16, 16);
     std::memcpy(batch->draw + 28, vu + 12 * 16, 16);
     std::memcpy(batch->draw + 32, vu + 11 * 16, 16);
+    std::memcpy(batch->draw + 41, &shapeMode, 4);
+    if (shapeMode != 0)
+    {
+        std::memcpy(batch->draw + 44, vu + 7 * 16, 48);
+        std::memcpy(batch->draw + 56, vu + 10 * 16, 16);
+        std::memcpy(batch->draw + 60, block, 16);
+    }
     for (int i = 0; i < triangles * 10; ++i)
         std::memcpy(batch->quads + i * 4, vu + ((first + i) & 0x3FF) * 16, 16);
 
@@ -109,6 +119,46 @@ VU1InterpreterAccess::StepResult VU1InterpreterAccess::runImage<kShaderTrack>(VU
     return StepResult::Ended;
 }
 
+template <>
+VU1InterpreterAccess::StepResult VU1InterpreterAccess::runImage<kOriginalEnv>(VU1Interpreter &, const Vu1RunArgs &);
+
+template <>
+VU1InterpreterAccess::StepResult VU1InterpreterAccess::runImage<kShaderEnv>(VU1Interpreter &vu, const Vu1RunArgs &args)
+{
+    if (vu.m_state.pc != 0u || args.memory == nullptr)
+        return runImage<kOriginalEnv>(vu, args); // Another entry point, or a run already in progress.
+
+    uint8_t *const memory = args.vuData;
+    int16_t flag;
+    std::memcpy(&flag, memory + 10 * 16 + 8, 2);
+    const bool environment = flag > 0;
+
+    int reader = static_cast<int>(vu.m_state.top & 0x3FFu);
+    int16_t count = loadCount(memory, reader);
+    for (;;)
+    {
+        uint8_t block[16];
+        std::memcpy(block, memory + reader * 16, 16);
+        std::memcpy(memory + 3 * 16, memory + reader * 16, 64);
+        if (environment) // The block's texture is replaced by the environment map.
+            std::memcpy(memory + 3 * 16, memory + 10 * 16, 8);
+        reader += 4;
+        kickPacket(args.memory, memory, 0);
+        sendTriangles(args.memory, memory, reader, count, environment ? 2 : 1, block);
+        reader += count * 10;
+        count = loadCount(memory, reader);
+        while (count < 0)
+        {
+            kickPacket(args.memory, memory, reader + 1);
+            reader += 1 - count;
+            count = loadCount(memory, reader);
+        }
+        if (count == 0)
+            break;
+    }
+    return StepResult::Ended;
+}
+
 namespace {
 
 // The GS backend builds its shaders during start-up, before the game's overrides run.
@@ -130,6 +180,7 @@ void installTrackDraw()
     if (!enabled || enabled[0] != '1')
         return;
     registerVu1CompiledProgram(kOriginalTrack, &VU1InterpreterAccess::runImage<kShaderTrack>);
+    registerVu1CompiledProgram(kOriginalEnv, &VU1InterpreterAccess::runImage<kShaderEnv>);
     std::fprintf(stderr, "[decomp] drawing track geometry with the vertex shader\n");
 }
 

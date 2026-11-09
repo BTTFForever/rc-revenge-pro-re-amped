@@ -404,7 +404,7 @@ index 2538d57..367de1a 100644
      static void SetGpuByDefault(bool enabled);
 diff --git a/ps2xRuntime/include/runtime/gs/gs_track_batch.h b/ps2xRuntime/include/runtime/gs/gs_track_batch.h
 new file mode 100644
-index 0000000..41407a1
+index 0000000..e160bd9
 --- /dev/null
 +++ b/ps2xRuntime/include/runtime/gs/gs_track_batch.h
 @@ -0,0 +1,20 @@
@@ -422,7 +422,7 @@ index 0000000..41407a1
 +struct GSTrackBatch
 +{
 +    uint32_t triangles;
-+    float draw[44]; // The shader's TrackDraw block; the backend fills in gsToClip and gsDepthRange.
++    float draw[64]; // The shader's TrackDraw block; the backend fills in gsToClip and gsDepthRange.
 +    float quads[1]; // triangles * 40 floats: ten quadwords each, as the game sends them to VU1.
 +};
 +
@@ -1282,10 +1282,10 @@ index 8f874c8..9df5ab8 100644
              return;
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
 new file mode 100644
-index 0000000..becabc4
+index 0000000..e917d8c
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
-@@ -0,0 +1,3107 @@
+@@ -0,0 +1,3108 @@
 +// GOW-Port: render-target GS renderer, see include/runtime/gs/gs_hw_backend.h.
 +#include "runtime/gs/gs_tri_groups.h"
 +#include "runtime/gs/gs_colour_runs.h" // GOW-Port: ps2recomp-gs-sombras-tramos
@@ -3306,7 +3306,8 @@ index 0000000..becabc4
 +        std::memcpy(&batch, &b.vertices[0].z, sizeof(batch));
 +        // Consecutive batches with the same state and constants are one draw.
 +        if (trackPending != nullptr && sameState(trackPendingState, b.state) &&
-+            std::memcmp(trackPending->draw, batch->draw, 36u * sizeof(float)) == 0)
++            std::memcmp(trackPending->draw, batch->draw, 36u * sizeof(float)) == 0 &&
++            std::memcmp(trackPending->draw + 41, batch->draw + 41, 23u * sizeof(float)) == 0)
 +        {
 +            const size_t have = trackPending->triangles * 160u, add = batch->triangles * 160u;
 +            trackPending = static_cast<GSTrackBatch *>(std::realloc(trackPending, offsetof(GSTrackBatch, quads) + have + add));

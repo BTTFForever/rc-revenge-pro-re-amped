@@ -1,8 +1,8 @@
 // Compares the track vertex shader with the exact C++ version of the VU1 program, on runs captured from the game.
 //
 // Every triangle runs through decomp/shaders/trdr_shape.vert on the GPU and, on its own, through runTrdrShape.
-// Build: g++ -std=c++20 -O2 -I decomp/vu1 tools/shader_check.cpp decomp/vu1/trdr_shape.cpp -lEGL -lOpenGL
-// Usage: shader_check <shader> <capture>...
+// Build: g++ -std=c++20 -O2 -I decomp/vu1 tools/shader_check.cpp decomp/vu1/trdr_shape.cpp decomp/vu1/env_shape.cpp decomp/vu1/vu_shape.cpp -lEGL -lOpenGL
+// Usage: shader_check [--env] <shader> <capture>...   (--env: captures of EnvRdr_VUShapeProg)
 #define GL_GLEXT_PROTOTYPES
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -61,6 +61,13 @@ GLuint compileShader(const std::string &source)
 int main(int argc, char **argv)
 {
     _mm_setcsr(_mm_getcsr() | 0x6000u); // The VU rounds toward zero.
+    bool envProgram = false;
+    if (argc > 1 && std::strcmp(argv[1], "--env") == 0)
+    {
+        envProgram = true;
+        --argc;
+        ++argv;
+    }
 
     EGLDisplay display = eglGetPlatformDisplay(EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, nullptr);
     eglInitialize(display, nullptr, nullptr);
@@ -126,7 +133,7 @@ int main(int argc, char **argv)
             uint32_t top;
             std::memcpy(&top, memory + 0x4000 + 32 * 16, 4);
 
-            float draw[4 * 11] = {};
+            float draw[64] = {};
             std::memcpy(draw, quad(18), 64);
             std::memcpy(draw + 16, quad(16), 16);
             std::memcpy(draw + 20, quad(17), 16);
@@ -135,13 +142,19 @@ int main(int argc, char **argv)
             std::memcpy(draw + 32, quad(11), 16);
             draw[36] = 2048.0f, draw[37] = 2048.0f, draw[38] = 320.0f, draw[39] = 240.0f;
             draw[40] = 16777216.0f;
-            glBindBuffer(GL_UNIFORM_BUFFER, uniforms);
-            glBufferData(GL_UNIFORM_BUFFER, sizeof(draw), draw, GL_STREAM_DRAW);
-            glBindBufferBase(GL_UNIFORM_BUFFER, 1, uniforms);
+            if (envProgram)
+            {
+                int16_t flag;
+                std::memcpy(&flag, memory + 10 * 16 + 8, 2);
+                const int32_t mode = flag > 0 ? 2 : 1;
+                std::memcpy(draw + 41, &mode, 4);
+                std::memcpy(draw + 44, quad(7), 48);
+                std::memcpy(draw + 56, quad(10), 16);
+            }
 
             // Find every triangle, keeping the block each one came from.
             struct Item { int headerAt; int at; };
-            std::vector<Item> items;
+            std::vector<Item> allItems;
             int reader = static_cast<int>(top & 0x3FFu);
             for (int guard = 0; guard < 64; ++guard)
             {
@@ -155,100 +168,115 @@ int main(int argc, char **argv)
                 if (count == 0 || reader + 4 + count * 10 > 1024)
                     break;
                 for (int t = 0; t < count; ++t)
-                    items.push_back({reader, reader + 4 + t * 10});
+                    allItems.push_back({reader, reader + 4 + t * 10});
                 reader += 4 + count * 10;
             }
-            if (items.empty())
+            if (allItems.empty())
                 continue;
 
-            std::vector<uint8_t> triangles(items.size() * 160u);
-            for (size_t i = 0; i < items.size(); ++i)
-                std::memcpy(triangles.data() + i * 160u, memory + items[i].at * 16, 160u);
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, input);
-            glBufferData(GL_SHADER_STORAGE_BUFFER, triangles.size(), triangles.data(), GL_STREAM_DRAW);
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, input);
-            std::vector<Output> outputs(items.size() * 3u);
-            glBindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER, feedback);
-            glBufferData(GL_TRANSFORM_FEEDBACK_BUFFER, outputs.size() * sizeof(Output), nullptr, GL_STREAM_READ);
-            glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, feedback);
-            glBeginTransformFeedback(GL_POINTS);
-            glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(outputs.size()));
-            glEndTransformFeedback();
-            glGetBufferSubData(GL_TRANSFORM_FEEDBACK_BUFFER, 0, outputs.size() * sizeof(Output), outputs.data());
-
-            for (size_t i = 0; i < items.size(); ++i)
+            // Each texture block is one draw, as in the game: a block's first quadword is one of the constants.
+            for (size_t first = 0; first < allItems.size();)
             {
-                ++stats.triangles;
-                // Run this triangle alone through the exact version.
-                std::memcpy(single.data(), memory, 0x4000);
-                const int at = static_cast<int>(top & 0x3FFu);
-                std::memcpy(single.data() + at * 16, memory + items[i].headerAt * 16, 64);
-                const int16_t one = 1;
-                std::memcpy(single.data() + at * 16 + 8, &one, 2);
-                std::memcpy(single.data() + (at + 4) * 16, memory + items[i].at * 16, 160);
-                std::memset(single.data() + (at + 14) * 16, 0, 16);
-                std::vector<std::vector<uint8_t>> kicks;
-                rc::vu1::runTrdrShape(single.data(), registers, 0u, top, kicks);
+                size_t last = first;
+                while (last < allItems.size() && allItems[last].headerAt == allItems[first].headerAt)
+                    ++last;
+                const std::vector<Item> items(allItems.begin() + first, allItems.begin() + last);
+                first = last;
+                std::memcpy(draw + 60, quad(items[0].headerAt), 16);
+                glBindBuffer(GL_UNIFORM_BUFFER, uniforms);
+                glBufferData(GL_UNIFORM_BUFFER, sizeof(draw), draw, GL_STREAM_DRAW);
+                glBindBufferBase(GL_UNIFORM_BUFFER, 1, uniforms);
 
-                const Output *out = &outputs[i * 3u];
-                const float nearZ = quad(12)[2];
-                const bool behind = out[0].viewZ < nearZ || out[1].viewZ < nearZ || out[2].viewZ < nearZ;
-                const int drawn = static_cast<int>(kicks.size()) - 2;
+                std::vector<uint8_t> triangles(items.size() * 160u);
+                for (size_t i = 0; i < items.size(); ++i)
+                    std::memcpy(triangles.data() + i * 160u, memory + items[i].at * 16, 160u);
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, input);
+                glBufferData(GL_SHADER_STORAGE_BUFFER, triangles.size(), triangles.data(), GL_STREAM_DRAW);
+                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, input);
+                std::vector<Output> outputs(items.size() * 3u);
+                glBindBuffer(GL_TRANSFORM_FEEDBACK_BUFFER, feedback);
+                glBufferData(GL_TRANSFORM_FEEDBACK_BUFFER, outputs.size() * sizeof(Output), nullptr, GL_STREAM_READ);
+                glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, feedback);
+                glBeginTransformFeedback(GL_POINTS);
+                glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(outputs.size()));
+                glEndTransformFeedback();
+                glGetBufferSubData(GL_TRANSFORM_FEEDBACK_BUFFER, 0, outputs.size() * sizeof(Output), outputs.data());
 
-                if (out[0].keep == 0.0f)
+                for (size_t i = 0; i < items.size(); ++i)
                 {
+                    ++stats.triangles;
+                    // Run this triangle alone through the exact version.
+                    std::memcpy(single.data(), memory, 0x4000);
+                    const int at = static_cast<int>(top & 0x3FFu);
+                    std::memcpy(single.data() + at * 16, memory + items[i].headerAt * 16, 64);
+                    const int16_t one = 1;
+                    std::memcpy(single.data() + at * 16 + 8, &one, 2);
+                    std::memcpy(single.data() + (at + 4) * 16, memory + items[i].at * 16, 160);
+                    std::memset(single.data() + (at + 14) * 16, 0, 16);
+                    std::vector<std::vector<uint8_t>> kicks;
+                    (envProgram ? rc::vu1::runEnvShape : rc::vu1::runTrdrShape)(single.data(), registers, 0u, top, kicks);
+
+                    const Output *out = &outputs[i * 3u];
+                    const float nearZ = quad(12)[2];
+                    const bool behind = out[0].viewZ < nearZ || out[1].viewZ < nearZ || out[2].viewZ < nearZ;
+                    const int packetsBefore = envProgram ? 1 : 2; // The texture block, and the track program's header.
+                    const int drawn = static_cast<int>(kicks.size()) - packetsBefore;
+
+                    if (out[0].keep == 0.0f)
+                    {
+                        if (drawn == 0)
+                            ++stats.culledAgree;
+                        else
+                            ++stats.keepDisagree;
+                        continue;
+                    }
+                    if (behind)
+                    {
+                        ++stats.behindNear;
+                        continue;
+                    }
                     if (drawn == 0)
-                        ++stats.culledAgree;
-                    else
-                        ++stats.keepDisagree;
-                    continue;
-                }
-                if (behind)
-                {
-                    ++stats.behindNear;
-                    continue;
-                }
-                if (drawn == 0)
-                {
-                    ++stats.offscreen; // Wholly past one screen edge: the GPU discards it as well.
-                    continue;
-                }
-                // A triangle past the guard band goes through the original's clipper even if one piece comes out.
-                const float guard = quad(16)[3];
-                bool crosses = false;
-                for (int corner = 0; corner < 3; ++corner)
-                    crosses = crosses || std::fabs(out[corner].gs[0] - quad(16)[0]) > guard || std::fabs(out[corner].gs[1] - quad(16)[1]) > guard;
-                if (crosses || drawn != 1 || kicks[2].size() != 160u)
-                {
-                    ++stats.screenClipped; // Crosses the screen edge: the GPU cuts it instead.
-                    continue;
-                }
+                    {
+                        ++stats.offscreen; // Wholly past one screen edge: the GPU discards it as well.
+                        continue;
+                    }
+                    // A triangle past the guard band goes through the original's clipper even if one piece comes out.
+                    const float guard = quad(16)[3];
+                    bool crosses = false;
+                    for (int corner = 0; corner < 3; ++corner)
+                        crosses = crosses || std::fabs(out[corner].gs[0] - quad(16)[0]) > guard || std::fabs(out[corner].gs[1] - quad(16)[1]) > guard;
+                    if (crosses || drawn != 1 || kicks[packetsBefore].size() != 160u)
+                    {
+                        ++stats.screenClipped; // Crosses the screen edge: the GPU cuts it instead.
+                        continue;
+                    }
 
-                ++stats.compared;
-                const uint8_t *packet = kicks[2].data() + 16;
-                for (int corner = 0; corner < 3; ++corner)
-                {
-                    const float *st = reinterpret_cast<const float *>(packet + corner * 48);
-                    const int32_t *colour = reinterpret_cast<const int32_t *>(packet + corner * 48 + 16);
-                    const int32_t *xyz = reinterpret_cast<const int32_t *>(packet + corner * 48 + 32);
-                    const Output &o = out[corner];
-                    const double dx = std::fabs(o.gs[0] * 16.0 - xyz[0]), dy = std::fabs(o.gs[1] * 16.0 - xyz[1]);
-                    const double xy = std::max(dx, dy);
-                    const double z = std::fabs(std::trunc(static_cast<double>(o.gs[2])) - xyz[2]); // The game truncates depth.
-                    double stError = 0.0;
-                    for (int k = 0; k < 3; ++k)
-                        stError = std::max(stError, std::fabs(o.stq[k] - st[k]) / std::max(1e-6, std::fabs(static_cast<double>(st[k]))));
-                    double colourError = 0.0;
-                    for (int k = 0; k < 4; ++k)
-                        colourError = std::max(colourError, static_cast<double>(std::fabs(o.colour[k] - colour[k])));
-                    stats.maxXY = std::max(stats.maxXY, xy);
-                    stats.maxZ = std::max(stats.maxZ, z);
-                    stats.maxST = std::max(stats.maxST, stError);
-                    stats.maxColour = std::max(stats.maxColour, colourError);
-                    stats.overXY += xy > 2.0;
-                    stats.overZ += z > 2.0;
-                    stats.overST += stError > 1e-5;
-                    stats.overColour += colourError > 1.0;
+                    ++stats.compared;
+                    const uint8_t *packet = kicks[packetsBefore].data() + 16;
+                    for (int corner = 0; corner < 3; ++corner)
+                    {
+                        const float *st = reinterpret_cast<const float *>(packet + corner * 48);
+                        const int32_t *colour = reinterpret_cast<const int32_t *>(packet + corner * 48 + 16);
+                        const int32_t *xyz = reinterpret_cast<const int32_t *>(packet + corner * 48 + 32);
+                        const Output &o = out[corner];
+                        const double dx = std::fabs(o.gs[0] * 16.0 - xyz[0]), dy = std::fabs(o.gs[1] * 16.0 - xyz[1]);
+                        const double xy = std::max(dx, dy);
+                        const double z = std::fabs(std::trunc(static_cast<double>(o.gs[2])) - xyz[2]); // The game truncates depth.
+                        double stError = 0.0;
+                        for (int k = 0; k < 3; ++k)
+                            stError = std::max(stError, std::fabs(o.stq[k] - st[k]) / std::max(1e-6, std::fabs(static_cast<double>(st[k]))));
+                        double colourError = 0.0;
+                        for (int k = 0; k < 4; ++k)
+                            colourError = std::max(colourError, static_cast<double>(std::fabs(o.colour[k] - colour[k])));
+                        stats.maxXY = std::max(stats.maxXY, xy);
+                        stats.maxZ = std::max(stats.maxZ, z);
+                        stats.maxST = std::max(stats.maxST, stError);
+                        stats.maxColour = std::max(stats.maxColour, colourError);
+                        stats.overXY += xy > 2.0;
+                        stats.overZ += z > 2.0;
+                        stats.overST += stError > 1e-5;
+                        stats.overColour += colourError > 1.0;
+                    }
                 }
             }
         }
