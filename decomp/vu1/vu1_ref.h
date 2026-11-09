@@ -24,6 +24,12 @@ void runWaterShape(uint8_t *memory, const float registers[32][4], uint32_t start
 void runSkinShape(uint8_t *memory, const float registers[32][4], uint32_t startPc, uint32_t top,
                   std::vector<std::vector<uint8_t>> &kicks);
 
+// The same for TERdr_VUShapeProg (Track Editor pieces) and Rdr_VUShapeProg.
+void runTerdrShape(uint8_t *memory, const float registers[32][4], uint32_t startPc, uint32_t top,
+                   std::vector<std::vector<uint8_t>> &kicks);
+void runRdrShape(uint8_t *memory, const float registers[32][4], uint32_t startPc, uint32_t top,
+                 std::vector<std::vector<uint8_t>> &kicks);
+
 // Copies one GIF packet, starting at a VU memory quadword: tags and data up to the end-of-packet tag.
 void copyGifPacket(const uint8_t *memory, int quad, std::vector<uint8_t> &packet);
 

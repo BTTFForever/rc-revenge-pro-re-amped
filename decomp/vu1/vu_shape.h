@@ -146,6 +146,8 @@ struct ShapeLayout
     int constantsOffset;         // Added to the fixed VU memory addresses of the constants.
     bool hasWindingFlag;         // Otherwise a triangle is drawn only when it faces the viewer.
     bool hasDepthBias;           // A depth bias in the first corner's texture w.
+    bool biasInQuickPath = false; // Same bias, added only on the path that needs no clipping.
+    bool biasInKick = false;      // Same bias, added again as each triangle is written.
 };
 
 struct ShapeProgram
@@ -206,5 +208,45 @@ struct ShapeProgram
     void scissor(int link, bool testFirst);
     int clipStage(int axis, float limit, bool lowerBound, int source, int dest, int count);
 };
+
+// The main loop the track and Track Editor programs share: texture blocks, register blocks, and a per-triangle step.
+template <typename PerTriangle>
+void runTextureBlocks(ShapeProgram &p, int reader, PerTriangle perTriangle)
+{
+    int count = p.loadInt(reader, 2);
+    bool startTextureBlock = true;
+    for (;;)
+    {
+        // A negative count is a block of GS registers: kick it and step over it.
+        while (count < 0)
+        {
+            p.kick(reader + 1);
+            reader += 1 - count;
+            count = p.loadInt(reader, 2);
+            startTextureBlock = true;
+            if (count == 0)
+                return;
+        }
+        if (count == 0)
+            return;
+
+        if (startTextureBlock)
+        {
+            // Four quadwords of texture state go out through a packet at the start of VU memory.
+            for (int i = 0; i < 4; ++i)
+                p.store(3 + i, p.load(reader + i));
+            reader += 4;
+            p.kick(0);
+            p.vi11 = p.layout.firstVertex;
+            startTextureBlock = false;
+        }
+
+        for (; count != 0; --count)
+            perTriangle(reader);
+
+        count = p.loadInt(reader, 2);
+        startTextureBlock = true;
+    }
+}
 
 } // namespace rc::vu1

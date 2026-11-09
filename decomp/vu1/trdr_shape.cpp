@@ -29,47 +29,13 @@ void runTrdrShape(uint8_t *memory, const float registers[32][4], uint32_t startP
     p.kick(247);
     p.loadConstants();
 
-    int reader = static_cast<int>(top & 0x3FFu);
-    int count = p.loadInt(reader, 2);
-    bool startTextureBlock = true;
-
-    while (true)
+    runTextureBlocks(p, static_cast<int>(top & 0x3FFu), [&](int &reader)
     {
-        // A negative count is a block of GS registers: kick it and step over it.
-        while (count < 0)
-        {
-            p.kick(reader + 1);
-            reader += 1 - count;
-            count = p.loadInt(reader, 2);
-            startTextureBlock = true;
-            if (count == 0)
-                return;
-        }
-        if (count == 0)
+        if (!p.setupTriangle(reader))
             return;
-
-        if (startTextureBlock)
-        {
-            // Four quadwords of texture state go out through a packet at the start of VU memory.
-            for (int i = 0; i < 4; ++i)
-                p.store(3 + i, p.load(reader + i));
-            reader += 4;
-            p.kick(0);
-            p.vi11 = 26;
-            startTextureBlock = false;
-        }
-
-        for (; count != 0; --count)
-        {
-            if (!p.setupTriangle(reader))
-                continue;
-            p.applyTint();
-            p.drawTriangle();
-        }
-
-        count = p.loadInt(reader, 2);
-        startTextureBlock = true;
-    }
+        p.applyTint();
+        p.drawTriangle();
+    });
 }
 
 } // namespace rc::vu1

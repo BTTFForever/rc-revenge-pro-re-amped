@@ -97,10 +97,13 @@ void ShapeProgram::rotateBackward()
 
 void ShapeProgram::kickTriangle()
 {
+    const float bias = r[14].f[3];
     for (int i = 0; i < 3; ++i)
     {
         V &position = r[11 + i];
         addTo(position, position, r[9], XY);
+        if (layout.biasInKick)
+            position.f[2] = fadd(position.f[2], bias).value;
         position.f[0] = ftoi4(position.f[0]);
         position.f[1] = ftoi4(position.f[1]);
         position.f[2] = ftoi0(position.f[2]);
@@ -146,6 +149,9 @@ void ShapeProgram::writeQuickTriangle()
     clip(12);
     clip(13);
     store(vi11 + 6, r[16]);
+    if (layout.biasInQuickPath)
+        for (int corner = 0; corner < 3; ++corner)
+            r[11 + corner].f[2] = fadd(r[11 + corner].f[2], r[14].f[3]).value;
     temp0.f[0] = ftoi4(temp0.f[0]);
     temp0.f[1] = ftoi4(temp0.f[1]);
     temp0.f[2] = ftoi0(r[11].f[2]);

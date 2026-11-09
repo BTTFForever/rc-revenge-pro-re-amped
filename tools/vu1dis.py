@@ -256,6 +256,10 @@ def main():
                 rendered.append(f'L_{pc:04x}:')
             rendered.append(text_line)
         (out / f'{program}.vsm').write_text('\n'.join(rendered) + '\n')
+        code = bytearray(0x4000) # The program as VU1 micro memory, for vu1_check.cpp's synthetic runs.
+        for pc, (lower, upper) in image.items():
+            struct.pack_into('<II', code, pc, lower, upper)
+        (out / f'{program}.bin').write_bytes(code)
         print(f'{program}: group {group}, {len(image)} instructions, {sum(len(v) for v in labels.values())} labels')
     print(f'{total} instructions, {unknown} undecoded')
 
