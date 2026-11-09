@@ -994,10 +994,10 @@ index 8f874c8..9df5ab8 100644
              return;
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
 new file mode 100644
-index 0000000..ed24e8f
+index 0000000..1fb0d09
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
-@@ -0,0 +1,2861 @@
+@@ -0,0 +1,2959 @@
 +// GOW-Port: render-target GS renderer, see include/runtime/gs/gs_hw_backend.h.
 +#include "runtime/gs/gs_tri_groups.h"
 +#include "runtime/gs/gs_colour_runs.h" // GOW-Port: ps2recomp-gs-sombras-tramos
@@ -1009,6 +1009,7 @@ index 0000000..ed24e8f
 +#include "../gs_gpu_helpers.h"
 +#include "runtime/gs/gs_shared_present.h"
 +
++#include <array>
 +#include <map>
 +#include <algorithm>
 +#include <chrono>
@@ -2226,18 +2227,18 @@ index 0000000..ed24e8f
 +        g.ActiveTexture(kTexture0 + 2);
 +        g.BindTexture(kTexture2D, tableTex);
 +        g.ActiveTexture(kTexture0);
-+        g.Uniform1i(locRtColor, 1);
-+        g.Uniform1i(locTables, 2);
-+        g.Uniform1i(locPalette, 3);
-+        g.Uniform4i(locTexFmt, tf.pageShiftX, tf.pageShiftY, tf.pixelsPerPageShift, tf.unpackedShift);
-+        g.Uniform4i(locTexFmt2, tf.bitOffset, texelBits, static_cast<GLint>(offsetOf(tf.table)), kind);
++        setUniform1i(g, locRtColor, 1);
++        setUniform1i(g, locTables, 2);
++        setUniform1i(g, locPalette, 3);
++        setUniform4i(g, locTexFmt, tf.pageShiftX, tf.pageShiftY, tf.pixelsPerPageShift, tf.unpackedShift);
++        setUniform4i(g, locTexFmt2, tf.bitOffset, texelBits, static_cast<GLint>(offsetOf(tf.table)), kind);
 +        const auto inv = inverseOffset.find(ownerPsm);
 +        const GLint zbits = !depthOwner ? 0 : (ownerPsm == 0x32u || ownerPsm == 0x3Au) ? 16 : ownerPsm == 0x31u ? 24 : 32;
-+        g.Uniform4i(locRtFmt, rf.pageShiftX, rf.pageShiftY, rf.pixelsPerPageShift, 1 << rf.unpackedShift);
-+        g.Uniform4i(locRtFmt2, inv == inverseOffset.end() ? 0 : static_cast<GLint>(inv->second),
++        setUniform4i(g, locRtFmt, rf.pageShiftX, rf.pageShiftY, rf.pixelsPerPageShift, 1 << rf.unpackedShift);
++        setUniform4i(g, locRtFmt2, inv == inverseOffset.end() ? 0 : static_cast<GLint>(inv->second),
 +                    static_cast<GLint>(depthOwner ? rt.zbp : rt.fbp), static_cast<GLint>(rt.fbw), zbits);
-+        g.Uniform4i(locTex0, static_cast<GLint>(c.tex0.tbp0), c.tex0.tbw, s.textureWidth, s.textureHeight);
-+        g.Uniform2f(locRtPx, static_cast<float>(rt.pxW), static_cast<float>(rt.pxH));
++        setUniform4i(g, locTex0, static_cast<GLint>(c.tex0.tbp0), c.tex0.tbw, s.textureWidth, s.textureHeight);
++        setUniform2f(g, locRtPx, static_cast<float>(rt.pxW), static_cast<float>(rt.pxH));
 +    }
 +
 +    // ---- CLUT from a render target --------------------------------------------------------------------------------
@@ -2840,6 +2841,85 @@ index 0000000..ed24e8f
 +            ++stats.unsupportedBlend;
 +    }
 +
++    // Last values sent to the main program's uniforms, so unchanged ones are not sent again.
++    struct UniformSlot { bool set = false; int32_t v[4] = {}; };
++    std::array<UniformSlot, 128> uniformCache;
++    uint32_t vboRing = 0u;
++    bool uniformUnchanged(GLint loc, int32_t a, int32_t b = 0, int32_t c = 0, int32_t d = 0)
++    {
++        if (loc < 0)
++            return true;
++        if (loc >= static_cast<GLint>(uniformCache.size()))
++            return false;
++        UniformSlot &slot = uniformCache[static_cast<size_t>(loc)];
++        if (slot.set && slot.v[0] == a && slot.v[1] == b && slot.v[2] == c && slot.v[3] == d)
++            return true;
++        slot.set = true;
++        slot.v[0] = a; slot.v[1] = b; slot.v[2] = c; slot.v[3] = d;
++        return false;
++    }
++    static int32_t bits(float f) { int32_t v; std::memcpy(&v, &f, 4); return v; }
++    void setUniform1i(const Api &g, GLint loc, GLint a) { if (!uniformUnchanged(loc, a)) g.Uniform1i(loc, a); }
++    void setUniform1f(const Api &g, GLint loc, float a) { if (!uniformUnchanged(loc, bits(a))) g.Uniform1f(loc, a); }
++    void setUniform2f(const Api &g, GLint loc, float a, float b) { if (!uniformUnchanged(loc, bits(a), bits(b))) g.Uniform2f(loc, a, b); }
++    void setUniform4i(const Api &g, GLint loc, GLint a, GLint b, GLint c, GLint d) { if (!uniformUnchanged(loc, a, b, c, d)) g.Uniform4i(loc, a, b, c, d); }
++
++    // The composed frame reaches the CPU through pixel buffers, so presenting does not wait for the GPU. What is shown is a
++    // frame or two old. A size change (a video ending, say) reads synchronously once so no stale picture is scaled.
++    struct ReadbackSlot { GLuint buffer = 0; GLsync fence = nullptr; uint32_t width = 0, height = 0; };
++    std::array<ReadbackSlot, 4> readbackSlots;
++    uint32_t readbackNext = 0u;
++    std::vector<uint8_t> readbackLast;
++    uint32_t readbackLastWidth = 0u, readbackLastHeight = 0u;
++    void readBackFrame(const Api &g, uint32_t width, uint32_t height, std::vector<uint8_t> &pixels)
++    {
++        constexpr GLenum kPixelPack = 0x88EB, kStreamRead = 0x88E1, kSyncGpuDone = 0x9117;
++        constexpr GLenum kAlreadySignaled = 0x911A, kConditionSatisfied = 0x911C;
++        const size_t bytes = static_cast<size_t>(width) * height * 4u;
++        ReadbackSlot &slot = readbackSlots[readbackNext];
++        bool free = slot.fence == nullptr;
++        if (slot.fence)
++        {
++            const GLenum status = g.ClientWaitSync(slot.fence, kSyncFlushCommandsBit, 0u);
++            if (status == kAlreadySignaled || status == kConditionSatisfied)
++            {
++                g.BindBuffer(kPixelPack, slot.buffer);
++                if (slot.width == width && slot.height == height)
++                    if (void *mapped = g.MapBufferRange(kPixelPack, 0, static_cast<GLsizeiptr>(bytes), 0x1u))
++                    {
++                        readbackLast.assign(static_cast<const uint8_t *>(mapped), static_cast<const uint8_t *>(mapped) + bytes);
++                        readbackLastWidth = width;
++                        readbackLastHeight = height;
++                        g.UnmapBuffer(kPixelPack);
++                    }
++                g.BindBuffer(kPixelPack, 0);
++                g.DeleteSync(slot.fence);
++                slot.fence = nullptr;
++                free = true;
++            }
++        }
++        if (free)
++        {
++            if (!slot.buffer)
++                g.GenBuffers(1, &slot.buffer);
++            g.BindBuffer(kPixelPack, slot.buffer);
++            if (slot.width != width || slot.height != height)
++            {
++                g.BufferData(kPixelPack, static_cast<GLsizeiptr>(bytes), nullptr, kStreamRead);
++                slot.width = width;
++                slot.height = height;
++            }
++            g.ReadPixels(0, 0, static_cast<GLsizei>(width), static_cast<GLsizei>(height), kRgba, kUnsignedByte, nullptr);
++            g.BindBuffer(kPixelPack, 0);
++            slot.fence = g.FenceSync(kSyncGpuDone, 0u);
++            readbackNext = (readbackNext + 1u) % readbackSlots.size();
++        }
++        if (readbackLastWidth == width && readbackLastHeight == height && readbackLast.size() == bytes)
++            pixels = readbackLast;
++        else
++            g.ReadPixels(0, 0, static_cast<GLsizei>(width), static_cast<GLsizei>(height), kRgba, kUnsignedByte, pixels.data());
++    }
++
 +    int dumpPresents = std::getenv("GOW_GS_HW_DUMP") ? std::atoi(std::getenv("GOW_GS_HW_DUMP")) : -1;
 +    int presentCount = 0, dumped = 0, dumpedAt = 0;
 +    const int dumpMax = std::getenv("GOW_GS_HW_DUMPMAX") ? std::atoi(std::getenv("GOW_GS_HW_DUMPMAX")) : 4000;
@@ -3076,33 +3156,33 @@ index 0000000..ed24e8f
 +        g.UseProgram(program);
 +        {
 +            const bool date = ((c.test >> 14) & 1u) != 0u && c.frame.psm != GS_PSM_CT24;
-+            g.Uniform1i(locDate, date ? 1 : 0);
-+            g.Uniform1i(locDatm, ((c.test >> 15) & 1u) != 0u ? 1 : 0);
++            setUniform1i(g, locDate, date ? 1 : 0);
++            setUniform1i(g, locDatm, ((c.test >> 15) & 1u) != 0u ? 1 : 0);
 +            const uint64_t al = c.alpha;
-+            g.Uniform1i(locSwBlend, softBlend && !zAliasWrite ? 1 : 0);
-+            g.Uniform1i(locPabe, pabe ? 1 : 0);
-+            g.Uniform1i(locColClamp, (s.colclamp & 1u) != 0u ? 1 : 0);
-+            g.Uniform4i(locAbcd, static_cast<GLint>(al & 3u), static_cast<GLint>((al >> 2) & 3u), static_cast<GLint>((al >> 4) & 3u), static_cast<GLint>((al >> 6) & 3u));
-+            g.Uniform1f(locFix, static_cast<float>((al >> 32) & 0xFFu));
-+            g.Uniform1i(locZAlias, zAlias ? 1 + static_cast<GLint>(ztst) : 0);
-+            g.Uniform1i(locZAliasWrite, zAliasWrite ? 1 : 0);
-+            g.Uniform1f(locZAliasMax, zMaxFor(c.zbuf.psm));
++            setUniform1i(g, locSwBlend, softBlend && !zAliasWrite ? 1 : 0);
++            setUniform1i(g, locPabe, pabe ? 1 : 0);
++            setUniform1i(g, locColClamp, (s.colclamp & 1u) != 0u ? 1 : 0);
++            setUniform4i(g, locAbcd, static_cast<GLint>(al & 3u), static_cast<GLint>((al >> 2) & 3u), static_cast<GLint>((al >> 4) & 3u), static_cast<GLint>((al >> 6) & 3u));
++            setUniform1f(g, locFix, static_cast<float>((al >> 32) & 0xFFu));
++            setUniform1i(g, locZAlias, zAlias ? 1 + static_cast<GLint>(ztst) : 0);
++            setUniform1i(g, locZAliasWrite, zAliasWrite ? 1 : 0);
++            setUniform1f(g, locZAliasMax, zMaxFor(c.zbuf.psm));
 +            if (date || softBlend || zAlias)
 +            {
 +                g.ActiveTexture(kTexture0 + 4);
 +                g.BindTexture(kTexture2D, rt.color);
-+                g.Uniform1i(locDest, 4);
++                setUniform1i(g, locDest, 4);
 +                g.ActiveTexture(kTexture0);
 +                g.TextureBarrier();
 +            }
 +        }
-+        g.Uniform2f(locInvSize, 1.0f / rt.pxW, 1.0f / rt.pxH);
-+        g.Uniform1i(locTme, s.prim.tme ? 1 : 0);
-+        g.Uniform1i(locFst, s.prim.fst ? 1 : 0);
-+        g.Uniform1i(locIip, s.prim.iip ? 1 : 0);
-+        g.Uniform1i(locTfx, c.tex0.tfx);
-+        g.Uniform1i(locTcc, c.tex0.tcc);
-+        g.Uniform1f(locBlendScale, 1.0f / 128.0f);
++        setUniform2f(g, locInvSize, 1.0f / rt.pxW, 1.0f / rt.pxH);
++        setUniform1i(g, locTme, s.prim.tme ? 1 : 0);
++        setUniform1i(g, locFst, s.prim.fst ? 1 : 0);
++        setUniform1i(g, locIip, s.prim.iip ? 1 : 0);
++        setUniform1i(g, locTfx, c.tex0.tfx);
++        setUniform1i(g, locTcc, c.tex0.tcc);
++        setUniform1f(g, locBlendScale, 1.0f / 128.0f);
 +        if (s.prim.tme)
 +        {
 +            // a texture that lives in a render target of the same format is sampled straight from it
@@ -3137,26 +3217,26 @@ index 0000000..ed24e8f
 +                g.TextureBarrier();
 +            const bool indexed = !(src || rsrc || zsrc) && isIndexed(c.tex0.psm) && vram != nullptr;
 +            Texture &tex = (src || rsrc || zsrc) ? dummy : indexed ? indexTextureFor(s) : textureFor(s);
-+            g.Uniform1i(locIndexed, indexed ? 1 : 0);
-+            g.Uniform1i(locLinear, s.linearFilter ? 1 : 0);
++            setUniform1i(g, locIndexed, indexed ? 1 : 0);
++            setUniform1i(g, locLinear, s.linearFilter ? 1 : 0);
 +            if (indexed)
 +            {
 +                g.ActiveTexture(kTexture0 + 5);
 +                g.BindTexture(kTexture2D, paletteFor(s));
-+                g.Uniform1i(locIdxPalette, 5);
-+                g.Uniform4i(locWrap, (c.clamp & 3u) == 0u ? 0 : 1, ((c.clamp >> 2) & 3u) == 0u ? 0 : 1, 0, 0);
++                setUniform1i(g, locIdxPalette, 5);
++                setUniform4i(g, locWrap, (c.clamp & 3u) == 0u ? 0 : 1, ((c.clamp >> 2) & 3u) == 0u ? 0 : 1, 0, 0);
 +            }
 +            g.ActiveTexture(kTexture0);
 +            g.BindTexture(kTexture2D, zsrc ? zsrc->depth : src ? src->color : rsrc ? rsrc->color : tex.id);
-+            g.Uniform1i(locZTex, !zsrc ? 0 : c.tex0.psm == 0x32 || c.tex0.psm == 0x3A ? 16 : c.tex0.psm == 0x31 ? 24 : 32);
-+            g.Uniform1f(locZMax, zsrc ? zMaxFor(static_cast<uint8_t>(c.tex0.psm)) : 1.0f);
-+            g.Uniform1i(locRtTex24, !(src || rsrc) ? 0 : c.tex0.psm == GS_PSM_CT24 ? 1 : family16(c.tex0.psm) ? 2 : 0);
-+            g.Uniform1i(locReinterp, rsrc ? 1 : 0);
++            setUniform1i(g, locZTex, !zsrc ? 0 : c.tex0.psm == 0x32 || c.tex0.psm == 0x3A ? 16 : c.tex0.psm == 0x31 ? 24 : 32);
++            setUniform1f(g, locZMax, zsrc ? zMaxFor(static_cast<uint8_t>(c.tex0.psm)) : 1.0f);
++            setUniform1i(g, locRtTex24, !(src || rsrc) ? 0 : c.tex0.psm == GS_PSM_CT24 ? 1 : family16(c.tex0.psm) ? 2 : 0);
++            setUniform1i(g, locReinterp, rsrc ? 1 : 0);
 +            if (rsrc)
 +                setupReinterpret(s, *rsrc, depthOwner);
-+            g.Uniform1f(locTa0, static_cast<float>(s.texa.ta0));
-+            g.Uniform1f(locTa1, static_cast<float>(s.texa.ta1));
-+            g.Uniform1i(locAem, s.texa.aem ? 1 : 0);
++            setUniform1f(g, locTa0, static_cast<float>(s.texa.ta0));
++            setUniform1f(g, locTa1, static_cast<float>(s.texa.ta1));
++            setUniform1i(g, locAem, s.texa.aem ? 1 : 0);
 +            const GLint filter = s.linearFilter ? kLinear : kNearest;
 +            g.TexParameteri(kTexture2D, kTextureMinFilter, filter);
 +            g.TexParameteri(kTexture2D, kTextureMagFilter, filter);
@@ -3169,32 +3249,50 @@ index 0000000..ed24e8f
 +                g.TexParameteri(kTexture2D, kTextureMinFilter, kNearest);
 +                g.TexParameteri(kTexture2D, kTextureMagFilter, kNearest);
 +            }
-+            g.Uniform1i(locTex, 0);
-+            g.Uniform2f(locTexDim, static_cast<float>(std::max<uint16_t>(s.textureWidth, 1)), static_cast<float>(std::max<uint16_t>(s.textureHeight, 1)));
++            setUniform1i(g, locTex, 0);
++            setUniform2f(g, locTexDim, static_cast<float>(std::max<uint16_t>(s.textureWidth, 1)), static_cast<float>(std::max<uint16_t>(s.textureHeight, 1)));
 +            if (zsrc)
 +            {
-+                g.Uniform2f(locTexSize, static_cast<float>(zsrc->pxW), static_cast<float>(zsrc->pxH));
++                setUniform2f(g, locTexSize, static_cast<float>(zsrc->pxW), static_cast<float>(zsrc->pxH));
 +                g.TexParameteri(kTexture2D, kTextureMinFilter, kNearest);
 +                g.TexParameteri(kTexture2D, kTextureMagFilter, kNearest);
 +            }
 +            else if (src)
-+                g.Uniform2f(locTexSize, static_cast<float>(src->pxW), static_cast<float>(src->pxH));
++                setUniform2f(g, locTexSize, static_cast<float>(src->pxW), static_cast<float>(src->pxH));
 +            else
-+                g.Uniform2f(locTexSize, static_cast<float>(tex.width), static_cast<float>(tex.height));
++                setUniform2f(g, locTexSize, static_cast<float>(tex.width), static_cast<float>(tex.height));
 +        }
 +        g.BindVertexArray(vao);
 +        g.BindBuffer(kArrayBuffer, vbo);
-+        g.BufferData(kArrayBuffer, static_cast<GLsizeiptr>(dverts.size() * sizeof(HwVertex)), dverts.data(), kStreamDraw);
++        // One streaming buffer: re-specifying the store for every draw is far more work in the driver than writing into it.
++        constexpr uint32_t kRingVertices = 1u << 20;
++        if (vboRing == 0u || vboRing + dverts.size() > kRingVertices)
++        {
++            g.BufferData(kArrayBuffer, static_cast<GLsizeiptr>(kRingVertices * sizeof(HwVertex)), nullptr, kStreamDraw);
++            vboRing = 0u;
++        }
++        const GLint ringFirst = static_cast<GLint>(vboRing);
++        {
++            constexpr GLbitfield kMapFlags = 0x2u | 0x4u | 0x20u; // WRITE | INVALIDATE_RANGE | UNSYNCHRONIZED
++            void *dst = g.MapBufferRange(kArrayBuffer, static_cast<GLintptr>(vboRing * sizeof(HwVertex)),
++                                         static_cast<GLsizeiptr>(dverts.size() * sizeof(HwVertex)), kMapFlags);
++            if (dst)
++            {
++                std::memcpy(dst, dverts.data(), dverts.size() * sizeof(HwVertex));
++                g.UnmapBuffer(kArrayBuffer);
++            }
++            vboRing += static_cast<uint32_t>(dverts.size());
++        }
 +
 +        const bool ate = (c.test & 1u) != 0u;
 +        const uint32_t atst = static_cast<uint32_t>((c.test >> 1) & 7u), aref = static_cast<uint32_t>((c.test >> 4) & 0xFFu);
 +        const uint32_t afail = static_cast<uint32_t>((c.test >> 12) & 3u);
-+        g.Uniform1i(locAte, ate ? 1 : 0);
-+        g.Uniform1i(locAtst, static_cast<GLint>(atst));
-+        g.Uniform1i(locAref, static_cast<GLint>(aref));
++        setUniform1i(g, locAte, ate ? 1 : 0);
++        setUniform1i(g, locAtst, static_cast<GLint>(atst));
++        setUniform1i(g, locAref, static_cast<GLint>(aref));
 +        static const bool forceNoTest = std::getenv("GOW_GS_HW_NOATEST") != nullptr;
-+        g.Uniform1i(locPass, (ate && !forceNoTest) ? 1 : 0);
-+        g.Uniform1i(locFailTint, 0);
++        setUniform1i(g, locPass, (ate && !forceNoTest) ? 1 : 0);
++        setUniform1i(g, locFailTint, 0);
 +        static const int traceAt = std::getenv("GOW_GS_HW_DEPTHTRACE") ? std::atoi(std::getenv("GOW_GS_HW_DEPTHTRACE")) : -1;
 +        const bool tracing = traceAt >= 0 && presentCount >= traceAt && presentCount < traceAt + 1 && rt.depth && rt.fbp == 0;
 +        const auto depthStats = [&](const char *when)
@@ -3264,12 +3362,12 @@ index 0000000..ed24e8f
 +            {
 +                if (gi != 0)
 +                    g.TextureBarrier();
-+                g.DrawArrays(kTriangles, static_cast<GLint>(first * 3u), static_cast<GLsizei>((triGroups[gi] - first) * 3u));
++                g.DrawArrays(kTriangles, ringFirst + static_cast<GLint>(first * 3u), static_cast<GLsizei>((triGroups[gi] - first) * 3u));
 +                first = triGroups[gi];
 +            }
 +        }
 +        else
-+            g.DrawArrays(kTriangles, 0, static_cast<GLsizei>(verts.size()));
++            g.DrawArrays(kTriangles, ringFirst, static_cast<GLsizei>(verts.size()));
 +        if (volBox[1] >= volBox[0] && volBox[3] >= volBox[2])
 +        {
 +            const int w = volBox[1] - volBox[0] + 1, h = volBox[3] - volBox[2] + 1;
@@ -3285,13 +3383,13 @@ index 0000000..ed24e8f
 +        if (ate && afail != 0u && !noFailPass)
 +        {
 +            // failing fragments: 1 FB_ONLY (colour+alpha, no Z), 2 ZB_ONLY (Z only), 3 RGB_ONLY (colour, no alpha, no Z)
-+            g.Uniform1i(locPass, 2);
++            setUniform1i(g, locPass, 2);
 +            static const bool failTint = std::getenv("GOW_GS_HW_FAILTINT") != nullptr;
-+            g.Uniform1i(locFailTint, (failTint && afail == 3u && s.prim.tme && c.frame.fbp == 0u) ? 1 : 0);
++            setUniform1i(g, locFailTint, (failTint && afail == 3u && s.prim.tme && c.frame.fbp == 0u) ? 1 : 0);
 +            if (afail == 1u) { g.DepthMask(kFalse); }
 +            else if (afail == 2u) { g.ColorMask(kFalse, kFalse, kFalse, kFalse); }
 +            else { g.DepthMask(kFalse); g.ColorMask(mr, mg, mb, kFalse); }
-+            g.DrawArrays(kTriangles, 0, static_cast<GLsizei>(verts.size()));
++            g.DrawArrays(kTriangles, ringFirst, static_cast<GLsizei>(verts.size()));
 +        }
 +        ++stats.batches;
 +        g.Disable(kScissorTest);
@@ -3847,7 +3945,7 @@ index 0000000..ed24e8f
 +    {
 +        return PresentationFrame{};
 +    }
-+    g.ReadPixels(0, 0, outW, outH, kRgba, kUnsignedByte, frame.pixels.data());
++    d.readBackFrame(g, outW, outH, frame.pixels);
 +    // the frontend packs presentation rows with a fixed 640 pixel stride
 +    if (frame.width < 640u)
 +    {

@@ -114,7 +114,7 @@ for the next one.
 ### State of `PS2X_GS_HW=1`
 The God of War render-target renderer now draws this game correctly at 1x and 3x: videos, logos, menu and races. Two fixes were needed:
 PABE support (the game's zero-alpha textures rely on it to draw opaque), and presenting from video memory when the displayed buffer was last written by an upload.
-Menu speed: about 53-56 fps at 1x and 48-50 fps at 3x, against 60 fps on the default renderer, so the game runs slightly slow on it. The window opens at 640x480 and is resizable;
+After caching uniforms, streaming vertices through one buffer and reading frames back through pixel buffers: about 60 fps at the menu at 1x and 55-59 fps at 3x (one 1x race ran at 23-35 fps). The profile-guided build was trained on the default renderer, so `tools/pgo.sh` has not profiled this code. The window opens at 640x480 and is resizable;
 it must be enlarged to show the extra detail. One run stopped at 0 fps during a demo with the heap reading 576 bytes free, like the parked freeze.
 
 ### State of `PS2X_GS_VK=1` (ps2-port-engine's Vulkan renderer)
