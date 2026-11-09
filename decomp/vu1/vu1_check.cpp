@@ -86,10 +86,16 @@ struct ImageStats
     }
 };
 
+void checkedWater(uint8_t *memory, const float registers[32][4], uint32_t pc, uint32_t top, std::vector<std::vector<uint8_t>> &kicks)
+{
+    runWaterShape(memory, registers, pc, top, kicks);
+}
+
 using RunFn = void (*)(uint8_t *, const float[32][4], uint32_t, uint32_t, std::vector<std::vector<uint8_t>> &);
 
 uint64_t g_captureHash = 0xC3952C0FAEB52EADull;
-std::atomic<uint64_t> g_trackRuns{0}, g_envRuns{0}, g_envMappedRuns{0}; // What the comparison has actually covered.
+std::atomic<uint64_t> g_cutShort{0}; // Runs the runtime stopped at its cycle limit and never resumed.
+std::atomic<uint64_t> g_trackRuns{0}, g_envRuns{0}, g_envMappedRuns{0}, g_waterRuns{0}; // What the comparison has actually covered.
 
 // `Entries` are the program counters at which the C++ version can start. Anything else continues a run already begun.
 template <uint64_t Hash, RunFn Run, uint32_t SecondEntry, uint32_t DirectEntry>
@@ -99,7 +105,10 @@ VU1InterpreterAccess::StepResult checked(VU1Interpreter &vu, const Vu1RunArgs &a
     if (state.pc == 0u || state.pc == SecondEntry || state.pc == DirectEntry)
     {
         if (g_active && g_next != g_expected.size())
+        {
             g_countMismatches.fetch_add(1u);
+            report("packet count", g_runs.load(), state.pc, static_cast<uint32_t>(g_next), static_cast<uint32_t>(g_expected.size()));
+        }
         std::memcpy(g_memory.get(), args.vuData, args.dataSize);
         if (g_capture != nullptr && Hash == g_captureHash && g_captureLeft > 0 && state.pc == 0u && g_runs.load() % 61u == 0u)
         {
@@ -122,6 +131,8 @@ VU1InterpreterAccess::StepResult checked(VU1Interpreter &vu, const Vu1RunArgs &a
             if (flag > 0)
                 g_envMappedRuns.fetch_add(1u);
         }
+        else if (Hash == 0xE96770E4143D2DA7ull)
+            g_waterRuns.fetch_add(1u);
         else
             g_trackRuns.fetch_add(1u);
     }
@@ -134,8 +145,20 @@ VU1InterpreterAccess::StepResult checked(VU1Interpreter &vu, const Vu1RunArgs &a
 
     const auto result = VU1InterpreterAccess::runImage<Hash>(vu, args);
 
+    if (result == VU1InterpreterAccess::StepResult::Budget && g_active)
+    {
+        // The original stopped early and nothing resumes it, so the C++ version, which finishes, can't be compared
+        // past this point. The packets up to here were compared as usual.
+        g_cutShort.fetch_add(1u);
+        g_active = false;
+    }
     if (result == VU1InterpreterAccess::StepResult::Ended && g_active)
     {
+        if (g_next != g_expected.size())
+        {
+            g_countMismatches.fetch_add(1u);
+            report("packet count at end", Hash >> 48, static_cast<uint32_t>(g_runs.load()), static_cast<uint32_t>(g_next), static_cast<uint32_t>(g_expected.size()));
+        }
         for (uint32_t i = 0u; i + 4u <= args.dataSize; i += 4u)
         {
             uint32_t a, b;
@@ -187,6 +210,7 @@ void installChecks()
     if (const char *hash = std::getenv("RC_VU1_CAPTURE_HASH"))
         g_captureHash = std::strtoull(hash, nullptr, 16);
     registerVu1CompiledProgram(0xC3952C0FAEB52EADull, &checked<0xC3952C0FAEB52EADull, &runTrdrShape, 0xFFFFFFFFu, 0x2050u>);
+    registerVu1CompiledProgram(0xE96770E4143D2DA7ull, &checked<0xE96770E4143D2DA7ull, &checkedWater, 0xFFFFFFFFu, 0xFFFFFFFFu>);
     registerVu1CompiledProgram(0xAB0E7743A9BA7393ull, &checked<0xAB0E7743A9BA7393ull, &runEnvShape, 0x78u, 0x2370u>);
     std::thread(
         []
@@ -194,9 +218,9 @@ void installChecks()
             for (;;)
             {
                 std::this_thread::sleep_for(std::chrono::seconds(5));
-                std::fprintf(stderr, "[vu1 ref] runs %llu (track %llu, env %llu, env-mapped %llu) packets %llu | mismatches: packets %llu, memory %llu, counts %llu\n",
+                std::fprintf(stderr, "[vu1 ref] runs %llu (track %llu, env %llu, env-mapped %llu, water %llu) packets %llu cut short %llu | mismatches: packets %llu, memory %llu, counts %llu\n",
                              (unsigned long long)g_runs.load(), (unsigned long long)g_trackRuns.load(), (unsigned long long)g_envRuns.load(),
-                             (unsigned long long)g_envMappedRuns.load(), (unsigned long long)g_packets.load(),
+                             (unsigned long long)g_envMappedRuns.load(), (unsigned long long)g_waterRuns.load(), (unsigned long long)g_packets.load(), (unsigned long long)g_cutShort.load(),
                              (unsigned long long)g_packetMismatches.load(), (unsigned long long)g_memoryMismatches.load(),
                              (unsigned long long)g_countMismatches.load());
             }

@@ -16,6 +16,8 @@ namespace {
 
 constexpr uint64_t kOriginalTrack = 0xC3952C0FAEB52EADull;
 constexpr uint64_t kShaderTrack = 0x5243545241434B31ull; // Not a real image hash: only a template argument.
+constexpr uint64_t kOriginalWater = 0xE96770E4143D2DA7ull;
+constexpr uint64_t kNativeWater = 0x524357415445524Eull; // Likewise.
 constexpr uint64_t kOriginalEnv = 0xAB0E7743A9BA7393ull;
 constexpr uint64_t kShaderEnv = 0x5243454E56534831ull; // Likewise.
 
@@ -159,6 +161,26 @@ VU1InterpreterAccess::StepResult VU1InterpreterAccess::runImage<kShaderEnv>(VU1I
     return StepResult::Ended;
 }
 
+// Water draws each triangle three times with GS state changes in between, so its order can't be batched for a shader
+// without changing how overlapping water blends. For now the exact C++ version runs in place of the VU1 program.
+template <>
+VU1InterpreterAccess::StepResult VU1InterpreterAccess::runImage<kOriginalWater>(VU1Interpreter &, const Vu1RunArgs &);
+
+template <>
+VU1InterpreterAccess::StepResult VU1InterpreterAccess::runImage<kNativeWater>(VU1Interpreter &vu, const Vu1RunArgs &args)
+{
+    if (vu.m_state.pc != 0u || args.memory == nullptr)
+        return runImage<kOriginalWater>(vu, args);
+
+    std::vector<std::vector<uint8_t>> kicks;
+    float after[32][4];
+    rc::vu1::runWaterShape(args.vuData, vu.m_state.vf, 0u, vu.m_state.top, kicks, after);
+    std::memcpy(vu.m_state.vf, after, sizeof(after));
+    for (const std::vector<uint8_t> &packet : kicks)
+        sendPacket(args.memory, packet.data(), packet.size());
+    return StepResult::Ended;
+}
+
 namespace {
 
 // The GS backend builds its shaders during start-up, before the game's overrides run.
@@ -181,6 +203,7 @@ void installTrackDraw()
         return;
     registerVu1CompiledProgram(kOriginalTrack, &VU1InterpreterAccess::runImage<kShaderTrack>);
     registerVu1CompiledProgram(kOriginalEnv, &VU1InterpreterAccess::runImage<kShaderEnv>);
+    registerVu1CompiledProgram(kOriginalWater, &VU1InterpreterAccess::runImage<kNativeWater>);
     std::fprintf(stderr, "[decomp] drawing track geometry with the vertex shader\n");
 }
 

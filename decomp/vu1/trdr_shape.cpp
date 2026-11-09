@@ -16,7 +16,8 @@ namespace rc::vu1 {
 
 void runTrdrShape(uint8_t *memory, const float registers[32][4], uint32_t startPc, uint32_t top, KickList &kicks)
 {
-    ShapeProgram p(memory, registers, ScissorLinks{0x7C, 0x335, 0x3B9, 0x3C6}, true, kicks);
+    static const ShapeLayout layout{0x7C, 0x335, 0x3B9, 0x3C6, 26, 46, 195, 216, 237, 238, {5, 6, 7}, 247, QuickWrap::Flush, true, 0, true, true};
+    ShapeProgram p(memory, registers, layout, kicks);
 
     if (startPc == 0x2050u)
     {

@@ -120,27 +120,47 @@ inline float ftoi0(float value) { return fromBits(static_cast<uint32_t>(ftoiRaw(
 inline float ftoi4(float value) { return fromBits(static_cast<uint32_t>(ftoiRaw(norm(value), 16.0f))); }
 inline float itof0(float value) { return static_cast<float>(static_cast<int32_t>(bits(value))); }
 
-// Return addresses a program stores in VU memory when it calls its scissor routine. They are visible in the memory
-// the program leaves behind.
-struct ScissorLinks
+// The reciprocal of a vector's length, as the VU's ERLENG computes it: zero for a zero vector.
+inline float reciprocalLength(const V &v)
 {
-    int quick, clipOne, clipTwoFirst, clipTwoSecond;
+    const float x = norm(v.f[0]), y = norm(v.f[1]), z = norm(v.f[2]);
+    const float length = std::sqrt(x * x + y * y + z * z);
+    return length != 0.0f ? 1.0f / length : length;
+}
+
+enum class QuickWrap { Flush, None, FlushFirst };
+
+// Where the programs differ. The clipping routines are the same text in all of them, at different addresses.
+struct ShapeLayout
+{
+    // Return addresses a program stores in VU memory when it calls its scissor routine. They are visible in the memory
+    // the program leaves behind.
+    int linkQuick, linkClipOne, linkClipTwoFirst, linkClipTwoSecond;
+    int firstVertex, wrapAt;     // The GS packet being written cycles between these quadword addresses.
+    int listA, listB;            // The clipper's two vertex lists.
+    int linkSlot, secondTriangle;
+    int quickTemp[3];            // The registers the quick path builds screen positions in. Their w lanes reach the GS.
+    int flushQuad;               // The small packet sent when the packet buffer wraps.
+    QuickWrap quickWrap;
+    bool flushOnClippedWrap;
+    int constantsOffset;         // Added to the fixed VU memory addresses of the constants.
+    bool hasWindingFlag;         // Otherwise a triangle is drawn only when it faces the viewer.
+    bool hasDepthBias;           // A depth bias in the first corner's texture w.
 };
 
 struct ShapeProgram
 {
     uint8_t *mem;
     V r[32];
-    ScissorLinks links;
-    bool flushOnQuickWrap; // The track program sends its header packet again when the quick path wraps; EnvRdr doesn't.
+    const ShapeLayout &layout;
     KickList *kicks;
     float acc[4]{};
     float q = 0.0f;
     uint32_t clipFlags = 0u;
-    int vi11 = 26;
+    int vi11;
     int behind = 0;
 
-    ShapeProgram(uint8_t *memory, const float registers[32][4], const ScissorLinks &scissorLinks, bool flush, KickList &kickList);
+    ShapeProgram(uint8_t *memory, const float registers[32][4], const ShapeLayout &shapeLayout, KickList &kickList);
 
     V &operator[](int index) { return r[index]; }
     V load(int quad) const
@@ -155,6 +175,13 @@ struct ShapeProgram
         int16_t out;
         std::memcpy(&out, mem + (quad & 0x3FF) * 16 + lane * 4, 2);
         return out;
+    }
+
+    // The VU stores an integer register as a word, zero-extended.
+    void storeInt(int quad, int lane, uint16_t value)
+    {
+        const uint32_t word = value;
+        std::memcpy(mem + (quad & 0x3FF) * 16 + lane * 4, &word, 4);
     }
 
     void kick(int quad);

@@ -76,6 +76,7 @@ void ShapeProgram::rotateForward()
     for (int first : {11, 14, 17})
     {
         const V saved = r[first];
+        r[26] = saved; // The original rotates through this register, and its w can reach a GS packet.
         r[first] = r[first + 1];
         r[first + 1] = r[first + 2];
         r[first + 2] = saved;
@@ -87,6 +88,7 @@ void ShapeProgram::rotateBackward()
     for (int first : {11, 14, 17})
     {
         const V saved = r[first + 2];
+        r[26] = saved;
         r[first + 2] = r[first + 1];
         r[first + 1] = r[first];
         r[first] = saved;
@@ -108,10 +110,11 @@ void ShapeProgram::kickTriangle()
     }
     vi11 += 10;
     kick(vi11 - 11);
-    if (vi11 == 46)
+    if (vi11 == layout.wrapAt)
     {
-        vi11 = 26;
-        kick(247);
+        vi11 = layout.firstVertex;
+        if (layout.flushOnClippedWrap)
+            kick(layout.flushQuad);
     }
 }
 
@@ -133,8 +136,9 @@ void ShapeProgram::writeQuickTriangle()
     mulBy(r[15], q, XYZ);
     q = vuDivide(1.0f, r[13].f[2]);
     transform(13);
-    addTo(r[5], r[11], r[9], XY);
-    addTo(r[6], r[12], r[9], XY);
+    V &temp0 = r[layout.quickTemp[0]], &temp1 = r[layout.quickTemp[1]], &temp2 = r[layout.quickTemp[2]];
+    addTo(temp0, r[11], r[9], XY);
+    addTo(temp1, r[12], r[9], XY);
     mulBy(r[13], q, XYZ);
     store(vi11 + 3, r[15]);
     mulBy(r[16], q, XYZ);
@@ -142,32 +146,34 @@ void ShapeProgram::writeQuickTriangle()
     clip(12);
     clip(13);
     store(vi11 + 6, r[16]);
-    r[5].f[0] = ftoi4(r[5].f[0]);
-    r[5].f[1] = ftoi4(r[5].f[1]);
-    r[5].f[2] = ftoi0(r[11].f[2]);
-    addTo(r[7], r[13], r[9], XY);
-    r[6].f[0] = ftoi4(r[6].f[0]);
-    r[6].f[1] = ftoi4(r[6].f[1]);
-    r[6].f[2] = ftoi0(r[12].f[2]);
-    r[7].f[0] = ftoi4(r[7].f[0]);
-    r[7].f[1] = ftoi4(r[7].f[1]);
-    r[7].f[2] = ftoi0(r[13].f[2]);
-    store(vi11 + 2, r[5]);
+    temp0.f[0] = ftoi4(temp0.f[0]);
+    temp0.f[1] = ftoi4(temp0.f[1]);
+    temp0.f[2] = ftoi0(r[11].f[2]);
+    addTo(temp2, r[13], r[9], XY);
+    temp1.f[0] = ftoi4(temp1.f[0]);
+    temp1.f[1] = ftoi4(temp1.f[1]);
+    temp1.f[2] = ftoi0(r[12].f[2]);
+    temp2.f[0] = ftoi4(temp2.f[0]);
+    temp2.f[1] = ftoi4(temp2.f[1]);
+    temp2.f[2] = ftoi0(r[13].f[2]);
+    store(vi11 + 2, temp0);
     if ((clipFlags & 0xF3CFu) != 0u)
     {
-        scissor(links.quick, true);
+        scissor(layout.linkQuick, true);
         return;
     }
-    store(vi11 + 5, r[6]);
-    store(vi11 + 8, r[7]);
+    store(vi11 + 5, temp1);
+    store(vi11 + 8, temp2);
+    const int packet = vi11 - 1;
     vi11 += 10;
-    kick(vi11 - 11);
-    if (vi11 == 46)
-    {
-        vi11 = 26;
-        if (flushOnQuickWrap)
-            kick(247);
-    }
+    const bool wrapped = vi11 == layout.wrapAt;
+    if (wrapped && layout.quickWrap == QuickWrap::FlushFirst)
+        kick(layout.flushQuad);
+    if (wrapped)
+        vi11 = layout.firstVertex;
+    kick(packet);
+    if (wrapped && layout.quickWrap == QuickWrap::Flush)
+        kick(layout.flushQuad);
 }
 
 // One Sutherland-Hodgman pass over a list of (position, texture, integer colour) vertices.
@@ -241,8 +247,7 @@ int ShapeProgram::clipStage(int axis, float limit, bool lowerBound, int source, 
 // Clips a triangle against the screen guard band, and draws what is left as a fan.
 void ShapeProgram::scissor(int link, bool testFirst)
 {
-    const uint32_t savedLink = static_cast<uint16_t>(link);
-    std::memcpy(mem + 237 * 16, &savedLink, 4);
+    storeInt(layout.linkSlot, 0, static_cast<uint16_t>(link));
     if (testFirst)
     {
         // Entirely beyond one edge: the three corners' flags for that edge are all set.
@@ -253,8 +258,8 @@ void ShapeProgram::scissor(int link, bool testFirst)
         }
     }
 
-    constexpr int kListA = 195;
-    constexpr int kListB = 216;
+    const int kListA = layout.listA;
+    const int kListB = layout.listB;
     for (int corner = 0; corner < 3; ++corner)
     {
         store(kListA + corner * 3, r[11 + corner]);
@@ -334,7 +339,7 @@ void ShapeProgram::clipOneInFront()
     clip(11);
 
     if ((clipFlags & 0xF3CFu) != 0u)
-        scissor(links.clipOne, true);
+        scissor(layout.linkClipOne, true);
     else
         kickTriangle();
 }
@@ -349,6 +354,7 @@ void ShapeProgram::clipTwoInFront()
     const float deltaOne = fsub(r[12].f[2], r[13].f[2]).value;
     const float tZero = fmul(1.0f, vuDivide(frontZero, deltaZero)).value;
     const float tOne = fmul(1.0f, vuDivide(frontOne, deltaOne)).value;
+    r[25].f[3] = tOne; // Where the original keeps it. In the water program its w reaches a GS packet.
     q = vuDivide(1.0f, nearZ);
 
     const V backColour = r[19];
@@ -387,7 +393,7 @@ void ShapeProgram::clipTwoInFront()
 
     r[29] = cutTexture;
 
-    constexpr int kSecond = 238;
+    const int kSecond = layout.secondTriangle;
     store(kSecond, r[12]);
     store(kSecond + 1, cutPosition);
     store(kSecond + 2, r[13]);
@@ -398,29 +404,29 @@ void ShapeProgram::clipTwoInFront()
     store(kSecond + 7, backColour);
     store(kSecond + 8, r[19]);
 
-    scissor(links.clipTwoFirst, false);
+    scissor(layout.linkClipTwoFirst, false);
     for (int i = 0; i < 9; ++i)
         r[11 + i] = load(kSecond + i);
-    scissor(links.clipTwoSecond, false);
+    scissor(layout.linkClipTwoSecond, false);
 }
 
-ShapeProgram::ShapeProgram(uint8_t *memory, const float registers[32][4], const ScissorLinks &scissorLinks, bool flush, KickList &kickList)
-    : mem(memory), links(scissorLinks), flushOnQuickWrap(flush), kicks(&kickList)
+ShapeProgram::ShapeProgram(uint8_t *memory, const float registers[32][4], const ShapeLayout &shapeLayout, KickList &kickList)
+    : mem(memory), layout(shapeLayout), kicks(&kickList), vi11(shapeLayout.firstVertex)
 {
     std::memcpy(r, registers, sizeof(r));
 }
 
 void ShapeProgram::loadConstants()
 {
-    r[1] = load(18);
-    r[2] = load(19);
-    r[3] = load(20);
-    r[4] = load(21);
-    r[9] = load(16);
-    r[10] = load(17);
-    r[21] = load(15);
-    r[22] = load(14);
-    r[23] = load(12);
+    r[1] = load(18 + layout.constantsOffset);
+    r[2] = load(19 + layout.constantsOffset);
+    r[3] = load(20 + layout.constantsOffset);
+    r[4] = load(21 + layout.constantsOffset);
+    r[9] = load(16 + layout.constantsOffset);
+    r[10] = load(17 + layout.constantsOffset);
+    r[21] = load(15 + layout.constantsOffset);
+    r[22] = load(14 + layout.constantsOffset);
+    r[23] = load(12 + layout.constantsOffset);
 }
 
 bool ShapeProgram::setupTriangle(int &reader)
@@ -441,8 +447,8 @@ bool ShapeProgram::setupTriangle(int &reader)
     reader += 10;
 
     // Facing test: the normal against the direction from the light position to the first corner.
-    V relative{};
-    p.subTo(relative, p[11], p[21], XYZ);
+    p.subTo(p[25], p[11], p[21], XYZ);
+    const V relative = p[25];
     float dot[3];
     for (int lane = 0; lane < 3; ++lane)
         dot[lane] = fmul(relative.f[lane], normal.f[lane]).value;
@@ -459,7 +465,8 @@ bool ShapeProgram::setupTriangle(int &reader)
             result[lane] = fmadd(acc, p[4].f[lane], position.f[3]).value;
         }
         std::memcpy(position.f, result, sizeof(result));
-        position.f[2] = fadd(position.f[2], p[14].f[3]).value; // A depth bias carried in the first w.
+        if (layout.hasDepthBias)
+            position.f[2] = fadd(position.f[2], p[14].f[3]).value; // A depth bias carried in the first w.
     }
 
     const float firstSum = fadd(dot[0], dot[1]).value;
@@ -474,7 +481,7 @@ bool ShapeProgram::setupTriangle(int &reader)
         behind |= 64;
     if (fadd(nearTest.f[2], p[13].f[2]).negative)
         behind |= 32;
-    if (winding == (facing.negative ? 128 : 0))
+    if (layout.hasWindingFlag ? winding == (facing.negative ? 128 : 0) : !facing.negative)
         return false;
     return true;
 }

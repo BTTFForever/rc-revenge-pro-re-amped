@@ -15,13 +15,6 @@ namespace rc::vu1 {
 
 namespace {
 
-float reciprocalLength(const V &v)
-{
-    const float x = norm(v.f[0]), y = norm(v.f[1]), z = norm(v.f[2]);
-    const float length = std::sqrt(x * x + y * y + z * z);
-    return length != 0.0f ? 1.0f / length : length;
-}
-
 // Replaces the texture and colour registers of a triangle with the environment-mapped version.
 void environmentCorners(ShapeProgram &p)
 {
@@ -95,7 +88,8 @@ void environmentCorners(ShapeProgram &p)
 
 void runEnvShape(uint8_t *memory, const float registers[32][4], uint32_t startPc, uint32_t top, KickList &kicks)
 {
-    ShapeProgram p(memory, registers, ScissorLinks{0xDE, 0x399, 0x41D, 0x42A}, false, kicks);
+    static const ShapeLayout layout{0xDE, 0x399, 0x41D, 0x42A, 26, 46, 195, 216, 237, 238, {5, 6, 7}, 247, QuickWrap::None, true, 0, true, true};
+    ShapeProgram p(memory, registers, layout, kicks);
 
     if (startPc == 0x2370u)
     {
