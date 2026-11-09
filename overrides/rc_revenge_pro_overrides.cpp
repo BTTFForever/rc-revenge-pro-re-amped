@@ -187,31 +187,27 @@ namespace
     constexpr uint32_t kMemBlockInitAddr = 0x00194238u;
     constexpr uint32_t kMainAddr = 0x0012EA10u;
     // Taken from the game's heap, so keep it small: a 2.2 MB level load fails with more.
-    constexpr uint32_t kHeapReserveBytes = 0x00100000u;
-    // 1.1 MB, enough for a full-screen sceGsExecLoadImage packet.
-    constexpr uint32_t kGuestHeapLimit = 0x005E0000u;
-    // 128 KB main stack in the reserved area. The top of RAM belongs to the callback stacks.
-    constexpr uint32_t kMainStackTop = 0x005FFD60u;
+    // The game's heap keeps its full size: taking even 1 MB from it ran the heaviest demo levels out of
+    // memory, and the failed allocations corrupted the effects list into an endless loop.
+    // The runtime's own allocations use about 5 KB, so they fit in the gap after the ELF image.
+    constexpr uint32_t kGuestHeapLimit = 0x00500000u;
+    // 128 KB main stack in the PS2 kernel's low memory, above the runtime's fixed pools (which end at 0x74000).
+    constexpr uint32_t kMainStackTop = 0x000FFD60u;
     constexpr uint32_t kGuestHeapStart = 0x004C7190u; // End of the ELF image.
 
-    // The game runs its own heap from a fixed base (0x500000) to 0x1FF0000, and the
-    // runtime's guest heap grows up from the end of the ELF right into it. Stubs such
-    // as sceGsExecLoadImage build large packets there, destroying the game's block
-    // headers. Move the game's heap up so the runtime and the main stack get their own space.
-    void memBlockInitWithReservedHeap(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    // The game runs its own heap from 0x500000 to 0x1FF0000. The runtime's allocations stay below
+    // 0x500000 so they cannot overwrite the game's block headers.
+    void memBlockInitWithSeparateRuntimeHeap(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         const uint32_t base = getRegU32(ctx, 4);
         const uint32_t size = getRegU32(ctx, 5);
-        const uint32_t movedBase = base + kHeapReserveBytes;
-        SET_GPR_U32(ctx, 4, movedBase);
-        SET_GPR_U32(ctx, 5, size - kHeapReserveBytes);
 
         const uint32_t usedEnd = runtime->guestHeapEnd();
         if (usedEnd <= kGuestHeapStart)
         {
             runtime->configureGuestHeap(kGuestHeapStart, kGuestHeapLimit);
         }
-        std::cout << std::hex << "[rc_revenge_pro] game heap 0x" << movedBase << " size 0x" << size - kHeapReserveBytes
+        std::cout << std::hex << "[rc_revenge_pro] game heap 0x" << base << " size 0x" << size
                   << ", guest heap end was 0x" << usedEnd << std::dec << std::endl;
         MemBlockInit_0x194238(rdram, ctx, runtime);
     }
@@ -525,7 +521,7 @@ namespace
         paths.cdImage = isoPath;
         PS2Runtime::setIoPaths(paths);
         runtime.replaceFunction(kSceCdSearchFileAddr, &searchFileOnIso);
-        runtime.replaceFunction(kMemBlockInitAddr, &memBlockInitWithReservedHeap);
+        runtime.replaceFunction(kMemBlockInitAddr, &memBlockInitWithSeparateRuntimeHeap);
         runtime.replaceFunction(kMainAddr, &mainOnTopOfRamStack);
         runtime.replaceFunction(0x001CE9A0u, &mpegAddBsInChunks);
         runtime.replaceFunction(0x001C3D90u, &gsSyncV);

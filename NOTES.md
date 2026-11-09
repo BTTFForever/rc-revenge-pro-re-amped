@@ -3,7 +3,7 @@
 A native Linux build of the PS2 game, made with PS2Recomp. Start it with `./run.sh`.
 
 Status on 2026-11-09: boots, plays video and music, renders the menus and races correctly, and runs
-at 45-55 fps at the main menu and roughly 30-60 fps in the attract-mode race, depending on the scene.
+at a steady 60 fps at the main menu and mostly 50-60 fps in the attract-mode race. Game speed follows the frame rate.
 
 ## What lives where
 | Path | Contents | Keep? |
@@ -44,9 +44,11 @@ Run from this folder. Steps 1-3 were checked on 2026-11-09 and reproduce the exi
    runtime or VU1 changes. `-DRC_PGO=off` returns to a plain build.
 
 ## Compiler findings
-- GCC with the profile: menu 45-55 fps. GCC without: 40-43 fps.
+- GCC with the profile: menu 45-55 fps. GCC without: 40-43 fps. With VU1 flag skipping added: a steady 60 fps at the menu.
 - Clang without a profile: 34-36 fps, and one run froze during a load. Not used.
 - `-O2` game code with `-O3` VU1 code gave no gain over `-O1` and `-O2`.
+- VU1 flag skipping (`planDeadFlags` in `vu1_recomp`, `PS2X_VU1_DEAD_FLAGS=0` when generating disables it): 744 of 890 FMACs drop
+  flags no instruction can see. It applies to programs that never read STATUS. Check it with `PS2X_VU1_VERIFY=1 PS2X_VU1_VERIFY_NOFLAGS=1`.
 - Keep `-ffp-contract=off`: the PS2's float results depend on each operation being rounded separately.
 
 ## Run-time switches
@@ -93,8 +95,18 @@ for the next one.
 ## Known limits and open questions
 - Output is the game's native 240 lines per frame, scaled to the window. The half-line bob is removed.
 - Memory card saving has not been exercised: `mc0` and `mc1` are empty.
+- Attract-mode freeze, parked 2026-11-09: one rainy jungle demo (level 3) stops the game in `VfxCallHandlers`. The effects list
+  loops because a block is handed out while still on the heap's free list. No double free was detected; a free-list link goes bad
+  first, around the `VfxUpdate` and `Vfx2RenderTSFX` temporary allocations. Forcing level 3 alone loads a boat variant without
+  rain and does not freeze, so the rain and vehicle choice comes from elsewhere. Next step if it matters in real play: walk every
+  heap block's header at each allocation to find the block overwritten, and the allocation just before it.
 - Measured performance comes from the attract-mode demo race, not from driven races.
-- Whether game speed is tied to frame rate below 60 fps has not been checked.
+- Game speed is tied to frame rate, so the game runs slower below 60 fps (reported by the user).
+
+### Graphical bugs to check later
+- Main menu: the butterfly model in the foreground should flap its wings, but the animation does not play properly.
+- Races: 2D effects behind vehicles, such as water spray, tire dirt and skid marks, are not drawn properly.
+- Other minor graphical bugs the user has seen since the start; details still to be collected.
 
 ### State of `PS2X_GS_HW=1`
 Runs at the requested scale at about the speed of the default renderer and fills the frame. Unsolved:
