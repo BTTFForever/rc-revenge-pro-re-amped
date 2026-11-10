@@ -178,6 +178,8 @@ Sweep of levels 1-24 on the God of War renderer at 3x: 1, 3, 4, 10, 15, 16 and 2
 
 Always run on the discrete RTX 2060 (`prime-run`-style environment, set by `tools/play.sh` and `tools/shadow.sh`). Every frame-rate figure in these notes up to 2026-11-10 was measured on the integrated Vega 10, because nothing selected the 2060 until then.
 
+On the 2060 the X11 window's GLX context stops EGL contexts being made current (any EGL display type, any thread), so `gs_gl.cpp` falls back to a GLX pbuffer context when EGL refuses. Level 18 on the 2060: 30-37 fps at both 2x and 4x, against about 48 on the Vega. `GSThread` is at 99% of one core, so the limit is CPU time in that thread rather than GPU power. `__GL_THREADED_OPTIMIZATIONS=1` halves it; turning vsync off doesn't help. Not yet profiled: `perf` needs `kernel.perf_event_paranoid` lowered.
+
 ### VU1 programs converted (2026-11-10)
 
 All shape programs share their clipping text at different addresses. `decomp/vu1/vu_shape.{h,cpp}` holds it, and `ShapeLayout` records how each program differs (addresses, buffers, which registers leak `w` lanes into GS packets, wrap behaviour).

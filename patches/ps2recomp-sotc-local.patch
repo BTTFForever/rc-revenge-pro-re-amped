@@ -809,7 +809,7 @@ index 6784aca..92e9af8 100644
      item.wait = {};
      item.resumeCompletion = {};
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_gl.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_gl.cpp
-index 5e04125..d10d51e 100644
+index 5e04125..13b0dc2 100644
 --- a/ps2xRuntime/src/lib/gs/gpu/gs_gl.cpp
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_gl.cpp
 @@ -101,6 +101,14 @@ namespace
@@ -909,7 +909,7 @@ index 5e04125..d10d51e 100644
          if (!missing.empty())
          {
              error = "missing GL functions: " + missing;
-@@ -521,25 +456,217 @@ namespace GSGL
+@@ -521,25 +456,334 @@ namespace GSGL
      }
  }
  #else
@@ -1015,9 +1015,100 @@ index 5e04125..d10d51e 100644
 +        return nullptr;
 +    }
 +
++    // On NVIDIA, EGL contexts can't be made current in a process whose window has a GLX context (the X11 window here),
++    // so there the renderer's context is GLX as well. It lives in an off-screen pbuffer on its own X connection.
++    struct Glx
++    {
++        void *(*OpenDisplay)(const char *) = nullptr;
++        void *(*GetProcAddress)(const unsigned char *) = nullptr;
++        void **(*ChooseFBConfig)(void *, int, const int *, int *) = nullptr;
++        void *(*CreatePbuffer)(void *, void *, const int *) = nullptr;
++        int (*MakeContextCurrent)(void *, void *, void *, void *) = nullptr;
++        void (*DestroyContext)(void *, void *) = nullptr;
++        void *(*GetCurrentContext)() = nullptr;
++        void *(*CreateContextAttribs)(void *, void *, void *, int, const int *) = nullptr;
++        void *display = nullptr;
++        void *config = nullptr;
++        void *pbuffer = nullptr;
++        bool active = false;
++        std::mutex mutex;
++    };
++
++    Glx &glx()
++    {
++        static Glx g;
++        return g;
++    }
++
++    bool startGlx()
++    {
++        Glx &g = glx();
++        if (g.display)
++            return true;
++        void *x11 = dlopen("libX11.so.6", RTLD_NOW | RTLD_LOCAL);
++        void *lib = dlopen("libGL.so.1", RTLD_NOW | RTLD_LOCAL);
++        if (!x11 || !lib)
++            return false;
++        const auto from = [](void *library, auto &target, const char *name) {
++            target = reinterpret_cast<std::remove_reference_t<decltype(target)>>(dlsym(library, name));
++            return target != nullptr;
++        };
++        int (*initThreads)() = nullptr;
++        if (!from(x11, g.OpenDisplay, "XOpenDisplay") || !from(x11, initThreads, "XInitThreads") ||
++            !from(lib, g.GetProcAddress, "glXGetProcAddressARB") || !from(lib, g.ChooseFBConfig, "glXChooseFBConfig") ||
++            !from(lib, g.CreatePbuffer, "glXCreatePbuffer") || !from(lib, g.MakeContextCurrent, "glXMakeContextCurrent") ||
++            !from(lib, g.DestroyContext, "glXDestroyContext") || !from(lib, g.GetCurrentContext, "glXGetCurrentContext"))
++            return false;
++        g.CreateContextAttribs = reinterpret_cast<decltype(g.CreateContextAttribs)>(
++            g.GetProcAddress(reinterpret_cast<const unsigned char *>("glXCreateContextAttribsARB")));
++        if (!g.CreateContextAttribs)
++            return false;
++        initThreads();
++        void *display = g.OpenDisplay(nullptr);
++        if (!display)
++            return false;
++        const int configAttributes[] = {0x8010 /* DRAWABLE_TYPE */, 0x4 /* PBUFFER_BIT */, 0x8011 /* RENDER_TYPE */, 1 /* RGBA_BIT */, 0};
++        int count = 0;
++        void **configs = g.ChooseFBConfig(display, 0, configAttributes, &count);
++        if (!configs || count == 0)
++            return false;
++        g.config = configs[0];
++        const int pbufferAttributes[] = {0x8041 /* WIDTH */, 1, 0x8040 /* HEIGHT */, 1, 0};
++        g.pbuffer = g.CreatePbuffer(display, g.config, pbufferAttributes);
++        if (!g.pbuffer)
++            return false;
++        g.display = display;
++        return true;
++    }
++
++    void *createGlxContext(void *share)
++    {
++        Glx &g = glx();
++        std::lock_guard<std::mutex> lock(g.mutex);
++        for (const int minor : {6, 5, 3})
++        {
++            const int attributes[] = {0x2091 /* MAJOR */, 4, 0x2092 /* MINOR */, minor, 0x9126 /* PROFILE_MASK */, 1 /* CORE */, 0};
++            if (void *context = g.CreateContextAttribs(g.display, g.config, share, 1, attributes))
++                return context;
++        }
++        return nullptr;
++    }
++
++    bool makeGlxCurrent(void *context)
++    {
++        Glx &g = glx();
++        std::lock_guard<std::mutex> lock(g.mutex);
++        return g.MakeContextCurrent(g.display, context ? g.pbuffer : nullptr, context ? g.pbuffer : nullptr, context) != 0;
++    }
++
 +    void *loadProc(const char *name)
 +    {
 +        static void *gl = dlopen("libOpenGL.so.0", RTLD_NOW | RTLD_LOCAL);
++        if (glx().active)
++        {
++            void *direct = gl ? dlsym(gl, name) : nullptr;
++            return direct ? direct : glx().GetProcAddress(reinterpret_cast<const unsigned char *>(name));
++        }
 +        void *proc = egl().GetProcAddress ? egl().GetProcAddress(name) : nullptr;
 +        if (!proc && gl)
 +            proc = dlsym(gl, name);
@@ -1064,21 +1155,27 @@ index 5e04125..d10d51e 100644
 -        return false;
 +        Destroy();
 +        Egl &e = egl();
-+        if (!e.ready)
++        EGLContext context = e.ready ? createEglContext(nullptr) : nullptr;
++        if (context && e.MakeCurrent(e.display, nullptr, nullptr, context))
 +        {
-+            error = "EGL unavailable (libEGL.so.1)";
-+            return false;
++            m_dc = e.display;
++            m_context = context;
 +        }
-+        EGLContext context = createEglContext(nullptr);
-+        if (!context || !e.MakeCurrent(e.display, nullptr, nullptr, context))
++        else
 +        {
++            const int eglError = e.ready ? e.GetError() : 0;
 +            if (context)
 +                e.DestroyContext(e.display, context);
-+            error = "OpenGL 4.x core context unavailable (EGL error " + std::to_string(e.GetError()) + ")";
-+            return false;
++            void *glxContext = startGlx() ? createGlxContext(nullptr) : nullptr;
++            if (!glxContext || !makeGlxCurrent(glxContext))
++            {
++                error = "OpenGL 4.x core context unavailable (EGL error " + std::to_string(eglError) + ", GLX fallback failed)";
++                return false;
++            }
++            glx().active = true;
++            m_dc = glx().display;
++            m_context = glxContext;
 +        }
-+        m_dc = e.display;
-+        m_context = context;
 +        std::string missing;
 +        loadContextApi(m_api, missing);
 +        if (!missing.empty())
@@ -1095,6 +1192,8 @@ index 5e04125..d10d51e 100644
 +
 +    void *Context::CreateWorker() const
 +    {
++        if (glx().active)
++            return m_context ? createGlxContext(m_context) : nullptr;
 +        return m_context ? createEglContext(m_context) : nullptr;
      }
  
@@ -1103,6 +1202,8 @@ index 5e04125..d10d51e 100644
 -    void Context::DestroyWorker(void *) {}
 +    bool Context::MakeWorkerCurrent(void *worker) const
 +    {
++        if (glx().active)
++            return worker && makeGlxCurrent(worker);
 +        return worker && m_dc && egl().MakeCurrent(m_dc, nullptr, nullptr, worker);
 +    }
 +
@@ -1110,6 +1211,14 @@ index 5e04125..d10d51e 100644
 +    {
 +        if (!worker)
 +            return;
++        if (glx().active)
++        {
++            if (glx().GetCurrentContext() == worker)
++                makeGlxCurrent(nullptr);
++            std::lock_guard<std::mutex> lock(glx().mutex);
++            glx().DestroyContext(glx().display, worker);
++            return;
++        }
 +        Egl &e = egl();
 +        if (e.GetCurrentContext() == worker)
 +            e.MakeCurrent(e.display, nullptr, nullptr, nullptr);
@@ -1118,7 +1227,15 @@ index 5e04125..d10d51e 100644
  
      void Context::Destroy()
      {
-+        if (m_context)
++        if (m_context && glx().active)
++        {
++            if (glx().GetCurrentContext() == m_context)
++                makeGlxCurrent(nullptr);
++            std::lock_guard<std::mutex> lock(glx().mutex);
++            glx().DestroyContext(glx().display, m_context);
++            m_context = nullptr;
++        }
++        else if (m_context)
 +        {
 +            Egl &e = egl();
 +            if (e.GetCurrentContext() == m_context)
