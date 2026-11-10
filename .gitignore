@@ -13,3 +13,4 @@ imgui.ini
 *.log
 dump_*.txt
 __pycache__/
+/decomp/recordings/*_memcard/

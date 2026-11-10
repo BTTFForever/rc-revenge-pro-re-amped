@@ -5515,6 +5515,162 @@ index 7781c41..ea87e8c 100644
      u32 ReadCT32(u8* data, u32 bp, u32 bw, u32 x, u32 y)
      {
          return PixelStorageTraits<C32>::Read(PageTableC32, data, bp, bw, x, y);
+diff --git a/ps2xRuntime/src/lib/ps2_host_input.cpp b/ps2xRuntime/src/lib/ps2_host_input.cpp
+index 0715da3..76907b5 100644
+--- a/ps2xRuntime/src/lib/ps2_host_input.cpp
++++ b/ps2xRuntime/src/lib/ps2_host_input.cpp
+@@ -3,6 +3,7 @@
+ #include "ps2_host_backend.h"
+ 
+ #include <algorithm>
++#include <cstdio>
+ #include <array>
+ #include <atomic>
+ #include <cctype>
+@@ -309,6 +310,75 @@ namespace ps2_host_input
+             return input;
+         }
+ 
++        // PS2X_PAD_RECORD=<file> writes port 0's input as it changes; PS2X_PAD_REPLAY=<file> plays such a file back instead
++        // of reading the host. Each line is "epoch frame buttons lx ly rx ry", in hex after the frame.
++        //
++        // The clock is the epoch in its high 32 bits and frames since that epoch began in its low 32: the game advances the
++        // epoch at each point where the time taken varies, such as a finished level load, so that loading can't move input.
++        struct PadRecordLine
++        {
++            uint64_t epoch;
++            uint64_t frame;
++            uint16_t buttons;
++            std::array<uint8_t, 4> axes;
++        };
++
++        std::atomic<const std::atomic<uint64_t> *> g_inputFrameCounter{nullptr};
++
++        const std::vector<PadRecordLine> &padReplay()
++        {
++            static const std::vector<PadRecordLine> lines = []
++            {
++                std::vector<PadRecordLine> out;
++                const char *path = std::getenv("PS2X_PAD_REPLAY");
++                if (!path || !*path)
++                    return out;
++                std::FILE *file = std::fopen(path, "r");
++                if (!file)
++                {
++                    std::cerr << "[input] cannot open pad replay " << path << std::endl;
++                    return out;
++                }
++                char text[128];
++                while (std::fgets(text, sizeof(text), file))
++                {
++                    unsigned long long epoch, frame;
++                    unsigned buttons, lx, ly, rx, ry;
++                    if (std::sscanf(text, "%llu %llu %x %x %x %x %x", &epoch, &frame, &buttons, &lx, &ly, &rx, &ry) == 7)
++                        out.push_back({epoch, frame, static_cast<uint16_t>(buttons),
++                                       {static_cast<uint8_t>(lx), static_cast<uint8_t>(ly), static_cast<uint8_t>(rx), static_cast<uint8_t>(ry)}});
++                }
++                std::fclose(file);
++                if (out.empty())
++                    std::cerr << "[input] pad replay " << path << " has no usable lines (made before epochs were added?)" << std::endl;
++                std::cerr << "[input] pad replay: " << out.size() << " change(s)" << std::endl;
++                return out;
++            }();
++            return lines;
++        }
++
++        void recordPad(uint64_t frame, uint16_t buttons, const std::array<uint8_t, 4> &axes)
++        {
++            static std::mutex mutex;
++            static std::FILE *const file = []() -> std::FILE *
++            {
++                const char *path = std::getenv("PS2X_PAD_RECORD");
++                return path && *path ? std::fopen(path, "w") : nullptr;
++            }();
++            if (file == nullptr)
++                return;
++            static uint16_t lastButtons = 0u;
++            static std::array<uint8_t, 4> lastAxes{0x80u, 0x80u, 0x80u, 0x80u};
++            std::lock_guard<std::mutex> lock(mutex);
++            if (buttons == lastButtons && axes == lastAxes)
++                return;
++            lastButtons = buttons;
++            lastAxes = axes;
++            std::fprintf(file, "%llu %llu %04x %02x %02x %02x %02x\n", static_cast<unsigned long long>(frame >> 32), static_cast<unsigned long long>(frame & 0xFFFFFFFFull),
++                         buttons, axes[0], axes[1], axes[2], axes[3]);
++            std::fflush(file); // Survives the game being closed or crashing.
++        }
++
+         std::mutex g_mutex;
+         std::array<PadInputState, kPadPorts> g_state = []
+         {
+@@ -570,6 +640,11 @@ namespace ps2_host_input
+         g_mouseCameraEnabled.store(enabled, std::memory_order_relaxed);
+     }
+ 
++    void setInputFrameCounter(const std::atomic<uint64_t> *counter)
++    {
++        g_inputFrameCounter.store(counter);
++    }
++
+     void setFieldCounter(const std::atomic<uint64_t> *counter)
+     {
+         g_fieldCounter.store(counter);
+@@ -647,6 +722,42 @@ namespace ps2_host_input
+                     state.rightY = scripted.axes[3];
+                 applyPressure(state);
+             }
++
++            const std::atomic<uint64_t> *frameCounter = g_inputFrameCounter.load();
++            const uint64_t frame = frameCounter ? frameCounter->load() : (counter ? counter->load() : 0u);
++            const std::vector<PadRecordLine> &replay = padReplay();
++            if (!replay.empty())
++            {
++                // Changes are delivered in order and each is held long enough for the game to see it, so a press and release
++                // recorded on the same frame still count. An epoch the game has moved past is skipped, input neutral.
++                static std::mutex replayMutex;
++                static size_t next = 0u;
++                static PadRecordLine current{0u, 0u, 0u, {0x80u, 0x80u, 0x80u, 0x80u}};
++                static auto lastApplied = std::chrono::steady_clock::now();
++                const uint64_t epoch = frame >> 32, epochFrame = frame & 0xFFFFFFFFull;
++                std::lock_guard<std::mutex> replayLock(replayMutex);
++                while (next < replay.size() && replay[next].epoch < epoch)
++                {
++                    ++next;
++                    current = PadRecordLine{epoch, 0u, 0u, {0x80u, 0x80u, 0x80u, 0x80u}};
++                }
++                const auto now = std::chrono::steady_clock::now();
++                if (next < replay.size() && replay[next].epoch == epoch && replay[next].frame <= epochFrame &&
++                    now - lastApplied >= std::chrono::milliseconds(35))
++                {
++                    current = replay[next++];
++                    lastApplied = now;
++                }
++                state = PadInputState{};
++                state.connected = true;
++                state.buttons = current.buttons;
++                state.leftX = current.axes[0];
++                state.leftY = current.axes[1];
++                state.rightX = current.axes[2];
++                state.rightY = current.axes[3];
++                applyPressure(state);
++            }
++            recordPad(frame, static_cast<uint16_t>(state.buttons), {state.leftX, state.leftY, state.rightX, state.rightY});
+         }
+         return state;
+     }
+diff --git a/ps2xRuntime/src/lib/ps2_host_input.h b/ps2xRuntime/src/lib/ps2_host_input.h
+index 9fdc3b1..e107198 100644
+--- a/ps2xRuntime/src/lib/ps2_host_input.h
++++ b/ps2xRuntime/src/lib/ps2_host_input.h
+@@ -9,6 +9,8 @@ namespace ps2_host_input
+ {
+     constexpr uint32_t kPadPorts = 2u;
+ 
++    void setInputFrameCounter(const std::atomic<uint64_t> *counter); // The clock PS2X_PAD_RECORD and PS2X_PAD_REPLAY use.
++
+     void setFieldCounter(const std::atomic<uint64_t> *counter);
+     void sample();
+     void releaseMouse();
 diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
 index 43f67b0..8a33442 100644
 --- a/ps2xRuntime/src/lib/ps2_runtime.cpp
