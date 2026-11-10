@@ -809,10 +809,18 @@ index 6784aca..92e9af8 100644
      item.wait = {};
      item.resumeCompletion = {};
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_gl.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_gl.cpp
-index 5e04125..13b0dc2 100644
+index 5e04125..4ac7a78 100644
 --- a/ps2xRuntime/src/lib/gs/gpu/gs_gl.cpp
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_gl.cpp
-@@ -101,6 +101,14 @@ namespace
+@@ -7,6 +7,7 @@
+ #include <cstdio>
+ #include <mutex>
+ #include <string_view>
++#include <unordered_map>
+ 
+ #if defined(_WIN32)
+ #ifndef NOMINMAX
+@@ -101,6 +102,14 @@ namespace
      }
  }
  
@@ -827,7 +835,7 @@ index 5e04125..13b0dc2 100644
  namespace GSSharedPresent
  {
      void CaptureHostContext()
-@@ -390,80 +398,7 @@ namespace GSGL
+@@ -390,80 +399,7 @@ namespace GSGL
          m_context = context;
  
          std::string missing;
@@ -909,7 +917,7 @@ index 5e04125..13b0dc2 100644
          if (!missing.empty())
          {
              error = "missing GL functions: " + missing;
-@@ -521,25 +456,334 @@ namespace GSGL
+@@ -521,25 +457,677 @@ namespace GSGL
      }
  }
  #else
@@ -1136,6 +1144,347 @@ index 5e04125..13b0dc2 100644
 +    }
 +}
 +
++
++namespace
++{
++    // Skips OpenGL calls that would not change anything. The renderer sets all of its state for every draw, tens of
++    // thousands of times a second, and NVIDIA's driver does real work for each call even when the value is unchanged.
++    // One context per thread, so the record of what is set is per thread and starts blank whenever a context is made current.
++    namespace statecache
++    {
++        using namespace GSGL;
++        using GLSL = GSGL::Api;
++        constexpr GLenum kTexture2D = 0x0DE1, kFramebuffer = 0x8D40, kReadFramebuffer = 0x8CA8, kDrawFramebuffer = 0x8CA9, kElementArray = 0x8893;
++
++        GLSL real;
++
++        struct TextureParams
++        {
++            GLint value[4] = {-1, -1, -1, -1};
++        };
++
++        struct State
++        {
++            int64_t readFb = -1, drawFb = -1, program = -1, vao = -1;
++            GLint viewport[4] = {-1, -1, -1, -1}, scissor[4] = {-1, -1, -1, -1};
++            bool viewportKnown = false, scissorKnown = false;
++            int64_t depthFunc = -1, depthMask = -1, colorMask = -1;
++            GLenum blendEquation[2] = {0, 0}, blendFunc[4] = {0, 0, 0, 0};
++            float blendColor[4] = {-1.0f, -1.0f, -1.0f, -1.0f};
++            bool blendColorKnown = false;
++            int64_t activeUnit = -1;
++            int64_t texture2d[32];
++            std::unordered_map<GLenum, int64_t> buffers;
++            std::array<std::pair<GLenum, bool>, 16> caps{};
++            int capCount = 0;
++            std::unordered_map<GLuint, TextureParams> params;
++
++            State()
++            {
++                for (int64_t &t : texture2d)
++                    t = -1;
++            }
++        };
++
++        thread_local State t_state;
++
++        void reset() { t_state = State{}; }
++
++        int parameterSlot(GLenum name)
++        {
++            switch (name)
++            {
++            case 0x2801: return 0; // MIN_FILTER
++            case 0x2800: return 1; // MAG_FILTER
++            case 0x2802: return 2; // WRAP_S
++            case 0x2803: return 3; // WRAP_T
++            default: return -1;
++            }
++        }
++
++        void BindFramebuffer(GLenum target, GLuint id)
++        {
++            State &s = t_state;
++            const int64_t value = id;
++            if (target == kFramebuffer)
++            {
++                if (s.readFb == value && s.drawFb == value)
++                    return;
++                s.readFb = s.drawFb = value;
++            }
++            else if (target == kReadFramebuffer)
++            {
++                if (s.readFb == value)
++                    return;
++                s.readFb = value;
++            }
++            else if (target == kDrawFramebuffer)
++            {
++                if (s.drawFb == value)
++                    return;
++                s.drawFb = value;
++            }
++            real.BindFramebuffer(target, id);
++        }
++
++        void Viewport(GLint x, GLint y, GLsizei w, GLsizei h)
++        {
++            State &s = t_state;
++            if (s.viewportKnown && s.viewport[0] == x && s.viewport[1] == y && s.viewport[2] == w && s.viewport[3] == h)
++                return;
++            s.viewportKnown = true;
++            s.viewport[0] = x, s.viewport[1] = y, s.viewport[2] = w, s.viewport[3] = h;
++            real.Viewport(x, y, w, h);
++        }
++
++        void Scissor(GLint x, GLint y, GLsizei w, GLsizei h)
++        {
++            State &s = t_state;
++            if (s.scissorKnown && s.scissor[0] == x && s.scissor[1] == y && s.scissor[2] == w && s.scissor[3] == h)
++                return;
++            s.scissorKnown = true;
++            s.scissor[0] = x, s.scissor[1] = y, s.scissor[2] = w, s.scissor[3] = h;
++            real.Scissor(x, y, w, h);
++        }
++
++        void setCap(GLenum cap, bool on)
++        {
++            State &s = t_state;
++            for (int i = 0; i < s.capCount; ++i)
++            {
++                if (s.caps[i].first != cap)
++                    continue;
++                if (s.caps[i].second == on)
++                    return;
++                s.caps[i].second = on;
++                if (on)
++                    real.Enable(cap);
++                else
++                    real.Disable(cap);
++                return;
++            }
++            if (s.capCount < static_cast<int>(s.caps.size()))
++                s.caps[s.capCount++] = {cap, on};
++            if (on)
++                real.Enable(cap);
++            else
++                real.Disable(cap);
++        }
++
++        void Enable(GLenum cap) { setCap(cap, true); }
++        void Disable(GLenum cap) { setCap(cap, false); }
++
++        void DepthFunc(GLenum func)
++        {
++            if (t_state.depthFunc == func)
++                return;
++            t_state.depthFunc = func;
++            real.DepthFunc(func);
++        }
++
++        void DepthMask(unsigned char mask)
++        {
++            if (t_state.depthMask == mask)
++                return;
++            t_state.depthMask = mask;
++            real.DepthMask(mask);
++        }
++
++        void ColorMask(unsigned char r, unsigned char g, unsigned char b, unsigned char a)
++        {
++            const int64_t value = r | g << 8 | b << 16 | a << 24;
++            if (t_state.colorMask == value)
++                return;
++            t_state.colorMask = value;
++            real.ColorMask(r, g, b, a);
++        }
++
++        void BlendEquationSeparate(GLenum rgb, GLenum alpha)
++        {
++            State &s = t_state;
++            if (s.blendEquation[0] == rgb && s.blendEquation[1] == alpha)
++                return;
++            s.blendEquation[0] = rgb, s.blendEquation[1] = alpha;
++            real.BlendEquationSeparate(rgb, alpha);
++        }
++
++        void BlendFuncSeparate(GLenum a, GLenum b, GLenum c, GLenum d)
++        {
++            State &s = t_state;
++            if (s.blendFunc[0] == a && s.blendFunc[1] == b && s.blendFunc[2] == c && s.blendFunc[3] == d)
++                return;
++            s.blendFunc[0] = a, s.blendFunc[1] = b, s.blendFunc[2] = c, s.blendFunc[3] = d;
++            real.BlendFuncSeparate(a, b, c, d);
++        }
++
++        void BlendColor(float r, float g, float b, float a)
++        {
++            State &s = t_state;
++            if (s.blendColorKnown && s.blendColor[0] == r && s.blendColor[1] == g && s.blendColor[2] == b && s.blendColor[3] == a)
++                return;
++            s.blendColorKnown = true;
++            s.blendColor[0] = r, s.blendColor[1] = g, s.blendColor[2] = b, s.blendColor[3] = a;
++            real.BlendColor(r, g, b, a);
++        }
++
++        void UseProgram(GLuint program)
++        {
++            if (t_state.program == program)
++                return;
++            t_state.program = program;
++            real.UseProgram(program);
++        }
++
++        void ActiveTexture(GLenum unit)
++        {
++            if (t_state.activeUnit == unit)
++                return;
++            t_state.activeUnit = unit;
++            real.ActiveTexture(unit);
++        }
++
++        int currentUnit()
++        {
++            const int64_t unit = t_state.activeUnit < 0 ? 0 : t_state.activeUnit - 0x84C0;
++            return unit >= 0 && unit < 32 ? static_cast<int>(unit) : -1;
++        }
++
++        void BindTexture(GLenum target, GLuint id)
++        {
++            if (target == kTexture2D && t_state.activeUnit >= 0)
++            {
++                const int unit = currentUnit();
++                if (unit >= 0)
++                {
++                    if (t_state.texture2d[unit] == id)
++                        return;
++                    t_state.texture2d[unit] = id;
++                }
++            }
++            real.BindTexture(target, id);
++        }
++
++        void TexParameteri(GLenum target, GLenum name, GLint value)
++        {
++            const int slot = parameterSlot(name);
++            const int unit = currentUnit();
++            if (target == kTexture2D && slot >= 0 && unit >= 0 && t_state.activeUnit >= 0 && t_state.texture2d[unit] > 0)
++            {
++                TextureParams &params = t_state.params[static_cast<GLuint>(t_state.texture2d[unit])];
++                if (params.value[slot] == value)
++                    return;
++                params.value[slot] = value;
++            }
++            real.TexParameteri(target, name, value);
++        }
++
++        void BindVertexArray(GLuint vao)
++        {
++            if (t_state.vao == vao)
++                return;
++            t_state.vao = vao;
++            real.BindVertexArray(vao);
++        }
++
++        void BindBuffer(GLenum target, GLuint id)
++        {
++            if (target != kElementArray) // That binding belongs to the vertex array.
++            {
++                const auto found = t_state.buffers.find(target);
++                if (found != t_state.buffers.end() && found->second == id)
++                    return;
++                t_state.buffers[target] = id;
++            }
++            real.BindBuffer(target, id);
++        }
++
++        void BindBufferRange(GLenum target, GLuint index, GLuint id, GLintptr offset, GLsizeiptr size)
++        {
++            t_state.buffers[target] = id; // Also binds the general target.
++            real.BindBufferRange(target, index, id, offset, size);
++        }
++
++        void BindBufferBase(GLenum target, GLuint index, GLuint id)
++        {
++            t_state.buffers[target] = id;
++            real.BindBufferBase(target, index, id);
++        }
++
++        // Deleting something that is bound silently unbinds it, and its name can come back for a new object.
++        void DeleteTextures(GLsizei count, const GLuint *ids)
++        {
++            State &s = t_state;
++            for (GLsizei i = 0; i < count; ++i)
++            {
++                s.params.erase(ids[i]);
++                for (int64_t &bound : s.texture2d)
++                    if (bound == ids[i])
++                        bound = -1;
++            }
++            real.DeleteTextures(count, ids);
++        }
++
++        void DeleteFramebuffers(GLsizei count, const GLuint *ids)
++        {
++            t_state.readFb = t_state.drawFb = -1;
++            real.DeleteFramebuffers(count, ids);
++        }
++
++        void DeleteBuffers(GLsizei count, const GLuint *ids)
++        {
++            t_state.buffers.clear();
++            real.DeleteBuffers(count, ids);
++        }
++
++        void DeleteVertexArrays(GLsizei count, const GLuint *ids)
++        {
++            t_state.vao = -1;
++            real.DeleteVertexArrays(count, ids);
++        }
++
++        void DeleteProgram(GLuint program)
++        {
++            t_state.program = -1;
++            real.DeleteProgram(program);
++        }
++
++        void install(GLSL &api)
++        {
++            static std::once_flag once;
++            std::call_once(once, [&] { real = api; });
++            reset();
++#define RC_CACHE(name) \
++    if (api.name)      \
++        api.name = name
++            RC_CACHE(BindFramebuffer);
++            RC_CACHE(Viewport);
++            RC_CACHE(Scissor);
++            RC_CACHE(Enable);
++            RC_CACHE(Disable);
++            RC_CACHE(DepthFunc);
++            RC_CACHE(DepthMask);
++            RC_CACHE(ColorMask);
++            RC_CACHE(BlendEquationSeparate);
++            RC_CACHE(BlendFuncSeparate);
++            RC_CACHE(BlendColor);
++            RC_CACHE(UseProgram);
++            RC_CACHE(ActiveTexture);
++            RC_CACHE(BindTexture);
++            RC_CACHE(TexParameteri);
++            RC_CACHE(BindVertexArray);
++            RC_CACHE(BindBuffer);
++            RC_CACHE(BindBufferRange);
++            RC_CACHE(BindBufferBase);
++            RC_CACHE(DeleteTextures);
++            RC_CACHE(DeleteFramebuffers);
++            RC_CACHE(DeleteBuffers);
++            RC_CACHE(DeleteVertexArrays);
++            RC_CACHE(DeleteProgram);
++#undef RC_CACHE
++        }
++    }
++}
++
  namespace GSGL
  {
      bool PublishShared(const Api &, GLuint, uint32_t, uint32_t, uint64_t, GLuint, GLint) { return false; }
@@ -1178,6 +1527,7 @@ index 5e04125..13b0dc2 100644
 +        }
 +        std::string missing;
 +        loadContextApi(m_api, missing);
++        statecache::install(m_api);
 +        if (!missing.empty())
 +        {
 +            error = "missing GL functions: " + missing;
@@ -1202,6 +1552,7 @@ index 5e04125..13b0dc2 100644
 -    void Context::DestroyWorker(void *) {}
 +    bool Context::MakeWorkerCurrent(void *worker) const
 +    {
++        statecache::reset();
 +        if (glx().active)
 +            return worker && makeGlxCurrent(worker);
 +        return worker && m_dc && egl().MakeCurrent(m_dc, nullptr, nullptr, worker);
@@ -1400,10 +1751,10 @@ index 8f874c8..9df5ab8 100644
              return;
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
 new file mode 100644
-index 0000000..61516fd
+index 0000000..90eb1e7
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
-@@ -0,0 +1,3108 @@
+@@ -0,0 +1,3240 @@
 +// GOW-Port: render-target GS renderer, see include/runtime/gs/gs_hw_backend.h.
 +#include "runtime/gs/gs_tri_groups.h"
 +#include "runtime/gs/gs_colour_runs.h" // GOW-Port: ps2recomp-gs-sombras-tramos
@@ -3272,6 +3623,70 @@ index 0000000..61516fd
 +    struct UniformSlot { bool set = false; int32_t v[4] = {}; };
 +    std::array<UniformSlot, 128> uniformCache;
 +    uint32_t vboRing = 0u;
++
++    // A streaming buffer that stays mapped: writing into it costs no driver call, where mapping and unmapping for every
++    // draw was a fifth of the renderer's time on NVIDIA. Fences keep the CPU from overwriting a part the GPU hasn't read.
++    struct PersistentRing
++    {
++        static constexpr int kSectors = 4;
++        uint8_t *base = nullptr;
++        size_t capacity = 0u, sectorBytes = 0u, head = 0u;
++        int firstSector = 0;
++        std::array<GLsync, kSectors> fences{};
++        bool tried = false;
++
++        bool init(const Api &g, GLenum target, GLuint buffer, size_t bytes)
++        {
++            tried = true;
++            if (!g.BufferStorage || !g.FenceSync || !g.ClientWaitSync || !g.DeleteSync)
++                return false;
++            constexpr GLbitfield kFlags = 0x2u | 0x40u | 0x80u; // WRITE | PERSISTENT | COHERENT
++            g.BindBuffer(target, buffer);
++            g.BufferStorage(target, static_cast<GLsizeiptr>(bytes), nullptr, kFlags);
++            base = static_cast<uint8_t *>(g.MapBufferRange(target, 0, static_cast<GLsizeiptr>(bytes), kFlags));
++            capacity = bytes;
++            sectorBytes = bytes / kSectors;
++            return base != nullptr;
++        }
++
++        void waitFor(const Api &g, int sector)
++        {
++            if (GLsync fence = fences[sector])
++            {
++                g.ClientWaitSync(fence, kSyncFlushCommandsBit, 2000000000ull);
++                g.DeleteSync(fence);
++                fences[sector] = nullptr;
++            }
++        }
++
++        size_t allocate(const Api &g, size_t bytes, size_t align)
++        {
++            size_t offset = (head + align - 1u) / align * align;
++            const bool crosses = offset / sectorBytes != (offset + bytes - 1u) / sectorBytes || offset + bytes > capacity;
++            if (crosses)
++            {
++                // What has been written since the last crossing is now in flight.
++                const int lastUsed = static_cast<int>((head == 0u ? 0u : head - 1u) / sectorBytes);
++                for (int sector = firstSector; sector <= lastUsed; ++sector)
++                {
++                    if (fences[sector])
++                        g.DeleteSync(fences[sector]);
++                    fences[sector] = g.FenceSync(kSyncGpuCommandsComplete, 0u);
++                }
++                size_t next = (lastUsed + 1) % kSectors;
++                if (next * sectorBytes + bytes > capacity)
++                    next = 0u;
++                offset = next * sectorBytes;
++                firstSector = static_cast<int>(next);
++                const int lastNeeded = static_cast<int>((offset + bytes - 1u) / sectorBytes);
++                for (int sector = firstSector; sector <= lastNeeded; ++sector)
++                    waitFor(g, sector);
++            }
++            head = offset + bytes;
++            return offset;
++        }
++    };
++    PersistentRing vertexRing, trackTriangleBuffer, trackConstantBuffer;
 +    bool uniformUnchanged(GLint loc, int32_t a, int32_t b = 0, int32_t c = 0, int32_t d = 0)
 +    {
 +        if (loc < 0)
@@ -3410,6 +3825,20 @@ index 0000000..61516fd
 +    }
 +
 +    GSTrackBatch *trackDraw = nullptr;
++    size_t trackRingOffset = 0u, trackRingBytes = 0u;
++    bool trackInRing = false;
++
++    void prepareTrackBuffers()
++    {
++        if (trackTriangleBuffer.tried)
++            return;
++        const Api &g = gl();
++        constexpr GLenum kStorage = 0x90D2, kUniform = 0x8A11;
++        g.GenBuffers(1, &trackTriangles);
++        g.GenBuffers(1, &trackConstants);
++        trackTriangleBuffer.init(g, kStorage, trackTriangles, 64u * 1024u * 1024u);
++        trackConstantBuffer.init(g, kUniform, trackConstants, 4u * 1024u * 1024u);
++    }
 +    GLuint trackTriangles = 0, trackConstants = 0;
 +    GLintptr trackTriangleRing = 0, trackConstantRing = 0;
 +    GSTrackBatch *trackPending = nullptr;
@@ -3422,6 +3851,41 @@ index 0000000..61516fd
 +    {
 +        GSTrackBatch *batch = nullptr;
 +        std::memcpy(&batch, &b.vertices[0].z, sizeof(batch));
++        if (!ensure())
++        {
++            std::free(batch);
++            return;
++        }
++        prepareTrackBuffers();
++        const size_t quadBytes = batch->quadBytes != 0u ? batch->quadBytes : batch->triangles * 160u;
++        if (trackTriangleBuffer.base != nullptr)
++        {
++            // Straight into the GPU's buffer: joined batches are simply written next to each other.
++            PersistentRing &ring = trackTriangleBuffer;
++            const bool joins = trackPending != nullptr && trackInRing && trackPending->quadBytes == 0u && batch->quadBytes == 0u &&
++                               sameState(trackPendingState, b.state) &&
++                               std::memcmp(trackPending->draw, batch->draw, 36u * sizeof(float)) == 0 &&
++                               std::memcmp(trackPending->draw + 41, batch->draw + 41, 23u * sizeof(float)) == 0 &&
++                               ring.head == trackRingOffset + trackRingBytes &&
++                               trackRingOffset / ring.sectorBytes == (ring.head + quadBytes - 1u) / ring.sectorBytes;
++            if (joins)
++            {
++                std::memcpy(ring.base + ring.head, batch->quads, quadBytes);
++                ring.head += quadBytes;
++                trackRingBytes += quadBytes;
++                trackPending->triangles += batch->triangles;
++                std::free(batch);
++                return;
++            }
++            flushPending(); // Also draws the previous batch.
++            trackRingOffset = ring.allocate(gl(), quadBytes, 256u);
++            std::memcpy(ring.base + trackRingOffset, batch->quads, quadBytes);
++            trackRingBytes = quadBytes;
++            trackInRing = true;
++            trackPending = batch;
++            trackPendingState = b.state;
++            return;
++        }
 +        // Consecutive batches with the same state and constants are one draw.
 +        if (trackPending != nullptr && trackPending->quadBytes == 0u && batch->quadBytes == 0u && sameState(trackPendingState, b.state) &&
 +            std::memcmp(trackPending->draw, batch->draw, 36u * sizeof(float)) == 0 &&
@@ -3459,6 +3923,7 @@ index 0000000..61516fd
 +            draw(trackPendingState, extent);
 +            trackDraw = nullptr;
 +        }
++        trackInRing = false;
 +        std::free(batch);
 +        ++stats.draws;
 +    }
@@ -3750,13 +4215,24 @@ index 0000000..61516fd
 +        g.BindBuffer(kArrayBuffer, vbo);
 +        // One streaming buffer: re-specifying the store for every draw is far more work in the driver than writing into it.
 +        constexpr uint32_t kRingVertices = 1u << 20;
-+        if (vboRing == 0u || vboRing + dverts.size() > kRingVertices)
++        if (!vertexRing.tried)
++            vertexRing.init(g, kArrayBuffer, vbo, kRingVertices * sizeof(HwVertex));
++        GLint ringFirst;
++        if (vertexRing.base != nullptr)
 +        {
-+            g.BufferData(kArrayBuffer, static_cast<GLsizeiptr>(kRingVertices * sizeof(HwVertex)), nullptr, kStreamDraw);
-+            vboRing = 0u;
++            const size_t bytes = dverts.size() * sizeof(HwVertex);
++            const size_t offset = vertexRing.allocate(g, bytes, sizeof(HwVertex));
++            std::memcpy(vertexRing.base + offset, dverts.data(), bytes);
++            ringFirst = static_cast<GLint>(offset / sizeof(HwVertex));
 +        }
-+        const GLint ringFirst = static_cast<GLint>(vboRing);
++        else
 +        {
++            if (vboRing == 0u || vboRing + dverts.size() > kRingVertices)
++            {
++                g.BufferData(kArrayBuffer, static_cast<GLsizeiptr>(kRingVertices * sizeof(HwVertex)), nullptr, kStreamDraw);
++                vboRing = 0u;
++            }
++            ringFirst = static_cast<GLint>(vboRing);
 +            constexpr GLbitfield kMapFlags = 0x2u | 0x4u | 0x20u; // WRITE | INVALIDATE_RANGE | UNSYNCHRONIZED
 +            void *dst = g.MapBufferRange(kArrayBuffer, static_cast<GLintptr>(vboRing * sizeof(HwVertex)),
 +                                         static_cast<GLsizeiptr>(dverts.size() * sizeof(HwVertex)), kMapFlags);
@@ -3781,16 +4257,20 @@ index 0000000..61516fd
 +                constexpr GLenum kStorage = 0x90D2u, kUniform = 0x8A11u, kStream = 0x88E0u, kClipDistance0 = 0x3000u;
 +                constexpr GLsizeiptr kRingBytes = 64 * 1024 * 1024, kConstantRingBytes = 4 * 1024 * 1024, kAlign = 256;
 +                constexpr GLbitfield kMapFlags = 0x2u | 0x4u | 0x20u; // WRITE | INVALIDATE_RANGE | UNSYNCHRONIZED
-+                if (trackTriangles == 0u)
-+                {
-+                    g.GenBuffers(1, &trackTriangles);
-+                    g.GenBuffers(1, &trackConstants);
++                if (locTrack < 0)
 +                    locTrack = g.GetUniformLocation(program, "uTrack");
-+                }
 +                trackDraw->draw[39] = zInv ? 1.0f : 0.0f;
 +                // Two streaming rings: re-specifying a buffer for each of the ~1500 batches a frame is far more driver work.
 +                const auto put = [&](GLenum target, GLuint id, GLintptr &ring, GLsizeiptr capacity, GLuint binding, const void *data, GLsizeiptr bytes)
 +                {
++                    PersistentRing &persistent = target == kStorage ? trackTriangleBuffer : trackConstantBuffer;
++                    if (persistent.base != nullptr)
++                    {
++                        const size_t offset = persistent.allocate(g, static_cast<size_t>(bytes), static_cast<size_t>(kAlign));
++                        std::memcpy(persistent.base + offset, data, static_cast<size_t>(bytes));
++                        g.BindBufferRange(target, binding, id, static_cast<GLintptr>(offset), bytes);
++                        return;
++                    }
 +                    g.BindBuffer(target, id);
 +                    if (ring == 0 || ring + bytes > capacity)
 +                    {
@@ -3805,7 +4285,10 @@ index 0000000..61516fd
 +                    g.BindBufferRange(target, binding, id, ring, bytes);
 +                    ring += (bytes + kAlign - 1) / kAlign * kAlign;
 +                };
-+                put(kStorage, trackTriangles, trackTriangleRing, kRingBytes, 0, trackDraw->quads, static_cast<GLsizeiptr>(trackDraw->quadBytes != 0u ? trackDraw->quadBytes : trackDraw->triangles * 160u));
++                if (trackInRing)
++                    g.BindBufferRange(kStorage, 0, trackTriangles, static_cast<GLintptr>(trackRingOffset), static_cast<GLsizeiptr>(trackRingBytes));
++                else
++                    put(kStorage, trackTriangles, trackTriangleRing, kRingBytes, 0, trackDraw->quads, static_cast<GLsizeiptr>(trackDraw->quadBytes != 0u ? trackDraw->quadBytes : trackDraw->triangles * 160u));
 +                put(kUniform, trackConstants, trackConstantRing, kConstantRingBytes, 1, trackDraw->draw, static_cast<GLsizeiptr>(sizeof(trackDraw->draw)));
 +                g.Uniform1i(locTrack, 1);
 +                g.Enable(kClipDistance0);

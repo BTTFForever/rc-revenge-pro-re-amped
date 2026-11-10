@@ -178,7 +178,11 @@ Sweep of levels 1-24 on the God of War renderer at 3x: 1, 3, 4, 10, 15, 16 and 2
 
 Always run on the discrete RTX 2060 (`prime-run`-style environment, set by `tools/play.sh` and `tools/shadow.sh`). Every frame-rate figure in these notes up to 2026-11-10 was measured on the integrated Vega 10, because nothing selected the 2060 until then.
 
-On the 2060 the X11 window's GLX context stops EGL contexts being made current (any EGL display type, any thread), so `gs_gl.cpp` falls back to a GLX pbuffer context when EGL refuses. Level 18 on the 2060: 30-37 fps at both 2x and 4x, against about 48 on the Vega. `GSThread` is at 99% of one core, so the limit is CPU time in that thread rather than GPU power. `__GL_THREADED_OPTIMIZATIONS=1` halves it; turning vsync off doesn't help. Not yet profiled: `perf` needs `kernel.perf_event_paranoid` lowered.
+On the 2060 the X11 window's GLX context stops EGL contexts being made current (any EGL display type, any thread), so `gs_gl.cpp` falls back to a GLX pbuffer context when EGL refuses. The first run on the 2060 gave 30-37 fps on level 18 at 2x and 4x, against about 48 on the Vega, with `GSThread` at 99% of one core. The renderer sends all its state for each of about 85,000 draws a second. Fixes, in `gs_gl.cpp` and `gs_hw_backend.cpp`: a state cache that skips unchanged GL calls (`statecache`), persistently mapped streaming buffers (`PersistentRing`, no map and unmap per draw), and track batches written straight into the mapped buffer.
+
+Level 18 is now 40-51 fps at both 2x and 4x; levels 3 and 16 hold 60 at 3x-4x; levels 5 and 8 are 33-59. On the heavy levels `nvidia-smi` shows the GPU at 95-100%, and the speed doesn't change with resolution, so the limit is not pixels. Untested guess: the vertex shader pulling every triangle from a buffer in system memory over PCIe. The Vulkan renderer is the natural place to fix that.
+
+`perf` is not allowed without lowering `kernel.perf_event_paranoid`. `tools/profile/sampler.cpp` is an LD_PRELOAD sampling profiler that needs no permissions: build as a shared library, run with `SAMPLE_THREAD=GSThread SAMPLE_OUT=<file>`, and read the result with `tools/profile/analyse.py <file> <binary>`.
 
 ### VU1 programs converted (2026-11-10)
 
