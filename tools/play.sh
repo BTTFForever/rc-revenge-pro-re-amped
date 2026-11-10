@@ -19,6 +19,15 @@ case "$mode" in
     replay) [ -f "$pad" ] || { echo "no recording $pad"; exit 1; }; input="PS2X_PAD_REPLAY=$pad" ;;
     *) echo "record or replay"; exit 1 ;;
 esac
+# Always the discrete RTX 2060, never the integrated Vega.
+if ! nvidia-smi -L >/dev/null 2>&1 && [ "${PLAY_ALLOW_IGPU:-0}" != 1 ]; then
+    echo "The NVIDIA GPU is not responding (nvidia-smi failed), so the game was not started. Rebooting normally clears this." >&2
+    echo "Set PLAY_ALLOW_IGPU=1 to run on the integrated GPU anyway." >&2
+    exit 1
+fi
+if nvidia-smi -L >/dev/null 2>&1; then
+    export __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only __GLX_VENDOR_LIBRARY_NAME=nvidia
+fi
 cd "$root"
 exec env PS2X_DEBUG_PANEL=0 PS2X_GS_GPU=1 PS2X_GS_HW=1 PS2X_GS_HW_SCALE=2 PS2X_GS_THREAD=1 PS2X_MTVU=1 PS2X_VU1_TIMING=0 \
     PS2X_EE_HOST_PACING=1 PS2X_GS_SHADER_PRELOAD=0 PS2X_GS_SHADER_CACHE=1 PS2X_GS_SHADER_CACHE_DIR="$root/build-decomp/shader-cache" \

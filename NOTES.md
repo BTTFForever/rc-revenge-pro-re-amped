@@ -174,6 +174,10 @@ Sweep of levels 1-24 on the God of War renderer at 3x: 1, 3, 4, 10, 15, 16 and 2
   the policy of keeping GS/DMA libraries as original code (GPL-3.0)
 - God of War recomp, by KIexster: Linux EGL context code and the render-target renderer (GPL-3.0)
 
+### GPU
+
+Always run on the discrete RTX 2060 (`prime-run`-style environment, set by `tools/play.sh` and `tools/shadow.sh`). Every frame-rate figure in these notes up to 2026-11-10 was measured on the integrated Vega 10, because nothing selected the 2060 until then.
+
 ### VU1 programs converted (2026-11-10)
 
 All shape programs share their clipping text at different addresses. `decomp/vu1/vu_shape.{h,cpp}` holds it, and `ShapeLayout` records how each program differs (addresses, buffers, which registers leak `w` lanes into GS packets, wrap behaviour).
