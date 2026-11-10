@@ -90,6 +90,8 @@ struct ee_float
 };
 
 inline ee_float ee_sqrt(ee_float x) { return FPU_SQRT_S(x.v); }
+// a / sqrt(b) as one instruction (rsqrt.s), which rounds differently from a division and a square root in turn.
+inline ee_float ee_rsqrt(ee_float a, ee_float b) { return FPU_RSQRT_S(a.v, b.v); }
 inline ee_float ee_abs(ee_float x) { return FPU_ABS_S(x.v); }
 inline ee_float ee_itof(int32_t x) { return FPU_CVT_S_W(x); }
 inline int32_t ee_ftoi(ee_float x) { return FPU_CVT_W_S(x.v); } // Truncates and saturates, as cvt.w.s does.

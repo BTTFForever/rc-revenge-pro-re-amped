@@ -96,9 +96,9 @@ uint32 Vec16Magnitude(ptr32<vec16_> p)
     return Sqr32(static_cast<uint32_t>(x * x + y * y + z * z));
 }
 
-uint16 NormalNormalise(ptr32<normal_> r)
+uint16 normaliseInPlace(normal_ &r)
 {
-    const int32_t x = r->x, y = r->y, z = r->z;
+    const int32_t x = r.x, y = r.y, z = r.z;
     const uint16_t magnitude = Sqr32(static_cast<uint32_t>(x * x + y * y + z * z));
     if (magnitude == 0u)
         return 0u;
@@ -108,15 +108,20 @@ uint16 NormalNormalise(ptr32<normal_> r)
     {
         // Too large for a signed 16-bit divisor: halve everything.
         s = magnitude >> 1;
-        r->x >>= 1;
-        r->y >>= 1;
-        r->z >>= 1;
+        r.x >>= 1;
+        r.y >>= 1;
+        r.z >>= 1;
     }
 
-    r->x = static_cast<frac>(ee_div(r->x << 12, s));
-    r->y = static_cast<frac>(ee_div(r->y << 12, s));
-    r->z = static_cast<frac>(ee_div(r->z << 12, s));
+    r.x = static_cast<frac>(ee_div(r.x << 12, s));
+    r.y = static_cast<frac>(ee_div(r.y << 12, s));
+    r.z = static_cast<frac>(ee_div(r.z << 12, s));
     return magnitude;
+}
+
+uint16 NormalNormalise(ptr32<normal_> r)
+{
+    return normaliseInPlace(*r);
 }
 
 void NormalDotProduct(ptr32<normal_> a, ptr32<normal_> b, ptr32<frac> cosine)
@@ -124,12 +129,17 @@ void NormalDotProduct(ptr32<normal_> a, ptr32<normal_> b, ptr32<frac> cosine)
     *cosine = static_cast<frac>((a->x * b->x + a->y * b->y + a->z * b->z) >> 12);
 }
 
-// dstVector may be a or b, so each component is stored before the next is read, as the original does.
+// dst may be a or b, so each component is stored before the next is read, as the original does.
+void crossInPlace(const normal_ &a, const normal_ &b, normal_ &dst)
+{
+    dst.x = static_cast<frac>((a.z * b.y - a.y * b.z) >> 12);
+    dst.y = static_cast<frac>((a.x * b.z - a.z * b.x) >> 12);
+    dst.z = static_cast<frac>((a.y * b.x - a.x * b.y) >> 12);
+}
+
 void NormalCrossProduct(ptr32<normal_> a, ptr32<normal_> b, ptr32<normal_> dstVector)
 {
-    dstVector->x = static_cast<frac>((a->z * b->y - a->y * b->z) >> 12);
-    dstVector->y = static_cast<frac>((a->x * b->z - a->z * b->x) >> 12);
-    dstVector->z = static_cast<frac>((a->y * b->x - a->x * b->y) >> 12);
+    crossInPlace(*a, *b, *dstVector);
 }
 
 // A fast length estimate: the largest component plus half of the next.

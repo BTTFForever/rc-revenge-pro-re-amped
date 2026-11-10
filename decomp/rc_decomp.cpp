@@ -147,6 +147,8 @@ void fuzzAll(uint8_t *rdram, const R5900Context &live, PS2Runtime *runtime, int 
         Entry &entry = *item.entry;
         if (entry.randomiseArgs == nullptr)
             continue;
+        if (const char *only = std::getenv("RC_SHADOW_ONLY"); only != nullptr && std::strcmp(only, entry.name) != 0)
+            continue;
         uint64_t state = 0x5EEDu + entry.address;
         uint64_t mismatches = 0u;
         for (int i = 0; i < iterations; ++i)
@@ -186,6 +188,14 @@ void fuzzAll(uint8_t *rdram, const R5900Context &live, PS2Runtime *runtime, int 
             const bool globalsSame = std::memcmp(rdram + kDataStart, globalsAfter.get(), kDataEnd - kDataStart) == 0;
             if (!regsSame || !scratchSame || !globalsSame)
             {
+                if (mismatches < 4u && !scratchSame)
+                {
+                    const uint32_t at = firstDifference(rdram + kScratch, scratchAfter.get(), 0u, kScratchSize) & ~3u;
+                    uint32_t native, original;
+                    std::memcpy(&native, rdram + kScratch + at, 4u);
+                    std::memcpy(&original, scratchAfter.get() + at, 4u);
+                    std::fprintf(stderr, "[decomp] FUZZ DETAIL %s: scratch+0x%x original=%08x decompiled=%08x\n", entry.name, at, original, native);
+                }
                 if (++mismatches <= 4u)
                     std::fprintf(stderr, "[decomp] FUZZ MISMATCH %s iteration %d: return %s scratch %s globals %s | a0=%x a1=%x a2=%x f12=%g f13=%g | v0 %llx vs %llx\n",
                                  entry.name, i, regsSame ? "same" : "DIFF", scratchSame ? "same" : "DIFF", globalsSame ? "same" : "DIFF",

@@ -52,6 +52,11 @@ RecompFn decompOr(uint32_t address, RecompFn fallback);
 
 extern PS2Runtime *g_runtime;
 
+// Advances the EE's clock without yielding, as a call or a loop iteration does in recompiled code. A native loop that
+// waits on the clock or on hardware must call this, or time would stand still. Recompiled code acts on any interrupt
+// that falls due at its next call or backward branch.
+inline void charge_ee_cycles(uint32_t cycles) { g_runtime->eeScheduler().accountCycles(cycles); }
+
 // Reads a hardware register, such as a timer, as the recompiled code does.
 uint32_t hw_read32(uint32_t address);
 
@@ -175,6 +180,7 @@ struct Thunk<Fn>
         else
             storeReturn<R>(ctx, std::apply(Fn, args));
         ctx->pc = returnAddress;
+        charge_ee_cycles(EeScheduler::kGuestDispatchCycles); // What a call into recompiled code charges.
     }
 };
 
@@ -241,6 +247,17 @@ inline uint32_t ee_divu(uint32_t a, uint32_t b)
                                        &::name##_##address, ::rc::Thunk<&::rc::name>::returns,       \
                                        nullptr};                                                     \
     static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &::rc::Thunk<&::rc::name>::run);
+
+// Compared on the game's own calls but not on random inputs, for functions whose real inputs are limited.
+#define RC_DECOMP_FN_NOFUZZ(name, address)                                                           \
+    static ::rc::Entry rc_entry_##name{#name, address, &::rc::Thunk<&::rc::name>::run,               \
+                                       &::name##_##address, ::rc::Thunk<&::rc::name>::returns,       \
+                                       nullptr};                                                     \
+    static void rc_shadow_##name(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)             \
+    {                                                                                                \
+        ::rc::shadowCall(rdram, ctx, runtime, rc_entry_##name);                                      \
+    }                                                                                                \
+    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_shadow_##name);
 
 #define RC_DECOMP_FN(name, address)                                                                  \
     static ::rc::Entry rc_entry_##name{#name, address, &::rc::Thunk<&::rc::name>::run,               \
