@@ -220,3 +220,7 @@ Done so far: RANDOM, VECTOR, MATHS, MATRIX, TRIG, MATHTRIG, F3DMATH, PSXDEFS, 3D
 
 `RC_SHADOW_ALWAYS=name,name` compares every call of those functions, for reaching rare paths; `RC_SHADOW_RATE=n` changes the sampling rate. In demo races boats and water run on levels 5, 8, 9, 11, 12, 17, 20, 21, 23 and 24; "other object" collisions on 5, 17 and 25; car-on-car collisions on nearly all.
 - Measured load before conversion, 30 s demo, level 18: TRdr 14.81 s, Water 2.36 s, Env 2.24 s, Skin 0.96 s. Rdr_VUShape and TERdr did not run in the demos tried, so they need another way to exercise them.
+
+## Where to resume (2026-11-10)
+
+Next: player and AI logic and collision detection (`PLAYER`, `AI`, `AINODE`, `CARCOL`, `TCOL`, `ACOL`), then the main loop, then the Vulkan renderer. Undecided: whether to chase the remaining slowdown on heavy levels (GPU at 95-100%, not resolution-bound) before that or leave it for the Vulkan stage; the recommendation was to leave it. `tools/decomp_extract.py UNIT...` prints a unit's Ghidra output, `tools/shadow.sh` checks it.
