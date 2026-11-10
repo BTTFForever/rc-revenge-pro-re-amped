@@ -197,5 +197,13 @@ All shape programs share their clipping text at different addresses. `decomp/vu1
 - `tools/play.sh record|replay <name>` plays from a clean memory card and records or replays the controller (`decomp/recordings/`). Circle and Square are on E and R there, because the mouse bindings need a captured pointer. `RC_VU1_REF=2` compares only the two programs above, cheap enough for play. Recording format: epoch, frame, buttons, axes; the epoch advances when a level finishes loading so load times can't shift input. Replay of the epoch format is untested, and session1 and session2 predate it, so they can't be replayed.
 - Memory-card saving works: a Track Editor track saved to the virtual card. Loading it back hasn't been tried.
 
-**Next: bulk C decompilation** of the remaining game code (15 of 2,486 functions are native), using `decomp/generated/pseudo_all.c` and the comparison harness. EE cycle charging in `Thunk::run` must be added first.
+**Bulk C decompilation** (started 2026-11-10). `tools/decomp_progress.py --files` shows progress by source unit: 1,713 game functions, about 119,000 lines of Ghidra output. The other 773 are SDK, libc and zlib, to be replaced by host libraries. `tools/shadow.sh <level> <seconds> [fuzz]` compares every native function with its recompiled original during a demo race and on random inputs (`RC_SHADOW_ONLY=<name>` limits the random inputs to one function).
+
+Things Ghidra's output hides, all found by the comparison:
+- `4096.0 / SQRT(x)` is a single `rsqrt.s`, which rounds differently: use `ee_rsqrt`.
+- `add` traps on overflow, so random inputs that overflow have no meaningful answer: those functions use `RC_DECOMP_FN_NOFUZZ`.
+- Native code must not call recompiled code directly. A checkpoint inside it returns early. `sinf` and `cosf` are native for that reason (`src/libm_float.cpp`); their huge-argument path is not ported and aborts with a message.
+- Open: `FMatNormalise` differs on a few random garbage inputs (about 1 in 500), never on a real call. Not explained.
+
+Done so far: 71 functions (RANDOM, VECTOR, MATHS, MATRIX, TRIG, MATHTRIG, F3DMATH, PSXDEFS, 3DMATH, and `GfxP2_SwapBuffers`). Next: the physics (FPHYSLIB, FUPDATE, FRESPONSE, FFORCES, FINITCAR, FBOAT).
 - Measured load before conversion, 30 s demo, level 18: TRdr 14.81 s, Water 2.36 s, Env 2.24 s, Skin 0.96 s. Rdr_VUShape and TERdr did not run in the demos tried, so they need another way to exercise them.
