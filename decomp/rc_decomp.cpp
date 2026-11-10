@@ -62,7 +62,12 @@ bool sampleThisCall(uint64_t callIndex)
         windowStart = now;
         windowCount = 0;
     }
-    if (windowCount >= kSamplesPerSecond)
+    static const int samplesPerSecond = []
+    {
+        const char *rate = std::getenv("RC_SHADOW_RATE"); // Comparisons per second, across all functions.
+        return rate ? std::atoi(rate) : static_cast<int>(kSamplesPerSecond);
+    }();
+    if (windowCount >= static_cast<decltype(windowCount)>(samplesPerSecond))
         return false;
     ++windowCount;
     return true;
@@ -240,7 +245,14 @@ void shadowCall(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, Entry &e
     }
 
     const uint64_t callIndex = entry.calls.fetch_add(1u, std::memory_order_relaxed);
-    if (!sampleThisCall(callIndex))
+    // RC_SHADOW_ALWAYS=name,name: compare every call of these, to reach rare paths. Slow.
+    static const std::string always = []
+    {
+        const char *names = std::getenv("RC_SHADOW_ALWAYS");
+        return "," + std::string(names ? names : "") + ",";
+    }();
+    const bool compareAlways = always.find("," + std::string(entry.name) + ",") != std::string::npos;
+    if (!compareAlways && !sampleThisCall(callIndex))
     {
         entry.native(rdram, ctx, runtime);
         return;

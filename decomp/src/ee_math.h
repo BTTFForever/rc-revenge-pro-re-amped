@@ -28,4 +28,6 @@ inline ee_float float_from_bits(uint32_t bits)
 uint16 normaliseInPlace(normal_ &r);
 void crossInPlace(const normal_ &a, const normal_ &b, normal_ &dst);
 
+void fmatMul(_sFMat &out, const _sFMat &a, const _sFMat &b);
+
 } // namespace rc

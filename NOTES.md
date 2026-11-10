@@ -203,7 +203,10 @@ Things Ghidra's output hides, all found by the comparison:
 - `4096.0 / SQRT(x)` is a single `rsqrt.s`, which rounds differently: use `ee_rsqrt`.
 - `add` traps on overflow, so random inputs that overflow have no meaningful answer: those functions use `RC_DECOMP_FN_NOFUZZ`.
 - Native code must not call recompiled code directly. A checkpoint inside it returns early. `sinf` and `cosf` are native for that reason (`src/libm_float.cpp`); their huge-argument path is not ported and aborts with a message.
+- Ghidra can flatten float additions: it printed `a + b + c` for code that computes `a + (b + c)`, and rounding differs. When a float function mismatches in its low bits, read the instruction order in `output/<name>.cpp`.
 - Open: `FMatNormalise` differs on a few random garbage inputs (about 1 in 500), never on a real call. Not explained.
 
-Done so far: 71 functions (RANDOM, VECTOR, MATHS, MATRIX, TRIG, MATHTRIG, F3DMATH, PSXDEFS, 3DMATH, and `GfxP2_SwapBuffers`). Next: the physics (FPHYSLIB, FUPDATE, FRESPONSE, FFORCES, FINITCAR, FBOAT).
+Done so far: RANDOM, VECTOR, MATHS, MATRIX, TRIG, MATHTRIG, F3DMATH, PSXDEFS, 3DMATH, `GfxP2_SwapBuffers`, and the car physics (FPHYSLIB, FUPDATE, FRESPONSE, FFORCES, FINITCAR, FBOAT). `FPhysLibInitTESTCarData` and `FPhysLibInitTESTCarSpheres` are left: nothing calls them.
+
+`RC_SHADOW_ALWAYS=name,name` compares every call of those functions, for reaching rare paths; `RC_SHADOW_RATE=n` changes the sampling rate. In demo races boats and water run on levels 5, 8, 9, 11, 12, 17, 20, 21, 23 and 24; "other object" collisions on 5, 17 and 25; car-on-car collisions on nearly all.
 - Measured load before conversion, 30 s demo, level 18: TRdr 14.81 s, Water 2.36 s, Env 2.24 s, Skin 0.96 s. Rdr_VUShape and TERdr did not run in the demos tried, so they need another way to exercise them.

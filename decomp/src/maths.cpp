@@ -38,20 +38,24 @@ uint32_t mul12(int32_t a, int32_t b)
 
 // F3DMATH.c
 
+void fmatMul(_sFMat &out, const _sFMat &left, const _sFMat &right)
+{
+    const _sFMat a = left, b = right; // out can be either input.
+    const ee_float scale = kOneOver4096;
+    out.Xx = (a.Xx * b.Xx + a.Xy * b.Yx + a.Xz * b.Zx) * scale;
+    out.Xy = (a.Xx * b.Xy + a.Xy * b.Yy + a.Xz * b.Zy) * scale;
+    out.Xz = (a.Xx * b.Xz + a.Xy * b.Yz + a.Xz * b.Zz) * scale;
+    out.Yx = (a.Yx * b.Xx + a.Yy * b.Yx + a.Yz * b.Zx) * scale;
+    out.Yy = (a.Yx * b.Xy + a.Yy * b.Yy + a.Yz * b.Zy) * scale;
+    out.Yz = (a.Yx * b.Xz + a.Yy * b.Yz + a.Yz * b.Zz) * scale;
+    out.Zx = (a.Zx * b.Xx + a.Zy * b.Yx + a.Zz * b.Zx) * scale;
+    out.Zy = (a.Zx * b.Xy + a.Zy * b.Yy + a.Zz * b.Zy) * scale;
+    out.Zz = (a.Zx * b.Xz + a.Zy * b.Yz + a.Zz * b.Zz) * scale;
+}
+
 void FMatMulFMat(ptr32<_sFMat> pMatOut, ptr32<_sFMat> pMat1, ptr32<_sFMat> pMat2)
 {
-    const _sFMat a = *pMat1;
-    const _sFMat b = *pMat2;
-    const ee_float scale = kOneOver4096;
-    pMatOut->Xx = (a.Xx * b.Xx + a.Xy * b.Yx + a.Xz * b.Zx) * scale;
-    pMatOut->Xy = (a.Xx * b.Xy + a.Xy * b.Yy + a.Xz * b.Zy) * scale;
-    pMatOut->Xz = (a.Xx * b.Xz + a.Xy * b.Yz + a.Xz * b.Zz) * scale;
-    pMatOut->Yx = (a.Yx * b.Xx + a.Yy * b.Yx + a.Yz * b.Zx) * scale;
-    pMatOut->Yy = (a.Yx * b.Xy + a.Yy * b.Yy + a.Yz * b.Zy) * scale;
-    pMatOut->Yz = (a.Yx * b.Xz + a.Yy * b.Yz + a.Yz * b.Zz) * scale;
-    pMatOut->Zx = (a.Zx * b.Xx + a.Zy * b.Yx + a.Zz * b.Zx) * scale;
-    pMatOut->Zy = (a.Zx * b.Xy + a.Zy * b.Yy + a.Zz * b.Zy) * scale;
-    pMatOut->Zz = (a.Zx * b.Xz + a.Zy * b.Yz + a.Zz * b.Zz) * scale;
+    fmatMul(*pMatOut, *pMat1, *pMat2);
 }
 
 // Rebuilds a matrix from its Y and Z columns so that it is orthonormal again.
