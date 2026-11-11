@@ -192,7 +192,7 @@ index b9933d5..18d9a35 100644
      unsigned int m_memoryAddress = 0x00100000u;
      unsigned int m_memoryBytes = 0x100u;
 diff --git a/ps2xRuntime/include/runtime/ee_scheduler.h b/ps2xRuntime/include/runtime/ee_scheduler.h
-index a9d47b1..16811e4 100644
+index a9d47b1..97175b7 100644
 --- a/ps2xRuntime/include/runtime/ee_scheduler.h
 +++ b/ps2xRuntime/include/runtime/ee_scheduler.h
 @@ -8,6 +8,7 @@
@@ -216,7 +216,17 @@ index a9d47b1..16811e4 100644
  // This exception is the EE equivalent of a longjmp to the dispatcher.  It is
  // not an error and must only be caught at EeScheduler::run().
  struct EeDispatcherTransfer final
-@@ -335,6 +342,16 @@ public:
+@@ -293,6 +300,9 @@ public:
+     void requestStop();
+     void postEvent(EeEvent event);
+     [[nodiscard]] bool checkpointDue(uint32_t cycles = kGeneratedCheckpointCycles) noexcept;
++    // While held, checkpoints still count cycles but never cut guest code short; events wait until the hold ends.
++    // For running a non-blocking function to completion from native code (the decompilation's comparison).
++    void holdCheckpoints(bool hold) noexcept { m_holdCheckpoints = hold; }
+     void accountCycles(uint32_t cycles) noexcept;
+     uint64_t skipIdleCycles() noexcept;
+     [[nodiscard]] bool isExecutingGuest() const noexcept;
+@@ -335,6 +345,16 @@ public:
          bool m_previous;
      };
  
@@ -233,7 +243,7 @@ index a9d47b1..16811e4 100644
      [[nodiscard]] bool transferPending() const noexcept
      {
          return m_transferPending;
-@@ -471,6 +488,26 @@ private:
+@@ -471,6 +491,26 @@ private:
      uint8_t *m_rdram = nullptr;
      std::array<std::deque<int>, kPriorityCount> m_readyQueues{};
      std::unordered_map<int, GuestThread> m_threads;
@@ -260,49 +270,14 @@ index a9d47b1..16811e4 100644
      std::unordered_map<int, EeSemaphore> m_semaphores;
      std::unordered_map<int, EeEventFlag> m_eventFlags;
      std::unordered_map<int, EeAlarm> m_alarms;
-diff --git a/ps2xRuntime/include/runtime/gs/gs_colour_runs.h b/ps2xRuntime/include/runtime/gs/gs_colour_runs.h
-new file mode 100644
-index 0000000..436162c
---- /dev/null
-+++ b/ps2xRuntime/include/runtime/gs/gs_colour_runs.h
-@@ -0,0 +1,37 @@
-+#pragma once
-+// GOW-Port: ps2recomp-gs-sombras-tramos. Tramos consecutivos de triángulos con el mismo color (GS por hardware, volúmenes
-+// de sombra). Las dos pasadas de recuento de las sombras (G += 255 y G += 1) tienen el mismo estado del GS y solo cambian
-+// el color plano de sus vértices, así que comparten lote; el atajo de mezcla fija necesita un solo color por llamada.
-+// Partir el lote en tramos, en orden, conserva el orden de las operaciones sobre cada píxel.
-+#include <cstddef>
-+#include <cstdint>
-+#include <vector>
-+
-+namespace gs_colour_runs
-+{
-+    // `verts`: vertexCount vértices de `stride` floats con el color (r, g, b) a partir del float `colourOffset`.
-+    // Deja en `ends` el vértice final (exclusivo) de cada tramo; los tramos empiezan siempre en un triángulo. Con un solo
-+    // color, un único tramo que lo abarca todo.
-+    inline void build(const float *verts, size_t stride, size_t colourOffset, size_t vertexCount, std::vector<uint32_t> &ends)
-+    {
-+        ends.clear();
-+        if (vertexCount == 0u)
-+            return;
-+        const auto colour = [&](size_t i) { return verts + i * stride + colourOffset; };
-+        const auto same = [&](size_t a, size_t b)
-+        {
-+            const float *ca = colour(a), *cb = colour(b);
-+            return ca[0] == cb[0] && ca[1] == cb[1] && ca[2] == cb[2];
-+        };
-+        size_t runStart = 0;
-+        for (size_t i = 3; i + 3u <= vertexCount; i += 3u)
-+        {
-+            if (!same(i, runStart))
-+            {
-+                ends.push_back(static_cast<uint32_t>(i));
-+                runStart = i;
-+            }
-+        }
-+        ends.push_back(static_cast<uint32_t>(vertexCount));
-+    }
-+}
+@@ -494,6 +534,7 @@ private:
+     mutable GuestThread *m_currentThread = nullptr;
+     bool m_rescheduleRequested = false;
+     bool m_unwinding = false;
++    bool m_holdCheckpoints = false;
+     bool m_sharedVu0RandomValid = false;
+     __m128 m_sharedVu0Random{};
+     bool m_timeSliceExpired = false;
 diff --git a/ps2xRuntime/include/runtime/gs/gs_frontend.h b/ps2xRuntime/include/runtime/gs/gs_frontend.h
 index c2823cd..5de2ad2 100644
 --- a/ps2xRuntime/include/runtime/gs/gs_frontend.h
@@ -339,56 +314,6 @@ index c2823cd..5de2ad2 100644
      float m_curS = 0.0f, m_curT = 0.0f;
      uint16_t m_curU = 0, m_curV = 0;
      uint8_t m_curFog = 0;
-diff --git a/ps2xRuntime/include/runtime/gs/gs_hw_backend.h b/ps2xRuntime/include/runtime/gs/gs_hw_backend.h
-new file mode 100644
-index 0000000..4f28b05
---- /dev/null
-+++ b/ps2xRuntime/include/runtime/gs/gs_hw_backend.h
-@@ -0,0 +1,44 @@
-+// GOW-Port: native GS renderer, the only GS renderer. Every draw is rasterised by the GPU into scaled RGBA render targets (one
-+// per frame buffer base); textures are read from the uploaded bytes (paletted ones as index + palette textures) and cached;
-+// the game's reinterpretation passes (channel shuffles, Z in colour memory, CRTC circuit merge) are done natively and the
-+// output is composed on the GPU at PS2X_GS_HW_SCALE. A small native store (GSTextureStore) keeps the uploaded bytes and the CLUT.
-+#pragma once
-+
-+#include "runtime/gs/gs_backend.h"
-+
-+#include <memory>
-+
-+class GSHwBackend final : public GSRasterBackend
-+{
-+public:
-+    GSHwBackend();
-+    ~GSHwBackend() override;
-+
-+    void Initialize(uint8_t *vram, uint32_t vramSize) override;
-+    void Reset() override;
-+
-+    void Submit(const GSPrimitiveBatch &batch) override;
-+    void LoadClut(const GSTex0Reg &tex0, const GSTexClutReg &texclut) override;
-+    void BeginTransfer(const GSTransferCommand &command) override;
-+    void UploadImage(const uint8_t *data, uint32_t sizeBytes) override;
-+
-+    void Flush() override;
-+    void TextureFlush() override;
-+    void Sync(GSSyncReason reason) override;
-+    PresentationFrame Present(const GSPresentationRequest &request) override;
-+    // GOW-Port: true when the GL context shares objects with the host window: Present then publishes the composed
-+    // frame as a shared texture (GPU copy) and returns no pixels; forceReadback requests (captures) still read back.
-+    bool UsesSharedPresentation() const;
-+
-+    bool ClearFramebuffer(const GSContext &context, uint32_t rgba) override;
-+    uint32_t ConsumeLocalToHostBytes(uint8_t *dst, uint32_t maxBytes) override;
-+
-+    uint32_t ReadVram(uint32_t psm, uint32_t base, uint32_t bw, uint32_t x, uint32_t y) const override;
-+    void WriteVram(uint32_t psm, uint32_t base, uint32_t bw, uint32_t x, uint32_t y, uint32_t value) override;
-+    void SnapshotVram(std::vector<uint8_t> &out) const override;
-+    GSTransferSnapshot GetTransferSnapshot() const override;
-+
-+private:
-+    struct Impl;
-+    std::unique_ptr<Impl> m_impl;
-+};
 diff --git a/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h b/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h
 index 2538d57..367de1a 100644
 --- a/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h
@@ -402,174 +327,6 @@ index 2538d57..367de1a 100644
      static std::unique_ptr<GSRasterBackend> MakeDefault();
      static void SetEnabledByDefault(bool enabled);
      static void SetGpuByDefault(bool enabled);
-diff --git a/ps2xRuntime/include/runtime/gs/gs_track_batch.h b/ps2xRuntime/include/runtime/gs/gs_track_batch.h
-new file mode 100644
-index 0000000..ef5d934
---- /dev/null
-+++ b/ps2xRuntime/include/runtime/gs/gs_track_batch.h
-@@ -0,0 +1,21 @@
-+#pragma once
-+// A batch of track triangles drawn by a vertex shader instead of VU1 (decomp/vu1/track_draw.cpp).
-+//
-+// It travels through the GS command stream as a GS register write to an unused address, carrying a pointer, so it
-+// stays in order with everything else. The backend frees it after drawing it.
-+#include <cstddef>
-+#include <cstdint>
-+
-+constexpr uint8_t kGSTrackBatchRegister = 0x7Eu;
-+constexpr uint8_t kGSTrackBatchMarker = 0xEEu; // In GSPrimitiveBatch::vertexCount; the pointer is in vertices[0].z.
-+
-+struct GSTrackBatch
-+{
-+    uint32_t triangles;
-+    uint32_t quadBytes; // Size of quads, if not ten quadwords per triangle. Such a batch is never merged with another.
-+    float draw[64]; // The shader's TrackDraw block; the backend fills in gsToClip and gsDepthRange.
-+    float quads[1]; // triangles * 40 floats: ten quadwords each, as the game sends them to VU1.
-+};
-+
-+// GLSL for the track vertex shader, set before the backend first builds its program.
-+extern const char *g_gsTrackVertexShader;
-diff --git a/ps2xRuntime/include/runtime/gs/gs_tri_groups.h b/ps2xRuntime/include/runtime/gs/gs_tri_groups.h
-new file mode 100644
-index 0000000..2f5de58
---- /dev/null
-+++ b/ps2xRuntime/include/runtime/gs/gs_tri_groups.h
-@@ -0,0 +1,94 @@
-+#pragma once
-+// GOW-Port: groups of consecutive triangles that cover disjoint pixels (GS hardware backend, shadow volumes).
-+// The shadow-volume passes blend with wrapping arithmetic (COLCLAMP=0) in the shader, which reads the destination:
-+// a triangle must see the result of every earlier triangle that covers the same pixels, so the backend drew one
-+// triangle per call with a texture barrier in between (~3000 calls and barriers per frame on the ship, which kept the
-+// GPU busy). Triangles whose interiors do not overlap can share a call: each pixel is still written once and in order.
-+#include <algorithm>
-+#include <cstddef>
-+#include <cstdint>
-+#include <vector>
-+
-+namespace gs_tri_groups
-+{
-+    struct Tri
-+    {
-+        float x[3], y[3];
-+        float minX, minY, maxX, maxY;
-+    };
-+
-+    inline Tri makeTri(const float *v0, const float *v1, const float *v2)
-+    {
-+        Tri t{{v0[0], v1[0], v2[0]}, {v0[1], v1[1], v2[1]}, 0, 0, 0, 0};
-+        t.minX = std::min({t.x[0], t.x[1], t.x[2]});
-+        t.maxX = std::max({t.x[0], t.x[1], t.x[2]});
-+        t.minY = std::min({t.y[0], t.y[1], t.y[2]});
-+        t.maxY = std::max({t.y[0], t.y[1], t.y[2]});
-+        return t;
-+    }
-+
-+    inline bool hasVertex(const Tri &t, float x, float y)
-+    {
-+        for (int i = 0; i < 3; ++i)
-+            if (t.x[i] == x && t.y[i] == y)
-+                return true;
-+        return false;
-+    }
-+
-+    // True unless an edge of one triangle separates the two. Interiors that only touch along an edge both triangles
-+    // share exactly (same two vertices: adjacent triangles of a mesh) do not overlap, since the rasteriser gives the
-+    // pixels of a shared edge to one of them; any other contact counts as overlap.
-+    inline bool overlap(const Tri &a, const Tri &b)
-+    {
-+        if (a.maxX < b.minX || b.maxX < a.minX || a.maxY < b.minY || b.maxY < a.minY)
-+            return false;
-+        const Tri *tris[2] = {&a, &b};
-+        for (int k = 0; k < 2; ++k)
-+        {
-+            const Tri &e = *tris[k];
-+            const Tri &o = *tris[1 - k];
-+            for (int i = 0; i < 3; ++i)
-+            {
-+                const int j = (i + 1) % 3;
-+                const float nx = e.y[j] - e.y[i], ny = e.x[i] - e.x[j];
-+                float minA = 1e30f, maxA = -1e30f, minB = 1e30f, maxB = -1e30f;
-+                for (int v = 0; v < 3; ++v)
-+                {
-+                    const float pa = nx * e.x[v] + ny * e.y[v], pb = nx * o.x[v] + ny * o.y[v];
-+                    minA = std::min(minA, pa), maxA = std::max(maxA, pa);
-+                    minB = std::min(minB, pb), maxB = std::max(maxB, pb);
-+                }
-+                const bool shared = hasVertex(o, e.x[i], e.y[i]) && hasVertex(o, e.x[j], e.y[j]);
-+                if (shared ? (maxA <= minB || maxB <= minA) : (maxA < minB || maxB < minA))
-+                    return false;
-+            }
-+        }
-+        return true;
-+    }
-+
-+    // ends[g] is one past the last triangle of group g (groups are consecutive and cover [0, triCount)).
-+    // `xy` points at the first vertex's x; each vertex is `strideFloats` floats, y follows x.
-+    inline void build(const float *xy, size_t strideFloats, size_t triCount, std::vector<uint32_t> &ends,
-+                      size_t maxGroup = 64u)
-+    {
-+        ends.clear();
-+        std::vector<Tri> group;
-+        group.reserve(maxGroup);
-+        for (size_t t = 0; t < triCount; ++t)
-+        {
-+            const float *v = xy + t * 3u * strideFloats;
-+            const Tri tri = makeTri(v, v + strideFloats, v + 2u * strideFloats);
-+            bool clash = group.size() >= maxGroup;
-+            for (size_t g = 0; !clash && g < group.size(); ++g)
-+                clash = overlap(group[g], tri);
-+            if (clash)
-+            {
-+                ends.push_back(static_cast<uint32_t>(t));
-+                group.clear();
-+            }
-+            group.push_back(tri);
-+        }
-+        if (triCount != 0u)
-+            ends.push_back(static_cast<uint32_t>(triCount));
-+    }
-+}
-diff --git a/ps2xRuntime/include/runtime/gs/gs_upload24.h b/ps2xRuntime/include/runtime/gs/gs_upload24.h
-new file mode 100644
-index 0000000..8255bf2
---- /dev/null
-+++ b/ps2xRuntime/include/runtime/gs/gs_upload24.h
-@@ -0,0 +1,35 @@
-+// GOW-Port: preservar el pixel CT24/Z24 que atraviesa dos bloques de IMAGE.
-+#pragma once
-+#include <algorithm>
-+#include <array>
-+#include <cstdint>
-+#include <cstring>
-+
-+struct GSUpload24State
-+{
-+    std::array<uint8_t, 3> bytes{};
-+    uint32_t size = 0u;
-+
-+    // El receptor devuelve false cuando termina la transferencia; su padding se descarta.
-+    // Solo copiar hasta dos bytes pendientes; entregar el resto directamente al backend.
-+    template <typename Receiver>
-+    void consume(const uint8_t *data, uint32_t length, Receiver receive)
-+    {
-+        uint32_t offset = 0u;
-+        if (size)
-+        {
-+            const uint32_t copy = std::min(3u - size, length);
-+            std::memcpy(bytes.data() + size, data, copy);
-+            size += copy;
-+            offset += copy;
-+            if (size < 3u) return;
-+            size = 0u;
-+            if (!receive(bytes.data(), 3u)) return;
-+        }
-+        const uint32_t aligned = ((length - offset) / 3u) * 3u;
-+        if (aligned && !receive(data + offset, aligned)) return;
-+        offset += aligned;
-+        size = length - offset;
-+        if (size) std::memcpy(bytes.data(), data + offset, size);
-+    }
-+};
 diff --git a/ps2xRuntime/include/runtime/gs/ps2_gs_memory.h b/ps2xRuntime/include/runtime/gs/ps2_gs_memory.h
 index e671f2f..b9da579 100644
 --- a/ps2xRuntime/include/runtime/gs/ps2_gs_memory.h
@@ -603,7 +360,7 @@ index e671f2f..b9da579 100644
  	u32 ReadZ32(u8* data, u32 bp, u32 bw, u32 x, u32 y);
  
 diff --git a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
-index 6784aca..92e9af8 100644
+index 6784aca..4f02764 100644
 --- a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
 +++ b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
 @@ -1,5 +1,11 @@
@@ -798,7 +555,16 @@ index 6784aca..92e9af8 100644
  void EeScheduler::requestStop()
  {
      m_stopRequested.store(true, std::memory_order_release);
-@@ -1915,6 +2064,9 @@ void EeScheduler::makeDormant(GuestThread &item)
+@@ -470,6 +619,8 @@ bool EeScheduler::checkpointDue(uint32_t cycles) noexcept
+     accountCycles(cycles);
+     if (m_hostPacing && m_eeCycle >= m_pacingCheckCycle)
+         hostCatchUp();
++    if (m_holdCheckpoints)
++        return false;
+ 
+     if (m_checkpointPending.load(std::memory_order_acquire) ||
+         m_stopRequested.load(std::memory_order_acquire))
+@@ -1915,6 +2066,9 @@ void EeScheduler::makeDormant(GuestThread &item)
  {
      removeReady(item);
      removeFromWaitObject(item);
@@ -1633,6 +1399,1140 @@ index 14522ea..df8aee5 100644
          bool graphics = false;
      };
  
+diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_gpu_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_gpu_backend.cpp
+index 8f874c8..9df5ab8 100644
+--- a/ps2xRuntime/src/lib/gs/gpu/gs_gpu_backend.cpp
++++ b/ps2xRuntime/src/lib/gs/gpu/gs_gpu_backend.cpp
+@@ -927,6 +927,10 @@ struct GSGpuBackend::Impl
+ 
+     void prewarmHardwareVariants()
+     {
++        // Loading every variant ever used occupies the GS for seconds at startup, while
++        // draws fall back to the compute path. PS2X_GS_SHADER_PRELOAD=0 loads them on demand.
++        if (const char *preload = std::getenv("PS2X_GS_SHADER_PRELOAD"); preload && *preload == '0')
++            return;
+         const std::filesystem::path path = hardwareManifestPath();
+         if (path.empty())
+             return;
+diff --git a/ps2xRuntime/src/lib/gs/gs_frontend.cpp b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
+index f78d7be..8f073b3 100644
+--- a/ps2xRuntime/src/lib/gs/gs_frontend.cpp
++++ b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
+@@ -1,3 +1,4 @@
++#include "runtime/gs/gs_track_batch.h"
+ #include "runtime/gs/gs_frontend.h"
+ #include "runtime/gs/gs_cpu_backend.h"
+ #include "runtime/gs/gs_recording.h"
+@@ -663,14 +664,31 @@ void GS::latchHostPresentationFrame()
+         request = buildPresentationRequestUnlocked();
+     }
+ 
++    // The game writes DISPFB and then immediately queues the clear of the buffer it just
++    // stopped displaying. Read the display registers only once the queue has drained, and
++    // read again if a swap landed during the copy, or the cleared buffer gets presented.
+     PresentationFrame frame{};
+     {
+         std::lock_guard<std::mutex> backendLock(m_backendLifetimeMutex);
+         if (m_backend)
+         {
+-            m_backend->Flush();
+-            m_backend->Sync(GSSyncReason::Presentation);
+-            frame = m_backend->Present(request);
++            for (int attempt = 0; attempt < 3; ++attempt)
++            {
++                m_backend->Flush();
++                m_backend->Sync(GSSyncReason::Presentation);
++                {
++                    std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
++                    if (!m_privRegs)
++                        break;
++                    request = buildPresentationRequestUnlocked();
++                }
++                frame = m_backend->Present(request);
++
++                std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
++                if (!m_privRegs ||
++                    (m_privRegs->dispfb1 == request.dispfb1 && m_privRegs->dispfb2 == request.dispfb2))
++                    break;
++            }
+         }
+     }
+ 
+@@ -747,110 +765,101 @@ bool GS::copyLatchedHostPresentationFrame(std::vector<uint8_t> &outPixels,
+     return true;
+ }
+ 
++bool GS::continueGifTag(const uint8_t *data, uint32_t sizeBytes, uint32_t &offset)
++{
++    GifTagProgress &tag = m_gifProgress;
++    if (tag.format == GIF_FMT_IMAGE)
++    {
++        const uint32_t available = sizeBytes > offset ? sizeBytes - offset : 0u;
++        const uint32_t imageBytes = std::min(tag.imageBytesLeft, available);
++        if (imageBytes != 0u)
++            processImageData(data + offset, imageBytes);
++        offset += imageBytes;
++        tag.imageBytesLeft -= imageBytes;
++        tag.active = tag.imageBytesLeft != 0u;
++        return !tag.active;
++    }
++
++    const bool packed = tag.format == GIF_FMT_PACKED;
++    const uint32_t itemBytes = packed ? 16u : 8u;
++    while (tag.loopsLeft != 0u)
++    {
++        while (tag.regIndex < tag.regCount)
++        {
++            if (offset + itemBytes > sizeBytes)
++                return false;
++            const uint64_t lo = loadLE64(data + offset);
++            if (packed)
++                writeRegisterPacked(tag.regs[tag.regIndex], lo, loadLE64(data + offset + 8));
++            else
++                writeRegisterUnlocked(tag.regs[tag.regIndex], lo);
++            offset += itemBytes;
++            ++tag.regIndex;
++        }
++        tag.regIndex = 0u;
++        --tag.loopsLeft;
++    }
++    if (!packed && (tag.totalRegWrites & 1u) != 0u)
++        offset += 8u; // REGLIST data is padded to a whole qword.
++    tag.active = false;
++    return true;
++}
++
+ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
+ {
++    if (s_rawGifSink)
++        s_rawGifSink(data, sizeBytes);
+     std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
+     if (!data || sizeBytes < 16 || !m_backend)
+         return;
+ 
+-    if (tryProcessNativeImageUploadPacket(data, sizeBytes))
++    if (!m_gifProgress.active && tryProcessNativeImageUploadPacket(data, sizeBytes))
+     {
+         m_backend->Flush();
+         return;
+     }
+ 
+-    PS2_IF_AGRESSIVE_LOGS({
+-        const uint32_t packetIndex = s_debugGifPacketCount.fetch_add(1, std::memory_order_relaxed);
+-        if (packetIndex < 48u)
+-        {
+-            const uint64_t tagLo = loadLE64(data);
+-            const uint32_t nloop = static_cast<uint32_t>(tagLo & 0x7FFFu);
+-            const uint8_t flg = static_cast<uint8_t>((tagLo >> 58) & 0x3u);
+-            uint32_t nreg = static_cast<uint32_t>((tagLo >> 60) & 0xFu);
+-            if (nreg == 0u)
+-                nreg = 16u;
+-            RUNTIME_LOG("[gs:gif] idx=" << packetIndex
+-                                        << " size=" << sizeBytes
+-                                        << " nloop=" << nloop
+-                                        << " flg=" << static_cast<uint32_t>(flg)
+-                                        << " nreg=" << nreg
+-                                        << " ctx0fbp=" << m_ctx[0].frame.fbp
+-                                        << " ctx1fbp=" << m_ctx[1].frame.fbp
+-                                        << std::endl);
+-        }
+-    });
+-
+     uint32_t offset = 0;
++    if (m_gifProgress.active && !continueGifTag(data, sizeBytes, offset))
++    {
++        m_backend->Flush();
++        return;
++    }
++
+     while (offset + 16 <= sizeBytes)
+     {
+-        uint64_t tagLo = loadLE64(data + offset);
+-        uint64_t tagHi = loadLE64(data + offset + 8);
++        const uint64_t tagLo = loadLE64(data + offset);
++        const uint64_t tagHi = loadLE64(data + offset + 8);
+         offset += 16;
+ 
+         m_curQ = 1.0f;
+ 
+-        uint32_t nloop = static_cast<uint32_t>(tagLo & 0x7FFF);
++        const uint32_t nloop = static_cast<uint32_t>(tagLo & 0x7FFF);
+         uint8_t flg = static_cast<uint8_t>((tagLo >> 58) & 0x3);
++        if (flg == 3u)
++            flg = GIF_FMT_IMAGE; // FLG=3 behaves exactly like IMAGE.
+         uint32_t nreg = static_cast<uint32_t>((tagLo >> 60) & 0xF);
+         if (nreg == 0)
+             nreg = 16;
+ 
+         recordGifTagDebugEventUnlocked(sizeBytes, nloop, flg, nreg);
+ 
+-        bool pre = ((tagLo >> 46) & 1) != 0;
+-        if (pre)
+-        {
++        if (((tagLo >> 46) & 1) != 0)
+             writeRegisterUnlocked(GS_REG_PRIM, (tagLo >> 47) & 0x7FF);
+-        }
+ 
+-        uint8_t regs[16];
++        GifTagProgress &tag = m_gifProgress;
++        tag = {};
++        tag.active = true;
++        tag.format = flg;
++        tag.loopsLeft = nloop;
++        tag.regCount = nreg;
++        tag.totalRegWrites = nloop * nreg;
++        tag.imageBytesLeft = nloop * 16u;
+         for (uint32_t i = 0; i < nreg; ++i)
+-            regs[i] = static_cast<uint8_t>((tagHi >> (i * 4)) & 0xF);
++            tag.regs[i] = static_cast<uint8_t>((tagHi >> (i * 4)) & 0xF);
+ 
+-        if (flg == GIF_FMT_PACKED)
+-        {
+-            for (uint32_t loop = 0; loop < nloop; ++loop)
+-            {
+-                for (uint32_t r = 0; r < nreg; ++r)
+-                {
+-                    if (offset + 16 > sizeBytes)
+-                    {
+-                        m_backend->Flush();
+-                        return;
+-                    }
+-                    uint64_t lo = loadLE64(data + offset);
+-                    uint64_t hi = loadLE64(data + offset + 8);
+-                    offset += 16;
+-                    writeRegisterPacked(regs[r], lo, hi);
+-                }
+-            }
+-        }
+-        else if (flg == GIF_FMT_REGLIST)
+-        {
+-            for (uint32_t loop = 0; loop < nloop; ++loop)
+-            {
+-                for (uint32_t r = 0; r < nreg; ++r)
+-                {
+-                    if (offset + 8 > sizeBytes)
+-                    {
+-                        m_backend->Flush();
+-                        return;
+-                    }
+-                    writeRegisterUnlocked(regs[r], loadLE64(data + offset));
+-                    offset += 8;
+-                }
+-            }
+-            if ((nloop * nreg) & 1)
+-                offset += 8;
+-        }
+-        else if (flg == GIF_FMT_IMAGE)
+-        {
+-            uint32_t imageBytes = nloop * 16;
+-            if (offset + imageBytes > sizeBytes)
+-                imageBytes = sizeBytes - offset;
+-            processImageData(data + offset, imageBytes);
+-            offset += imageBytes;
+-        }
++        if (!continueGifTag(data, sizeBytes, offset))
++            break;
+     }
+     m_backend->Flush();
+ }
+@@ -1189,6 +1198,19 @@ void GS::writeRegister(uint8_t regAddr, uint64_t value)
+ 
+ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
+ {
++#if PS2X_EE_FIBERS
++    if (regAddr == kGSTrackBatchRegister)
++    {
++        if (m_backend)
++        {
++            GSPrimitiveBatch batch = buildDrawBatch(1);
++            batch.vertexCount = kGSTrackBatchMarker;
++            std::memcpy(&batch.vertices[0].z, &value, sizeof(value));
++            m_backend->Submit(batch);
++        }
++        return;
++    }
++#endif
+     const bool interestingReg =
+         regAddr == GS_REG_PRIM ||
+         regAddr == GS_REG_RGBAQ ||
+diff --git a/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp b/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
+index c5a6f78..d271984 100644
+--- a/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
++++ b/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
+@@ -1,6 +1,7 @@
+ #include "runtime/gs/gs_threaded_backend.h"
+ #include "runtime/gs/gs_cpu_backend.h"
+ #include "runtime/gs/gs_gpu_backend.h"
++#include "runtime/gs/gs_hw_backend.h"
+ #include "runtime/gs/gs_shared_present.h"
+ #include "ThreadPriority.h"
+ #include "ThreadNaming.h"
+@@ -77,12 +78,19 @@ GSThreadedBackend::~GSThreadedBackend()
+         m_worker.join();
+ }
+ 
++std::unique_ptr<GSRasterBackend> (*GSThreadedBackend::s_backendFactory)() = nullptr;
++
+ std::unique_ptr<GSRasterBackend> GSThreadedBackend::MakeDefault()
+ {
+     const char *value = std::getenv("PS2X_GS_THREAD");
+     const bool enabled = (value && *value) ? *value != '0' : s_enabledByDefault.load();
+     const char *gpu = std::getenv("PS2X_GS_GPU");
+     const bool useGpu = (gpu && *gpu) ? *gpu != '0' : s_gpuByDefault.load();
++    if (s_backendFactory)
++        return s_backendFactory();
++    const char *hw = std::getenv("PS2X_GS_HW");
++    if (hw && *hw == '1')
++        return std::make_unique<GSThreadedBackend>(std::make_unique<GSHwBackend>());
+     if (useGpu)
+         return std::make_unique<GSThreadedBackend>(std::make_unique<GSGpuBackend>());
+     if (!enabled)
+diff --git a/ps2xRuntime/src/lib/gs/ps2_gs_memory.cpp b/ps2xRuntime/src/lib/gs/ps2_gs_memory.cpp
+index 7781c41..ea87e8c 100644
+--- a/ps2xRuntime/src/lib/gs/ps2_gs_memory.cpp
++++ b/ps2xRuntime/src/lib/gs/ps2_gs_memory.cpp
+@@ -1,4 +1,5 @@
+ #include <array>
++#include <mutex>
+ 
+ #include "runtime/gs/ps2_gs_memory.h"
+ 
+@@ -203,23 +204,29 @@ namespace GSMem
+ 
+     void InitLookupTables()
+     {
+-        // 32 bit
+-        PixelStorageTraits<C32>::InitPageLookupTable(PageTableC32, BlockTableC32, ColumnTable32);
+-        PixelStorageTraits<Z32>::InitPageLookupTable(PageTableZ32, BlockTableZ32, ColumnTable32);
++        // GOW-Port: tablas inmutables compartidas entre CPU y el hilo OpenGL.
++        static std::once_flag once;
++        std::call_once(once, [] {
++            // 32 bit
++            PixelStorageTraits<C32>::InitPageLookupTable(PageTableC32, BlockTableC32, ColumnTable32);
++            PixelStorageTraits<Z32>::InitPageLookupTable(PageTableZ32, BlockTableZ32, ColumnTable32);
+ 
+-        // 16 bit
+-        PixelStorageTraits<C16>::InitPageLookupTable(PageTableC16, BlockTableC16, ColumnTable16);
+-        PixelStorageTraits<C16S>::InitPageLookupTable(PageTableC16S, BlockTableC16S, ColumnTable16);
+-        PixelStorageTraits<Z16>::InitPageLookupTable(PageTableZ16, BlockTableZ16, ColumnTable16);
+-        PixelStorageTraits<Z16S>::InitPageLookupTable(PageTableZ16S, BlockTableZ16S, ColumnTable16);
++            // 16 bit
++            PixelStorageTraits<C16>::InitPageLookupTable(PageTableC16, BlockTableC16, ColumnTable16);
++            PixelStorageTraits<C16S>::InitPageLookupTable(PageTableC16S, BlockTableC16S, ColumnTable16);
++            PixelStorageTraits<Z16>::InitPageLookupTable(PageTableZ16, BlockTableZ16, ColumnTable16);
++            PixelStorageTraits<Z16S>::InitPageLookupTable(PageTableZ16S, BlockTableZ16S, ColumnTable16);
+ 
+-        // 8 bit
+-        PixelStorageTraits<P8>::InitPageLookupTable(PageTableP8, BlockTableP8, ColumnTable8);
++            // 8 bit
++            PixelStorageTraits<P8>::InitPageLookupTable(PageTableP8, BlockTableP8, ColumnTable8);
+ 
+-        // 4 bit
+-        PixelStorageTraits<P4>::InitPageLookupTable(PageTableP4, BlockTableP4, ColumnTable4);
++            // 4 bit
++            PixelStorageTraits<P4>::InitPageLookupTable(PageTableP4, BlockTableP4, ColumnTable4);
++        });
+     }
+ 
++    // GOW-Port: adaptado de Taylor N. Albarnaz / LightVelox (GPL-3.0).
++    // Origen: PS2Recomp sotc-port, ac9efa070638ad3b3accd284de6f898d5ab271d1.
+     const u16* PageTableData(PixelStorageMode psm)
+     {
+         switch (psm)
+@@ -354,6 +361,92 @@ namespace GSMem
+     {
+     }
+ 
++    namespace
++    {
++        template<PixelStorageMode psm, typename Table, typename Fetch>
++        void writeRunT(const Table& table, u8* data, u32 bp, u32 bw, u32 x, u32 y, u32 count, Fetch fetch)
++        {
++            using Packed = typename PixelStorageTraits<psm>::PackedT;
++            for (u32 i = 0; i < count; ++i)
++                PixelStorageTraits<psm>::Write(table, data, bp, bw, x + i, y, static_cast<Packed>(fetch(i)));
++        }
++    }
++
++    namespace
++    {
++        template<PixelStorageMode psm, typename Table>
++        void readIndexRunT(const Table& table, const u8* data, u32 bp, u32 bw, u32 x, u32 y, u32 count, u8* out)
++        {
++            for (u32 i = 0; i < count; ++i)
++                out[i] = static_cast<u8>(PixelStorageTraits<psm>::Read(table, data, bp, bw, x + i, y));
++        }
++    }
++
++    void ReadIndexRun(const u8* data, u32 psm, u32 bp, u32 bw, u32 x, u32 y, u32 count, u8* out)
++    {
++        switch (static_cast<PixelStorageMode>(psm & 0x3Fu))
++        {
++        case P8: readIndexRunT<P8>(PageTableP8, data, bp, bw, x, y, count, out); break;
++        case P8H: readIndexRunT<P8H>(PageTableC32, data, bp, bw, x, y, count, out); break;
++        case P4: readIndexRunT<P4>(PageTableP4, data, bp, bw, x, y, count, out); break;
++        case P4HL: readIndexRunT<P4HL>(PageTableC32, data, bp, bw, x, y, count, out); break;
++        case P4HH: readIndexRunT<P4HH>(PageTableC32, data, bp, bw, x, y, count, out); break;
++        default: std::memset(out, 0, count); break;
++        }
++    }
++
++    namespace
++    {
++        template<PixelStorageMode psm, typename Table>
++        void readColorRunT(const Table& table, const u8* data, u32 bp, u32 bw, u32 x, u32 y, u32 count, u32* out)
++        {
++            for (u32 i = 0; i < count; ++i)
++                out[i] = static_cast<u32>(PixelStorageTraits<psm>::Read(table, data, bp, bw, x + i, y));
++        }
++    }
++
++    bool ReadColorRun(const u8* data, u32 psm, u32 bp, u32 bw, u32 x, u32 y, u32 count, u32* out)
++    {
++        switch (static_cast<PixelStorageMode>(psm & 0x3Fu))
++        {
++        case C32: readColorRunT<C32>(PageTableC32, data, bp, bw, x, y, count, out); return true;
++        case Z32: readColorRunT<Z32>(PageTableZ32, data, bp, bw, x, y, count, out); return true;
++        case C24: readColorRunT<C24>(PageTableC32, data, bp, bw, x, y, count, out); return true;
++        case Z24: readColorRunT<Z24>(PageTableZ32, data, bp, bw, x, y, count, out); return true;
++        case C16: readColorRunT<C16>(PageTableC16, data, bp, bw, x, y, count, out); return true;
++        case C16S: readColorRunT<C16S>(PageTableC16S, data, bp, bw, x, y, count, out); return true;
++        case Z16: readColorRunT<Z16>(PageTableZ16, data, bp, bw, x, y, count, out); return true;
++        case Z16S: readColorRunT<Z16S>(PageTableZ16S, data, bp, bw, x, y, count, out); return true;
++        default: return false;
++        }
++    }
++
++    void WriteRun(u8* data, u32 psm, u32 bp, u32 bw, u32 x, u32 y, const u8* src, u32 srcPixel, u32 count)
++    {
++        auto f32 = [src, srcPixel](u32 i) { u32 v; std::memcpy(&v, src + (srcPixel + i) * 4u, 4u); return v; };
++        auto f24 = [src, srcPixel](u32 i) { const u8* p = src + (srcPixel + i) * 3u; return u32(p[0]) | (u32(p[1]) << 8) | (u32(p[2]) << 16); };
++        auto f16 = [src, srcPixel](u32 i) { u16 v; std::memcpy(&v, src + (srcPixel + i) * 2u, 2u); return u32(v); };
++        auto f8 = [src, srcPixel](u32 i) { return u32(src[srcPixel + i]); };
++        auto f4 = [src, srcPixel](u32 i) { const u32 n = srcPixel + i; return u32(src[n >> 1] >> ((n & 1u) * 4u)) & 0x0Fu; };
++        switch (static_cast<PixelStorageMode>(psm & 0x3Fu))
++        {
++        case C32: writeRunT<C32>(PageTableC32, data, bp, bw, x, y, count, f32); break;
++        case Z32: writeRunT<Z32>(PageTableZ32, data, bp, bw, x, y, count, f32); break;
++        case C24: writeRunT<C24>(PageTableC32, data, bp, bw, x, y, count, f24); break;
++        case Z24: writeRunT<Z24>(PageTableZ32, data, bp, bw, x, y, count, f24); break;
++        case C16: writeRunT<C16>(PageTableC16, data, bp, bw, x, y, count, f16); break;
++        case C16S: writeRunT<C16S>(PageTableC16S, data, bp, bw, x, y, count, f16); break;
++        case Z16: writeRunT<Z16>(PageTableZ16, data, bp, bw, x, y, count, f16); break;
++        case Z16S: writeRunT<Z16S>(PageTableZ16S, data, bp, bw, x, y, count, f16); break;
++        case P8: writeRunT<P8>(PageTableP8, data, bp, bw, x, y, count, f8); break;
++        case P8H: writeRunT<P8H>(PageTableC32, data, bp, bw, x, y, count, f8); break;
++        case P4: writeRunT<P4>(PageTableP4, data, bp, bw, x, y, count, f4); break;
++        case P4HL: writeRunT<P4HL>(PageTableC32, data, bp, bw, x, y, count, f4); break;
++        case P4HH: writeRunT<P4HH>(PageTableC32, data, bp, bw, x, y, count, f4); break;
++        default: break;
++        }
++    }
++
+     u32 ReadCT32(u8* data, u32 bp, u32 bw, u32 x, u32 y)
+     {
+         return PixelStorageTraits<C32>::Read(PageTableC32, data, bp, bw, x, y);
+diff --git a/ps2xRuntime/src/lib/ps2_host_input.cpp b/ps2xRuntime/src/lib/ps2_host_input.cpp
+index 0715da3..76907b5 100644
+--- a/ps2xRuntime/src/lib/ps2_host_input.cpp
++++ b/ps2xRuntime/src/lib/ps2_host_input.cpp
+@@ -3,6 +3,7 @@
+ #include "ps2_host_backend.h"
+ 
+ #include <algorithm>
++#include <cstdio>
+ #include <array>
+ #include <atomic>
+ #include <cctype>
+@@ -309,6 +310,75 @@ namespace ps2_host_input
+             return input;
+         }
+ 
++        // PS2X_PAD_RECORD=<file> writes port 0's input as it changes; PS2X_PAD_REPLAY=<file> plays such a file back instead
++        // of reading the host. Each line is "epoch frame buttons lx ly rx ry", in hex after the frame.
++        //
++        // The clock is the epoch in its high 32 bits and frames since that epoch began in its low 32: the game advances the
++        // epoch at each point where the time taken varies, such as a finished level load, so that loading can't move input.
++        struct PadRecordLine
++        {
++            uint64_t epoch;
++            uint64_t frame;
++            uint16_t buttons;
++            std::array<uint8_t, 4> axes;
++        };
++
++        std::atomic<const std::atomic<uint64_t> *> g_inputFrameCounter{nullptr};
++
++        const std::vector<PadRecordLine> &padReplay()
++        {
++            static const std::vector<PadRecordLine> lines = []
++            {
++                std::vector<PadRecordLine> out;
++                const char *path = std::getenv("PS2X_PAD_REPLAY");
++                if (!path || !*path)
++                    return out;
++                std::FILE *file = std::fopen(path, "r");
++                if (!file)
++                {
++                    std::cerr << "[input] cannot open pad replay " << path << std::endl;
++                    return out;
++                }
++                char text[128];
++                while (std::fgets(text, sizeof(text), file))
++                {
++                    unsigned long long epoch, frame;
++                    unsigned buttons, lx, ly, rx, ry;
++                    if (std::sscanf(text, "%llu %llu %x %x %x %x %x", &epoch, &frame, &buttons, &lx, &ly, &rx, &ry) == 7)
++                        out.push_back({epoch, frame, static_cast<uint16_t>(buttons),
++                                       {static_cast<uint8_t>(lx), static_cast<uint8_t>(ly), static_cast<uint8_t>(rx), static_cast<uint8_t>(ry)}});
++                }
++                std::fclose(file);
++                if (out.empty())
++                    std::cerr << "[input] pad replay " << path << " has no usable lines (made before epochs were added?)" << std::endl;
++                std::cerr << "[input] pad replay: " << out.size() << " change(s)" << std::endl;
++                return out;
++            }();
++            return lines;
++        }
++
++        void recordPad(uint64_t frame, uint16_t buttons, const std::array<uint8_t, 4> &axes)
++        {
++            static std::mutex mutex;
++            static std::FILE *const file = []() -> std::FILE *
++            {
++                const char *path = std::getenv("PS2X_PAD_RECORD");
++                return path && *path ? std::fopen(path, "w") : nullptr;
++            }();
++            if (file == nullptr)
++                return;
++            static uint16_t lastButtons = 0u;
++            static std::array<uint8_t, 4> lastAxes{0x80u, 0x80u, 0x80u, 0x80u};
++            std::lock_guard<std::mutex> lock(mutex);
++            if (buttons == lastButtons && axes == lastAxes)
++                return;
++            lastButtons = buttons;
++            lastAxes = axes;
++            std::fprintf(file, "%llu %llu %04x %02x %02x %02x %02x\n", static_cast<unsigned long long>(frame >> 32), static_cast<unsigned long long>(frame & 0xFFFFFFFFull),
++                         buttons, axes[0], axes[1], axes[2], axes[3]);
++            std::fflush(file); // Survives the game being closed or crashing.
++        }
++
+         std::mutex g_mutex;
+         std::array<PadInputState, kPadPorts> g_state = []
+         {
+@@ -570,6 +640,11 @@ namespace ps2_host_input
+         g_mouseCameraEnabled.store(enabled, std::memory_order_relaxed);
+     }
+ 
++    void setInputFrameCounter(const std::atomic<uint64_t> *counter)
++    {
++        g_inputFrameCounter.store(counter);
++    }
++
+     void setFieldCounter(const std::atomic<uint64_t> *counter)
+     {
+         g_fieldCounter.store(counter);
+@@ -647,6 +722,42 @@ namespace ps2_host_input
+                     state.rightY = scripted.axes[3];
+                 applyPressure(state);
+             }
++
++            const std::atomic<uint64_t> *frameCounter = g_inputFrameCounter.load();
++            const uint64_t frame = frameCounter ? frameCounter->load() : (counter ? counter->load() : 0u);
++            const std::vector<PadRecordLine> &replay = padReplay();
++            if (!replay.empty())
++            {
++                // Changes are delivered in order and each is held long enough for the game to see it, so a press and release
++                // recorded on the same frame still count. An epoch the game has moved past is skipped, input neutral.
++                static std::mutex replayMutex;
++                static size_t next = 0u;
++                static PadRecordLine current{0u, 0u, 0u, {0x80u, 0x80u, 0x80u, 0x80u}};
++                static auto lastApplied = std::chrono::steady_clock::now();
++                const uint64_t epoch = frame >> 32, epochFrame = frame & 0xFFFFFFFFull;
++                std::lock_guard<std::mutex> replayLock(replayMutex);
++                while (next < replay.size() && replay[next].epoch < epoch)
++                {
++                    ++next;
++                    current = PadRecordLine{epoch, 0u, 0u, {0x80u, 0x80u, 0x80u, 0x80u}};
++                }
++                const auto now = std::chrono::steady_clock::now();
++                if (next < replay.size() && replay[next].epoch == epoch && replay[next].frame <= epochFrame &&
++                    now - lastApplied >= std::chrono::milliseconds(35))
++                {
++                    current = replay[next++];
++                    lastApplied = now;
++                }
++                state = PadInputState{};
++                state.connected = true;
++                state.buttons = current.buttons;
++                state.leftX = current.axes[0];
++                state.leftY = current.axes[1];
++                state.rightX = current.axes[2];
++                state.rightY = current.axes[3];
++                applyPressure(state);
++            }
++            recordPad(frame, static_cast<uint16_t>(state.buttons), {state.leftX, state.leftY, state.rightX, state.rightY});
+         }
+         return state;
+     }
+diff --git a/ps2xRuntime/src/lib/ps2_host_input.h b/ps2xRuntime/src/lib/ps2_host_input.h
+index 9fdc3b1..e107198 100644
+--- a/ps2xRuntime/src/lib/ps2_host_input.h
++++ b/ps2xRuntime/src/lib/ps2_host_input.h
+@@ -9,6 +9,8 @@ namespace ps2_host_input
+ {
+     constexpr uint32_t kPadPorts = 2u;
+ 
++    void setInputFrameCounter(const std::atomic<uint64_t> *counter); // The clock PS2X_PAD_RECORD and PS2X_PAD_REPLAY use.
++
+     void setFieldCounter(const std::atomic<uint64_t> *counter);
+     void sample();
+     void releaseMouse();
+diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
+index 43f67b0..8a33442 100644
+--- a/ps2xRuntime/src/lib/ps2_runtime.cpp
++++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
+@@ -547,6 +547,9 @@ static void UploadFrame(Texture2D &tex, PS2Runtime *rt, uint32_t &outWidth, uint
+         return;
+     }
+     s_lastPresentationTick = currentTick;
++    // With VU1 on its own thread the display registers can run ahead of the drawing,
++    // which shows a cleared buffer as a black frame. Let queued work finish first.
++    ps2x::asyncvif::sync(rt->memory());
+     rt->gs().latchHostPresentationFrame();
+     if (GSSharedPresent::Active())
+     {
+diff --git a/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp b/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
+index 0b08639..aee6ae0 100644
+--- a/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
++++ b/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
+@@ -6,6 +6,8 @@
+ #define VU1_FORCE_INLINE inline
+ #include "ps2_vu1_impl.inl"
+ 
++void (*g_vu1KickObserver)(const uint8_t *, size_t) = nullptr;
++
+ #include <algorithm>
+ #include <bit>
+ #include <cfenv>
+@@ -1180,6 +1182,8 @@ bool VU1InterpreterAccess::runVerifiedWith(VU1Interpreter &vu, uint8_t *vuCode,
+     packetSink = nullptr;
+ 
+     std::string diff;
++    // Set when the code was generated with dead-flag analysis: those MAC and STATUS values are not produced.
++    static const bool kIgnoreFlags = std::getenv("PS2X_VU1_VERIFY_NOFLAGS") != nullptr;
+     const auto note = [&diff](const std::string &text)
+     {
+         if (diff.size() < 1500u)
+@@ -1205,11 +1209,11 @@ bool VU1InterpreterAccess::runVerifiedWith(VU1Interpreter &vu, uint8_t *vuCode,
+         note("r");
+     if (a.pc != b.pc)
+         note("pc");
+-    if (a.mac != b.mac)
++    if (!kIgnoreFlags && (a.mac != b.mac))
+         note("mac");
+     if (a.clip != b.clip)
+         note("clip");
+-    if (a.status != b.status)
++    if (!kIgnoreFlags && a.status != b.status)
+         note("status");
+     if (a.ebit != b.ebit || a.haltAfterDelaySlot != b.haltAfterDelaySlot || a.stoppedByD != b.stoppedByD ||
+         a.stoppedByT != b.stoppedByT)
+@@ -1247,7 +1251,7 @@ bool VU1InterpreterAccess::runVerifiedWith(VU1Interpreter &vu, uint8_t *vuCode,
+         std::sort(entries.begin(), entries.end());
+         return entries;
+     };
+-    if (!realEnded && flagEntries(vu) != flagEntries(*shadow))
++    if (!kIgnoreFlags && !realEnded && flagEntries(vu) != flagEntries(*shadow))
+         note("flags");
+     const auto scalarEqual = [](const auto &x, const auto &y)
+     {
+diff --git a/ps2xRuntime/src/lib/vu/ps2_vu1_impl.inl b/ps2xRuntime/src/lib/vu/ps2_vu1_impl.inl
+index 518cf91..35b7282 100644
+--- a/ps2xRuntime/src/lib/vu/ps2_vu1_impl.inl
++++ b/ps2xRuntime/src/lib/vu/ps2_vu1_impl.inl
+@@ -16,6 +16,10 @@
+ #include <string>
+ #include <vector>
+ 
++#if PS2X_EE_FIBERS
++extern void (*g_vu1KickObserver)(const uint8_t *, size_t); // Sees each PATH1 packet, for comparing VU1 programs.
++#endif
++
+ #ifndef VU1_FORCE_INLINE
+ #if defined(_MSC_VER)
+ #define VU1_FORCE_INLINE __forceinline
+@@ -945,6 +949,10 @@ inline void VU1Interpreter::finishXgkick()
+             return;
+         }
+     }
++#if PS2X_EE_FIBERS
++    if (g_vu1KickObserver)
++        g_vu1KickObserver(m_xgkick.packet.data(), m_xgkick.totalBytes);
++#endif
+     if (m_activeMemory)
+         m_activeMemory->submitGifPacket(GifPathId::Path1, m_xgkick.packet.data(), m_xgkick.totalBytes);
+     else if (m_activeGs)
+@@ -3334,6 +3342,21 @@ struct VU1InterpreterAccess
+         return c.result;
+     }
+ 
++    // An FMAC whose flags no instruction can observe (see planDeadFlags in vu1_recomp).
++    template <FK K, bool Lean = true>
++    static VU1_FORCE_INLINE __m128 fmacN(VU1Interpreter &vu, Vu1FastCtx &ctx, uint64_t cycle, uint32_t dest, __m128 s, __m128 t, __m128 a,
++                                         __m128 &normalized)
++    {
++        const FmacCore c = fmacCore<K, Lean>(dest, s, t, a);
++        if (!c.safe)
++        {
++            FmacFlags flags;
++            return fmacExact<K, Lean>(vu, ctx, cycle, dest, c.s, c.t, a, c.result, normalized, flags);
++        }
++        normalized = c.result;
++        return c.result;
++    }
++
+     template <FK K, bool Lean = true>
+     static VU1_FORCE_INLINE __m128 fmacV(VU1Interpreter &vu, Vu1FastCtx &ctx, uint64_t cycle, uint32_t dest, __m128 s, __m128 t, __m128 a,
+                                          __m128 &normalized, __m128 &accZero, __m128 &accSign, uint32_t &accScalar)
+diff --git a/ps2xTest/tools/vu1_recomp.cpp b/ps2xTest/tools/vu1_recomp.cpp
+index 5d465b0..3e1a0ee 100644
+--- a/ps2xTest/tools/vu1_recomp.cpp
++++ b/ps2xTest/tools/vu1_recomp.cpp
+@@ -10,6 +10,7 @@
+ #include <map>
+ #include <regex>
+ #include <set>
++#include <tuple>
+ #include <sstream>
+ #include <string>
+ #include <vector>
+@@ -738,7 +739,7 @@ namespace
+     std::string referencePaths(std::string text)
+     {
+         if (!kLeanFmac)
+-            text = std::regex_replace(text, std::regex(R"(\b(fmac[VF]?<FK::\w+)>)"), "$1, false>");
++            text = std::regex_replace(text, std::regex(R"(\b(fmac[VFN]?<FK::\w+)>)"), "$1, false>");
+         if (!kLeanNorm)
+             text = std::regex_replace(text, std::regex(R"(\b(vnorm|qN|iN)\()"), "$1<false>(");
+         return text;
+@@ -763,6 +764,134 @@ namespace
+         std::set<uint32_t> segs;
+         bool aggregateFlags = true;
+         bool cacheRegisters = true;
++        std::vector<bool> deadFlags;
++
++        bool writesFlags(const Pair &p) const
++        {
++            const RegViewProbe probe;
++            const UpperEmit up = upperEmit(p.d.upper);
++            return up.isFmac && !up.generic;
++        }
++
++        // Status and MAC readers among the lower instructions.
++        static bool readsStatusFlag(const Pair &p)
++        {
++            const uint32_t op = (p.d.lower >> 25) & 0x7Fu;
++            return !p.d.iBit && op >= 0x14u && op <= 0x17u;
++        }
++
++        static bool readsMacFlag(const Pair &p)
++        {
++            const uint32_t op = (p.d.lower >> 25) & 0x7Fu;
++            return !p.d.iBit && (op == 0x18u || op == 0x1Au || op == 0x1Bu);
++        }
++
++        // True if a MAC reader can see the flags of an FMAC before a later FMAC's flags have landed for certain.
++        // A later FMAC issued at pair k has landed by pair k + 4, since every pair takes at least one cycle. The state is
++        // (pair, pending branch target or -1, pairs until the later FMAC has landed or -1).
++        bool flagsVisible(uint32_t fmacIndex, uint32_t count) const
++        {
++            struct State { uint32_t index; int pending; int land; };
++            std::vector<State> work;
++            std::set<std::tuple<uint32_t, int, int>> seen;
++            bool unknown = false;
++            const auto successors = [&](uint32_t index, int pending, int land)
++            {
++                if (index >= count)
++                {
++                    unknown = true;
++                    return;
++                }
++                const Pair &p = pairs[index];
++                if (p.fallback || p.reserved)
++                {
++                    unknown = true;
++                    return;
++                }
++                if (pending != -1 && (p.branch || p.d.eBit))
++                {
++                    unknown = true; // A branch or end in a delay slot: not modelled here.
++                    return;
++                }
++                const uint32_t fall = index + 1u;
++                if (pending == -2)
++                    return; // The delay slot of an E-bit pair ends the program.
++                if (pending >= 0)
++                {
++                    work.push_back({static_cast<uint32_t>(pending), -1, land});
++                    return;
++                }
++                if (p.d.eBit)
++                {
++                    work.push_back({fall, -2, land});
++                    return;
++                }
++                if (p.branch)
++                {
++                    if (p.dynamic)
++                    {
++                        unknown = true;
++                        return;
++                    }
++                    work.push_back({fall, static_cast<int>(p.target / 8u), land});
++                    if (p.conditional)
++                        work.push_back({fall, -1, land});
++                    return;
++                }
++                work.push_back({fall, -1, land});
++            };
++            // The FMAC's own pair may be a delay slot, so what follows it depends on the pair before.
++            successors(fmacIndex, -1, -1);
++            if (fmacIndex > 0u && pairs[fmacIndex - 1u].branch)
++            {
++                if (pairs[fmacIndex - 1u].dynamic)
++                    return true;
++                successors(fmacIndex, static_cast<int>(pairs[fmacIndex - 1u].target / 8u), -1);
++            }
++            else if (fmacIndex > 0u && pairs[fmacIndex - 1u].d.eBit)
++                successors(fmacIndex, -2, -1);
++            while (!work.empty() && !unknown)
++            {
++                const State state = work.back();
++                work.pop_back();
++                if (state.land == 0)
++                    continue;
++                if (!seen.insert({state.index, state.pending, state.land}).second)
++                    continue;
++                if (state.index >= count)
++                    return true;
++                const Pair &p = pairs[state.index];
++                if (readsMacFlag(p))
++                    return true;
++                int land = state.land > 0 ? state.land - 1 : -1;
++                if (writesFlags(p) && land < 0)
++                    land = 4;
++                successors(state.index, state.pending, land);
++            }
++            return unknown;
++        }
++
++        void planDeadFlags(uint32_t count, std::map<std::string, uint32_t> &stats)
++        {
++            deadFlags.assign(pairs.size(), false);
++            if (!settingEnabled("PS2X_VU1_DEAD_FLAGS"))
++                return;
++            // Sticky STATUS bits gather every FMAC's result, so a program that reads STATUS keeps all of them.
++            for (uint32_t index = 0; index < count; ++index)
++                if (readsStatusFlag(pairs[index]))
++                    return;
++            for (uint32_t index = 0; index < count; ++index)
++            {
++                if (pairs[index].fallback || !writesFlags(pairs[index]))
++                    continue;
++                ++stats["fmacs"];
++                if (!flagsVisible(index, count))
++                {
++                    deadFlags[index] = true;
++                    ++stats["fmacs without flags"];
++                }
++            }
++        }
+ 
+         bool inBlock(uint32_t pc) const
+         {
+@@ -1055,7 +1184,10 @@ namespace
+             std::string fmacValue = up.value;
+             std::string fmacDecl = "__m128 un;";
+             std::string fmacAfter;
+-            if (known && up.isFmac)
++            const bool flagsDead = up.isFmac && !up.generic && p.pc / 8u < deadFlags.size() && deadFlags[p.pc / 8u];
++            if (flagsDead)
++                fmacValue = "fmacN" + up.fmacCall + ")";
++            else if (known && up.isFmac)
+             {
+                 known->fmacPos.push_back(known->pos);
+                 if (known->pos == known->lastCollapsed)
+@@ -1453,6 +1585,8 @@ namespace
+                 emitter.isTarget[p.target / 8u] = true;
+         }
+ 
++        emitter.planDeadFlags(count, stats);
++
+         std::vector<bool> spanned(count + 1u, false);
+         for (uint32_t index = 0; index < count; ++index)
+         {
+diff --git a/ps2xRuntime/include/runtime/gs/gs_colour_runs.h b/ps2xRuntime/include/runtime/gs/gs_colour_runs.h
+new file mode 100644
+index 0000000..436162c
+--- /dev/null
++++ b/ps2xRuntime/include/runtime/gs/gs_colour_runs.h
+@@ -0,0 +1,37 @@
++#pragma once
++// GOW-Port: ps2recomp-gs-sombras-tramos. Tramos consecutivos de triángulos con el mismo color (GS por hardware, volúmenes
++// de sombra). Las dos pasadas de recuento de las sombras (G += 255 y G += 1) tienen el mismo estado del GS y solo cambian
++// el color plano de sus vértices, así que comparten lote; el atajo de mezcla fija necesita un solo color por llamada.
++// Partir el lote en tramos, en orden, conserva el orden de las operaciones sobre cada píxel.
++#include <cstddef>
++#include <cstdint>
++#include <vector>
++
++namespace gs_colour_runs
++{
++    // `verts`: vertexCount vértices de `stride` floats con el color (r, g, b) a partir del float `colourOffset`.
++    // Deja en `ends` el vértice final (exclusivo) de cada tramo; los tramos empiezan siempre en un triángulo. Con un solo
++    // color, un único tramo que lo abarca todo.
++    inline void build(const float *verts, size_t stride, size_t colourOffset, size_t vertexCount, std::vector<uint32_t> &ends)
++    {
++        ends.clear();
++        if (vertexCount == 0u)
++            return;
++        const auto colour = [&](size_t i) { return verts + i * stride + colourOffset; };
++        const auto same = [&](size_t a, size_t b)
++        {
++            const float *ca = colour(a), *cb = colour(b);
++            return ca[0] == cb[0] && ca[1] == cb[1] && ca[2] == cb[2];
++        };
++        size_t runStart = 0;
++        for (size_t i = 3; i + 3u <= vertexCount; i += 3u)
++        {
++            if (!same(i, runStart))
++            {
++                ends.push_back(static_cast<uint32_t>(i));
++                runStart = i;
++            }
++        }
++        ends.push_back(static_cast<uint32_t>(vertexCount));
++    }
++}
+diff --git a/ps2xRuntime/include/runtime/gs/gs_hw_backend.h b/ps2xRuntime/include/runtime/gs/gs_hw_backend.h
+new file mode 100644
+index 0000000..4f28b05
+--- /dev/null
++++ b/ps2xRuntime/include/runtime/gs/gs_hw_backend.h
+@@ -0,0 +1,44 @@
++// GOW-Port: native GS renderer, the only GS renderer. Every draw is rasterised by the GPU into scaled RGBA render targets (one
++// per frame buffer base); textures are read from the uploaded bytes (paletted ones as index + palette textures) and cached;
++// the game's reinterpretation passes (channel shuffles, Z in colour memory, CRTC circuit merge) are done natively and the
++// output is composed on the GPU at PS2X_GS_HW_SCALE. A small native store (GSTextureStore) keeps the uploaded bytes and the CLUT.
++#pragma once
++
++#include "runtime/gs/gs_backend.h"
++
++#include <memory>
++
++class GSHwBackend final : public GSRasterBackend
++{
++public:
++    GSHwBackend();
++    ~GSHwBackend() override;
++
++    void Initialize(uint8_t *vram, uint32_t vramSize) override;
++    void Reset() override;
++
++    void Submit(const GSPrimitiveBatch &batch) override;
++    void LoadClut(const GSTex0Reg &tex0, const GSTexClutReg &texclut) override;
++    void BeginTransfer(const GSTransferCommand &command) override;
++    void UploadImage(const uint8_t *data, uint32_t sizeBytes) override;
++
++    void Flush() override;
++    void TextureFlush() override;
++    void Sync(GSSyncReason reason) override;
++    PresentationFrame Present(const GSPresentationRequest &request) override;
++    // GOW-Port: true when the GL context shares objects with the host window: Present then publishes the composed
++    // frame as a shared texture (GPU copy) and returns no pixels; forceReadback requests (captures) still read back.
++    bool UsesSharedPresentation() const;
++
++    bool ClearFramebuffer(const GSContext &context, uint32_t rgba) override;
++    uint32_t ConsumeLocalToHostBytes(uint8_t *dst, uint32_t maxBytes) override;
++
++    uint32_t ReadVram(uint32_t psm, uint32_t base, uint32_t bw, uint32_t x, uint32_t y) const override;
++    void WriteVram(uint32_t psm, uint32_t base, uint32_t bw, uint32_t x, uint32_t y, uint32_t value) override;
++    void SnapshotVram(std::vector<uint8_t> &out) const override;
++    GSTransferSnapshot GetTransferSnapshot() const override;
++
++private:
++    struct Impl;
++    std::unique_ptr<Impl> m_impl;
++};
+diff --git a/ps2xRuntime/include/runtime/gs/gs_track_batch.h b/ps2xRuntime/include/runtime/gs/gs_track_batch.h
+new file mode 100644
+index 0000000..ef5d934
+--- /dev/null
++++ b/ps2xRuntime/include/runtime/gs/gs_track_batch.h
+@@ -0,0 +1,21 @@
++#pragma once
++// A batch of track triangles drawn by a vertex shader instead of VU1 (decomp/vu1/track_draw.cpp).
++//
++// It travels through the GS command stream as a GS register write to an unused address, carrying a pointer, so it
++// stays in order with everything else. The backend frees it after drawing it.
++#include <cstddef>
++#include <cstdint>
++
++constexpr uint8_t kGSTrackBatchRegister = 0x7Eu;
++constexpr uint8_t kGSTrackBatchMarker = 0xEEu; // In GSPrimitiveBatch::vertexCount; the pointer is in vertices[0].z.
++
++struct GSTrackBatch
++{
++    uint32_t triangles;
++    uint32_t quadBytes; // Size of quads, if not ten quadwords per triangle. Such a batch is never merged with another.
++    float draw[64]; // The shader's TrackDraw block; the backend fills in gsToClip and gsDepthRange.
++    float quads[1]; // triangles * 40 floats: ten quadwords each, as the game sends them to VU1.
++};
++
++// GLSL for the track vertex shader, set before the backend first builds its program.
++extern const char *g_gsTrackVertexShader;
+diff --git a/ps2xRuntime/include/runtime/gs/gs_tri_groups.h b/ps2xRuntime/include/runtime/gs/gs_tri_groups.h
+new file mode 100644
+index 0000000..2f5de58
+--- /dev/null
++++ b/ps2xRuntime/include/runtime/gs/gs_tri_groups.h
+@@ -0,0 +1,94 @@
++#pragma once
++// GOW-Port: groups of consecutive triangles that cover disjoint pixels (GS hardware backend, shadow volumes).
++// The shadow-volume passes blend with wrapping arithmetic (COLCLAMP=0) in the shader, which reads the destination:
++// a triangle must see the result of every earlier triangle that covers the same pixels, so the backend drew one
++// triangle per call with a texture barrier in between (~3000 calls and barriers per frame on the ship, which kept the
++// GPU busy). Triangles whose interiors do not overlap can share a call: each pixel is still written once and in order.
++#include <algorithm>
++#include <cstddef>
++#include <cstdint>
++#include <vector>
++
++namespace gs_tri_groups
++{
++    struct Tri
++    {
++        float x[3], y[3];
++        float minX, minY, maxX, maxY;
++    };
++
++    inline Tri makeTri(const float *v0, const float *v1, const float *v2)
++    {
++        Tri t{{v0[0], v1[0], v2[0]}, {v0[1], v1[1], v2[1]}, 0, 0, 0, 0};
++        t.minX = std::min({t.x[0], t.x[1], t.x[2]});
++        t.maxX = std::max({t.x[0], t.x[1], t.x[2]});
++        t.minY = std::min({t.y[0], t.y[1], t.y[2]});
++        t.maxY = std::max({t.y[0], t.y[1], t.y[2]});
++        return t;
++    }
++
++    inline bool hasVertex(const Tri &t, float x, float y)
++    {
++        for (int i = 0; i < 3; ++i)
++            if (t.x[i] == x && t.y[i] == y)
++                return true;
++        return false;
++    }
++
++    // True unless an edge of one triangle separates the two. Interiors that only touch along an edge both triangles
++    // share exactly (same two vertices: adjacent triangles of a mesh) do not overlap, since the rasteriser gives the
++    // pixels of a shared edge to one of them; any other contact counts as overlap.
++    inline bool overlap(const Tri &a, const Tri &b)
++    {
++        if (a.maxX < b.minX || b.maxX < a.minX || a.maxY < b.minY || b.maxY < a.minY)
++            return false;
++        const Tri *tris[2] = {&a, &b};
++        for (int k = 0; k < 2; ++k)
++        {
++            const Tri &e = *tris[k];
++            const Tri &o = *tris[1 - k];
++            for (int i = 0; i < 3; ++i)
++            {
++                const int j = (i + 1) % 3;
++                const float nx = e.y[j] - e.y[i], ny = e.x[i] - e.x[j];
++                float minA = 1e30f, maxA = -1e30f, minB = 1e30f, maxB = -1e30f;
++                for (int v = 0; v < 3; ++v)
++                {
++                    const float pa = nx * e.x[v] + ny * e.y[v], pb = nx * o.x[v] + ny * o.y[v];
++                    minA = std::min(minA, pa), maxA = std::max(maxA, pa);
++                    minB = std::min(minB, pb), maxB = std::max(maxB, pb);
++                }
++                const bool shared = hasVertex(o, e.x[i], e.y[i]) && hasVertex(o, e.x[j], e.y[j]);
++                if (shared ? (maxA <= minB || maxB <= minA) : (maxA < minB || maxB < minA))
++                    return false;
++            }
++        }
++        return true;
++    }
++
++    // ends[g] is one past the last triangle of group g (groups are consecutive and cover [0, triCount)).
++    // `xy` points at the first vertex's x; each vertex is `strideFloats` floats, y follows x.
++    inline void build(const float *xy, size_t strideFloats, size_t triCount, std::vector<uint32_t> &ends,
++                      size_t maxGroup = 64u)
++    {
++        ends.clear();
++        std::vector<Tri> group;
++        group.reserve(maxGroup);
++        for (size_t t = 0; t < triCount; ++t)
++        {
++            const float *v = xy + t * 3u * strideFloats;
++            const Tri tri = makeTri(v, v + strideFloats, v + 2u * strideFloats);
++            bool clash = group.size() >= maxGroup;
++            for (size_t g = 0; !clash && g < group.size(); ++g)
++                clash = overlap(group[g], tri);
++            if (clash)
++            {
++                ends.push_back(static_cast<uint32_t>(t));
++                group.clear();
++            }
++            group.push_back(tri);
++        }
++        if (triCount != 0u)
++            ends.push_back(static_cast<uint32_t>(triCount));
++    }
++}
+diff --git a/ps2xRuntime/include/runtime/gs/gs_upload24.h b/ps2xRuntime/include/runtime/gs/gs_upload24.h
+new file mode 100644
+index 0000000..8255bf2
+--- /dev/null
++++ b/ps2xRuntime/include/runtime/gs/gs_upload24.h
+@@ -0,0 +1,35 @@
++// GOW-Port: preservar el pixel CT24/Z24 que atraviesa dos bloques de IMAGE.
++#pragma once
++#include <algorithm>
++#include <array>
++#include <cstdint>
++#include <cstring>
++
++struct GSUpload24State
++{
++    std::array<uint8_t, 3> bytes{};
++    uint32_t size = 0u;
++
++    // El receptor devuelve false cuando termina la transferencia; su padding se descarta.
++    // Solo copiar hasta dos bytes pendientes; entregar el resto directamente al backend.
++    template <typename Receiver>
++    void consume(const uint8_t *data, uint32_t length, Receiver receive)
++    {
++        uint32_t offset = 0u;
++        if (size)
++        {
++            const uint32_t copy = std::min(3u - size, length);
++            std::memcpy(bytes.data() + size, data, copy);
++            size += copy;
++            offset += copy;
++            if (size < 3u) return;
++            size = 0u;
++            if (!receive(bytes.data(), 3u)) return;
++        }
++        const uint32_t aligned = ((length - offset) / 3u) * 3u;
++        if (aligned && !receive(data + offset, aligned)) return;
++        offset += aligned;
++        size = length - offset;
++        if (size) std::memcpy(bytes.data(), data + offset, size);
++    }
++};
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_gl_api_load.inl b/ps2xRuntime/src/lib/gs/gpu/gs_gl_api_load.inl
 new file mode 100644
 index 0000000..14cfe7b
@@ -1734,21 +2634,6 @@ index 0000000..14cfe7b
 +        load(a.MaxShaderCompilerThreads, "glMaxShaderCompilerThreadsKHR", parallelMissing);
 +    a.graphics = graphicsMissing.empty();
 +}
-diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_gpu_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_gpu_backend.cpp
-index 8f874c8..9df5ab8 100644
---- a/ps2xRuntime/src/lib/gs/gpu/gs_gpu_backend.cpp
-+++ b/ps2xRuntime/src/lib/gs/gpu/gs_gpu_backend.cpp
-@@ -927,6 +927,10 @@ struct GSGpuBackend::Impl
- 
-     void prewarmHardwareVariants()
-     {
-+        // Loading every variant ever used occupies the GS for seconds at startup, while
-+        // draws fall back to the compute path. PS2X_GS_SHADER_PRELOAD=0 loads them on demand.
-+        if (const char *preload = std::getenv("PS2X_GS_SHADER_PRELOAD"); preload && *preload == '0')
-+            return;
-         const std::filesystem::path path = hardwareManifestPath();
-         if (path.empty())
-             return;
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
 new file mode 100644
 index 0000000..90eb1e7
@@ -5404,247 +6289,6 @@ index 0000000..ed807df
 +    GSTransferSnapshot m_state{};
 +    GSUpload24State m_upload24{};
 +};
-diff --git a/ps2xRuntime/src/lib/gs/gs_frontend.cpp b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
-index f78d7be..8f073b3 100644
---- a/ps2xRuntime/src/lib/gs/gs_frontend.cpp
-+++ b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
-@@ -1,3 +1,4 @@
-+#include "runtime/gs/gs_track_batch.h"
- #include "runtime/gs/gs_frontend.h"
- #include "runtime/gs/gs_cpu_backend.h"
- #include "runtime/gs/gs_recording.h"
-@@ -663,14 +664,31 @@ void GS::latchHostPresentationFrame()
-         request = buildPresentationRequestUnlocked();
-     }
- 
-+    // The game writes DISPFB and then immediately queues the clear of the buffer it just
-+    // stopped displaying. Read the display registers only once the queue has drained, and
-+    // read again if a swap landed during the copy, or the cleared buffer gets presented.
-     PresentationFrame frame{};
-     {
-         std::lock_guard<std::mutex> backendLock(m_backendLifetimeMutex);
-         if (m_backend)
-         {
--            m_backend->Flush();
--            m_backend->Sync(GSSyncReason::Presentation);
--            frame = m_backend->Present(request);
-+            for (int attempt = 0; attempt < 3; ++attempt)
-+            {
-+                m_backend->Flush();
-+                m_backend->Sync(GSSyncReason::Presentation);
-+                {
-+                    std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
-+                    if (!m_privRegs)
-+                        break;
-+                    request = buildPresentationRequestUnlocked();
-+                }
-+                frame = m_backend->Present(request);
-+
-+                std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
-+                if (!m_privRegs ||
-+                    (m_privRegs->dispfb1 == request.dispfb1 && m_privRegs->dispfb2 == request.dispfb2))
-+                    break;
-+            }
-         }
-     }
- 
-@@ -747,110 +765,101 @@ bool GS::copyLatchedHostPresentationFrame(std::vector<uint8_t> &outPixels,
-     return true;
- }
- 
-+bool GS::continueGifTag(const uint8_t *data, uint32_t sizeBytes, uint32_t &offset)
-+{
-+    GifTagProgress &tag = m_gifProgress;
-+    if (tag.format == GIF_FMT_IMAGE)
-+    {
-+        const uint32_t available = sizeBytes > offset ? sizeBytes - offset : 0u;
-+        const uint32_t imageBytes = std::min(tag.imageBytesLeft, available);
-+        if (imageBytes != 0u)
-+            processImageData(data + offset, imageBytes);
-+        offset += imageBytes;
-+        tag.imageBytesLeft -= imageBytes;
-+        tag.active = tag.imageBytesLeft != 0u;
-+        return !tag.active;
-+    }
-+
-+    const bool packed = tag.format == GIF_FMT_PACKED;
-+    const uint32_t itemBytes = packed ? 16u : 8u;
-+    while (tag.loopsLeft != 0u)
-+    {
-+        while (tag.regIndex < tag.regCount)
-+        {
-+            if (offset + itemBytes > sizeBytes)
-+                return false;
-+            const uint64_t lo = loadLE64(data + offset);
-+            if (packed)
-+                writeRegisterPacked(tag.regs[tag.regIndex], lo, loadLE64(data + offset + 8));
-+            else
-+                writeRegisterUnlocked(tag.regs[tag.regIndex], lo);
-+            offset += itemBytes;
-+            ++tag.regIndex;
-+        }
-+        tag.regIndex = 0u;
-+        --tag.loopsLeft;
-+    }
-+    if (!packed && (tag.totalRegWrites & 1u) != 0u)
-+        offset += 8u; // REGLIST data is padded to a whole qword.
-+    tag.active = false;
-+    return true;
-+}
-+
- void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
- {
-+    if (s_rawGifSink)
-+        s_rawGifSink(data, sizeBytes);
-     std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
-     if (!data || sizeBytes < 16 || !m_backend)
-         return;
- 
--    if (tryProcessNativeImageUploadPacket(data, sizeBytes))
-+    if (!m_gifProgress.active && tryProcessNativeImageUploadPacket(data, sizeBytes))
-     {
-         m_backend->Flush();
-         return;
-     }
- 
--    PS2_IF_AGRESSIVE_LOGS({
--        const uint32_t packetIndex = s_debugGifPacketCount.fetch_add(1, std::memory_order_relaxed);
--        if (packetIndex < 48u)
--        {
--            const uint64_t tagLo = loadLE64(data);
--            const uint32_t nloop = static_cast<uint32_t>(tagLo & 0x7FFFu);
--            const uint8_t flg = static_cast<uint8_t>((tagLo >> 58) & 0x3u);
--            uint32_t nreg = static_cast<uint32_t>((tagLo >> 60) & 0xFu);
--            if (nreg == 0u)
--                nreg = 16u;
--            RUNTIME_LOG("[gs:gif] idx=" << packetIndex
--                                        << " size=" << sizeBytes
--                                        << " nloop=" << nloop
--                                        << " flg=" << static_cast<uint32_t>(flg)
--                                        << " nreg=" << nreg
--                                        << " ctx0fbp=" << m_ctx[0].frame.fbp
--                                        << " ctx1fbp=" << m_ctx[1].frame.fbp
--                                        << std::endl);
--        }
--    });
--
-     uint32_t offset = 0;
-+    if (m_gifProgress.active && !continueGifTag(data, sizeBytes, offset))
-+    {
-+        m_backend->Flush();
-+        return;
-+    }
-+
-     while (offset + 16 <= sizeBytes)
-     {
--        uint64_t tagLo = loadLE64(data + offset);
--        uint64_t tagHi = loadLE64(data + offset + 8);
-+        const uint64_t tagLo = loadLE64(data + offset);
-+        const uint64_t tagHi = loadLE64(data + offset + 8);
-         offset += 16;
- 
-         m_curQ = 1.0f;
- 
--        uint32_t nloop = static_cast<uint32_t>(tagLo & 0x7FFF);
-+        const uint32_t nloop = static_cast<uint32_t>(tagLo & 0x7FFF);
-         uint8_t flg = static_cast<uint8_t>((tagLo >> 58) & 0x3);
-+        if (flg == 3u)
-+            flg = GIF_FMT_IMAGE; // FLG=3 behaves exactly like IMAGE.
-         uint32_t nreg = static_cast<uint32_t>((tagLo >> 60) & 0xF);
-         if (nreg == 0)
-             nreg = 16;
- 
-         recordGifTagDebugEventUnlocked(sizeBytes, nloop, flg, nreg);
- 
--        bool pre = ((tagLo >> 46) & 1) != 0;
--        if (pre)
--        {
-+        if (((tagLo >> 46) & 1) != 0)
-             writeRegisterUnlocked(GS_REG_PRIM, (tagLo >> 47) & 0x7FF);
--        }
- 
--        uint8_t regs[16];
-+        GifTagProgress &tag = m_gifProgress;
-+        tag = {};
-+        tag.active = true;
-+        tag.format = flg;
-+        tag.loopsLeft = nloop;
-+        tag.regCount = nreg;
-+        tag.totalRegWrites = nloop * nreg;
-+        tag.imageBytesLeft = nloop * 16u;
-         for (uint32_t i = 0; i < nreg; ++i)
--            regs[i] = static_cast<uint8_t>((tagHi >> (i * 4)) & 0xF);
-+            tag.regs[i] = static_cast<uint8_t>((tagHi >> (i * 4)) & 0xF);
- 
--        if (flg == GIF_FMT_PACKED)
--        {
--            for (uint32_t loop = 0; loop < nloop; ++loop)
--            {
--                for (uint32_t r = 0; r < nreg; ++r)
--                {
--                    if (offset + 16 > sizeBytes)
--                    {
--                        m_backend->Flush();
--                        return;
--                    }
--                    uint64_t lo = loadLE64(data + offset);
--                    uint64_t hi = loadLE64(data + offset + 8);
--                    offset += 16;
--                    writeRegisterPacked(regs[r], lo, hi);
--                }
--            }
--        }
--        else if (flg == GIF_FMT_REGLIST)
--        {
--            for (uint32_t loop = 0; loop < nloop; ++loop)
--            {
--                for (uint32_t r = 0; r < nreg; ++r)
--                {
--                    if (offset + 8 > sizeBytes)
--                    {
--                        m_backend->Flush();
--                        return;
--                    }
--                    writeRegisterUnlocked(regs[r], loadLE64(data + offset));
--                    offset += 8;
--                }
--            }
--            if ((nloop * nreg) & 1)
--                offset += 8;
--        }
--        else if (flg == GIF_FMT_IMAGE)
--        {
--            uint32_t imageBytes = nloop * 16;
--            if (offset + imageBytes > sizeBytes)
--                imageBytes = sizeBytes - offset;
--            processImageData(data + offset, imageBytes);
--            offset += imageBytes;
--        }
-+        if (!continueGifTag(data, sizeBytes, offset))
-+            break;
-     }
-     m_backend->Flush();
- }
-@@ -1189,6 +1198,19 @@ void GS::writeRegister(uint8_t regAddr, uint64_t value)
- 
- void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
- {
-+#if PS2X_EE_FIBERS
-+    if (regAddr == kGSTrackBatchRegister)
-+    {
-+        if (m_backend)
-+        {
-+            GSPrimitiveBatch batch = buildDrawBatch(1);
-+            batch.vertexCount = kGSTrackBatchMarker;
-+            std::memcpy(&batch.vertices[0].z, &value, sizeof(value));
-+            m_backend->Submit(batch);
-+        }
-+        return;
-+    }
-+#endif
-     const bool interestingReg =
-         regAddr == GS_REG_PRIM ||
-         regAddr == GS_REG_RGBAQ ||
 diff --git a/ps2xRuntime/src/lib/gs/gs_gpu_helpers.h b/ps2xRuntime/src/lib/gs/gs_gpu_helpers.h
 new file mode 100644
 index 0000000..fb5ad7b
@@ -5938,620 +6582,3 @@ index 0000000..fb5ad7b
 +        return clampU8(static_cast<int>(std::lround(top + (bottom - top) * fy)));
 +    }
 +}
-diff --git a/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp b/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
-index c5a6f78..d271984 100644
---- a/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
-+++ b/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
-@@ -1,6 +1,7 @@
- #include "runtime/gs/gs_threaded_backend.h"
- #include "runtime/gs/gs_cpu_backend.h"
- #include "runtime/gs/gs_gpu_backend.h"
-+#include "runtime/gs/gs_hw_backend.h"
- #include "runtime/gs/gs_shared_present.h"
- #include "ThreadPriority.h"
- #include "ThreadNaming.h"
-@@ -77,12 +78,19 @@ GSThreadedBackend::~GSThreadedBackend()
-         m_worker.join();
- }
- 
-+std::unique_ptr<GSRasterBackend> (*GSThreadedBackend::s_backendFactory)() = nullptr;
-+
- std::unique_ptr<GSRasterBackend> GSThreadedBackend::MakeDefault()
- {
-     const char *value = std::getenv("PS2X_GS_THREAD");
-     const bool enabled = (value && *value) ? *value != '0' : s_enabledByDefault.load();
-     const char *gpu = std::getenv("PS2X_GS_GPU");
-     const bool useGpu = (gpu && *gpu) ? *gpu != '0' : s_gpuByDefault.load();
-+    if (s_backendFactory)
-+        return s_backendFactory();
-+    const char *hw = std::getenv("PS2X_GS_HW");
-+    if (hw && *hw == '1')
-+        return std::make_unique<GSThreadedBackend>(std::make_unique<GSHwBackend>());
-     if (useGpu)
-         return std::make_unique<GSThreadedBackend>(std::make_unique<GSGpuBackend>());
-     if (!enabled)
-diff --git a/ps2xRuntime/src/lib/gs/ps2_gs_memory.cpp b/ps2xRuntime/src/lib/gs/ps2_gs_memory.cpp
-index 7781c41..ea87e8c 100644
---- a/ps2xRuntime/src/lib/gs/ps2_gs_memory.cpp
-+++ b/ps2xRuntime/src/lib/gs/ps2_gs_memory.cpp
-@@ -1,4 +1,5 @@
- #include <array>
-+#include <mutex>
- 
- #include "runtime/gs/ps2_gs_memory.h"
- 
-@@ -203,23 +204,29 @@ namespace GSMem
- 
-     void InitLookupTables()
-     {
--        // 32 bit
--        PixelStorageTraits<C32>::InitPageLookupTable(PageTableC32, BlockTableC32, ColumnTable32);
--        PixelStorageTraits<Z32>::InitPageLookupTable(PageTableZ32, BlockTableZ32, ColumnTable32);
-+        // GOW-Port: tablas inmutables compartidas entre CPU y el hilo OpenGL.
-+        static std::once_flag once;
-+        std::call_once(once, [] {
-+            // 32 bit
-+            PixelStorageTraits<C32>::InitPageLookupTable(PageTableC32, BlockTableC32, ColumnTable32);
-+            PixelStorageTraits<Z32>::InitPageLookupTable(PageTableZ32, BlockTableZ32, ColumnTable32);
- 
--        // 16 bit
--        PixelStorageTraits<C16>::InitPageLookupTable(PageTableC16, BlockTableC16, ColumnTable16);
--        PixelStorageTraits<C16S>::InitPageLookupTable(PageTableC16S, BlockTableC16S, ColumnTable16);
--        PixelStorageTraits<Z16>::InitPageLookupTable(PageTableZ16, BlockTableZ16, ColumnTable16);
--        PixelStorageTraits<Z16S>::InitPageLookupTable(PageTableZ16S, BlockTableZ16S, ColumnTable16);
-+            // 16 bit
-+            PixelStorageTraits<C16>::InitPageLookupTable(PageTableC16, BlockTableC16, ColumnTable16);
-+            PixelStorageTraits<C16S>::InitPageLookupTable(PageTableC16S, BlockTableC16S, ColumnTable16);
-+            PixelStorageTraits<Z16>::InitPageLookupTable(PageTableZ16, BlockTableZ16, ColumnTable16);
-+            PixelStorageTraits<Z16S>::InitPageLookupTable(PageTableZ16S, BlockTableZ16S, ColumnTable16);
- 
--        // 8 bit
--        PixelStorageTraits<P8>::InitPageLookupTable(PageTableP8, BlockTableP8, ColumnTable8);
-+            // 8 bit
-+            PixelStorageTraits<P8>::InitPageLookupTable(PageTableP8, BlockTableP8, ColumnTable8);
- 
--        // 4 bit
--        PixelStorageTraits<P4>::InitPageLookupTable(PageTableP4, BlockTableP4, ColumnTable4);
-+            // 4 bit
-+            PixelStorageTraits<P4>::InitPageLookupTable(PageTableP4, BlockTableP4, ColumnTable4);
-+        });
-     }
- 
-+    // GOW-Port: adaptado de Taylor N. Albarnaz / LightVelox (GPL-3.0).
-+    // Origen: PS2Recomp sotc-port, ac9efa070638ad3b3accd284de6f898d5ab271d1.
-     const u16* PageTableData(PixelStorageMode psm)
-     {
-         switch (psm)
-@@ -354,6 +361,92 @@ namespace GSMem
-     {
-     }
- 
-+    namespace
-+    {
-+        template<PixelStorageMode psm, typename Table, typename Fetch>
-+        void writeRunT(const Table& table, u8* data, u32 bp, u32 bw, u32 x, u32 y, u32 count, Fetch fetch)
-+        {
-+            using Packed = typename PixelStorageTraits<psm>::PackedT;
-+            for (u32 i = 0; i < count; ++i)
-+                PixelStorageTraits<psm>::Write(table, data, bp, bw, x + i, y, static_cast<Packed>(fetch(i)));
-+        }
-+    }
-+
-+    namespace
-+    {
-+        template<PixelStorageMode psm, typename Table>
-+        void readIndexRunT(const Table& table, const u8* data, u32 bp, u32 bw, u32 x, u32 y, u32 count, u8* out)
-+        {
-+            for (u32 i = 0; i < count; ++i)
-+                out[i] = static_cast<u8>(PixelStorageTraits<psm>::Read(table, data, bp, bw, x + i, y));
-+        }
-+    }
-+
-+    void ReadIndexRun(const u8* data, u32 psm, u32 bp, u32 bw, u32 x, u32 y, u32 count, u8* out)
-+    {
-+        switch (static_cast<PixelStorageMode>(psm & 0x3Fu))
-+        {
-+        case P8: readIndexRunT<P8>(PageTableP8, data, bp, bw, x, y, count, out); break;
-+        case P8H: readIndexRunT<P8H>(PageTableC32, data, bp, bw, x, y, count, out); break;
-+        case P4: readIndexRunT<P4>(PageTableP4, data, bp, bw, x, y, count, out); break;
-+        case P4HL: readIndexRunT<P4HL>(PageTableC32, data, bp, bw, x, y, count, out); break;
-+        case P4HH: readIndexRunT<P4HH>(PageTableC32, data, bp, bw, x, y, count, out); break;
-+        default: std::memset(out, 0, count); break;
-+        }
-+    }
-+
-+    namespace
-+    {
-+        template<PixelStorageMode psm, typename Table>
-+        void readColorRunT(const Table& table, const u8* data, u32 bp, u32 bw, u32 x, u32 y, u32 count, u32* out)
-+        {
-+            for (u32 i = 0; i < count; ++i)
-+                out[i] = static_cast<u32>(PixelStorageTraits<psm>::Read(table, data, bp, bw, x + i, y));
-+        }
-+    }
-+
-+    bool ReadColorRun(const u8* data, u32 psm, u32 bp, u32 bw, u32 x, u32 y, u32 count, u32* out)
-+    {
-+        switch (static_cast<PixelStorageMode>(psm & 0x3Fu))
-+        {
-+        case C32: readColorRunT<C32>(PageTableC32, data, bp, bw, x, y, count, out); return true;
-+        case Z32: readColorRunT<Z32>(PageTableZ32, data, bp, bw, x, y, count, out); return true;
-+        case C24: readColorRunT<C24>(PageTableC32, data, bp, bw, x, y, count, out); return true;
-+        case Z24: readColorRunT<Z24>(PageTableZ32, data, bp, bw, x, y, count, out); return true;
-+        case C16: readColorRunT<C16>(PageTableC16, data, bp, bw, x, y, count, out); return true;
-+        case C16S: readColorRunT<C16S>(PageTableC16S, data, bp, bw, x, y, count, out); return true;
-+        case Z16: readColorRunT<Z16>(PageTableZ16, data, bp, bw, x, y, count, out); return true;
-+        case Z16S: readColorRunT<Z16S>(PageTableZ16S, data, bp, bw, x, y, count, out); return true;
-+        default: return false;
-+        }
-+    }
-+
-+    void WriteRun(u8* data, u32 psm, u32 bp, u32 bw, u32 x, u32 y, const u8* src, u32 srcPixel, u32 count)
-+    {
-+        auto f32 = [src, srcPixel](u32 i) { u32 v; std::memcpy(&v, src + (srcPixel + i) * 4u, 4u); return v; };
-+        auto f24 = [src, srcPixel](u32 i) { const u8* p = src + (srcPixel + i) * 3u; return u32(p[0]) | (u32(p[1]) << 8) | (u32(p[2]) << 16); };
-+        auto f16 = [src, srcPixel](u32 i) { u16 v; std::memcpy(&v, src + (srcPixel + i) * 2u, 2u); return u32(v); };
-+        auto f8 = [src, srcPixel](u32 i) { return u32(src[srcPixel + i]); };
-+        auto f4 = [src, srcPixel](u32 i) { const u32 n = srcPixel + i; return u32(src[n >> 1] >> ((n & 1u) * 4u)) & 0x0Fu; };
-+        switch (static_cast<PixelStorageMode>(psm & 0x3Fu))
-+        {
-+        case C32: writeRunT<C32>(PageTableC32, data, bp, bw, x, y, count, f32); break;
-+        case Z32: writeRunT<Z32>(PageTableZ32, data, bp, bw, x, y, count, f32); break;
-+        case C24: writeRunT<C24>(PageTableC32, data, bp, bw, x, y, count, f24); break;
-+        case Z24: writeRunT<Z24>(PageTableZ32, data, bp, bw, x, y, count, f24); break;
-+        case C16: writeRunT<C16>(PageTableC16, data, bp, bw, x, y, count, f16); break;
-+        case C16S: writeRunT<C16S>(PageTableC16S, data, bp, bw, x, y, count, f16); break;
-+        case Z16: writeRunT<Z16>(PageTableZ16, data, bp, bw, x, y, count, f16); break;
-+        case Z16S: writeRunT<Z16S>(PageTableZ16S, data, bp, bw, x, y, count, f16); break;
-+        case P8: writeRunT<P8>(PageTableP8, data, bp, bw, x, y, count, f8); break;
-+        case P8H: writeRunT<P8H>(PageTableC32, data, bp, bw, x, y, count, f8); break;
-+        case P4: writeRunT<P4>(PageTableP4, data, bp, bw, x, y, count, f4); break;
-+        case P4HL: writeRunT<P4HL>(PageTableC32, data, bp, bw, x, y, count, f4); break;
-+        case P4HH: writeRunT<P4HH>(PageTableC32, data, bp, bw, x, y, count, f4); break;
-+        default: break;
-+        }
-+    }
-+
-     u32 ReadCT32(u8* data, u32 bp, u32 bw, u32 x, u32 y)
-     {
-         return PixelStorageTraits<C32>::Read(PageTableC32, data, bp, bw, x, y);
-diff --git a/ps2xRuntime/src/lib/ps2_host_input.cpp b/ps2xRuntime/src/lib/ps2_host_input.cpp
-index 0715da3..76907b5 100644
---- a/ps2xRuntime/src/lib/ps2_host_input.cpp
-+++ b/ps2xRuntime/src/lib/ps2_host_input.cpp
-@@ -3,6 +3,7 @@
- #include "ps2_host_backend.h"
- 
- #include <algorithm>
-+#include <cstdio>
- #include <array>
- #include <atomic>
- #include <cctype>
-@@ -309,6 +310,75 @@ namespace ps2_host_input
-             return input;
-         }
- 
-+        // PS2X_PAD_RECORD=<file> writes port 0's input as it changes; PS2X_PAD_REPLAY=<file> plays such a file back instead
-+        // of reading the host. Each line is "epoch frame buttons lx ly rx ry", in hex after the frame.
-+        //
-+        // The clock is the epoch in its high 32 bits and frames since that epoch began in its low 32: the game advances the
-+        // epoch at each point where the time taken varies, such as a finished level load, so that loading can't move input.
-+        struct PadRecordLine
-+        {
-+            uint64_t epoch;
-+            uint64_t frame;
-+            uint16_t buttons;
-+            std::array<uint8_t, 4> axes;
-+        };
-+
-+        std::atomic<const std::atomic<uint64_t> *> g_inputFrameCounter{nullptr};
-+
-+        const std::vector<PadRecordLine> &padReplay()
-+        {
-+            static const std::vector<PadRecordLine> lines = []
-+            {
-+                std::vector<PadRecordLine> out;
-+                const char *path = std::getenv("PS2X_PAD_REPLAY");
-+                if (!path || !*path)
-+                    return out;
-+                std::FILE *file = std::fopen(path, "r");
-+                if (!file)
-+                {
-+                    std::cerr << "[input] cannot open pad replay " << path << std::endl;
-+                    return out;
-+                }
-+                char text[128];
-+                while (std::fgets(text, sizeof(text), file))
-+                {
-+                    unsigned long long epoch, frame;
-+                    unsigned buttons, lx, ly, rx, ry;
-+                    if (std::sscanf(text, "%llu %llu %x %x %x %x %x", &epoch, &frame, &buttons, &lx, &ly, &rx, &ry) == 7)
-+                        out.push_back({epoch, frame, static_cast<uint16_t>(buttons),
-+                                       {static_cast<uint8_t>(lx), static_cast<uint8_t>(ly), static_cast<uint8_t>(rx), static_cast<uint8_t>(ry)}});
-+                }
-+                std::fclose(file);
-+                if (out.empty())
-+                    std::cerr << "[input] pad replay " << path << " has no usable lines (made before epochs were added?)" << std::endl;
-+                std::cerr << "[input] pad replay: " << out.size() << " change(s)" << std::endl;
-+                return out;
-+            }();
-+            return lines;
-+        }
-+
-+        void recordPad(uint64_t frame, uint16_t buttons, const std::array<uint8_t, 4> &axes)
-+        {
-+            static std::mutex mutex;
-+            static std::FILE *const file = []() -> std::FILE *
-+            {
-+                const char *path = std::getenv("PS2X_PAD_RECORD");
-+                return path && *path ? std::fopen(path, "w") : nullptr;
-+            }();
-+            if (file == nullptr)
-+                return;
-+            static uint16_t lastButtons = 0u;
-+            static std::array<uint8_t, 4> lastAxes{0x80u, 0x80u, 0x80u, 0x80u};
-+            std::lock_guard<std::mutex> lock(mutex);
-+            if (buttons == lastButtons && axes == lastAxes)
-+                return;
-+            lastButtons = buttons;
-+            lastAxes = axes;
-+            std::fprintf(file, "%llu %llu %04x %02x %02x %02x %02x\n", static_cast<unsigned long long>(frame >> 32), static_cast<unsigned long long>(frame & 0xFFFFFFFFull),
-+                         buttons, axes[0], axes[1], axes[2], axes[3]);
-+            std::fflush(file); // Survives the game being closed or crashing.
-+        }
-+
-         std::mutex g_mutex;
-         std::array<PadInputState, kPadPorts> g_state = []
-         {
-@@ -570,6 +640,11 @@ namespace ps2_host_input
-         g_mouseCameraEnabled.store(enabled, std::memory_order_relaxed);
-     }
- 
-+    void setInputFrameCounter(const std::atomic<uint64_t> *counter)
-+    {
-+        g_inputFrameCounter.store(counter);
-+    }
-+
-     void setFieldCounter(const std::atomic<uint64_t> *counter)
-     {
-         g_fieldCounter.store(counter);
-@@ -647,6 +722,42 @@ namespace ps2_host_input
-                     state.rightY = scripted.axes[3];
-                 applyPressure(state);
-             }
-+
-+            const std::atomic<uint64_t> *frameCounter = g_inputFrameCounter.load();
-+            const uint64_t frame = frameCounter ? frameCounter->load() : (counter ? counter->load() : 0u);
-+            const std::vector<PadRecordLine> &replay = padReplay();
-+            if (!replay.empty())
-+            {
-+                // Changes are delivered in order and each is held long enough for the game to see it, so a press and release
-+                // recorded on the same frame still count. An epoch the game has moved past is skipped, input neutral.
-+                static std::mutex replayMutex;
-+                static size_t next = 0u;
-+                static PadRecordLine current{0u, 0u, 0u, {0x80u, 0x80u, 0x80u, 0x80u}};
-+                static auto lastApplied = std::chrono::steady_clock::now();
-+                const uint64_t epoch = frame >> 32, epochFrame = frame & 0xFFFFFFFFull;
-+                std::lock_guard<std::mutex> replayLock(replayMutex);
-+                while (next < replay.size() && replay[next].epoch < epoch)
-+                {
-+                    ++next;
-+                    current = PadRecordLine{epoch, 0u, 0u, {0x80u, 0x80u, 0x80u, 0x80u}};
-+                }
-+                const auto now = std::chrono::steady_clock::now();
-+                if (next < replay.size() && replay[next].epoch == epoch && replay[next].frame <= epochFrame &&
-+                    now - lastApplied >= std::chrono::milliseconds(35))
-+                {
-+                    current = replay[next++];
-+                    lastApplied = now;
-+                }
-+                state = PadInputState{};
-+                state.connected = true;
-+                state.buttons = current.buttons;
-+                state.leftX = current.axes[0];
-+                state.leftY = current.axes[1];
-+                state.rightX = current.axes[2];
-+                state.rightY = current.axes[3];
-+                applyPressure(state);
-+            }
-+            recordPad(frame, static_cast<uint16_t>(state.buttons), {state.leftX, state.leftY, state.rightX, state.rightY});
-         }
-         return state;
-     }
-diff --git a/ps2xRuntime/src/lib/ps2_host_input.h b/ps2xRuntime/src/lib/ps2_host_input.h
-index 9fdc3b1..e107198 100644
---- a/ps2xRuntime/src/lib/ps2_host_input.h
-+++ b/ps2xRuntime/src/lib/ps2_host_input.h
-@@ -9,6 +9,8 @@ namespace ps2_host_input
- {
-     constexpr uint32_t kPadPorts = 2u;
- 
-+    void setInputFrameCounter(const std::atomic<uint64_t> *counter); // The clock PS2X_PAD_RECORD and PS2X_PAD_REPLAY use.
-+
-     void setFieldCounter(const std::atomic<uint64_t> *counter);
-     void sample();
-     void releaseMouse();
-diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
-index 43f67b0..8a33442 100644
---- a/ps2xRuntime/src/lib/ps2_runtime.cpp
-+++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
-@@ -547,6 +547,9 @@ static void UploadFrame(Texture2D &tex, PS2Runtime *rt, uint32_t &outWidth, uint
-         return;
-     }
-     s_lastPresentationTick = currentTick;
-+    // With VU1 on its own thread the display registers can run ahead of the drawing,
-+    // which shows a cleared buffer as a black frame. Let queued work finish first.
-+    ps2x::asyncvif::sync(rt->memory());
-     rt->gs().latchHostPresentationFrame();
-     if (GSSharedPresent::Active())
-     {
-diff --git a/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp b/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
-index 0b08639..aee6ae0 100644
---- a/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
-+++ b/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
-@@ -6,6 +6,8 @@
- #define VU1_FORCE_INLINE inline
- #include "ps2_vu1_impl.inl"
- 
-+void (*g_vu1KickObserver)(const uint8_t *, size_t) = nullptr;
-+
- #include <algorithm>
- #include <bit>
- #include <cfenv>
-@@ -1180,6 +1182,8 @@ bool VU1InterpreterAccess::runVerifiedWith(VU1Interpreter &vu, uint8_t *vuCode,
-     packetSink = nullptr;
- 
-     std::string diff;
-+    // Set when the code was generated with dead-flag analysis: those MAC and STATUS values are not produced.
-+    static const bool kIgnoreFlags = std::getenv("PS2X_VU1_VERIFY_NOFLAGS") != nullptr;
-     const auto note = [&diff](const std::string &text)
-     {
-         if (diff.size() < 1500u)
-@@ -1205,11 +1209,11 @@ bool VU1InterpreterAccess::runVerifiedWith(VU1Interpreter &vu, uint8_t *vuCode,
-         note("r");
-     if (a.pc != b.pc)
-         note("pc");
--    if (a.mac != b.mac)
-+    if (!kIgnoreFlags && (a.mac != b.mac))
-         note("mac");
-     if (a.clip != b.clip)
-         note("clip");
--    if (a.status != b.status)
-+    if (!kIgnoreFlags && a.status != b.status)
-         note("status");
-     if (a.ebit != b.ebit || a.haltAfterDelaySlot != b.haltAfterDelaySlot || a.stoppedByD != b.stoppedByD ||
-         a.stoppedByT != b.stoppedByT)
-@@ -1247,7 +1251,7 @@ bool VU1InterpreterAccess::runVerifiedWith(VU1Interpreter &vu, uint8_t *vuCode,
-         std::sort(entries.begin(), entries.end());
-         return entries;
-     };
--    if (!realEnded && flagEntries(vu) != flagEntries(*shadow))
-+    if (!kIgnoreFlags && !realEnded && flagEntries(vu) != flagEntries(*shadow))
-         note("flags");
-     const auto scalarEqual = [](const auto &x, const auto &y)
-     {
-diff --git a/ps2xRuntime/src/lib/vu/ps2_vu1_impl.inl b/ps2xRuntime/src/lib/vu/ps2_vu1_impl.inl
-index 518cf91..35b7282 100644
---- a/ps2xRuntime/src/lib/vu/ps2_vu1_impl.inl
-+++ b/ps2xRuntime/src/lib/vu/ps2_vu1_impl.inl
-@@ -16,6 +16,10 @@
- #include <string>
- #include <vector>
- 
-+#if PS2X_EE_FIBERS
-+extern void (*g_vu1KickObserver)(const uint8_t *, size_t); // Sees each PATH1 packet, for comparing VU1 programs.
-+#endif
-+
- #ifndef VU1_FORCE_INLINE
- #if defined(_MSC_VER)
- #define VU1_FORCE_INLINE __forceinline
-@@ -945,6 +949,10 @@ inline void VU1Interpreter::finishXgkick()
-             return;
-         }
-     }
-+#if PS2X_EE_FIBERS
-+    if (g_vu1KickObserver)
-+        g_vu1KickObserver(m_xgkick.packet.data(), m_xgkick.totalBytes);
-+#endif
-     if (m_activeMemory)
-         m_activeMemory->submitGifPacket(GifPathId::Path1, m_xgkick.packet.data(), m_xgkick.totalBytes);
-     else if (m_activeGs)
-@@ -3334,6 +3342,21 @@ struct VU1InterpreterAccess
-         return c.result;
-     }
- 
-+    // An FMAC whose flags no instruction can observe (see planDeadFlags in vu1_recomp).
-+    template <FK K, bool Lean = true>
-+    static VU1_FORCE_INLINE __m128 fmacN(VU1Interpreter &vu, Vu1FastCtx &ctx, uint64_t cycle, uint32_t dest, __m128 s, __m128 t, __m128 a,
-+                                         __m128 &normalized)
-+    {
-+        const FmacCore c = fmacCore<K, Lean>(dest, s, t, a);
-+        if (!c.safe)
-+        {
-+            FmacFlags flags;
-+            return fmacExact<K, Lean>(vu, ctx, cycle, dest, c.s, c.t, a, c.result, normalized, flags);
-+        }
-+        normalized = c.result;
-+        return c.result;
-+    }
-+
-     template <FK K, bool Lean = true>
-     static VU1_FORCE_INLINE __m128 fmacV(VU1Interpreter &vu, Vu1FastCtx &ctx, uint64_t cycle, uint32_t dest, __m128 s, __m128 t, __m128 a,
-                                          __m128 &normalized, __m128 &accZero, __m128 &accSign, uint32_t &accScalar)
-diff --git a/ps2xTest/tools/vu1_recomp.cpp b/ps2xTest/tools/vu1_recomp.cpp
-index 5d465b0..3e1a0ee 100644
---- a/ps2xTest/tools/vu1_recomp.cpp
-+++ b/ps2xTest/tools/vu1_recomp.cpp
-@@ -10,6 +10,7 @@
- #include <map>
- #include <regex>
- #include <set>
-+#include <tuple>
- #include <sstream>
- #include <string>
- #include <vector>
-@@ -738,7 +739,7 @@ namespace
-     std::string referencePaths(std::string text)
-     {
-         if (!kLeanFmac)
--            text = std::regex_replace(text, std::regex(R"(\b(fmac[VF]?<FK::\w+)>)"), "$1, false>");
-+            text = std::regex_replace(text, std::regex(R"(\b(fmac[VFN]?<FK::\w+)>)"), "$1, false>");
-         if (!kLeanNorm)
-             text = std::regex_replace(text, std::regex(R"(\b(vnorm|qN|iN)\()"), "$1<false>(");
-         return text;
-@@ -763,6 +764,134 @@ namespace
-         std::set<uint32_t> segs;
-         bool aggregateFlags = true;
-         bool cacheRegisters = true;
-+        std::vector<bool> deadFlags;
-+
-+        bool writesFlags(const Pair &p) const
-+        {
-+            const RegViewProbe probe;
-+            const UpperEmit up = upperEmit(p.d.upper);
-+            return up.isFmac && !up.generic;
-+        }
-+
-+        // Status and MAC readers among the lower instructions.
-+        static bool readsStatusFlag(const Pair &p)
-+        {
-+            const uint32_t op = (p.d.lower >> 25) & 0x7Fu;
-+            return !p.d.iBit && op >= 0x14u && op <= 0x17u;
-+        }
-+
-+        static bool readsMacFlag(const Pair &p)
-+        {
-+            const uint32_t op = (p.d.lower >> 25) & 0x7Fu;
-+            return !p.d.iBit && (op == 0x18u || op == 0x1Au || op == 0x1Bu);
-+        }
-+
-+        // True if a MAC reader can see the flags of an FMAC before a later FMAC's flags have landed for certain.
-+        // A later FMAC issued at pair k has landed by pair k + 4, since every pair takes at least one cycle. The state is
-+        // (pair, pending branch target or -1, pairs until the later FMAC has landed or -1).
-+        bool flagsVisible(uint32_t fmacIndex, uint32_t count) const
-+        {
-+            struct State { uint32_t index; int pending; int land; };
-+            std::vector<State> work;
-+            std::set<std::tuple<uint32_t, int, int>> seen;
-+            bool unknown = false;
-+            const auto successors = [&](uint32_t index, int pending, int land)
-+            {
-+                if (index >= count)
-+                {
-+                    unknown = true;
-+                    return;
-+                }
-+                const Pair &p = pairs[index];
-+                if (p.fallback || p.reserved)
-+                {
-+                    unknown = true;
-+                    return;
-+                }
-+                if (pending != -1 && (p.branch || p.d.eBit))
-+                {
-+                    unknown = true; // A branch or end in a delay slot: not modelled here.
-+                    return;
-+                }
-+                const uint32_t fall = index + 1u;
-+                if (pending == -2)
-+                    return; // The delay slot of an E-bit pair ends the program.
-+                if (pending >= 0)
-+                {
-+                    work.push_back({static_cast<uint32_t>(pending), -1, land});
-+                    return;
-+                }
-+                if (p.d.eBit)
-+                {
-+                    work.push_back({fall, -2, land});
-+                    return;
-+                }
-+                if (p.branch)
-+                {
-+                    if (p.dynamic)
-+                    {
-+                        unknown = true;
-+                        return;
-+                    }
-+                    work.push_back({fall, static_cast<int>(p.target / 8u), land});
-+                    if (p.conditional)
-+                        work.push_back({fall, -1, land});
-+                    return;
-+                }
-+                work.push_back({fall, -1, land});
-+            };
-+            // The FMAC's own pair may be a delay slot, so what follows it depends on the pair before.
-+            successors(fmacIndex, -1, -1);
-+            if (fmacIndex > 0u && pairs[fmacIndex - 1u].branch)
-+            {
-+                if (pairs[fmacIndex - 1u].dynamic)
-+                    return true;
-+                successors(fmacIndex, static_cast<int>(pairs[fmacIndex - 1u].target / 8u), -1);
-+            }
-+            else if (fmacIndex > 0u && pairs[fmacIndex - 1u].d.eBit)
-+                successors(fmacIndex, -2, -1);
-+            while (!work.empty() && !unknown)
-+            {
-+                const State state = work.back();
-+                work.pop_back();
-+                if (state.land == 0)
-+                    continue;
-+                if (!seen.insert({state.index, state.pending, state.land}).second)
-+                    continue;
-+                if (state.index >= count)
-+                    return true;
-+                const Pair &p = pairs[state.index];
-+                if (readsMacFlag(p))
-+                    return true;
-+                int land = state.land > 0 ? state.land - 1 : -1;
-+                if (writesFlags(p) && land < 0)
-+                    land = 4;
-+                successors(state.index, state.pending, land);
-+            }
-+            return unknown;
-+        }
-+
-+        void planDeadFlags(uint32_t count, std::map<std::string, uint32_t> &stats)
-+        {
-+            deadFlags.assign(pairs.size(), false);
-+            if (!settingEnabled("PS2X_VU1_DEAD_FLAGS"))
-+                return;
-+            // Sticky STATUS bits gather every FMAC's result, so a program that reads STATUS keeps all of them.
-+            for (uint32_t index = 0; index < count; ++index)
-+                if (readsStatusFlag(pairs[index]))
-+                    return;
-+            for (uint32_t index = 0; index < count; ++index)
-+            {
-+                if (pairs[index].fallback || !writesFlags(pairs[index]))
-+                    continue;
-+                ++stats["fmacs"];
-+                if (!flagsVisible(index, count))
-+                {
-+                    deadFlags[index] = true;
-+                    ++stats["fmacs without flags"];
-+                }
-+            }
-+        }
- 
-         bool inBlock(uint32_t pc) const
-         {
-@@ -1055,7 +1184,10 @@ namespace
-             std::string fmacValue = up.value;
-             std::string fmacDecl = "__m128 un;";
-             std::string fmacAfter;
--            if (known && up.isFmac)
-+            const bool flagsDead = up.isFmac && !up.generic && p.pc / 8u < deadFlags.size() && deadFlags[p.pc / 8u];
-+            if (flagsDead)
-+                fmacValue = "fmacN" + up.fmacCall + ")";
-+            else if (known && up.isFmac)
-             {
-                 known->fmacPos.push_back(known->pos);
-                 if (known->pos == known->lastCollapsed)
-@@ -1453,6 +1585,8 @@ namespace
-                 emitter.isTarget[p.target / 8u] = true;
-         }
- 
-+        emitter.planDeadFlags(count, stats);
-+
-         std::vector<bool> spanned(count + 1u, false);
-         for (uint32_t index = 0; index < count; ++index)
-         {

@@ -30,4 +30,13 @@ void crossInPlace(const normal_ &a, const normal_ &b, normal_ &dst);
 
 void fmatMul(_sFMat &out, const _sFMat &a, const _sFMat &b);
 
+// psxdefs.cpp: 16-bit vector operations on local vectors. gteMulVec16 multiplies by gteMat into gteOut.
+void gteMulVec16(const sVec16 &v);
+uint32_t vec16LengthSquared(const sVec16 &v);
+void vec16MulScaler(sVec16 &out, const sVec16 &v, int16_t scale);
+
+// SVECTOR and sVec16 are the same four shorts under two names.
+inline sVec16 &asVec16(SVECTOR &v) { return reinterpret_cast<sVec16 &>(v); }
+inline const sVec16 &asVec16(const SVECTOR &v) { return reinterpret_cast<const sVec16 &>(v); }
+
 } // namespace rc

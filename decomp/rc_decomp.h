@@ -224,6 +224,28 @@ R guest_call(uint32_t address, A... args)
         return static_cast<R>(getRegU32(&ctx, 2));
 }
 
+// A word the original reads from its own stack frame without writing it first, so it holds whatever an earlier call
+// left there. frameSize is the original's frame size and offset the word's place in that frame. A native function
+// does not move $sp, so the original's frame starts frameSize below the caller's $sp.
+template <typename T>
+T stale_stack(uint32_t frameSize, uint32_t offset)
+{
+    const uint32_t sp = getRegU32(&g_runtime->eeScheduler().runningContext(), 29);
+    T value;
+    std::memcpy(&value, guest_host(sp - frameSize + offset), sizeof(T));
+    return value;
+}
+
+// A local variable the original keeps in its stack frame and passes to another function by address. Placing it at
+// the same guest address leaves guest RAM as the original would. Only for native code that does not call guest code
+// while the variable is live, since a guest callee's frame would overlap it.
+template <typename T>
+ptr32<T> frame_local(uint32_t frameSize, uint32_t offset)
+{
+    const uint32_t sp = getRegU32(&g_runtime->eeScheduler().runningContext(), 29);
+    return ptr32<T>(sp - frameSize + offset);
+}
+
 // MIPS division: truncates, and does not trap on the cases x86 does.
 inline int32_t ee_div(int32_t a, int32_t b)
 {

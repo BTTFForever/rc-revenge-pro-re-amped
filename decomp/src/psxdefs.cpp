@@ -76,6 +76,15 @@ void divScaler(sVec16 &out, const sVec16 &vec, int16_t scale)
 
 } // namespace
 
+// Forms of the operations below for vectors held in local variables (ee_math.h).
+void gteMulVec16(const sVec16 &v) { gteMatrixMul(v.x, v.y, v.z); }
+uint32_t vec16LengthSquared(const sVec16 &v) { return lengthSquared(v); }
+void vec16MulScaler(sVec16 &out, const sVec16 &v, int16_t scale)
+{
+    writeWarned(out, static_cast<uint32_t>((v.x * scale) >> 12), static_cast<uint32_t>((v.y * scale) >> 12),
+                static_cast<uint32_t>((v.z * scale) >> 12), "Overflow in Vec16MulScaler");
+}
+
 uint16 Sqr32(uint32 n); // math_core.cpp
 
 void PS2C_Vec16DivScaler(ptr32<_sVec16> pOut, ptr32<_sVec16> pVec, int16 scale)
@@ -142,8 +151,7 @@ void PS2C_Vec16MinusVec16(ptr32<_sVec16> pOut, ptr32<_sVec16> pVec1, ptr32<_sVec
 void PS2C_Vec16MulScaler(ptr32<_sVec16> pOut, ptr32<_sVec16> pVec, int16 scale)
 {
     const sVec16 v = *pVec;
-    writeWarned(*pOut, static_cast<uint32_t>((v.x * scale) >> 12), static_cast<uint32_t>((v.y * scale) >> 12),
-                static_cast<uint32_t>((v.z * scale) >> 12), "Overflow in Vec16MulScaler");
+    vec16MulScaler(*pOut, v, scale);
 }
 
 int32 PS2C_Vec16DotVec16(ptr32<_sVec16> pVec1, ptr32<_sVec16> pVec2)

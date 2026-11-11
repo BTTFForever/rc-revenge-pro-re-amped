@@ -47,6 +47,23 @@ constexpr uint64_t kAlwaysCompare = 64u;    // Every function's first calls are 
 constexpr int kSamplesPerSecond = 15;       // Each comparison scans 32 MB several times.
 
 bool g_comparing = false; // Only the guest executor thread comes here.
+
+// Runs a recompiled original to its end. Interrupts wait until it returns: a run cut short by one proves nothing,
+// and long functions (deep searches, big clears) would otherwise rarely finish between two interrupts.
+//
+// A recompiled function can also return before the guest function has: a call to itself becomes a jump inside the
+// same host function, so the inner return leaves the host function with pc at the outer call's return address, and
+// the game's dispatcher re-enters it there. This keeps dispatching the same way until pc reaches the caller.
+void runOriginal(Entry &entry, uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    EeScheduler &scheduler = runtime->eeScheduler();
+    const uint32_t returnAddress = getRegU32(ctx, 31);
+    scheduler.holdCheckpoints(true);
+    entry.original(rdram, ctx, runtime);
+    for (int resumes = 0; ctx->pc != returnAddress && resumes < 1000000; ++resumes)
+        runtime->lookupFunction(ctx->pc)(rdram, ctx, runtime);
+    scheduler.holdCheckpoints(false);
+}
 std::unique_ptr<uint8_t[]> g_before;
 std::unique_ptr<uint8_t[]> g_expected;
 
@@ -207,7 +224,7 @@ bool fuzzStep(uint8_t *rdram, const R5900Context &live, PS2Runtime *runtime, int
                 std::memcpy(g_before.get(), rdram, PS2_RAM_SIZE);
 
             R5900Context originalCtx = inputs;
-            entry.original(rdram, &originalCtx, runtime);
+            runOriginal(entry, rdram, &originalCtx, runtime);
             if (entry.fuzzWholeRam)
             {
                 std::memcpy(g_expected.get(), rdram, PS2_RAM_SIZE);
@@ -328,8 +345,11 @@ void shadowCall(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, Entry &e
     }
 
     // The random test waits for the game's heap, which some of the functions allocate from.
+    // RC_SHADOW_FUZZ_DELAY=<seconds> waits longer, for setups that need a level loaded.
     static bool fuzzed = std::getenv("RC_SHADOW_FUZZ") == nullptr;
-    if (!fuzzed && G(memVarG).pHeader)
+    static const auto fuzzFrom = std::chrono::steady_clock::now() +
+                                 std::chrono::seconds(std::atoi(std::getenv("RC_SHADOW_FUZZ_DELAY") ? std::getenv("RC_SHADOW_FUZZ_DELAY") : "0"));
+    if (!fuzzed && G(memVarG).pHeader && std::chrono::steady_clock::now() >= fuzzFrom)
     {
         g_comparing = true;
         fuzzed = fuzzStep(rdram, *ctx, runtime, std::atoi(std::getenv("RC_SHADOW_FUZZ")));
@@ -359,7 +379,7 @@ void shadowCall(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, Entry &e
     // The original runs on a copy of the registers, then its writes to RAM are undone.
     R5900Context originalCtx = *ctx;
     g_comparing = true;
-    entry.original(rdram, &originalCtx, runtime);
+    runOriginal(entry, rdram, &originalCtx, runtime);
     g_comparing = false;
     std::memcpy(g_expected.get(), rdram, kRamSize);
     revertWrites(rdram, g_before.get(), 0u, kRamSize);
@@ -403,6 +423,19 @@ void shadowCall(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, Entry &e
     }
 }
 
+// RC_DECOMP_SKIP=name,name leaves those functions recompiled. A native caller still calls them natively, so this is
+// for exposing a native function's callees to the comparison: with the caller recompiled, its calls go through the
+// table and are compared.
+bool skipped(const char *name)
+{
+    static const std::string skip = []
+    {
+        const char *names = std::getenv("RC_DECOMP_SKIP");
+        return "," + std::string(names ? names : "") + ",";
+    }();
+    return skip.find("," + std::string(name) + ",") != std::string::npos;
+}
+
 RecompFn decompOr(uint32_t address, RecompFn fallback)
 {
     const char *enabled = std::getenv("RC_DECOMP");
@@ -411,7 +444,7 @@ RecompFn decompOr(uint32_t address, RecompFn fallback)
     for (const Registered &item : registry())
     {
         if (item.entry->address == address)
-            return item.entry->native;
+            return skipped(item.entry->name) ? fallback : item.entry->native;
     }
     return fallback;
 }
@@ -446,7 +479,8 @@ void installDecomp(PS2Runtime &runtime)
     }
     size_t installed = 0u;
     for (const Registered &item : registry())
-        installed += runtime.replaceFunction(item.entry->address, shadow ? item.shadow : item.entry->native) ? 1u : 0u;
+        if (!skipped(item.entry->name))
+            installed += runtime.replaceFunction(item.entry->address, shadow ? item.shadow : item.entry->native) ? 1u : 0u;
     std::fprintf(stderr, "[decomp] %zu of %zu functions installed%s\n", installed, registry().size(),
                  shadow ? ", comparing against the recompiled originals" : "");
 }
