@@ -173,7 +173,8 @@ uint32 PS2C_Vec16Normalise(ptr32<_sVec16> pOut, ptr32<_sVec16> pVec)
 {
     const int16_t scale = static_cast<int16_t>(Sqr32(lengthSquared(*pVec)));
     divScaler(*pOut, *pVec, scale);
-    return static_cast<uint32_t>(static_cast<int32_t>(scale));
+    // The original returns Sqr32's result as is, zero-extended, not the sign-extended scale.
+    return static_cast<uint16_t>(scale);
 }
 
 void PS2C_GetVec16GteResult(ptr32<_sVec16> pOut)

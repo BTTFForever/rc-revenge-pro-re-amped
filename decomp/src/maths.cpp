@@ -358,10 +358,11 @@ angle ArcTan(int32 x, int32 y)
         }
     }
 
-    const int32_t quotient = ee_div(static_cast<int32_t>(numerator), static_cast<int32_t>(large));
-    const int32_t remainder = static_cast<int32_t>(numerator) - quotient * static_cast<int32_t>(large);
-    const uint32_t roundUp = large < static_cast<uint32_t>(remainder << 1) ? 1u : 0u;
-    const int16_t value = G(arcTanTableG)[quotient + static_cast<int32_t>(roundUp)];
+    // Unsigned (divu): the numerator can reach 2^31 when small >= 0x80000 or |y| is 0x80000000.
+    const uint32_t quotient = ee_divu(numerator, large);
+    const uint32_t remainder = numerator - quotient * large;
+    const uint32_t roundUp = large < (remainder << 1) ? 1u : 0u;
+    const int16_t value = G(arcTanTableG)[static_cast<int32_t>(quotient + roundUp)];
 
     if (x < 0)
     {
