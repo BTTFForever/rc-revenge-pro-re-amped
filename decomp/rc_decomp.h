@@ -246,6 +246,30 @@ ptr32<T> frame_local(uint32_t frameSize, uint32_t offset)
     return ptr32<T>(sp - frameSize + offset);
 }
 
+// The original's stack frame, for native code that passes the address of a local to guest code (or to a native
+// function taking ptr32). Lowers the running context's $sp by the original's frame size while it lives, so the
+// locals sit where the original kept them and guest callees build their frames below them, as in the original.
+class GuestFrame
+{
+public:
+    explicit GuestFrame(uint32_t size)
+        : m_ctx(g_runtime->eeScheduler().runningContext()), m_sp(getRegU32(&m_ctx, 29) - size), m_size(size)
+    {
+        SET_GPR_S32((&m_ctx), 29, static_cast<int32_t>(m_sp));
+    }
+    ~GuestFrame() { SET_GPR_S32((&m_ctx), 29, static_cast<int32_t>(m_sp + m_size)); }
+    GuestFrame(const GuestFrame &) = delete;
+    GuestFrame &operator=(const GuestFrame &) = delete;
+
+    template <typename T>
+    ptr32<T> local(uint32_t offset) const { return ptr32<T>(m_sp + offset); }
+
+private:
+    R5900Context &m_ctx;
+    uint32_t m_sp;
+    uint32_t m_size;
+};
+
 // MIPS division: truncates, and does not trap on the cases x86 does.
 inline int32_t ee_div(int32_t a, int32_t b)
 {

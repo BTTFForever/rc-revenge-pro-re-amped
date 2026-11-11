@@ -59,9 +59,23 @@ void runComparedNative(Entry &entry, uint8_t *rdram, R5900Context *ctx, PS2Runti
     R5900Context &running = runtime->eeScheduler().runningContext();
     const bool copy = ctx != &running;
     const R5900Context saved = copy ? running : R5900Context{};
+    // Interrupts wait, as for the original, so none runs inside the native's guest calls.
+    runtime->eeScheduler().holdCheckpoints(true);
     g_inComparedNative = true;
-    entry.native(rdram, ctx, runtime);
+    // RC_SHADOW_SELFTEST=1 runs the original in place of the native: any difference left is noise from outside the
+    // function (another thread writing guest RAM between the two runs).
+    static const bool selfTest = std::getenv("RC_SHADOW_SELFTEST") != nullptr;
+    if (selfTest)
+    {
+        const uint32_t returnAddress = getRegU32(ctx, 31);
+        entry.original(rdram, ctx, runtime);
+        for (int resumes = 0; ctx->pc != returnAddress && resumes < 1000000; ++resumes)
+            runtime->lookupFunction(ctx->pc)(rdram, ctx, runtime);
+    }
+    else
+        entry.native(rdram, ctx, runtime);
     g_inComparedNative = false;
+    runtime->eeScheduler().holdCheckpoints(false);
     if (copy)
         running = saved;
 }
@@ -442,7 +456,22 @@ void shadowCall(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, Entry &e
     {
         const uint32_t difference = firstDifference(rdram, g_expected.get(), begin, end);
         if (difference != end)
+        {
             fail("ram", g_expected[difference], rdram[difference], difference);
+            // RC_SHADOW_DIFFS=1: list every differing range, to see what kind of data it is.
+            static const bool listAll = std::getenv("RC_SHADOW_DIFFS") != nullptr;
+            for (uint32_t at = difference, shown = 0; listAll && at < end && shown < 24; ++shown)
+            {
+                uint32_t stop = at;
+                while (stop < end && rdram[stop] != g_expected[stop])
+                    ++stop;
+                std::fprintf(stderr, "[decomp]   differs 0x%x..0x%x:", at, stop);
+                for (uint32_t i = at; i < stop && i < at + 16u; ++i)
+                    std::fprintf(stderr, " %02x/%02x", g_expected[i], rdram[i]);
+                std::fprintf(stderr, "\n");
+                at = firstDifference(rdram, g_expected.get(), stop, end);
+            }
+        }
     }
 }
 

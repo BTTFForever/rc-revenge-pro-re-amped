@@ -923,6 +923,7 @@ int32 AIPlayCatchup(ptr32<_sObject> pObj, int32 i)
 // whose search fails falls back to its last valid node. Then updates its distance to the finish.
 void AIUpdateObjectNode(ptr32<_sObject> pObj)
 {
+    GuestFrame frame(0x20); // So the guest code it calls sees the stack as under the original.
     _sCar_AI &carAI = pObj->carAI;
     ptr32<_sAINode> current = carAI.pCurNode;
     if (!current)
@@ -1251,6 +1252,414 @@ void PlayerInit(int32 noPlayers)
         InputSetVibrationFlags(INPUT_MULTITAP_2, frontEnd.gameStateData.playerConfig[1].vibrationOnOff == 0 ? 1 : 0);
 }
 
+// The AI driving loop and the systems it calls that are not native yet, through guest_call.
+namespace {
+
+const uint32_t kPhysicsRightCar = 0x13d6a0, kPhysicsResetCar = 0x13e4e8, kVfxAddNew = 0x157c50;
+const uint32_t kObjectWeaponAffect = 0x137368, kTaskCachedInsert = 0x1afb68, kWeaponRelativeAngle = 0x1812b8;
+const uint32_t kWeaponRocketTestLockon = 0x17bf38, kObjectGiveNextWeapon = 0x138660, kWeaponSpawn = 0x17a8d0;
+const uint32_t kRCMusicChain = 0x140f08, kObjectAllRemoveWeapons = 0x138538, kRevSfxPlay3D = 0x1418a8;
+const uint32_t kCameraPlaceAtAINode = 0x117888;
+
+ee_float rodataFloat(uint32_t address)
+{
+    return *static_cast<ee_float *>(guest_host(address));
+}
+
+int16_t weaponRelativeAngle(ptr32<_sObject> from, ptr32<_sObject> to)
+{
+    return static_cast<int16_t>(guest_call<int32_t>(kWeaponRelativeAngle, from, to));
+}
+
+} // namespace
+
+uint16 RandomGetRange(uint16 lower, uint16 upper);
+uint16 RandomGetNDRange(uint16 lower, uint16 upper);
+
+// Whether a computer car fires its weapon now: 0 no, 1 fire, 2 fire the weapon's other way (backwards). Only on the
+// ground, and the rules depend on the weapon.
+int32 AIWeaponDecideToFire(ptr32<_sObject> pObject, tTime time)
+{
+    _sObject &obj = *pObject;
+    // The original's 0x80-byte frame: hit point, normal, material.
+    GuestFrame frame(0x80);
+    if (obj.respawn != 0 || obj.weaponAffect == 5)
+        return 0;
+    const ptr32<_sColCellVecPSX> pos(guest_addr(&obj.pos16));
+    if (!AColDownCast(pos, frame.local<_sColCellVecPSX>(0), frame.local<_sColNormalPSX>(0x10), frame.local<uint8>(0x20)))
+        return 0;
+    _sCar_AI &carAI = obj.carAI;
+    const ptr32<_sObject> front = carAI.pNearestObjInFront, behind = carAI.pNearestObjBehind;
+    switch (obj.weaponType)
+    {
+    case 8: // Fires once at a car ahead within about 22 degrees, on a 1 in 25 chance.
+    {
+        if (obj.aiFire != 0 || !front)
+            return 0;
+        const int16_t first = weaponRelativeAngle(pObject, front);
+        const int16_t angle = weaponRelativeAngle(pObject, carAI.pNearestObjInFront);
+        if (first < 1 ? 0x3ff < -angle : 0x3ff < angle)
+            return 0;
+        if (RandomGetRange(0, 0x19) != 0)
+            return 0;
+        obj.aiFire = 1;
+        return 1;
+    }
+    case 1: // Rockets: fire at a locked target, now and then otherwise, sometimes backwards.
+        if (!front)
+        {
+            RandomGetRange(0, 100);
+            return 2;
+        }
+        guest_call(kWeaponRocketTestLockon, pObject);
+        if (obj.weaponLock != 0)
+            return RandomGetRange(0, 0xf) == 0 ? 1 : 0;
+        if (RandomGetRange(0, 100) < 2)
+            return 1;
+        if (RandomGetRange(0, 100) < 2)
+            return 2;
+        return 0;
+    case 4: // Within 2000 of a car in front, or failing that of one behind.
+    {
+        ptr32<_sObject> other = front;
+        if (other)
+        {
+            if (other->carAI.iTotalRacedDist - carAI.iTotalRacedDist < 2000)
+                return 1;
+        }
+        other = behind;
+        if (!other)
+            return 0;
+        return carAI.iTotalRacedDist - other->carAI.iTotalRacedDist < 2000 ? 1 : 0;
+    }
+    case 5: // When the car ahead is 400 to 1000 or 2000 units ahead, allowing for speed, and within 22 degrees.
+    {
+        if (!front)
+            return 0;
+        int32_t gap = front->carAI.iTotalRacedDist - carAI.iTotalRacedDist;
+        gap -= ee_ftoi(obj.pPhysics->speed * ee_itof(gap) * rodataFloat(0x327588));
+        if (399 < gap && 0x3e6u < static_cast<uint32_t>(gap) - 0x3e9u)
+            return 0;
+        const int16_t first = weaponRelativeAngle(pObject, front);
+        const int16_t angle = weaponRelativeAngle(pObject, carAI.pNearestObjInFront);
+        if (0 < first)
+            return 0x3ff < angle ? 0 : 1;
+        return -angle < 0x400 ? 1 : 0;
+    }
+    case 11: // Rarely; forwards or backwards towards whichever car is nearer.
+    {
+        const int32_t ahead = front ? front->carAI.iTotalRacedDist - carAI.iTotalRacedDist : 500000;
+        const int32_t back = behind ? carAI.iTotalRacedDist - behind->carAI.iTotalRacedDist : 500000;
+        if (2 < RandomGetNDRange(0, 100))
+            return 0;
+        if (RandomGetNDRange(0, 100) < 0xf)
+            return 1;
+        if (RandomGetNDRange(0, 100) < 0xf)
+            return 2;
+        return back < ahead ? 1 : 2;
+    }
+    default:
+        return RandomGetRange(0, 99) == 0 ? 1 : 0;
+    }
+}
+
+// Picks up the next weapon if one is due, and fires it if the computer decides to.
+void AITestWeapon(ptr32<_sObject> pObject, tTime time)
+{
+    // The original's 0x60-byte frame: the weapon definition at 0, the position at 0x20, copied to 0x10. Fields of the
+    // definition the original doesn't set keep whatever the stack held.
+    GuestFrame frame(0x60);
+    guest_call(kObjectGiveNextWeapon, pObject);
+    _sObject &obj = *pObject;
+    if (obj.weaponType == 0 || obj.weaponFiring != 0)
+        return;
+    const int32_t fire = AIWeaponDecideToFire(pObject, time);
+    if (fire == 0)
+        return;
+    _sWeaponDef &def = *frame.local<_sWeaponDef>(0);
+    def.owner = obj.playerNo;
+    const ptr32<_sObject> target = obj.carAI.pNearestObjInFront ? obj.carAI.pNearestObjInFront : obj.carAI.pNearestObjBehind;
+    def.target = target ? static_cast<int16>(target->playerNo) : 0x7f;
+    def.specialFire = static_cast<int16>(fire - 1);
+    def.no = obj.weaponType;
+    int16_t *built = reinterpret_cast<int16_t *>(frame.local<int16_t>(0x20).get());
+    built[0] = static_cast<int16_t>(ee_ftoi(obj.pos16.x));
+    built[1] = static_cast<int16_t>(ee_ftoi(obj.pos16.y));
+    built[2] = static_cast<int16_t>(ee_ftoi(obj.pos16.z));
+    std::memcpy(frame.local<int16_t>(0x10).get(), built, 6);
+    guest_call(kWeaponSpawn, frame.local<void>(0x10), frame.local<void>(0), time);
+    obj.weaponType = 0;
+    obj.oCol.updated = 1;
+}
+
+// One frame of a computer-driven car, run by its task every 100 time units.
+//
+// The car steers towards a point on the racing line further ahead the faster it goes, corrected for the track edges
+// and the car in front, and sets its throttle from the next node's priority (slower into marked corners) and how
+// hard it is steering. A car that keeps going slowly reverses for 13 frames (state 2). A car stuck on a node is reset
+// after 100 frames, and turned upright after 20 if it is upside down with its wheels off the ground.
+void AIControl(ptr32<void> pData, tTime time)
+{
+    GuestFrame frame(0x90);
+    const ptr32<_sObject> pObj = pData.cast<_sObject>();
+    _sObject &obj = *pObj;
+    _sFPhysLibCar &physics = *obj.pPhysics;
+    _sCar_AI &carAI = obj.carAI;
+    AIUpdateObjectNode(pObj);
+    const ptr32<_sAINode> node = carAI.pCurNode;
+    if (node)
+    {
+        int16_t stuck = carAI.sStuckOnNodeCount;
+        if (stuck == 0)
+        {
+            carAI.pStuckOnNode = node;
+            guest_call<int32_t>(kPhysicsResetCar, pObj);
+            stuck = 100;
+            carAI.bAIState = 0;
+            carAI.sStuckOnNodeCount = 100;
+            carAI.iSlowSpeedAccum = 0;
+        }
+        if (stuck == 0x50 && obj.pPhysics->mat.Yy.v < 2048.0f && (obj.pPhysics->flags & 0x20) != 0)
+        {
+            carAI.pStuckOnNode = node;
+            guest_call<uint32_t>(kVfxAddNew, pObj, 0, 0, 0x2a);
+            guest_call<int32_t>(kPhysicsRightCar, pObj);
+            carAI.bAIState = 0;
+            carAI.iSlowSpeedAccum = 0;
+        }
+        const uint8 state = carAI.bAIState;
+        if (state == 0)
+        {
+            ee_float speed = physics.speed;
+            if (G(hudVarG).iReadySteadyGo != 0 || !(speed.v < rodataFloat(0x327580).v))
+                carAI.iSlowSpeedAccum = 0;
+            else
+            {
+                int32_t pace = ee_ftoi(speed);
+                if (pace < 0x578)
+                    pace = 0x578;
+                carAI.iSlowSpeedAccum = carAI.iSlowSpeedAccum + 3000 - pace;
+                if (10000 < carAI.iSlowSpeedAccum)
+                {
+                    if (!carAI.pStuckOnNode)
+                        carAI.pStuckOnNode = node;
+                    carAI.bAIStateReturn = 0;
+                    carAI.bAIState = 2;
+                    carAI.sAIStateCount = 0xd;
+                    speed = physics.speed;
+                }
+            }
+            const ptr32<SVECTOR> looking = AINodeUpdateRacingLineAhead(pObj, ee_ftoi(speed * ee_float(0.0625f) + ee_float(200.0f)));
+            if (looking)
+                carAI.svLookingPoint = *looking;
+            AINodeUpdateAngleToRacingLine(pObj);
+            const auto clamp = [](int32_t v) { return v > 0x7f ? 0x7f : v < -0x7f ? -0x7f : v; };
+            int32_t steer = clamp(carAI.cosAngleToRacingLine >> 4);
+            const int32_t edges = AIAdjustForTrackEdges(pObj);
+            const int32_t traffic = AIAdjustForTooCloseToCarAhead(pObj, steer + edges);
+            steer = clamp(steer + edges + traffic);
+            if (obj.weaponAffect == 0xd) // Hit by the weapon that swaps the steering.
+            {
+                const int32_t random = RandomGetNDRange(1000, 3000);
+                if (time < obj.weaponAffectTime - random)
+                    steer = -steer;
+            }
+            if (obj.skidOil != 0)
+                steer >>= 1;
+            obj.lightsOn = static_cast<int8>(obj.lightsOn & 0xfe);
+            const int32_t hardness = steer < 0 ? -steer : steer;
+            physics.inputSteerAngle = static_cast<int16>(steer);
+            if (0x7d < hardness)
+                obj.lightsOn = static_cast<int8>(obj.lightsOn | 1);
+            int32_t throttle;
+            if (hardness < 0x6a || !(rodataFloat(0x327584).v < physics.speed.v))
+            {
+                switch (static_cast<uint8>(node->priority))
+                {
+                case 6: throttle = 0x60; break;
+                case 7: throttle = 0x40; break;
+                case 8: throttle = 0x20; break;
+                case 9: throttle = 0x10; break;
+                default: throttle = 0x7f; break;
+                }
+            }
+            else
+            {
+                // Steering hard at speed: brake lights and half throttle, none for a car.
+                throttle = 0x40;
+                obj.lightsOn = static_cast<int8>(obj.lightsOn | 1);
+                if (VfxAreWeInCar(pObj) != 0)
+                    throttle = 0;
+            }
+            physics.inputEngineThrottle = static_cast<int16>(carAI.iTimeFinishedRace == 0 ? AIPlayCatchup(pObj, throttle) : throttle);
+        }
+        else if (state == 2)
+        {
+            // Reversing: full reverse throttle, steering the other way.
+            int32_t steer = -static_cast<int32_t>(carAI.cosAngleToRacingLine) >> 4;
+            physics.inputEngineThrottle = -0x7f;
+            carAI.iSlowSpeedAccum = 0;
+            if (0x30 < steer)
+                steer = 0x30;
+            if (steer < -0x30)
+                steer = -0x30;
+            physics.inputSteerAngle = static_cast<int16>(steer);
+        }
+    }
+    // A timed state ends after sAIStateCount frames, returning to bAIStateReturn.
+    const int16_t count = carAI.sAIStateCount;
+    if (count != 0)
+    {
+        carAI.sAIStateCount = static_cast<int16>(count - 1);
+        if (count == 1)
+        {
+            carAI.iSlowSpeedAccum = 0;
+            carAI.bAIState = carAI.bAIStateReturn;
+        }
+    }
+    guest_call(kObjectWeaponAffect, pObj, time);
+    AITestWeapon(pObj, time);
+    const ptr32<_sTask> task = obj.pTask;
+    task->time = time + 100;
+    guest_call(kTaskCachedInsert, task);
+}
+
+// Sorts the race order by distance raced (one pass of a bubble sort a frame; finished cars keep their places), then
+// gives each car its position, the cars either side of it and the gaps to them. Cars close behind another alternate
+// between the racing line and the overtaking line. When every human has finished, records their places, plays the
+// finishing music and ends the race.
+void AIDoRaceOrder()
+{
+    GuestFrame frame(0x50);
+    sAIClass &ai = G(aiVarG);
+    sObjectClass &objects = G(objectVarG);
+    mainClass &main = G(mainVarG);
+    for (int32_t i = static_cast<int32_t>(objects.noObjects) - 1; 0 < i; --i)
+    {
+        _sObject &later = *ai.raceOrder[i].pObject;
+        _sObject &earlier = *ai.raceOrder[i - 1].pObject;
+        if (later.carAI.iTimeFinishedRace == 0 && earlier.carAI.iTimeFinishedRace == 0 &&
+            earlier.carAI.iTotalRacedDist < later.carAI.iTotalRacedDist)
+        {
+            std::swap(ai.raceOrder[i - 1], ai.raceOrder[i]);
+            ai.raceOrder[i].pObject->iRacePos = static_cast<int16>(i);
+        }
+    }
+
+    if (main.noHuman != 0)
+    {
+        uint32_t finished = 0;
+        for (int32_t k = 0; k < main.noHuman; ++k)
+            if (G(playerVarG).player[k].pObject->carAI.iTimeFinishedRace != 0)
+                ++finished;
+        if (finished == main.noHuman)
+        {
+            for (uint32_t u = 0; u < objects.noObjects; ++u)
+            {
+                const uint8 type = ai.raceOrder[u].pObject->playerType;
+                if (type == 0)
+                    ai.player1CameIn = static_cast<uint16>(u + 1);
+                else if (type == 1)
+                    ai.player2CameIn = static_cast<uint16>(u + 1);
+            }
+            if (main.status != MAIN_RACE_OVER)
+            {
+                guest_call(kRCMusicChain, (ai.player1CameIn == 1 || ai.player2CameIn == 1) ? 0x67 : 0x66, 5);
+                guest_call(kObjectAllRemoveWeapons);
+            }
+            main.status = MAIN_RACE_OVER;
+        }
+    }
+
+    ai.raceOrder[0].pObject->carAI.bOvertaking = 0;
+    for (uint32_t u = 0; u < objects.noObjects; ++u)
+    {
+        _sRaceOrder &entry = ai.raceOrder[u];
+        _sObject &obj = *entry.pObject;
+        _sCar_AI &carAI = obj.carAI;
+        if (carAI.iTimeFinishedRace == 0 && 0 <= carAI.iLapsCompleted)
+        {
+            // The lap index is not checked: addressed as the original does.
+            const int32_t start = *static_cast<int32_t *>(guest_host(guest_addr(&obj.iLapTimes[0]) + carAI.iLapsCompleted * 4u));
+            obj.iLapTime = main.time - start;
+        }
+        obj.iRacePos = static_cast<int16>(u);
+        const auto gap = [](int32_t a, int32_t b) { const int32_t d = a - b; return d < 1 ? b - a : d; };
+        if (static_cast<int32_t>(u) < 1)
+            carAI.pNearestObjInFront = nullptr;
+        else
+        {
+            carAI.pNearestObjInFront = ai.raceOrder[u - 1].pObject;
+            carAI.distNearestCarInFront = gap(ai.raceOrder[u - 1].pObject->carAI.iTotalRacedDist, carAI.iTotalRacedDist);
+        }
+        if (u < objects.noObjects - 1)
+        {
+            carAI.pNearestObjBehind = ai.raceOrder[u + 1].pObject;
+            carAI.distNearestCarBehind = gap(ai.raceOrder[u + 1].pObject->carAI.iTotalRacedDist, carAI.iTotalRacedDist);
+        }
+        else
+            carAI.pNearestObjBehind = nullptr;
+        if (u != 0 && carAI.distNearestCarInFront < 0x5dc)
+            carAI.bOvertaking = static_cast<uint8>(ai.raceOrder[u - 1].pObject->carAI.bOvertaking ^ 1);
+        entry.modelType = static_cast<uint8>(obj.pDef->type);
+        entry.playerType = obj.playerType;
+        if (obj.pRendObj->pRendObjHead == obj.pDef->pRendObjHeadAlt)
+            entry.isAltRendObj = 1;
+    }
+}
+
+// Puts a car back on the track at its respawn node, moved times nodes on, and back a node at a time while any car
+// is within 200 units of it. On the levels that mix land and water (9 and 11) the car turns into a boat or back with
+// an effect. Plays the respawn sound, moves the camera behind the car for a human player and turns the car upright.
+void AIRespawnFurther(ptr32<_sObject> pObj, int32 times)
+{
+    GuestFrame frame(0x80);
+    _sFPhysLibCar &physics = *pObj->pPhysics;
+    ptr32<_sAINode> node = AINodeGetReSpawnNode(pObj);
+    if (!node)
+        return;
+    for (; times != 0; --times)
+        node = node->next[0];
+    const sObjectClass &objects = G(objectVarG);
+    for (uint32_t u = 0; u < objects.noObjects; ++u)
+    {
+        const SVECTOR &pos = *VfxCarPositionPoi(objects.list[u]);
+        const auto near = [](int16_t a, int16_t b) { return (a < b ? b - a : a - b) < 200; };
+        if (near(node->centre.vx, pos.vx) && near(node->centre.vy, pos.vy) && near(node->centre.vz, pos.vz))
+        {
+            node = node->prev[0];
+            u = 0; // The search starts again from the second car.
+        }
+    }
+    _sCar_AI &carAI = pObj->carAI;
+    carAI.pCurNode = node;
+    const uint32_t kind = G(mainVarG).level % 12u;
+    if (kind == 9 || kind == 11)
+    {
+        const bool inCar = VfxAreWeInCar(pObj) != 0;
+        if (carAI.pCurNode->link.onwater == -1)
+        {
+            if (inCar && pObj->metamorphosis == 0)
+                guest_call<uint32_t>(kVfxAddNew, pObj, 1, 0, 0x1b);
+        }
+        else if (!inCar && pObj->metamorphosis == 0)
+            guest_call<uint32_t>(kVfxAddNew, pObj, 0, 0, 0x1b);
+    }
+    guest_call<int32_t>(kRevSfxPlay3D, 0x3a, 0xc4, 0x100, ptr32<void>(guest_addr(&pObj->pRendObj->pos)), pObj->playerType + 4, 5000);
+    physics.pos.x = ee_itof(node->centre.vx << 8);
+    physics.pos.y = ee_itof(node->centre.vy << 8);
+    physics.pos.z = ee_itof(node->centre.vz << 8);
+    const uint8 player = pObj->playerType;
+    if (player < 2 && G(cameraVarG).camera[player].mode == CAMERA_MODE_GAME_FOLLOW_PLAYER)
+        guest_call(kCameraPlaceAtAINode, ptr32<void>(guest_addr(&G(cameraVarG).camera[player])), node->prev[0], 0x50);
+    guest_call<int32_t>(kPhysicsRightCar, pObj);
+    carAI.bAIState = 0;
+    carAI.sStuckOnNodeCount = 100;
+    carAI.bAIStateReturn = 0;
+    carAI.sAIStateCount = 0;
+    carAI.iSlowSpeedAccum = 0;
+}
+
 } // namespace rc
 
 RC_DECOMP_FN_SETUP(VfxAreWeInCar, 0x16a330, rc::fuzz::aiCar)
@@ -1299,3 +1708,8 @@ RC_DECOMP_FN(ProcessControlInput, 0x140608)
 RC_DECOMP_FN_SETUP(PlayerCatchup, 0x1407f8, rc::fuzz::aiCar)
 RC_DECOMP_FN(PlayerTerm, 0x13f918)
 RC_DECOMP_FN(PlayerInit, 0x13f628)
+RC_DECOMP_FN_SETUP(AIWeaponDecideToFire, 0x100e78, rc::fuzz::aiCar)
+RC_DECOMP_FN_NOFUZZ(AITestWeapon, 0x1014c0) // Spawns real weapons.
+RC_DECOMP_FN_NOFUZZ(AIControl, 0x1000c0) // A copied car's task would join the real task list.
+RC_DECOMP_FN_NOFUZZ(AIDoRaceOrder, 0x1005d8)
+RC_DECOMP_FN_NOFUZZ(AIRespawnFurther, 0x100b68) // Moves the real camera and plays sound.

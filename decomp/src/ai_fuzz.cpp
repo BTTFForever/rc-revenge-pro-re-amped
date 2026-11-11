@@ -122,6 +122,12 @@ uint32_t buildCar(Rng &rng, uint32_t scratch)
     car.playerNo = static_cast<uint8>(rng.below(8));
     car.iRacePos = static_cast<int16>(rng.below(8));
     car.weaponsHeld = static_cast<int8>(rng.below(3));
+    static const uint8 kWeapons[] = {0, 1, 2, 4, 5, 8, 11};
+    car.weaponType = kWeapons[rng.below(7)];
+    car.weaponFiring = rng.chance(80) ? 0 : 1;
+    car.respawn = rng.chance(90) ? 0 : 1;
+    car.aiFire = rng.below(2);
+    car.weaponLock = static_cast<uint8>(rng.below(2));
     G(aiNodeVarG).iNodeSearcher = rng.below(G(aiNodeVarG).noNodesSingle);
     return scratch + kObject;
 }
