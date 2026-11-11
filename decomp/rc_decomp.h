@@ -36,6 +36,7 @@ struct Entry
     RecompFn original;
     ReturnKind returns;
     void (*randomiseArgs)(R5900Context *, uint64_t &, uint32_t); // Null if random inputs would be meaningless.
+    bool fuzzWholeRam = false; // The random test compares all of guest RAM, for a function that uses the game's heap.
     std::atomic<uint64_t> calls{0};
     std::atomic<uint64_t> compared{0};
     std::atomic<uint64_t> mismatches{0};
@@ -253,6 +254,31 @@ inline uint32_t ee_divu(uint32_t a, uint32_t b)
     static ::rc::Entry rc_entry_##name{#name, address, &::rc::Thunk<&::rc::name>::run,               \
                                        &::name##_##address, ::rc::Thunk<&::rc::name>::returns,       \
                                        nullptr};                                                     \
+    static void rc_shadow_##name(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)             \
+    {                                                                                                \
+        ::rc::shadowCall(rdram, ctx, runtime, rc_entry_##name);                                      \
+    }                                                                                                \
+    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_shadow_##name);
+
+// For a function that follows pointers stored in its data, where random bytes would be meaningless. The random test
+// calls setup(ctx, state, scratch) instead of randomising the arguments: it builds valid inputs in the scratch area
+// (0x8000 bytes of guest RAM at the address given) and in the game's globals, and sets the argument registers.
+#define RC_DECOMP_FN_SETUP(name, address, setup)                                                     \
+    static ::rc::Entry rc_entry_##name{#name, address, &::rc::Thunk<&::rc::name>::run,               \
+                                       &::name##_##address, ::rc::Thunk<&::rc::name>::returns,       \
+                                       &setup};                                                      \
+    static void rc_shadow_##name(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)             \
+    {                                                                                                \
+        ::rc::shadowCall(rdram, ctx, runtime, rc_entry_##name);                                      \
+    }                                                                                                \
+    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_shadow_##name);
+
+// As RC_DECOMP_FN_SETUP, for a function that allocates from the game's heap: the random test compares all of guest
+// RAM instead of the scratch area and the globals, on fewer inputs because that is slow.
+#define RC_DECOMP_FN_SETUP_HEAP(name, address, setup)                                                \
+    static ::rc::Entry rc_entry_##name{#name, address, &::rc::Thunk<&::rc::name>::run,               \
+                                       &::name##_##address, ::rc::Thunk<&::rc::name>::returns,       \
+                                       &setup, true};                                                \
     static void rc_shadow_##name(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)             \
     {                                                                                                \
         ::rc::shadowCall(rdram, ctx, runtime, rc_entry_##name);                                      \

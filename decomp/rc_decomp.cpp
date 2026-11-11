@@ -2,7 +2,7 @@
 //
 //   RC_DECOMP=0         keep every recompiled function
 //   RC_SHADOW=1         compare sampled calls against the recompiled originals
-//   RC_SHADOW_FUZZ=n    also run each function on n random inputs, once the game has started
+//   RC_SHADOW_FUZZ=n    also run each function on n random inputs, in steps between the game's own calls
 //   RC_SHADOW_LOG=file  the running totals, rewritten every 3 seconds (default: decomp_shadow.txt)
 
 #include "rc_decomp.h"
@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -137,49 +138,107 @@ void writeSummary(const std::string &path)
 
 // Random inputs reach the code that a demo race does not. Each input runs through the original and the
 // decompiled function from identical state, comparing the result, the scratch area and the game's globals.
-void fuzzAll(uint8_t *rdram, const R5900Context &live, PS2Runtime *runtime, int iterations)
+//
+// Recompiled code stops at its next call or loop once the scheduler has an interrupt or a thread switch due, and
+// nothing can service that from in here. So the test runs in steps: when an original is cut short, the step ends,
+// the game carries on, and the next compared call resumes the test from the same input.
+struct FuzzProgress
+{
+    size_t index = 0;          // Which registered function.
+    int iteration = 0;
+    uint64_t state = 0;        // The random generator, at the start of the current input.
+    bool entryStarted = false;
+    int retries = 0;           // Times the current input was cut short with a whole step to itself.
+    uint64_t mismatches = 0, returnedNonZero = 0, wroteMemory = 0, cutShort = 0; // For the current function.
+    uint64_t failures = 0, steps = 0;
+};
+
+// Returns true once every function has been tested.
+bool fuzzStep(uint8_t *rdram, const R5900Context &live, PS2Runtime *runtime, int iterations)
 {
     constexpr uint32_t kScratch = 0x01F00000u, kScratchSize = 0x8000u;
     constexpr uint32_t kDataStart = 0x001E9400u, kDataEnd = 0x004C7190u;
-    std::unique_ptr<uint8_t[]> backup(new uint8_t[PS2_RAM_SIZE]);
-    std::memcpy(backup.get(), rdram, PS2_RAM_SIZE);
-    std::unique_ptr<uint8_t[]> scratchStart(new uint8_t[kScratchSize]), globalsStart(new uint8_t[kDataEnd - kDataStart]);
-    std::unique_ptr<uint8_t[]> scratchAfter(new uint8_t[kScratchSize]), globalsAfter(new uint8_t[kDataEnd - kDataStart]);
-
-    uint64_t failures = 0u;
-    for (const Registered &item : registry())
+    static FuzzProgress progress;
+    static std::unique_ptr<uint8_t[]> backup(new uint8_t[PS2_RAM_SIZE]);
+    static std::unique_ptr<uint8_t[]> scratchStart(new uint8_t[kScratchSize]), globalsStart(new uint8_t[kDataEnd - kDataStart]);
+    static std::unique_ptr<uint8_t[]> scratchAfter(new uint8_t[kScratchSize]), globalsAfter(new uint8_t[kDataEnd - kDataStart]);
+    static const std::string only = [] // RC_SHADOW_ONLY=name,name limits the test to those functions.
     {
-        Entry &entry = *item.entry;
-        if (entry.randomiseArgs == nullptr)
-            continue;
-        if (const char *only = std::getenv("RC_SHADOW_ONLY"); only != nullptr && std::strcmp(only, entry.name) != 0)
-            continue;
-        uint64_t state = 0x5EEDu + entry.address;
-        uint64_t mismatches = 0u;
-        for (int i = 0; i < iterations; ++i)
+        const char *names = std::getenv("RC_SHADOW_ONLY");
+        return names ? "," + std::string(names) + "," : std::string();
+    }();
+    constexpr int kWholeRamInputs = 40, kTries = 2, kLongTries = 80;
+
+    std::memcpy(backup.get(), rdram, PS2_RAM_SIZE);
+    ++progress.steps;
+    bool firstOfStep = true;
+    bool paused = false;
+    while (!paused && progress.index < registry().size())
+    {
+        Entry &entry = *registry()[progress.index].entry;
+        if (entry.randomiseArgs == nullptr || (!only.empty() && only.find("," + std::string(entry.name) + ",") == std::string::npos))
         {
+            ++progress.index;
+            continue;
+        }
+        if (!progress.entryStarted)
+        {
+            progress.entryStarted = true;
+            progress.iteration = 0;
+            progress.state = 0x5EEDu + entry.address;
+            progress.mismatches = progress.returnedNonZero = progress.wroteMemory = progress.cutShort = 0u;
+        }
+        const int inputs = entry.fuzzWholeRam ? std::min(iterations, kWholeRamInputs) : iterations;
+        for (; progress.iteration < inputs; ++progress.iteration, firstOfStep = false, progress.retries = 0)
+        {
+            uint64_t state = progress.state;
             for (uint32_t pos = 0u; pos < kScratchSize; pos += 4u)
             {
                 // Mostly small values: fixed-point vectors are 16-bit, and huge ones only overflow.
                 const uint32_t word = (nextFuzz(state) & 1u) != 0u ? nextFuzz(state) : (nextFuzz(state) & 0x0FFF0FFFu);
                 std::memcpy(rdram + kScratch + pos, &word, 4u);
             }
-            std::memcpy(scratchStart.get(), rdram + kScratch, kScratchSize);
-            std::memcpy(globalsStart.get(), rdram + kDataStart, kDataEnd - kDataStart);
-
+            // A function registered with its own setup builds valid data in the scratch area and the globals here.
             R5900Context inputs = live;
             entry.randomiseArgs(&inputs, state, kScratch);
+            std::memcpy(scratchStart.get(), rdram + kScratch, kScratchSize);
+            std::memcpy(globalsStart.get(), rdram + kDataStart, kDataEnd - kDataStart);
+            if (entry.fuzzWholeRam)
+                std::memcpy(g_before.get(), rdram, PS2_RAM_SIZE);
 
             R5900Context originalCtx = inputs;
             entry.original(rdram, &originalCtx, runtime);
+            if (entry.fuzzWholeRam)
+            {
+                std::memcpy(g_expected.get(), rdram, PS2_RAM_SIZE);
+                revertWrites(rdram, g_before.get(), 0u, PS2_RAM_SIZE);
+            }
             if (originalCtx.pc != getRegU32(&inputs, 31))
             {
+                // Cut short by a scheduling point. Try the input again in the next step, unless it has had several
+                // whole steps to itself: then it is something the function cannot finish, and it is counted and skipped.
+                // A function that runs for longer than the usual gap between interrupts needs many tries.
                 std::memcpy(rdram + kScratch, scratchStart.get(), kScratchSize);
                 std::memcpy(rdram + kDataStart, globalsStart.get(), kDataEnd - kDataStart);
-                continue; // Cut short by a scheduling point.
+                paused = true;
+                if (firstOfStep && ++progress.retries >= (entry.fuzzWholeRam ? kLongTries : kTries))
+                {
+                    ++progress.cutShort;
+                    progress.state = state;
+                    progress.retries = 0;
+                    ++progress.iteration;
+                }
+                break;
             }
-            std::memcpy(scratchAfter.get(), rdram + kScratch, kScratchSize);
-            std::memcpy(globalsAfter.get(), rdram + kDataStart, kDataEnd - kDataStart);
+            progress.state = state;
+            const uint8_t *after = entry.fuzzWholeRam ? g_expected.get() : rdram;
+            std::memcpy(scratchAfter.get(), after + kScratch, kScratchSize);
+            std::memcpy(globalsAfter.get(), after + kDataStart, kDataEnd - kDataStart);
+            progress.returnedNonZero += entry.returns == ReturnKind::Gpr && GPR_U64((&originalCtx), 2) != 0u ? 1u : 0u;
+            progress.wroteMemory += std::memcmp(scratchAfter.get(), scratchStart.get(), kScratchSize) != 0 ||
+                                            std::memcmp(globalsAfter.get(), globalsStart.get(), kDataEnd - kDataStart) != 0
+                                        ? 1u
+                                        : 0u;
             std::memcpy(rdram + kScratch, scratchStart.get(), kScratchSize);
             std::memcpy(rdram + kDataStart, globalsStart.get(), kDataEnd - kDataStart);
 
@@ -191,9 +250,25 @@ void fuzzAll(uint8_t *rdram, const R5900Context &live, PS2Runtime *runtime, int 
                                                                     : std::memcmp(&nativeCtx.f[0], &originalCtx.f[0], 4u) == 0);
             const bool scratchSame = std::memcmp(rdram + kScratch, scratchAfter.get(), kScratchSize) == 0;
             const bool globalsSame = std::memcmp(rdram + kDataStart, globalsAfter.get(), kDataEnd - kDataStart) == 0;
-            if (!regsSame || !scratchSame || !globalsSame)
+            bool ramSame = true;
+            if (entry.fuzzWholeRam)
             {
-                if (mismatches < 4u && !scratchSame)
+                // As for the game's own calls: everything but the dead stack below $sp.
+                const uint32_t stackTop = getRegU32(&inputs, 29) & PS2_RAM_MASK;
+                const uint32_t stackLow = stackTop > kStackScratch ? stackTop - kStackScratch : 0u;
+                for (const auto &[begin, end] : {std::pair<uint32_t, uint32_t>{0u, stackLow}, {stackTop, static_cast<uint32_t>(PS2_RAM_SIZE)}})
+                {
+                    const uint32_t difference = firstDifference(rdram, g_expected.get(), begin, end);
+                    if (difference != end && ramSame && progress.mismatches < 4u)
+                        std::fprintf(stderr, "[decomp] FUZZ DETAIL %s: ram 0x%x original=%02x decompiled=%02x\n", entry.name, difference,
+                                     g_expected[difference], rdram[difference]);
+                    ramSame = ramSame && difference == end;
+                }
+                revertWrites(rdram, backup.get(), 0u, PS2_RAM_SIZE); // The heap as it was, for the next input.
+            }
+            if (!regsSame || !scratchSame || !globalsSame || !ramSame)
+            {
+                if (progress.mismatches < 4u && !scratchSame)
                 {
                     const uint32_t at = firstDifference(rdram + kScratch, scratchAfter.get(), 0u, kScratchSize) & ~3u;
                     uint32_t native, original;
@@ -201,18 +276,38 @@ void fuzzAll(uint8_t *rdram, const R5900Context &live, PS2Runtime *runtime, int 
                     std::memcpy(&original, scratchAfter.get() + at, 4u);
                     std::fprintf(stderr, "[decomp] FUZZ DETAIL %s: scratch+0x%x original=%08x decompiled=%08x\n", entry.name, at, original, native);
                 }
-                if (++mismatches <= 4u)
+                if (progress.mismatches < 4u && !globalsSame)
+                {
+                    const uint32_t at = firstDifference(rdram + kDataStart, globalsAfter.get(), 0u, kDataEnd - kDataStart) & ~3u;
+                    uint32_t native, original;
+                    std::memcpy(&native, rdram + kDataStart + at, 4u);
+                    std::memcpy(&original, globalsAfter.get() + at, 4u);
+                    std::fprintf(stderr, "[decomp] FUZZ DETAIL %s: global 0x%x original=%08x decompiled=%08x\n", entry.name, kDataStart + at, original, native);
+                }
+                if (++progress.mismatches <= 4u)
                     std::fprintf(stderr, "[decomp] FUZZ MISMATCH %s iteration %d: return %s scratch %s globals %s | a0=%x a1=%x a2=%x f12=%g f13=%g | v0 %llx vs %llx\n",
-                                 entry.name, i, regsSame ? "same" : "DIFF", scratchSame ? "same" : "DIFF", globalsSame ? "same" : "DIFF",
+                                 entry.name, progress.iteration, regsSame ? "same" : "DIFF", scratchSame ? "same" : "DIFF", globalsSame ? "same" : "DIFF",
                                  getRegU32(&inputs, 4), getRegU32(&inputs, 5), getRegU32(&inputs, 6), inputs.f[12], inputs.f[13],
                                  (unsigned long long)GPR_U64((&originalCtx), 2), (unsigned long long)GPR_U64((&nativeCtx), 2));
             }
         }
-        std::fprintf(stderr, "[decomp] fuzz %s: %d inputs, %llu mismatches\n", entry.name, iterations, (unsigned long long)mismatches);
-        failures += mismatches;
+        if (progress.iteration >= inputs)
+        {
+            // The counts say how much of the function the inputs reached.
+            std::fprintf(stderr, "[decomp] fuzz %s: %d inputs, %llu mismatches (%llu returned non-zero, %llu wrote memory, %llu cut short)\n",
+                         entry.name, inputs, (unsigned long long)progress.mismatches, (unsigned long long)progress.returnedNonZero,
+                         (unsigned long long)progress.wroteMemory, (unsigned long long)progress.cutShort);
+            progress.failures += progress.mismatches;
+            progress.entryStarted = false;
+            ++progress.index;
+        }
     }
-    std::memcpy(rdram, backup.get(), PS2_RAM_SIZE);
-    std::fprintf(stderr, "[decomp] fuzz finished: %llu mismatches\n", (unsigned long long)failures);
+    revertWrites(rdram, backup.get(), 0u, PS2_RAM_SIZE);
+    if (paused)
+        return false;
+    std::fprintf(stderr, "[decomp] fuzz finished: %llu mismatches, in %llu steps\n", (unsigned long long)progress.failures,
+                 (unsigned long long)progress.steps);
+    return true;
 }
 
 } // namespace
@@ -232,16 +327,13 @@ void shadowCall(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, Entry &e
         return;
     }
 
-    static bool fuzzed = false;
-    if (!fuzzed)
+    // The random test waits for the game's heap, which some of the functions allocate from.
+    static bool fuzzed = std::getenv("RC_SHADOW_FUZZ") == nullptr;
+    if (!fuzzed && G(memVarG).pHeader)
     {
-        fuzzed = true;
-        if (const char *count = std::getenv("RC_SHADOW_FUZZ"))
-        {
-            g_comparing = true;
-            fuzzAll(rdram, *ctx, runtime, std::atoi(count));
-            g_comparing = false;
-        }
+        g_comparing = true;
+        fuzzed = fuzzStep(rdram, *ctx, runtime, std::atoi(std::getenv("RC_SHADOW_FUZZ")));
+        g_comparing = false;
     }
 
     const uint64_t callIndex = entry.calls.fetch_add(1u, std::memory_order_relaxed);

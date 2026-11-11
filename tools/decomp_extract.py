@@ -20,7 +20,7 @@ def main():
             ready[int(address, 16)] = int(level)
     done = set()
     for path in pathlib.Path('decomp/src').glob('*.cpp'):
-        done |= {int(a, 16) for a in re.findall(r'RC_DECOMP_FN\w*\(\w+,\s*(0x[0-9a-f]+)\)', path.read_text())}
+        done |= {int(a, 16) for a in re.findall(r'RC_DECOMP_FN\w*\(\w+,\s*(0x[0-9a-f]+)[,)]', path.read_text())}
     text = open('decomp/generated/pseudo_all.c', errors='replace').read()
     found = []
     for part in re.split(r'(?=^/\* ==== )', text, flags=re.M):
