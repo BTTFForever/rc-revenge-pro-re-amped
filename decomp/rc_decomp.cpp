@@ -47,6 +47,24 @@ constexpr uint64_t kAlwaysCompare = 64u;    // Every function's first calls are 
 constexpr int kSamplesPerSecond = 15;       // Each comparison scans 32 MB several times.
 
 bool g_comparing = false; // Only the guest executor thread comes here.
+// Set while a compared native function runs. Native code that calls guest code (guest_call) can reach other
+// decompiled functions; comparing those there would reuse the RAM snapshots the outer comparison still needs.
+bool g_inComparedNative = false;
+
+//
+// The random test runs natives on a copy of the registers, but guest_call works on the scheduler's running context,
+// which is the game's own: its registers are put back afterwards, or the game would carry on with the test's.
+void runComparedNative(Entry &entry, uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    R5900Context &running = runtime->eeScheduler().runningContext();
+    const bool copy = ctx != &running;
+    const R5900Context saved = copy ? running : R5900Context{};
+    g_inComparedNative = true;
+    entry.native(rdram, ctx, runtime);
+    g_inComparedNative = false;
+    if (copy)
+        running = saved;
+}
 
 // Runs a recompiled original to its end. Interrupts wait until it returns: a run cut short by one proves nothing,
 // and long functions (deep searches, big clears) would otherwise rarely finish between two interrupts.
@@ -260,7 +278,7 @@ bool fuzzStep(uint8_t *rdram, const R5900Context &live, PS2Runtime *runtime, int
             std::memcpy(rdram + kDataStart, globalsStart.get(), kDataEnd - kDataStart);
 
             R5900Context nativeCtx = inputs;
-            entry.native(rdram, &nativeCtx, runtime);
+            runComparedNative(entry, rdram, &nativeCtx, runtime);
 
             const bool regsSame = entry.returns == ReturnKind::None ||
                                   (entry.returns == ReturnKind::Gpr ? GPR_U64((&nativeCtx), 2) == GPR_U64((&originalCtx), 2)
@@ -343,6 +361,11 @@ void shadowCall(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, Entry &e
         entry.original(rdram, ctx, runtime);
         return;
     }
+    if (g_inComparedNative)
+    {
+        entry.native(rdram, ctx, runtime);
+        return;
+    }
 
     // The random test waits for the game's heap, which some of the functions allocate from.
     // RC_SHADOW_FUZZ_DELAY=<seconds> waits longer, for setups that need a level loaded.
@@ -392,7 +415,7 @@ void shadowCall(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, Entry &e
     }
 
     const R5900Context input = *ctx;
-    entry.native(rdram, ctx, runtime);
+    runComparedNative(entry, rdram, ctx, runtime);
     entry.compared.fetch_add(1u, std::memory_order_relaxed);
 
     bool same = true;
