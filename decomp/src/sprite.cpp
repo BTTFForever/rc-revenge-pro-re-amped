@@ -321,6 +321,43 @@ void SpriteRenderNew(ptr32<_sSprite> pSprite, ptr32<_sSpriteParams> pSpriteParam
     strip.vertex(texel(3), rgbaLow, rgbaHigh, xy(x1, y1), depth(order, 0x327998u));
 }
 
+// A font character: half height, at the farthest depth, coloured, through the effects texture setter.
+void SpriteRenderFont(ptr32<_sSprite> pSprite, ptr32<_sSpriteParams> pSpriteParams, f32)
+{
+    const _sSpriteParams &params = *pSpriteParams;
+    const uint8_t s0 = static_cast<uint8_t>(pSprite->xOffset + static_cast<uint8_t>(params.xOffset));
+    const uint8_t w = static_cast<uint8_t>(params.width), h = static_cast<uint8_t>(params.height);
+    const uint8_t t0 = static_cast<uint8_t>(pSprite->yOffset + static_cast<uint8_t>(params.yOffset));
+    const int16_t px = params.x, py = params.y;
+    const uint8_t s1 = static_cast<uint8_t>(s0 + w);
+    const uint8 blue = params.blue;
+    const int16_t right = static_cast<int16_t>(px + w);
+    const uint8 red = params.red, green = params.green;
+    const uint8_t t1 = static_cast<uint8_t>(t0 + h);
+    const int16_t bottom = static_cast<int16_t>(py + (h >> 1));
+    const uint8 spriteWidth = pSprite->width, spriteHeight = pSprite->height;
+    void GfxP2_TexFX(ptr32<_sGfxTexture> pTex, u32 attrib);
+    GfxP2_TexFX(pSprite->pTextureHandle, 0);
+    const ee_float fw = ee_itof(spriteWidth), fh = ee_itof(spriteHeight);
+    const auto texel = [&](uint8_t a, uint8_t b) {
+        const ee_float fs = ee_itof(a) / fw, ft = ee_itof(b) / fh;
+        uint32_t sb, tb;
+        std::memcpy(&sb, &fs, 4);
+        std::memcpy(&tb, &ft, 4);
+        return sb | (static_cast<uint64_t>(tb) << 32);
+    };
+    const uint64_t rgbaLow = red | (static_cast<uint64_t>(green) << 32), rgbaHigh = blue | 0x8000000000ull;
+    const uint64_t x0 = gsCoord(px + 0x6c0), x1 = gsCoord(right + 0x6c0), y0 = gsCoord(py + 0x780), y1 = gsCoord(bottom + 0x780);
+    const uint64_t far = 0xffffff;
+    SpriteStrip strip;
+    strip.vertex(texel(s0, t0), rgbaLow, rgbaHigh, xy(x0, y0), far);
+    strip.vertex(texel(s0, t1), rgbaLow, rgbaHigh, xy(x0, y1), far);
+    strip.vertex(texel(s1, t1), rgbaLow, rgbaHigh, xy(x1, y1), far);
+    strip.vertex(texel(s0, t0), rgbaLow, rgbaHigh, xy(x0, y0), far);
+    strip.vertex(texel(s1, t0), rgbaLow, rgbaHigh, xy(x1, y0), far);
+    strip.vertex(texel(s1, t1), rgbaLow, rgbaHigh, xy(x1, y1), far);
+}
+
 void SpriteInit()
 {
     ResTypeSetConstructDaemon(ptr32<char>(0x328178u), 0x1897a0u, 4);
@@ -336,4 +373,5 @@ RC_DECOMP_FN(SpriteRender, 0x185e78)
 RC_DECOMP_FN(SpriteRenderHalf, 0x1869d8)
 RC_DECOMP_FN(SpriteRenderScaled, 0x187540)
 RC_DECOMP_FN(SpriteRenderNew, 0x1880f8)
+RC_DECOMP_FN(SpriteRenderFont, 0x188e90)
 RC_DECOMP_FN_NOFUZZ(SpriteInit, 0x185818)
