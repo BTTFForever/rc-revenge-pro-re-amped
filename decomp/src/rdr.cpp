@@ -302,6 +302,8 @@ void RdrState_PkForceApplyStateBlock(ptr32<sRdrStateBlock> block, ptr32<sceVif1P
 // shape microprogram draws. Channels 0 and 1 are the two players' views (0 means the current player), 2 and 3 the
 // screen overlay for each.
 
+uint64_t gsTex0(const _sGfxTexture *tex);
+
 namespace {
 
 const uint32_t kPolyOne = 0x32839c, kTriOne = 0x3283a4; // Each holds the vertex w (1.0) the packets carry.
@@ -332,22 +334,6 @@ uint64_t sideLog2(int32_t side)
         if (side == (1 << bits))
             return bits;
     return 0;
-}
-
-// The GS TEX0 register for the channel's texture: buffer, width in 64-texel units, format, size, and for the
-// palette formats (0x13, 0x14) the palette's address, loaded with the texture.
-uint64_t tex0(const _sGfxTexture *tex)
-{
-    if (!tex)
-        return 0;
-    const int32_t wd = tex->wd;
-    const int32_t blocks = (wd < 0 ? wd + 0x3f : wd) >> 6;
-    const uint64_t bufferWidth = 0 < blocks ? static_cast<uint64_t>(blocks) : 1;
-    uint64_t value = static_cast<uint64_t>(static_cast<int64_t>(tex->idxList[0])) | 0x400000000ull | (sideLog2(wd) << 26) |
-                     (bufferWidth << 14) | (static_cast<uint64_t>(static_cast<int64_t>(tex->fmt)) << 20) | (sideLog2(tex->ht) << 30);
-    if (static_cast<uint32_t>(tex->fmt) - 0x13u < 2u)
-        value |= 0x2000000000000000ull | (static_cast<uint64_t>(static_cast<int64_t>(tex->clutVramAddr)) << 37);
-    return value;
 }
 
 // Writes the count of polygons since the last texture into the packet, where that texture's GIF tag left room.
@@ -399,7 +385,7 @@ bool beginPolygon(int32_t channel, int32_t maxQuadwords)
     if (c.reqTexture != 0)
     {
         RdrState_PkForceApplyStateBlock(stateOf(c), packet);
-        const uint64_t texture = tex0(c.pCurrTexture.get());
+        const uint64_t texture = gsTex0(c.pCurrTexture.get());
         closePolyCount(c);
         sceVif1PkAddUpkData64(packet, texture);
         c.pPolysToRender = c.vifDataPkt.pCurrent;
@@ -444,6 +430,22 @@ void emitTriangle(ptr32<sceVif1Packet> packet, ptr32<_sRdrPoly> poly, const int 
 }
 
 } // namespace
+
+// The GS TEX0 register for the channel's texture: buffer, width in 64-texel units, format, size, and for the
+// palette formats (0x13, 0x14) the palette's address, loaded with the texture.
+uint64_t gsTex0(const _sGfxTexture *tex)
+{
+    if (!tex)
+        return 0;
+    const int32_t wd = tex->wd;
+    const int32_t blocks = (wd < 0 ? wd + 0x3f : wd) >> 6;
+    const uint64_t bufferWidth = 0 < blocks ? static_cast<uint64_t>(blocks) : 1;
+    uint64_t value = static_cast<uint64_t>(static_cast<int64_t>(tex->idxList[0])) | 0x400000000ull | (sideLog2(wd) << 26) |
+                     (bufferWidth << 14) | (static_cast<uint64_t>(static_cast<int64_t>(tex->fmt)) << 20) | (sideLog2(tex->ht) << 30);
+    if (static_cast<uint32_t>(tex->fmt) - 0x13u < 2u)
+        value |= 0x2000000000000000ull | (static_cast<uint64_t>(static_cast<int64_t>(tex->clutVramAddr)) << 37);
+    return value;
+}
 
 void RdrPolyCamera(int32_t channel, ptr32<sceVu0FMATRIX> pMatrix, ptr32<sceVu0FVECTOR> pPos, ee_float dValX, ee_float dValY)
 {

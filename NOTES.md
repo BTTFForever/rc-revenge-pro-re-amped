@@ -252,6 +252,10 @@ Polygons (2026-11-12, `src/rdr.cpp`, `src/vifpk.cpp`, Opus): all of RDRPOLY (HUD
 - Random inputs that follow fully random pointers still differ now and then (about 1 in 100 for the packet builders): addresses such as 0xd2233e44 are hardware ranges the runtime routes to `Load`/`Store`, while `guest_host` masks them into RAM. Real data never points there.
 - Unchecked indices again: the polygon channel number is used as given, so a random one walked off the C++ array into host memory and crashed the test. Channels are now addressed as the original does.
 
+Shapes (2026-11-12, `src/shape.cpp`, Opus): all of RDR_SHAPE. `TRdr_VUShape` (cars and scenery) compared on levels 18 and 5, about 620 sampled calls, 0 differences; `Rdr_ShapeInit` on every call. The shiny-pass branches (`gEnvMap` set), `TRdr_VUShapeCell`, `TERdr_VUShape` (Track Editor), `Rdr_VUShape`/`Rdr_VUShapeSetup` (version 2 shapes) and the load-time fix-ups (`Rdr_FixVUShape`, `Rdr_FixupShapeTex`, `Rdr_FixVU*Dma`, `Rdr_ShapeConstruct`) never ran in the races compared.
+- Ghidra names two different DMA templates `_dma_1`: the shape ring copies 0x1d8880, the Track Editor ring 0x1dec80. Check addresses of symbols with a numeric suffix in the instructions.
+- `FlushCache(0)` (a syscall) is left out of native code: the runtime models no cache.
+
 `RC_SHADOW_ALWAYS=name,name` compares every call of those functions, for reaching rare paths; `RC_SHADOW_RATE=n` changes the sampling rate. In demo races boats and water run on levels 5, 8, 9, 11, 12, 17, 20, 21, 23 and 24; "other object" collisions on 5, 17 and 25; car-on-car collisions on nearly all.
 - Measured load before conversion, 30 s demo, level 18: TRdr 14.81 s, Water 2.36 s, Env 2.24 s, Skin 0.96 s. Rdr_VUShape and TERdr did not run in the demos tried, so they need another way to exercise them.
 
