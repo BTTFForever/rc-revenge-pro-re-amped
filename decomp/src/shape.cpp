@@ -638,6 +638,302 @@ void Rdr_Water(ptr32<sRdrVUShape> pShape, ptr32<_sRdrCamera> pCamera)
     RdrState_ApplyDefaultStateBlock();
 }
 
+// RDRALPHA.c: transparent triangles. Shapes hand theirs over as they are drawn (moved into world space unless the
+// shape sits at the origin unrotated); once a frame they are sorted back to front and drawn in one DMA chain with
+// depth writes off.
+
+namespace {
+
+const uint32_t kQsort = 0x1b7de0, kRdrAlphaSortFunc = 0x1a28f0, kPrintf = 0x12e9e8;
+
+ee_float f(f32 value) { return ee_float(value); }
+
+// The camera the alpha pass draws with, rebuilt from the game's 16-bit view matrix.
+void alphaCamera(_sRdrCamera &cam)
+{
+    const view3dClass &view = G(view3dVarG);
+    const _matPsx &t = *view.pPsxTViewMatrix;
+    const vec32 &trans = view.pPsxViewMatrix->trans;
+    const ee_float k = ee_float(0.00024414062f);
+    const auto unit = [&](frac value) { return ee_itof(static_cast<int16_t>(value)) * k; };
+    cam.mat.Xx = unit(t.mat.Xx);
+    cam.mat.Xy = unit(t.mat.Xy);
+    cam.mat.Xz = unit(t.mat.Xz);
+    cam.mat.Yx = unit(t.mat.Yx);
+    cam.mat.Yy = unit(t.mat.Yy);
+    cam.mat.Yz = unit(t.mat.Yz);
+    cam.mat.Zx = unit(t.mat.Zx);
+    cam.mat.Zy = unit(t.mat.Zy);
+    cam.pos.x = ee_itof(trans.x);
+    cam.pos.y = ee_itof(trans.y);
+    cam.pos.z = ee_itof(trans.z);
+    cam.mat.Zz = unit(t.mat.Zz);
+    const ee_float toAngle = *static_cast<ee_float *>(guest_host(0x327bc4u));
+    const ee_float toRadians = *static_cast<ee_float *>(guest_host(0x327bc8u));
+    const int32_t fov = ee_ftoi(G(lsVarG).fov * toAngle) & 0xffff;
+    const ee_float half = ee_itof(ee_ftoi(ee_itof(fov) * ee_float(0.5f)) & 0xffff) * toRadians;
+    const ee_float sine = ee_sinf(half), cosine = ee_cosf(half);
+    const ee_float dValX = ee_float(1.0f) / (sine / cosine) * ee_itof(G(gGfxP2).wd) * ee_float(0.5f);
+    cam.dValX = dValX;
+    cam.dValY = dValX * *static_cast<ee_float *>(guest_host(0x327bccu));
+    const int32_t player = G(gRdrPolyPlayer);
+    cam.vertDrawOffset = player == 1 ? -56.0f : player == 2 ? 56.0f : 0.0f;
+}
+
+void transformPoint(f32 *out, const f32 *in, const sMat33 &m, const sVec3 &pos)
+{
+    out[0] = in[0] * m.Xx + f(in[1]) * m.Yx + f(in[2]) * m.Zx + pos.x;
+    out[1] = f(in[0]) * m.Xy + f(in[1]) * m.Yy + f(in[2]) * m.Zy + pos.y;
+    out[2] = f(in[0]) * m.Xz + f(in[1]) * m.Yz + f(in[2]) * m.Zz + pos.z;
+}
+
+ee_float depth(const f32 *v, const _sRdrCamera &cam)
+{
+    return (f(v[0]) - cam.pos.x) * cam.mat.Zx + (f(v[1]) - cam.pos.y) * cam.mat.Zy + (f(v[2]) - cam.pos.z) * cam.mat.Zz;
+}
+
+} // namespace
+
+void RdrAlphaCameraToRdrCamera(ptr32<_sRdrCamera> pCam)
+{
+    alphaCamera(*pCam);
+}
+
+// qsort's comparison: further first.
+int32_t RdrAlphaSortFunc(ptr32<void> arg1, ptr32<void> arg2)
+{
+    const ee_float a = *ptr32<ee_float>(arg1.address + 4), b = *ptr32<ee_float>(arg2.address + 4);
+    return ee_ftoi(b - a);
+}
+
+void RdrAlphaTerm()
+{
+    sRdrAlpha &alpha = G(gRdrAlpha);
+    const auto release = [](auto &field) { MemBlockFree(ptr32<memHandle>(guest_addr(&field))); };
+    for (int i = 0; i < 4; ++i)
+    {
+        release(alpha.pDmaTags[i]);
+        release(alpha.pVifCommands[i]);
+    }
+    release(alpha.pTriSortList);
+    release(alpha.pTempTris[0]);
+    release(alpha.pTempTris[1]);
+    release(G(pAlphaPtrListG));
+    release(G(pAlphaTriListG));
+}
+
+void RdrAlphaInit()
+{
+    sRdrAlpha &alpha = G(gRdrAlpha);
+    const auto allocate = [](auto &field, uint32 size) { MemBlockAllocLo(ptr32<memHandle>(guest_addr(&field)), size); };
+    for (int i = 0; i < 4; ++i)
+    {
+        allocate(alpha.pDmaTags[i], 0x29f70);
+        allocate(alpha.pVifCommands[i], 0x1800);
+    }
+    allocate(alpha.pTriSortList, 80000);
+    allocate(alpha.pTempTris[0], 0xe0000);
+    allocate(alpha.pTempTris[1], 0xe0000);
+    alpha.numTriangles = 0;
+    alpha.nextTempTri = static_cast<int32_t>((G(gRdr).frameNumber & 1) << 11);
+    allocate(G(pAlphaPtrListG), 40000);
+    allocate(G(pAlphaTriListG), 80000);
+}
+
+// Adds a shape's transparent triangles to this frame's list, keeping those with a corner in front of the camera.
+void RdrAlphaAddTriangles(ptr32<sRdrVUShape> shape)
+{
+    sRdrAlpha &alpha = G(gRdrAlpha);
+    const sRdrVUShape &sh = *shape;
+    uint32_t count = static_cast<uint32_t>(sh.pAlpha->numPolys);
+    ptr32<sVuTri> tris = ptr32<sVuTri>(sh.pAlpha.address + offsetof(sRdrAlphaData, alphaPolys));
+    if (count + static_cast<uint32_t>(alpha.numTriangles) >= 10000)
+        return;
+    if (sh.pos.x.v != 0.0f || sh.pos.y.v != 0.0f || sh.pos.z.v != 0.0f || sh.mat.Xx.v != 1.0f || sh.mat.Yy.v != 1.0f || sh.mat.Zz.v != 1.0f)
+    {
+        if (0x7ffu < static_cast<uint32_t>(alpha.nextTempTri) + count)
+            return;
+        int32_t first = alpha.nextTempTri;
+        if (G(gRdrPolyPlayer) == 2)
+            first += 0x800;
+        const ptr32<sVuTri> temp = alpha.pTempTris[G(gRdr).frameNumber & 1];
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            const sVuTri &in = tris[static_cast<int32_t>(i)];
+            sVuTri &out = temp[first + static_cast<int32_t>(i)];
+            out = in;
+            transformPoint(out.vertex1, reinterpret_cast<const f32 *>(in.vertex1), sh.mat, sh.pos);
+            transformPoint(out.vertex2, reinterpret_cast<const f32 *>(in.vertex2), sh.mat, sh.pos);
+            transformPoint(out.vertex3, reinterpret_cast<const f32 *>(in.vertex3), sh.mat, sh.pos);
+            if (out.backfaceDisable == 0)
+            {
+                const sMat33 &m = sh.mat;
+                out.nx = f(in.nx) * m.Xx + f(in.ny) * m.Yx + f(in.nz) * m.Zx;
+                out.ny = f(in.nx) * m.Xy + f(in.ny) * m.Yy + f(in.nz) * m.Zy;
+                out.nz = f(in.nx) * m.Xz + f(in.ny) * m.Yz + f(in.nz) * m.Zz;
+            }
+            alpha.nextTempTri = alpha.nextTempTri + 1;
+        }
+        tris = temp + first;
+    }
+    _sRdrCamera camera;
+    alphaCamera(camera);
+    ptr32<sTriSorter> slot = alpha.pTriSortList + alpha.numTriangles;
+    for (; count != 0; --count, tris = tris + 1)
+    {
+        const sVuTri &tri = *tris;
+        const ee_float d1 = depth(reinterpret_cast<const f32 *>(tri.vertex1), camera);
+        const ee_float d2 = depth(reinterpret_cast<const f32 *>(tri.vertex2), camera);
+        const ee_float d3 = depth(reinterpret_cast<const f32 *>(tri.vertex3), camera);
+        slot->distance = d1 + d2 + d3;
+        if (0.0f <= d1.v || 0.0f <= d2.v || 0.0f <= d3.v)
+        {
+            slot->pTri = tris;
+            alpha.numTriangles = alpha.numTriangles + 1;
+            slot = slot + 1;
+        }
+    }
+}
+
+// Sorts the frame's transparent triangles and adds them to the frame as one chain: a camera packet, then for each
+// triangle a DMA "ref" that unpacks it into VU1 memory, with a draw and flush whenever 0x180 quadwords fill up.
+void RdrAlphaAddToDmaChain()
+{
+    GuestFrame frame(0x280);
+    sRdrAlpha &alpha = G(gRdrAlpha);
+    alpha.lastNumTriangles = alpha.numTriangles;
+    if (alpha.numTriangles < 1)
+    {
+        alpha.nextTempTri = 0;
+        return;
+    }
+    _sRdrCamera camera;
+    alphaCamera(camera);
+    const int32_t total = alpha.numTriangles;
+    std::memcpy(G(pAlphaTriListG).get(), alpha.pTriSortList.get(), static_cast<size_t>(total) * 8u);
+    for (int32_t i = 0; i < total; ++i)
+        G(pAlphaPtrListG)[i] = G(pAlphaTriListG) + i;
+    int32_t vifWords = 4;
+    guest_call(kQsort, G(pAlphaPtrListG), total, 4, kRdrAlphaSortFunc);
+    for (int32_t i = 0; i < alpha.numTriangles; ++i)
+    {
+        const sTriSorter &sorted = *G(pAlphaPtrListG)[i];
+        sTriSorter &dst = alpha.pTriSortList[i];
+        const ptr32<sVuTri> tri = sorted.pTri;
+        dst.distance = sorted.distance;
+        dst.pTri = tri;
+    }
+
+    // The camera packet, for an identity shape at the origin.
+    sRdr &rdr = G(gRdr);
+    uint32_t packetAddress = 0;
+    uint8_t *packet = nextPacket(rdr.currShapeData, kShapePackets, rdr.pShapeData, rdr.shapeDataSz, &packetAddress);
+    std::memset(packet + 0xc0, 0, 12);
+    putw(packet, 0xcc, 0x3f800000);
+    sRdrVUShape origin{};
+    std::memcpy(&origin.mat, guest_host(0x324cc8u), sizeof(sMat33));
+    writeShapeCamera(packet, 0xf0, origin, camera);
+    Rdr_UploadProg(ptr32<u32>(kShapeProgram));
+    Rdr_AddDmaCall(ptr32<void>(packetAddress));
+
+    const int32_t buffer = G(gRdrPolyPlayer) == 2 ? static_cast<int32_t>((rdr.frameNumber & 1) + 2) : static_cast<int32_t>(rdr.frameNumber & 1);
+    uint32_t vif = alpha.pVifCommands[buffer].address;
+    uint32_t tag = alpha.pDmaTags[buffer].address;
+    const uint32_t vifEnd = vif + 0x600 * 4;
+    const auto u8at = [](uint32_t a) -> uint8_t & { return *static_cast<uint8_t *>(guest_host(a)); };
+    const auto u16at = [](uint32_t a) -> uint16_t & { return *static_cast<uint16_t *>(guest_host(a)); };
+    const auto u32at = [](uint32_t a) -> uint32_t & { return *static_cast<uint32_t *>(guest_host(a)); };
+
+    const ptr32<sRdrStateBlock> state(guest_addr(&G(block)));
+    if (G(blockSetup) == 0)
+    {
+        RdrState_SetStateBlockToDefaults(state);
+        RdrState_SetPixelAlphaBlendControlEnable(state, 0);
+        RdrState_SetAlphaBlending(state, 0, 1, 0, 1, 0x80);
+        RdrState_SetZBufferWriteEnable(state, 0);
+        void RdrState_SetAlphaTestEnable(ptr32<sRdrStateBlock> block, u32 enable, u32 func, u32 fail, u8 ref);
+        RdrState_SetAlphaTestEnable(state, 0, 0, 0, 0);
+        G(blockSetup) = 1;
+    }
+    RdrState_ApplyStateBlock(state);
+
+    // Unpacks a zero quadword at the VU address reached, then draws and flushes: the end of a batch.
+    const auto endBatch = [&](uint32_t vuAddress)
+    {
+        u32at(tag + 8) = 0x1000404;
+        u32at(tag + 12) = vuAddress | 0x6c018000u;
+        u8at(tag + 3) = 0x30; // ref
+        u8at(tag + 2) = 0;
+        u32at(vif) = 0;
+        u32at(tag + 4) = vif;
+        u16at(tag) = 1;
+        u32at(vif + 4) = 0;
+        u16at(tag + 16) = 0;
+        u32at(vif + 8) = 0;
+        u32at(vif + 12) = 0;
+    };
+    int32_t drawn = 0;
+    uint32_t vuAddress = 0;
+    int32_t left = total;
+    ptr32<sTriSorter> entry = alpha.pTriSortList;
+    if (0 < left && 0 < G(maxAlphaPolys))
+    {
+        uint32_t reach = 0xf;
+        for (;;)
+        {
+            uint32_t at = vuAddress;
+            if (0x17f < reach)
+            {
+                endBatch(vuAddress);
+                at = 0;
+                vifWords += 4;
+                vif += 16;
+                u8at(tag + 0x13) = 0x30;
+                u32at(tag + 0x18) = 0x14000000; // MSCAL
+                u32at(tag + 0x1c) = 0x13000000; // FLUSHA
+                u8at(tag + 0x12) = 0;
+                u32at(tag + 0x14) = vif;
+                tag += 32;
+            }
+            u8at(tag + 2) = 0;
+            u8at(tag + 3) = 0x30;
+            u16at(tag) = 0xe; // The triangle's 14 quadwords.
+            --left;
+            u32at(tag + 4) = entry->pTri.address;
+            entry = entry + 1;
+            u32at(tag + 8) = 0x1000404;
+            ++drawn;
+            u32at(tag + 12) = at | 0x6c0e8000u;
+            vuAddress = at + 0xe;
+            tag += 16;
+            if (left <= 0 || drawn >= G(maxAlphaPolys))
+                break;
+            reach = at + 0x1d;
+        }
+    }
+    endBatch(vuAddress);
+    u8at(tag + 0x13) = 0x10; // cnt
+    u32at(tag + 0x1c) = 0x13000000;
+    u8at(tag + 0x12) = 0;
+    u32at(tag + 0x18) = 0x14000000;
+    u32at(tag + 0x14) = vif + 16;
+    u8at(tag + 0x23) = 0x60; // ret
+    u8at(tag + 0x22) = 0;
+    u32at(tag + 0x2c) = 0;
+    u16at(tag + 0x20) = 0;
+    u32at(tag + 0x24) = 0;
+    u32at(tag + 0x28) = 0;
+    if (-1 < G(maxAlphaPolys) && 0 < drawn)
+        Rdr_AddDmaCall(alpha.pDmaTags[buffer].cast<void>());
+    RdrState_ApplyDefaultStateBlock();
+    alpha.nextTempTri = 0;
+    alpha.numTriangles = 0;
+    if (vifEnd < vif + 16)
+        guest_call(kPrintf, 0x324cf0u); // "overflowed\n"
+    if (0x600 < vifWords)
+        guest_call(kPrintf, 0x324d00u); // "ovecounted\n"
+}
+
 } // namespace rc
 
 RC_DECOMP_FN(Rdr_ShapeConstruct, 0x1a7210)
@@ -661,3 +957,9 @@ RC_DECOMP_FN_NOFUZZ(Rdr_VUSkin, 0x1a2e58)
 RC_DECOMP_FN_NOFUZZ(Rdr_WaterTerm, 0x1a9470)
 RC_DECOMP_FN_NOFUZZ(Rdr_WaterInit, 0x1a9310)
 RC_DECOMP_FN_NOFUZZ(Rdr_Water, 0x1a9480)
+RC_DECOMP_FN_NOFUZZ(RdrAlphaCameraToRdrCamera, 0x1a1d28)
+RC_DECOMP_FN_NOFUZZ(RdrAlphaSortFunc, 0x1a28f0)
+RC_DECOMP_FN_NOFUZZ(RdrAlphaTerm, 0x1a16d8)
+RC_DECOMP_FN_NOFUZZ(RdrAlphaInit, 0x1a15a0)
+RC_DECOMP_FN_NOFUZZ(RdrAlphaAddTriangles, 0x1a17b0)
+RC_DECOMP_FN_NOFUZZ(RdrAlphaAddToDmaChain, 0x1a1f50)

@@ -101,7 +101,13 @@ std::unique_ptr<uint8_t[]> g_expected;
 
 bool sampleThisCall(uint64_t callIndex)
 {
-    if (callIndex < kAlwaysCompare)
+    // RC_SHADOW_FIRST=<n> changes how many of each function's first calls are always compared (0 for play testing).
+    static const uint64_t first = []
+    {
+        const char *value = std::getenv("RC_SHADOW_FIRST");
+        return value ? static_cast<uint64_t>(std::atoll(value)) : kAlwaysCompare;
+    }();
+    if (callIndex < first)
         return true;
     using Clock = std::chrono::steady_clock;
     static Clock::time_point windowStart = Clock::now();
