@@ -14,6 +14,8 @@
 #include <iterator>
 #include <tuple>
 #include <type_traits>
+#include <utility>
+#include <vector>
 
 #include "ps2_runtime.h"
 #include "ps2_recompiled_functions.h"
@@ -57,6 +59,9 @@ extern PS2Runtime *g_runtime;
 // waits on the clock or on hardware must call this, or time would stand still. Recompiled code acts on any interrupt
 // that falls due at its next call or backward branch.
 inline void charge_ee_cycles(uint32_t cycles) { g_runtime->eeScheduler().accountCycles(cycles); }
+
+// RC_DECOMP_CHARGE=<cycles>: an extra flat charge per native call, for testing timing effects.
+extern uint32_t g_nativeExtraCycles;
 
 // Reads a hardware register, such as a timer, as the recompiled code does.
 uint32_t hw_read32(uint32_t address);
@@ -181,7 +186,7 @@ struct Thunk<Fn>
         else
             storeReturn<R>(ctx, std::apply(Fn, args));
         ctx->pc = returnAddress;
-        charge_ee_cycles(EeScheduler::kGuestDispatchCycles); // What a call into recompiled code charges.
+        charge_ee_cycles(EeScheduler::kGuestDispatchCycles + g_nativeExtraCycles); // What a call into recompiled code charges.
     }
 };
 
@@ -272,6 +277,10 @@ private:
 
 // Runs the recompiled original of a registered float(float) function, for paths the native version does not cover.
 ee_float callOriginalFloat(uint32_t address, ee_float argument);
+
+// A function that only writes known memory can declare it, for a much cheaper live comparison (rc_decomp.cpp).
+using RegionProvider = void (*)(std::vector<std::pair<uint32_t, uint32_t>> &ranges);
+void registerRegions(const char *name, RegionProvider provider);
 
 // MIPS division: truncates, and does not trap on the cases x86 does.
 inline int32_t ee_div(int32_t a, int32_t b)

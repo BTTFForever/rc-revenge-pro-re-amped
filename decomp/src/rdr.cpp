@@ -115,6 +115,71 @@ void Rdr_StartFrame()
     GfxP2_BeginScene();
 }
 
+// GFX_P2.c: register writes appended to the GS packet buffer (gGfxP2.pDmaBuff), as GIF A+D data. Each ends the
+// current GIF tag (gifTagIdx = -1), so the next primitive starts a new one.
+
+void GfxP2_RenderDmaSend() {}
+
+namespace {
+
+uint64_t *gifQuadwords(sGfxP2 &gfx, int32_t count)
+{
+    uint64_t *at = reinterpret_cast<uint64_t *>((gfx.pDmaBuff + gfx.buffIdx).get());
+    gfx.buffIdx = gfx.buffIdx + count;
+    gfx.gifTagIdx = -1;
+    return at;
+}
+
+} // namespace
+
+// The default scissor and test registers.
+void GfxP2_DefRenderState()
+{
+    uint64_t *q = gifQuadwords(G(gGfxP2), 4);
+    q[0] = 0x1000000000000003ull; // 3 registers, A+D
+    q[1] = 0xee;
+    q[2] = 0xfd0003027d0003ull; // SCISSOR_1
+    q[3] = 0x40;
+    q[4] = 0x60; // PRMODECONT
+    q[5] = 0x14;
+    q[7] = 0x47; // TEST_1
+    q[6] = 0x703f7;
+}
+
+void GfxP2_Scissor(int32_t x1, int32_t y1, int32_t x2, int32_t y2)
+{
+    uint64_t *q = gifQuadwords(G(gGfxP2), 4);
+    q[0] = 0x1000000000000003ull;
+    q[1] = 0xee;
+    q[2] = static_cast<uint64_t>(static_cast<int64_t>(x1 | (x2 << 16))) | (static_cast<uint64_t>(static_cast<int64_t>(y1)) << 32) |
+           (static_cast<uint64_t>(static_cast<int64_t>(y2)) << 48);
+    q[3] = 0x40;
+    q[4] = 0x60;
+    q[5] = 0x14;
+    q[7] = 0x47;
+    q[6] = 0x70000;
+}
+
+void GfxP2_ZWriteEnable()
+{
+    uint64_t *q = gifQuadwords(G(gGfxP2), 2);
+    q[0] = 0x1000000000000001ull;
+    q[1] = 0xe;
+    q[3] = 0x4e; // ZBUF_1
+    q[2] = 0x10000a0;
+    G(zWriteEnabled) = 1;
+}
+
+void GfxP2_ZWriteDisable()
+{
+    uint64_t *q = gifQuadwords(G(gGfxP2), 2);
+    q[0] = 0x1000000000000001ull;
+    q[1] = 0xe;
+    q[3] = 0x4e;
+    q[2] = 0x1010000a0ull; // ZMSK
+    G(zWriteEnabled) = 0;
+}
+
 // RDRSTATE.c
 
 void RdrState_SetAlphaBlending(ptr32<sRdrStateBlock> block, u32 A, u32 B, u32 C, u32 D, u8 fixedAlpha)
@@ -649,6 +714,11 @@ RC_DECOMP_FN(Rdr_DrawQuad, 0x1a4420)
 RC_DECOMP_FN_NOFUZZ(Rdr_Term, 0x1a3628)
 RC_DECOMP_FN(GfxP2_BeginScene, 0x18fc88)
 RC_DECOMP_FN(GfxP2_EndScene, 0x18fc90)
+RC_DECOMP_FN(GfxP2_RenderDmaSend, 0x18fcd0)
+RC_DECOMP_FN(GfxP2_DefRenderState, 0x18fe40)
+RC_DECOMP_FN(GfxP2_Scissor, 0x18fee8)
+RC_DECOMP_FN(GfxP2_ZWriteEnable, 0x190058)
+RC_DECOMP_FN(GfxP2_ZWriteDisable, 0x1900c0)
 RC_DECOMP_FN(Rdr_StartFrame, 0x1a3638)
 RC_DECOMP_FN(RdrState_SetAlphaBlending, 0x1a13b8)
 RC_DECOMP_FN(RdrState_SetAlphaTestEnable, 0x1a13f0)
@@ -679,3 +749,30 @@ RC_DECOMP_FN_NOFUZZ(RdrPolyInitCamera, 0x1a7648)
 RC_DECOMP_FN_NOFUZZ(RdrPoly, 0x1a7ad8)
 RC_DECOMP_FN_NOFUZZ(RdrTri, 0x1a8638)
 RC_DECOMP_FN_NOFUZZ(RdrPolyFlush, 0x1a8fa0)
+
+namespace {
+
+// What the polygon builder writes: the four channels and their packet buffers.
+void polygonRegions(std::vector<std::pair<uint32_t, uint32_t>> &ranges)
+{
+    using namespace rc;
+    const uint32_t base = guest_addr(&G(gRdrPolyClass));
+    ranges.emplace_back(base, base + static_cast<uint32_t>(sizeof(sRdrPolyClass)));
+    for (int c = 0; c < 4; ++c)
+        for (int b = 0; b < 2; ++b)
+        {
+            const uint32_t at = G(gRdrPolyClass).channels[c].pDmaBuffer[b].address & PS2_RAM_MASK;
+            const uint32_t size = static_cast<uint32_t>(G(channelSizes)[c]);
+            if (at != 0 && at + size <= PS2_RAM_SIZE)
+                ranges.emplace_back(at, at + size);
+        }
+}
+
+const bool polygonRegionsRegistered = []
+{
+    for (const char *name : {"RdrPoly", "RdrTri", "RdrPolyTexture", "RdrZedsWriteOff", "RdrZedsWriteOn", "RdrPolyCamera"})
+        rc::registerRegions(name, polygonRegions);
+    return true;
+}();
+
+} // namespace

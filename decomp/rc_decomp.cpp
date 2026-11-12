@@ -20,6 +20,13 @@
 
 namespace rc {
 
+uint32_t g_nativeExtraCycles = []
+{
+    const char *value = std::getenv("RC_DECOMP_CHARGE");
+    return value ? static_cast<uint32_t>(std::atoi(value)) : 0u;
+}();
+
+
 uint8_t *g_rdram = nullptr;
 PS2Runtime *g_runtime = nullptr;
 
@@ -372,6 +379,76 @@ void registerEntry(Entry &entry, RecompFn shadow)
     registry().push_back({&entry, shadow});
 }
 
+// Functions whose writes are confined to known memory can be compared cheaply: only those ranges are snapshot,
+// restored and compared, instead of all of RAM. Each provider returns the ranges at the time of the call.
+std::vector<std::pair<std::string, RegionProvider>> &regionProviders()
+{
+    static std::vector<std::pair<std::string, RegionProvider>> providers;
+    return providers;
+}
+
+void registerRegions(const char *name, RegionProvider provider)
+{
+    regionProviders().emplace_back(name, provider);
+}
+
+namespace {
+
+RegionProvider regionsFor(const Entry &entry)
+{
+    for (const auto &[name, provider] : regionProviders())
+        if (name == entry.name)
+            return provider;
+    return nullptr;
+}
+
+// The light comparison: as shadowCall below, over the provider's ranges only.
+void shadowCallRegions(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, Entry &entry, RegionProvider provider)
+{
+    std::vector<std::pair<uint32_t, uint32_t>> ranges;
+    provider(ranges);
+    std::vector<std::vector<uint8_t>> before, expected;
+    for (const auto &[begin, end] : ranges)
+        before.emplace_back(rdram + begin, rdram + end);
+    R5900Context originalCtx = *ctx;
+    g_comparing = true;
+    runOriginal(entry, rdram, &originalCtx, runtime);
+    g_comparing = false;
+    for (size_t i = 0; i < ranges.size(); ++i)
+    {
+        expected.emplace_back(rdram + ranges[i].first, rdram + ranges[i].second);
+        std::memcpy(rdram + ranges[i].first, before[i].data(), before[i].size());
+    }
+    if (originalCtx.pc != getRegU32(ctx, 31))
+    {
+        entry.native(rdram, ctx, runtime);
+        return;
+    }
+    const R5900Context input = *ctx;
+    runComparedNative(entry, rdram, ctx, runtime);
+    entry.compared.fetch_add(1u, std::memory_order_relaxed);
+    for (size_t i = 0; i < ranges.size(); ++i)
+    {
+        const uint8_t *now = rdram + ranges[i].first;
+        for (uint32_t k = 0; k < expected[i].size(); ++k)
+        {
+            if (now[k] != expected[i][k])
+            {
+                entry.mismatches.fetch_add(1u, std::memory_order_relaxed);
+                reportMismatch(entry, input, "ram", expected[i][k], now[k], ranges[i].first + k);
+                // Show the whole differing stretch, up to 64 bytes.
+                std::fprintf(stderr, "[decomp]   region 0x%x+0x%x:", ranges[i].first, k);
+                for (uint32_t j = k; j < expected[i].size() && j < k + 64u; ++j)
+                    std::fprintf(stderr, " %02x/%02x", expected[i][j], now[j]);
+                std::fprintf(stderr, "\n");
+                return;
+            }
+        }
+    }
+}
+
+} // namespace
+
 void shadowCall(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, Entry &entry)
 {
     // An original that calls another decompiled function reaches this again. The reference must be
@@ -410,6 +487,12 @@ void shadowCall(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, Entry &e
     if (!compareAlways && !sampleThisCall(callIndex))
     {
         entry.native(rdram, ctx, runtime);
+        return;
+    }
+
+    if (const RegionProvider provider = regionsFor(entry))
+    {
+        shadowCallRegions(rdram, ctx, runtime, entry, provider);
         return;
     }
 
