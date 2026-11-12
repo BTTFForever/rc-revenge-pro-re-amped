@@ -139,7 +139,7 @@ struct SpriteQuad
     uint8_t s0, s1, t0, t1;
 };
 
-SpriteQuad spriteQuad(const _sSprite &sprite, const _sSpriteParams &params, uint8_t w, uint8_t h)
+SpriteQuad spriteQuad(const _sSprite &sprite, const _sSpriteParams &params, uint8_t w, uint8_t h, int16_t screenW, int16_t screenH)
 {
     SpriteQuad q;
     const uint32 flags = params.flags;
@@ -150,8 +150,8 @@ SpriteQuad spriteQuad(const _sSprite &sprite, const _sSpriteParams &params, uint
         u = static_cast<uint8_t>(sprite.xOffset + static_cast<uint8_t>(params.xOffset));
         v = static_cast<uint8_t>(sprite.yOffset + static_cast<uint8_t>(params.yOffset));
         q.x[0] = px; q.y[0] = py;
-        q.x[1] = static_cast<int16_t>(px + w); q.y[1] = py;
-        q.x[2] = px; q.y[2] = static_cast<int16_t>(py + h);
+        q.x[1] = static_cast<int16_t>(px + screenW); q.y[1] = py;
+        q.x[2] = px; q.y[2] = static_cast<int16_t>(py + screenH);
         q.x[3] = q.x[1]; q.y[3] = q.y[2];
         uEnd = static_cast<uint8_t>(u + w);
         vEnd = static_cast<uint8_t>(v + h);
@@ -161,7 +161,7 @@ SpriteQuad spriteQuad(const _sSprite &sprite, const _sSpriteParams &params, uint
         u = static_cast<uint8_t>(sprite.xOffset + static_cast<uint8_t>(params.yOffset));
         v = static_cast<uint8_t>(sprite.yOffset + static_cast<uint8_t>(params.xOffset));
         q.x[2] = px; q.y[0] = py;
-        q.x[0] = static_cast<int16_t>(px + w); q.y[1] = static_cast<int16_t>(py + h);
+        q.x[0] = static_cast<int16_t>(px + screenW); q.y[1] = static_cast<int16_t>(py + screenH);
         q.x[1] = q.x[0]; q.y[2] = q.y[0];
         q.x[3] = q.x[2]; q.y[3] = q.y[1];
         uEnd = static_cast<uint8_t>(u + h);
@@ -170,7 +170,7 @@ SpriteQuad spriteQuad(const _sSprite &sprite, const _sSpriteParams &params, uint
     else if ((flags & 4) == 0)
     {
         q.x[0] = px; q.y[1] = py;
-        q.x[2] = static_cast<int16_t>(px + w); q.y[0] = static_cast<int16_t>(py + h);
+        q.x[2] = static_cast<int16_t>(px + screenW); q.y[0] = static_cast<int16_t>(py + screenH);
         u = static_cast<uint8_t>(sprite.xOffset + static_cast<uint8_t>(params.yOffset));
         v = static_cast<uint8_t>(sprite.yOffset + static_cast<uint8_t>(params.xOffset));
         q.x[1] = q.x[0]; q.y[2] = q.y[0];
@@ -183,7 +183,7 @@ SpriteQuad spriteQuad(const _sSprite &sprite, const _sSpriteParams &params, uint
         u = static_cast<uint8_t>(sprite.xOffset + static_cast<uint8_t>(params.xOffset));
         v = static_cast<uint8_t>(sprite.yOffset + static_cast<uint8_t>(params.yOffset));
         q.x[1] = px; q.y[2] = py;
-        q.x[0] = static_cast<int16_t>(px + w); q.y[0] = static_cast<int16_t>(py + h);
+        q.x[0] = static_cast<int16_t>(px + screenW); q.y[0] = static_cast<int16_t>(py + screenH);
         q.y[1] = q.y[0]; q.x[2] = q.x[0];
         q.x[3] = q.x[1]; q.y[3] = q.y[2];
         uEnd = static_cast<uint8_t>(u + w);
@@ -202,15 +202,29 @@ uint64_t corner(const SpriteQuad &q, int i) { return xy(gsCoord(q.x[i] + 0x6c0),
 
 } // namespace
 
-// A sprite with a colour, a texel rectangle, rotation and mirroring.
-void SpriteRender(ptr32<_sSprite> pSprite, ptr32<_sSpriteParams> pSpriteParams, f32 otz)
+namespace {
+
+enum class SpriteSize { Normal, Half, Scaled };
+
+// SpriteRender and its variants: the same quad, with the screen size halved or scaled, a different texture flag and
+// depth constant.
+void renderSprite(ptr32<_sSprite> pSprite, ptr32<_sSpriteParams> pSpriteParams, f32 otz, SpriteSize size, bool filter, uint32_t depthScale)
 {
     const _sSpriteParams &params = *pSpriteParams;
     const uint32 flags = params.flags;
     const uint8 spriteWidth = pSprite->width, spriteHeight = pSprite->height;
-    const SpriteQuad q = spriteQuad(*pSprite, params, static_cast<uint8_t>(params.width), static_cast<uint8_t>(params.height));
+    const uint8_t w8 = static_cast<uint8_t>(params.width), h8 = static_cast<uint8_t>(params.height);
+    int16_t screenW = w8, screenH = h8;
+    if (size == SpriteSize::Half)
+        screenH = static_cast<int16_t>(h8 >> 1);
+    else if (size == SpriteSize::Scaled)
+    {
+        screenW = static_cast<int16_t>((static_cast<uint32_t>(w8) * params.xScale) >> 8);
+        screenH = static_cast<int16_t>((static_cast<uint32_t>(h8) * params.yScale) >> 8);
+    }
+    const SpriteQuad q = spriteQuad(*pSprite, params, w8, h8, screenW, screenH);
     const uint8 blue = params.blue, red = params.red, green = params.green;
-    GfxP2_TexExt(pSprite->pTextureHandle, static_cast<s32>((flags & 1) << 1), spriteAlphaType(flags));
+    GfxP2_TexExt(pSprite->pTextureHandle, filter ? static_cast<s32>((flags & 1) << 1) : 0, spriteAlphaType(flags));
     const ee_float w = ee_itof(spriteWidth), h = ee_itof(spriteHeight);
     const auto texel = [&](uint8_t s, uint8_t t) {
         const ee_float fs = ee_itof(s) / w, ft = ee_itof(t) / h;
@@ -220,14 +234,34 @@ void SpriteRender(ptr32<_sSprite> pSprite, ptr32<_sSpriteParams> pSpriteParams, 
         return sb | (static_cast<uint64_t>(tb) << 32);
     };
     const uint64_t rgbaLow = red | (static_cast<uint64_t>(green) << 32), rgbaHigh = blue | 0x8000000000ull;
-    const uint64_t z = depth(otz, 0x327978u);
+    const uint64_t z = depth(otz, depthScale);
     SpriteStrip strip;
     strip.vertex(texel(q.s0, q.t0), rgbaLow, rgbaHigh, corner(q, 0), z);
     strip.vertex(texel(q.s0, q.t1), rgbaLow, rgbaHigh, corner(q, 2), z);
     strip.vertex(texel(q.s1, q.t1), rgbaLow, rgbaHigh, corner(q, 3), z);
     strip.vertex(texel(q.s0, q.t0), rgbaLow, rgbaHigh, corner(q, 0), z);
     strip.vertex(texel(q.s1, q.t0), rgbaLow, rgbaHigh, corner(q, 1), z);
-    strip.vertex(texel(q.s1, q.t1), rgbaLow, rgbaHigh, corner(q, 3), depth(otz, 0x327978u));
+    strip.vertex(texel(q.s1, q.t1), rgbaLow, rgbaHigh, corner(q, 3), depth(otz, depthScale));
+}
+
+} // namespace
+
+// A sprite with a colour, a texel rectangle, rotation and mirroring.
+void SpriteRender(ptr32<_sSprite> pSprite, ptr32<_sSpriteParams> pSpriteParams, f32 otz)
+{
+    renderSprite(pSprite, pSpriteParams, otz, SpriteSize::Normal, true, 0x327978u);
+}
+
+// At half height (interlaced screens), always unfiltered.
+void SpriteRenderHalf(ptr32<_sSprite> pSprite, ptr32<_sSpriteParams> pSpriteParams, f32 otz)
+{
+    renderSprite(pSprite, pSpriteParams, otz, SpriteSize::Half, false, 0x32797cu);
+}
+
+// Scaled by xScale and yScale (8.8 fixed point).
+void SpriteRenderScaled(ptr32<_sSprite> pSprite, ptr32<_sSpriteParams> pSpriteParams, f32 otz)
+{
+    renderSprite(pSprite, pSpriteParams, otz, SpriteSize::Scaled, true, 0x327980u);
 }
 
 void SpriteInit()
@@ -242,4 +276,6 @@ RC_DECOMP_FN(SpriteSetTextureHandle, 0x1897c8)
 RC_DECOMP_FN(SpriteRenderSprite, 0x1897d0)
 RC_DECOMP_FN(SpriteRenderFast, 0x185830)
 RC_DECOMP_FN(SpriteRender, 0x185e78)
+RC_DECOMP_FN(SpriteRenderHalf, 0x1869d8)
+RC_DECOMP_FN(SpriteRenderScaled, 0x187540)
 RC_DECOMP_FN_NOFUZZ(SpriteInit, 0x185818)
