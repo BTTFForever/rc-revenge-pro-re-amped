@@ -5,7 +5,7 @@
 // such as a block of graphics chip register writes or a microprogram upload. gRdr.pDmaTag holds two chains of 1000
 // tags, one per frame, swapped each frame.
 
-#include "ee_math.h"
+#include "vifpk.h"
 
 namespace rc {
 
@@ -276,6 +276,365 @@ void RenderTerm() {}
 
 void TexFreeIntermediateResData() {}
 
+// RDRSTATE.c, for a packet being built: the six register writes as GIF A+D data inside an UNPACK.
+void RdrState_PkForceApplyStateBlock(ptr32<sRdrStateBlock> block, ptr32<sceVif1Packet> packet)
+{
+    // Each value is read just before it is written, as in the original: the packet may overlap the block.
+    sceVif1PkAddUpkData64(packet, 0);
+    sceVif1PkAddUpkData64(packet, 0xfffffffffffffff9ull);
+    sceVif1PkAddUpkData64(packet, 0x1000000000008006ull);
+    sceVif1PkAddUpkData64(packet, 0xe);
+    sceVif1PkAddUpkData64(packet, G(gRdrStateScissorOverride));
+    sceVif1PkAddUpkData64(packet, kGsScissor1);
+    sceVif1PkAddUpkData64(packet, block->alpha);
+    sceVif1PkAddUpkData64(packet, kGsAlpha1);
+    sceVif1PkAddUpkData64(packet, block->clamp);
+    sceVif1PkAddUpkData64(packet, kGsClamp1);
+    sceVif1PkAddUpkData64(packet, block->test);
+    sceVif1PkAddUpkData64(packet, kGsTest1);
+    sceVif1PkAddUpkData64(packet, block->zbuf);
+    sceVif1PkAddUpkData64(packet, kGsZbuf1);
+    sceVif1PkAddUpkData64(packet, block->pabe);
+    sceVif1PkAddUpkData64(packet, kGsPabe);
+}
+
+// RDRPOLY.c: textured polygons for the HUD, menus and effects, batched per channel into a VIF packet that the
+// shape microprogram draws. Channels 0 and 1 are the two players' views (0 means the current player), 2 and 3 the
+// screen overlay for each.
+
+namespace {
+
+const uint32_t kPolyOne = 0x32839c, kTriOne = 0x3283a4; // Each holds the vertex w (1.0) the packets carry.
+
+int32_t polyChannel(int32_t channel)
+{
+    const int32_t player = G(gRdrPolyPlayer);
+    if (channel == 0)
+        channel = player == 2 ? 1 : 0;
+    if (channel == 2 && player == 2)
+        channel = 3;
+    return channel;
+}
+
+// The channel number is not checked; past the four channels the original reads and writes whatever follows.
+sRdrPolyChannel &channelAt(int32_t channel)
+{
+    return *static_cast<sRdrPolyChannel *>(guest_host(guest_addr(&G(gRdrPolyClass)) + static_cast<uint32_t>(channel) * sizeof(sRdrPolyChannel)));
+}
+
+ptr32<sceVif1Packet> packetOf(sRdrPolyChannel &c) { return ptr32<sceVif1Packet>(guest_addr(&c.vifDataPkt)); }
+ptr32<sRdrStateBlock> stateOf(sRdrPolyChannel &c) { return ptr32<sRdrStateBlock>(guest_addr(&c.renderState)); }
+
+// log2 of a texture side for TEX0; 0 for anything that isn't a power of two up to 1024.
+uint64_t sideLog2(int32_t side)
+{
+    for (uint64_t bits = 0; bits <= 10; ++bits)
+        if (side == (1 << bits))
+            return bits;
+    return 0;
+}
+
+// The GS TEX0 register for the channel's texture: buffer, width in 64-texel units, format, size, and for the
+// palette formats (0x13, 0x14) the palette's address, loaded with the texture.
+uint64_t tex0(const _sGfxTexture *tex)
+{
+    if (!tex)
+        return 0;
+    const int32_t wd = tex->wd;
+    const int32_t blocks = (wd < 0 ? wd + 0x3f : wd) >> 6;
+    const uint64_t bufferWidth = 0 < blocks ? static_cast<uint64_t>(blocks) : 1;
+    uint64_t value = static_cast<uint64_t>(static_cast<int64_t>(tex->idxList[0])) | 0x400000000ull | (sideLog2(wd) << 26) |
+                     (bufferWidth << 14) | (static_cast<uint64_t>(static_cast<int64_t>(tex->fmt)) << 20) | (sideLog2(tex->ht) << 30);
+    if (static_cast<uint32_t>(tex->fmt) - 0x13u < 2u)
+        value |= 0x2000000000000000ull | (static_cast<uint64_t>(static_cast<int64_t>(tex->clutVramAddr)) << 37);
+    return value;
+}
+
+// Writes the count of polygons since the last texture into the packet, where that texture's GIF tag left room.
+void closePolyCount(sRdrPolyChannel &c)
+{
+    if (c.pPolysToRender)
+    {
+        const u32 count = c.polysToRender;
+        const ptr32<u32> at = c.pPolysToRender;
+        c.pPolysToRender = nullptr;
+        *at = count;
+        c.polysToRender = 0;
+    }
+}
+
+// Starts a polygon: closes the UNPACK if it is getting long, opens the packet and an UNPACK if needed, and emits the
+// render state and texture when they changed. Returns false if the channel has no texture.
+bool beginPolygon(int32_t channel, int32_t maxQuadwords)
+{
+    sRdrPolyChannel &c = channelAt(channel);
+    if (!c.pCurrTexture)
+        return false;
+    const ptr32<sceVif1Packet> packet = packetOf(c);
+    const int32_t sinceCode = static_cast<int32_t>(c.vifDataPkt.pCurrent.address + 0xf - c.vifDataPkt.pVifCode.address);
+    const int32_t quadwords = (sinceCode < 0 ? static_cast<int32_t>(c.vifDataPkt.pCurrent.address + 0x1e - c.vifDataPkt.pVifCode.address) : sinceCode) >> 4;
+    if (maxQuadwords < quadwords && c.unpacking != 0)
+    {
+        closePolyCount(c);
+        pkAddUpkData128(c.vifDataPkt, 0, 0);
+        sceVif1PkCloseUpkCode(packet);
+        c.unpacking = 0;
+        sceVif1PkAddCode(packet, 0x14000000); // MSCAL: draw what is there.
+    }
+    if (c.vifPktInUse == 0)
+    {
+        sceVif1PkInit(packet, c.pDmaBuffer[c.buffToUse]);
+        sceVif1PkReset(packet);
+        sceVif1PkRet(packet, 0);
+        c.vifPktInUse = 1;
+    }
+    if (c.unpacking == 0)
+    {
+        sceVif1PkOpenUpkCode(packet, 0x8000, 0x6c, 4, 4);
+        c.pPolysToRender = nullptr;
+        c.reqTexture = 1;
+        c.unpacking = 1;
+        c.polysToRender = 0;
+    }
+    if (c.reqTexture != 0)
+    {
+        RdrState_PkForceApplyStateBlock(stateOf(c), packet);
+        const uint64_t texture = tex0(c.pCurrTexture.get());
+        closePolyCount(c);
+        sceVif1PkAddUpkData64(packet, texture);
+        c.pPolysToRender = c.vifDataPkt.pCurrent;
+        sceVif1PkAddUpkData64(packet, 0);
+        sceVif1PkAddUpkData64(packet, 0x60);
+        sceVif1PkAddUpkData64(packet, 0x14);
+        sceVif1PkAddUpkData64(packet, 0);
+        sceVif1PkAddUpkData64(packet, 0x34);
+        sceVif1PkAddUpkData64(packet, 0);
+        sceVif1PkAddUpkData64(packet, 0x36);
+        c.reqTexture = 0;
+    }
+    return true;
+}
+
+// One triangle of a polygon: a header, the three vertices, their texture coordinates and their colours.
+void emitTriangle(ptr32<sceVif1Packet> packet, ptr32<_sRdrPoly> poly, const int (&v)[3], uint32_t one)
+{
+    const uint32_t base = poly.address;
+    const auto words = [&](uint32_t address, u_int n) { sceVif1PkAddUpkData32N(packet, ptr32<u_int>(address), n); };
+    const uint32_t zOffset = base + offsetof(_sRdrPoly, zOffset);
+    sceVif1PkAddUpkData32(packet, 0);
+    words(one, 1);
+    sceVif1PkAddUpkData32(packet, 0);
+    sceVif1PkAddUpkData32(packet, 1);
+    for (int i : v)
+    {
+        words(base + offsetof(_sRdrPoly, vertex) + i * 16u, 3);
+        words(one, 1);
+    }
+    for (int i : v)
+    {
+        words(base + offsetof(_sRdrPoly, u) + i * 4u, 1);
+        words(base + offsetof(_sRdrPoly, v) + i * 4u, 1);
+        words(one, 1);
+        words(zOffset, 1);
+    }
+    const uint8_t *rgba = reinterpret_cast<const uint8_t *>(poly->rgba);
+    for (int i : v)
+        for (int k = 0; k < 4; ++k)
+            sceVif1PkAddUpkData32(packet, rgba[i * 4 + k]);
+}
+
+} // namespace
+
+void RdrPolyCamera(int32_t channel, ptr32<sceVu0FMATRIX> pMatrix, ptr32<sceVu0FVECTOR> pPos, ee_float dValX, ee_float dValY)
+{
+    sRdrPolyChannel &c = channelAt(polyChannel(channel));
+    std::memcpy(c.cameraMatrix, pMatrix.get(), sizeof(c.cameraMatrix));
+    std::memcpy(c.cameraPos, pPos.get(), sizeof(c.cameraPos));
+    c.cameraDValY = dValY;
+    c.cameraDValX = dValX;
+}
+
+int32_t sceVif1UnpackSize(ptr32<sceVif1Packet> pPacket)
+{
+    const int32_t a = static_cast<int32_t>(pPacket->pCurrent.address + (0xf - pPacket->pVifCode.address));
+    const int32_t b = static_cast<int32_t>(pPacket->pCurrent.address + (0x1e - pPacket->pVifCode.address));
+    return (a < 0 ? b : a) >> 4;
+}
+
+// Sets the channel's texture and the state for a texture style: 0x10 repeat instead of clamp, 0x20 alpha test kept
+// on failure for colour only, 2 additive, 4 subtractive, otherwise normal blending.
+void RdrPolyTexture(int32_t channel, ptr32<_sGfxTexture> pTexture, u32 style)
+{
+    sRdrPolyChannel &c = channelAt(polyChannel(channel));
+    const ptr32<sRdrStateBlock> state = stateOf(c);
+    if (pTexture == c.pCurrTexture && style == c.currTexAttrib)
+        return;
+    RdrState_SetStateBlockToDefaults(state);
+    c.pCurrTexture = pTexture;
+    c.reqTexture = 1;
+    c.currTexAttrib = style;
+    RdrState_SetTextureClamp(state, (style & 0x10) == 0 ? 5 : 0);
+    RdrState_SetAlphaTestEnable(state, 1, 3, (style & 0x20) == 0 ? 0 : 3, '?');
+    if ((style & 2) == 0 && (style & 4) == 0 && (style & 0x20) == 0)
+    {
+        RdrState_SetAlphaBlending(state, 1, 0, 2, 0, 0x80);
+        RdrState_SetPixelAlphaBlendControlEnable(state, 1);
+    }
+    else
+    {
+        u32 B = 0, C = 0, D = 0;
+        if ((style & 2) != 0)
+            B = 2, C = 2;
+        else if ((style & 4) != 0)
+            C = 2, D = 2;
+        RdrState_SetAlphaBlending(state, 1, B, C, D, 0x80);
+        RdrState_SetPixelAlphaBlendControlEnable(state, 0);
+    }
+    RdrState_SetZBufferWriteEnable(state, c.turnOffZeds != 0 ? 0 : 1);
+}
+
+void RdrPolyTerm()
+{
+    for (sRdrPolyChannel &c : G(gRdrPolyClass).channels)
+    {
+        MemBlockFree(ptr32<memHandle>(guest_addr(&c.pDmaBuffer[0])));
+        MemBlockFree(ptr32<memHandle>(guest_addr(&c.pDmaBuffer[1])));
+    }
+}
+
+void RdrZedsWriteOff(int32_t channel)
+{
+    sRdrPolyChannel &c = channelAt(polyChannel(channel));
+    RdrState_SetZBufferWriteEnable(stateOf(c), 0);
+    c.reqTexture = 1;
+    c.turnOffZeds = 1;
+}
+
+// Sets the state's depth writes back on but leaves turnOffZeds set, as the original does.
+void RdrZedsWriteOn(int32_t channel)
+{
+    sRdrPolyChannel &c = channelAt(polyChannel(channel));
+    RdrState_SetZBufferWriteEnable(stateOf(c), 1);
+    c.reqTexture = 1;
+    c.turnOffZeds = 1;
+}
+
+void RdrPolyInit()
+{
+    sRdrPolyClass &polys = G(gRdrPolyClass);
+    polys.dmaVIF1 = ptr32<anon_0db2ace9>(guest_call<uint32_t>(0x1c4900u, 1)); // sceDmaGetChan(1)
+    for (int32_t i = 0; i < 4; ++i)
+    {
+        sRdrPolyChannel &c = polys.channels[i];
+        const uint32 size = static_cast<uint32>(G(channelSizes)[i]);
+        MemBlockAllocLo(ptr32<memHandle>(guest_addr(&c.pDmaBuffer[0])), size);
+        MemBlockAllocLo(ptr32<memHandle>(guest_addr(&c.pDmaBuffer[1])), size);
+        c.buffToUse = 0;
+        c.pCurrTexture = nullptr;
+        c.currTexAttrib = 0xffffffffu;
+        c.vifPktInUse = 0;
+        c.unpacking = 0;
+        c.reqTexture = 0;
+        c.pPolysToRender = nullptr;
+        c.polysToRender = 0;
+        RdrState_SetStateBlockToDefaults(stateOf(c));
+        c.turnOffZeds = 0;
+    }
+}
+
+// Adds the packet that sets the shape microprogram's camera for a channel, from the shape packet ring.
+void RdrPolyInitCamera(int32_t channel)
+{
+    sRdr &rdr = G(gRdr);
+    const int32_t index = rdr.currShapeData;
+    rdr.currShapeData = rdr.currShapeData + 1;
+    if (0x167 < rdr.currShapeData)
+        rdr.currShapeData = 0;
+    const ptr32<u8> packet = rdr.pShapeData + index * rdr.shapeDataSz;
+    uint8_t *p = packet.get();
+    const auto put = [p](uint32_t offset, uint32_t value) { std::memcpy(p + offset, &value, 4); };
+    const auto putf = [p](uint32_t offset, ee_float value) { std::memcpy(p + offset, &value, 4); };
+    const sRdrPolyChannel &c = channelAt(channel);
+    put(0xcc, *static_cast<uint32_t *>(guest_host(0x327bf4u)));
+    std::memset(p + 0xc0, 0, 12);
+    putf(0xf0, c.cameraMatrix[0][2]);
+    putf(0xf4, c.cameraMatrix[1][2]);
+    put(0xfc, 0);
+    putf(0xf8, c.cameraMatrix[2][2]);
+    std::memcpy(p + 0x100, c.cameraPos, 16);
+    put(0x10c, 0);
+    putf(0x120, c.cameraDValX);
+    putf(0x124, -c.cameraDValY);
+    alignas(16) float position[4], negated[4], matrix[16], eye[4];
+    std::memcpy(position, c.cameraPos, 16);
+    _mm_storeu_ps(negated, PS2_VMUL(_mm_loadu_ps(position), _mm_set1_ps(-1.0f)));
+    std::memcpy(matrix, c.cameraMatrix, 64);
+    vu0ApplyMatrix(eye, matrix, negated);
+    for (int row = 0; row < 3; ++row)
+    {
+        std::memcpy(p + 0x130 + row * 0x10, &c.cameraMatrix[row][0], 8);
+        putf(0x138 + row * 0x10, c.cameraMatrix[row][2]);
+    }
+    std::memcpy(p + 0x160, eye, 8);
+    putf(0x168, eye[2]);
+    put(0x16c, 0x3f800000); // 1.0
+    const int32_t player = G(gRdrPolyPlayer);
+    put(0x114, player == 1 ? 0x44f90000u : player == 2 ? *static_cast<uint32_t *>(guest_host(0x327bf8u)) : 0x45000000u);
+    Rdr_UploadProg(ptr32<u32>(kShapeProgram));
+    Rdr_AddDmaCall(packet.cast<void>());
+}
+
+// A quad, as two triangles (0 1 2 and 1 2 3).
+void RdrPoly(int32_t channel, ptr32<_sRdrPoly> poly)
+{
+    channel = polyChannel(channel);
+    if (!beginPolygon(channel, 0x96))
+        return;
+    sRdrPolyChannel &c = channelAt(channel);
+    const ptr32<sceVif1Packet> packet = packetOf(c);
+    emitTriangle(packet, poly, {0, 1, 2}, kPolyOne);
+    emitTriangle(packet, poly, {1, 2, 3}, kPolyOne);
+    c.polysToRender = c.polysToRender + 2;
+}
+
+void RdrTri(int32_t channel, ptr32<_sRdrPoly> poly)
+{
+    channel = polyChannel(channel);
+    if (!beginPolygon(channel, 200))
+        return;
+    sRdrPolyChannel &c = channelAt(channel);
+    emitTriangle(packetOf(c), poly, {0, 1, 2}, kTriOne);
+    c.polysToRender = c.polysToRender + 1;
+}
+
+// Ends the channel's packet, adds the camera packet and the polygon packet to the frame, and swaps buffers.
+void RdrPolyFlush(int32_t channel)
+{
+    channel = polyChannel(channel);
+    sRdrPolyChannel &c = channelAt(channel);
+    if (c.vifPktInUse == 0)
+        return;
+    const ptr32<sceVif1Packet> packet = packetOf(c);
+    if (c.unpacking != 0)
+    {
+        closePolyCount(c);
+        pkAddUpkData128(c.vifDataPkt, 0, 0);
+        sceVif1PkCloseUpkCode(packet);
+        c.unpacking = 0;
+    }
+    sceVif1PkAddCode(packet, 0x14000000); // MSCAL
+    sceVif1PkAddCode(packet, 0x13000000); // FLUSHA
+    sceVif1PkTerminate(packet);
+    RdrPolyInitCamera(channel);
+    Rdr_AddDmaCall(c.pDmaBuffer[c.buffToUse].cast<void>());
+    c.vifPktInUse = 0;
+    c.buffToUse = (c.buffToUse + 1) & 1;
+    RdrState_SetStateBlockToDefaults(stateOf(c));
+    c.turnOffZeds = 0;
+    c.pCurrTexture = nullptr;
+    c.currTexAttrib = 0xffffffffu;
+}
+
 } // namespace rc
 
 RC_DECOMP_FN(Rdr_WhichProg, 0x1a73a8)
@@ -306,3 +665,15 @@ RC_DECOMP_FN(RenderAllocateBuffers, 0x183c80)
 RC_DECOMP_FN(RenderFreeBuffers, 0x183c98)
 RC_DECOMP_FN(RenderTerm, 0x183c30)
 RC_DECOMP_FN(TexFreeIntermediateResData, 0x183ee8)
+RC_DECOMP_FN(RdrState_PkForceApplyStateBlock, 0x1a1178)
+RC_DECOMP_FN(RdrPolyCamera, 0x1a9168)
+RC_DECOMP_FN(sceVif1UnpackSize, 0x1a92e8)
+RC_DECOMP_FN(RdrPolyTexture, 0x1a7880)
+RC_DECOMP_FN_NOFUZZ(RdrPolyTerm, 0x1a90e0)
+RC_DECOMP_FN(RdrZedsWriteOff, 0x1a9208)
+RC_DECOMP_FN(RdrZedsWriteOn, 0x1a9278)
+RC_DECOMP_FN_NOFUZZ(RdrPolyInit, 0x1a7518)
+RC_DECOMP_FN_NOFUZZ(RdrPolyInitCamera, 0x1a7648)
+RC_DECOMP_FN_NOFUZZ(RdrPoly, 0x1a7ad8)
+RC_DECOMP_FN_NOFUZZ(RdrTri, 0x1a8638)
+RC_DECOMP_FN_NOFUZZ(RdrPolyFlush, 0x1a8fa0)

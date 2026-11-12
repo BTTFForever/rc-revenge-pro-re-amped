@@ -13,13 +13,27 @@
 #include <type_traits>
 
 #include "ps2_runtime_macros.h"
+#include "runtime/ps2_memory.h"
 
 namespace rc {
 
 extern uint8_t *g_rdram; // Guest RAM, set once at start.
 
-inline void *guest_host(uint32_t address) { return g_rdram + (address & PS2_RAM_MASK); }
-inline uint32_t guest_addr(const void *host) { return static_cast<uint32_t>(static_cast<const uint8_t *>(host) - g_rdram); }
+// The 16 KB scratchpad (0x70000000) is separate memory; everything else is main RAM, mirrors included.
+inline void *guest_host(uint32_t address)
+{
+    if (ps2IsScratchpadAddress(address)) [[unlikely]]
+        return ps2GetScratchpadHostPtr() + ps2ScratchpadOffset(address);
+    return g_rdram + (address & PS2_RAM_MASK);
+}
+inline uint32_t guest_addr(const void *host)
+{
+    const uint8_t *p = static_cast<const uint8_t *>(host);
+    const uint8_t *scratch = ps2GetScratchpadHostPtr();
+    if (scratch && p >= scratch && p < scratch + PS2_SCRATCHPAD_SIZE) [[unlikely]]
+        return PS2_SCRATCHPAD_BASE + static_cast<uint32_t>(p - scratch);
+    return static_cast<uint32_t>(p - g_rdram);
+}
 
 template <typename T>
 struct ptr32
