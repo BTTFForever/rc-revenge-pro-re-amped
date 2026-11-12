@@ -264,6 +264,63 @@ void SpriteRenderScaled(ptr32<_sSprite> pSprite, ptr32<_sSpriteParams> pSpritePa
     renderSprite(pSprite, pSpriteParams, otz, SpriteSize::Scaled, true, 0x327980u);
 }
 
+// A sprite at double width (wide-screen menus), with its texel corners chosen by the rotation flags and swapped by
+// the mirror flags (here 0x10 swaps vertically and 0x20 horizontally). Each vertex has its own depth constant.
+void SpriteRenderNew(ptr32<_sSprite> pSprite, ptr32<_sSpriteParams> pSpriteParams, uint32 otz)
+{
+    const _sSpriteParams &params = *pSpriteParams;
+    const uint32 flags = params.flags;
+    const uint8 spriteWidth = pSprite->width, spriteHeight = pSprite->height;
+    uint8_t s0 = static_cast<uint8_t>(static_cast<uint8_t>(params.xOffset) + pSprite->xOffset);
+    uint8_t t0 = static_cast<uint8_t>(static_cast<uint8_t>(params.yOffset) + pSprite->yOffset);
+    const int32_t px = params.x, py = params.y;
+    int32_t w = params.width, h = params.height;
+    if ((flags & 6) != 0)
+        std::swap(w, h);
+    const int16_t bottom = static_cast<int16_t>(py + static_cast<int16_t>(h));
+    const int16_t right = static_cast<int16_t>(px + static_cast<int16_t>(w) * 2);
+    uint8_t s1 = static_cast<uint8_t>((w & 0xffff) + s0);
+    uint8_t t1 = static_cast<uint8_t>((h & 0xffff) + t0);
+    if ((flags & 0x10) != 0)
+        std::swap(t0, t1);
+    if ((flags & 0x20) != 0)
+        std::swap(s0, s1);
+    // Texel corners for screen top-left, top-right, bottom-left, bottom-right.
+    uint8_t u[4], v[4];
+    const auto set = [&](uint8_t a0, uint8_t b0, uint8_t a1, uint8_t b1, uint8_t a2, uint8_t b2, uint8_t a3, uint8_t b3) {
+        u[0] = a0; v[0] = b0; u[1] = a1; v[1] = b1; u[2] = a2; v[2] = b2; u[3] = a3; v[3] = b3;
+    };
+    if ((flags & 0xe) == 0)
+        set(s0, t0, s1, t0, s0, t1, s1, t1);
+    else if ((flags & 2) != 0)
+        set(s0, t1, s0, t0, s1, t1, s1, t0);
+    else if ((flags & 4) != 0)
+        set(s1, t1, s0, t1, s1, t0, s0, t0);
+    else
+        set(s1, t0, s1, t1, s0, t0, s0, t1);
+    const uint8 blue = params.blue, red = params.red, green = params.green;
+    GfxP2_TexExt(pSprite->pTextureHandle, static_cast<s32>((flags & 1) << 1), spriteAlphaType(flags));
+    const ee_float fw = ee_itof(spriteWidth), fh = ee_itof(spriteHeight);
+    const auto texel = [&](int i) {
+        const ee_float fs = ee_itof(u[i]) / fw, ft = ee_itof(v[i]) / fh;
+        uint32_t sb, tb;
+        std::memcpy(&sb, &fs, 4);
+        std::memcpy(&tb, &ft, 4);
+        return sb | (static_cast<uint64_t>(tb) << 32);
+    };
+    const ee_float order = ee_itof(static_cast<int32_t>(otz));
+    const uint64_t rgbaLow = red | (static_cast<uint64_t>(green) << 32), rgbaHigh = blue | 0x8000000000ull;
+    const uint64_t x0 = gsCoord(static_cast<int16_t>(px) + 0x6c0), x1 = gsCoord(right + 0x6c0);
+    const uint64_t y0 = gsCoord(static_cast<int16_t>(py) + 0x780), y1 = gsCoord(bottom + 0x780);
+    SpriteStrip strip;
+    strip.vertex(texel(0), rgbaLow, rgbaHigh, xy(x0, y0), depth(order, 0x327984u));
+    strip.vertex(texel(2), rgbaLow, rgbaHigh, xy(x0, y1), depth(order, 0x327988u));
+    strip.vertex(texel(3), rgbaLow, rgbaHigh, xy(x1, y1), depth(order, 0x32798cu));
+    strip.vertex(texel(0), rgbaLow, rgbaHigh, xy(x0, y0), depth(order, 0x327990u));
+    strip.vertex(texel(1), rgbaLow, rgbaHigh, xy(x1, y0), depth(order, 0x327994u));
+    strip.vertex(texel(3), rgbaLow, rgbaHigh, xy(x1, y1), depth(order, 0x327998u));
+}
+
 void SpriteInit()
 {
     ResTypeSetConstructDaemon(ptr32<char>(0x328178u), 0x1897a0u, 4);
@@ -278,4 +335,5 @@ RC_DECOMP_FN(SpriteRenderFast, 0x185830)
 RC_DECOMP_FN(SpriteRender, 0x185e78)
 RC_DECOMP_FN(SpriteRenderHalf, 0x1869d8)
 RC_DECOMP_FN(SpriteRenderScaled, 0x187540)
+RC_DECOMP_FN(SpriteRenderNew, 0x1880f8)
 RC_DECOMP_FN_NOFUZZ(SpriteInit, 0x185818)
