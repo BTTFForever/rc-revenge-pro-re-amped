@@ -84,7 +84,7 @@ int32_t remPio2(ee_float x, ee_float y[2])
             y[1] = x - x;
             return 0;
         }
-        // The game's angles never get this large, and reducing them needs the long-division routine.
+        // Not reached: sinf and cosf hand these arguments to the originals (see below).
         std::fprintf(stderr, "[decomp] sinf/cosf argument %g needs __kernel_rem_pio2f, which is not ported\n", static_cast<double>(x.v));
         std::abort();
     }
@@ -130,9 +130,15 @@ int32_t remPio2(ee_float x, ee_float y[2])
 
 } // namespace
 
+// Arguments past 2^7 * pi/2 need __kernel_rem_pio2f, which is not ported: the game's own sinf and cosf handle
+// them (firing a weapon passes 32768).
+const uint32_t kNeedsLongReduction = 0x43490F80u;
+
 ee_float ee_sinf(ee_float x)
 {
     const uint32_t ix = float_bits(x) & 0x7FFFFFFFu;
+    if (ix > kNeedsLongReduction && ix < 0x7F800000u)
+        return callOriginalFloat(0x1c85d0, x);
     if (ix < 0x3F490FD9u)
         return kernelSin(x, 0.0f, 0);
     if (ix >= 0x7F800000u)
@@ -154,6 +160,8 @@ ee_float ee_sinf(ee_float x)
 ee_float ee_cosf(ee_float x)
 {
     const uint32_t ix = float_bits(x) & 0x7FFFFFFFu;
+    if (ix > kNeedsLongReduction && ix < 0x7F800000u)
+        return callOriginalFloat(0x1c84e8, x);
     if (ix < 0x3F490FD9u)
         return kernelCos(x, 0.0f);
     if (ix >= 0x7F800000u)
@@ -178,5 +186,5 @@ float cosf(ee_float x) { return ee_cosf(x); }
 
 } // namespace rc
 
-RC_DECOMP_FN_NOFUZZ(sinf, 0x1c85d0)
-RC_DECOMP_FN_NOFUZZ(cosf, 0x1c84e8)
+RC_DECOMP_FN(sinf, 0x1c85d0)
+RC_DECOMP_FN(cosf, 0x1c84e8)

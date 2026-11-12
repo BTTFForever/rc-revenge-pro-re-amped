@@ -270,6 +270,9 @@ private:
     uint32_t m_size;
 };
 
+// Runs the recompiled original of a registered float(float) function, for paths the native version does not cover.
+ee_float callOriginalFloat(uint32_t address, ee_float argument);
+
 // MIPS division: truncates, and does not trap on the cases x86 does.
 inline int32_t ee_div(int32_t a, int32_t b)
 {

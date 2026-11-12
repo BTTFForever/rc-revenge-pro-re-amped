@@ -481,6 +481,33 @@ void shadowCall(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, Entry &e
     }
 }
 
+// Runs a function's recompiled original from native code on a copy of the running context, with interrupts held,
+// to its real return; for rare paths not ported yet (rc_decomp.h).
+ee_float callOriginalFloat(uint32_t address, ee_float argument)
+{
+    for (const Registered &item : registry())
+    {
+        if (item.entry->address != address)
+            continue;
+        PS2Runtime *runtime = g_runtime;
+        R5900Context ctx = runtime->eeScheduler().runningContext();
+        ctx.f[12] = argument.v;
+        constexpr uint32_t kReturn = 0xFFFFFFE0u; // No guest code has this address.
+        SET_GPR_U32((&ctx), 31, kReturn);
+        const bool comparing = g_comparing;
+        g_comparing = true; // Nested decompiled functions run their originals too.
+        runtime->eeScheduler().holdCheckpoints(true);
+        item.entry->original(g_rdram, &ctx, runtime);
+        for (int resumes = 0; ctx.pc != kReturn && resumes < 1000000; ++resumes)
+            runtime->lookupFunction(ctx.pc)(g_rdram, &ctx, runtime);
+        runtime->eeScheduler().holdCheckpoints(false);
+        g_comparing = comparing;
+        return ee_float(ctx.f[0]);
+    }
+    std::fprintf(stderr, "[decomp] callOriginalFloat: nothing registered at 0x%x\n", address);
+    std::abort();
+}
+
 // RC_DECOMP_SKIP=name,name leaves those functions recompiled. A native caller still calls them natively, so this is
 // for exposing a native function's callees to the comparison: with the caller recompiled, its calls go through the
 // table and are compared.
