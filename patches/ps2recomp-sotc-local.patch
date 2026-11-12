@@ -2636,10 +2636,10 @@ index 0000000..14cfe7b
 +}
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
 new file mode 100644
-index 0000000..90eb1e7
+index 0000000..d6631f6
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
-@@ -0,0 +1,3240 @@
+@@ -0,0 +1,3267 @@
 +// GOW-Port: render-target GS renderer, see include/runtime/gs/gs_hw_backend.h.
 +#include "runtime/gs/gs_tri_groups.h"
 +#include "runtime/gs/gs_colour_runs.h" // GOW-Port: ps2recomp-gs-sombras-tramos
@@ -4723,6 +4723,32 @@ index 0000000..90eb1e7
 +        g.GenBuffers(1, &trackConstants);
 +        trackTriangleBuffer.init(g, kStorage, trackTriangles, 64u * 1024u * 1024u);
 +        trackConstantBuffer.init(g, kUniform, trackConstants, 4u * 1024u * 1024u);
++        // The persistently mapped rings are host-visible memory, so the vertex shader reads them over PCIe. With
++        // PS2X_GS_DEVICE_VERTS=1 (off by default: no gain measured) each range written is copied into a device-local twin and the
++        // draw reads that.
++        const char *env = std::getenv("PS2X_GS_DEVICE_VERTS");
++        if (g.CopyBufferSubData && g.BufferStorage && (env != nullptr && env[0] == '1') &&
++            trackTriangleBuffer.base != nullptr && trackConstantBuffer.base != nullptr)
++        {
++            g.GenBuffers(1, &trackTrianglesDev);
++            g.BindBuffer(kStorage, trackTrianglesDev);
++            g.BufferStorage(kStorage, 64 * 1024 * 1024, nullptr, 0u);
++            g.GenBuffers(1, &trackConstantsDev);
++            g.BindBuffer(kUniform, trackConstantsDev);
++            g.BufferStorage(kUniform, 4 * 1024 * 1024, nullptr, 0u);
++            std::fprintf(stderr, "[gs] track geometry copied to device-local buffers\n");
++        }
++    }
++    GLuint trackTrianglesDev = 0, trackConstantsDev = 0;
++    // Copies a written range of a mapped ring into its device twin and returns the buffer to bind.
++    GLuint toDevice(const Api &g, GLuint host, GLuint dev, size_t offset, size_t bytes)
++    {
++        if (dev == 0u)
++            return host;
++        g.BindBuffer(kCopyReadBuffer, host);
++        g.BindBuffer(kCopyWriteBuffer, dev);
++        g.CopyBufferSubData(kCopyReadBuffer, kCopyWriteBuffer, static_cast<GLintptr>(offset), static_cast<GLintptr>(offset), static_cast<GLsizeiptr>(bytes));
++        return dev;
 +    }
 +    GLuint trackTriangles = 0, trackConstants = 0;
 +    GLintptr trackTriangleRing = 0, trackConstantRing = 0;
@@ -5153,7 +5179,8 @@ index 0000000..90eb1e7
 +                    {
 +                        const size_t offset = persistent.allocate(g, static_cast<size_t>(bytes), static_cast<size_t>(kAlign));
 +                        std::memcpy(persistent.base + offset, data, static_cast<size_t>(bytes));
-+                        g.BindBufferRange(target, binding, id, static_cast<GLintptr>(offset), bytes);
++                        const GLuint use = toDevice(g, id, target == kStorage ? trackTrianglesDev : trackConstantsDev, offset, static_cast<size_t>(bytes));
++                        g.BindBufferRange(target, binding, use, static_cast<GLintptr>(offset), bytes);
 +                        return;
 +                    }
 +                    g.BindBuffer(target, id);
@@ -5171,7 +5198,7 @@ index 0000000..90eb1e7
 +                    ring += (bytes + kAlign - 1) / kAlign * kAlign;
 +                };
 +                if (trackInRing)
-+                    g.BindBufferRange(kStorage, 0, trackTriangles, static_cast<GLintptr>(trackRingOffset), static_cast<GLsizeiptr>(trackRingBytes));
++                    g.BindBufferRange(kStorage, 0, toDevice(g, trackTriangles, trackTrianglesDev, trackRingOffset, trackRingBytes), static_cast<GLintptr>(trackRingOffset), static_cast<GLsizeiptr>(trackRingBytes));
 +                else
 +                    put(kStorage, trackTriangles, trackTriangleRing, kRingBytes, 0, trackDraw->quads, static_cast<GLsizeiptr>(trackDraw->quadBytes != 0u ? trackDraw->quadBytes : trackDraw->triangles * 160u));
 +                put(kUniform, trackConstants, trackConstantRing, kConstantRingBytes, 1, trackDraw->draw, static_cast<GLsizeiptr>(sizeof(trackDraw->draw)));
