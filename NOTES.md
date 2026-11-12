@@ -268,7 +268,7 @@ Shapes (2026-11-12, `src/shape.cpp`, Opus): all of RDR_SHAPE. `TRdr_VUShape` (ca
 
 Sprites (2026-11-12, `src/sprite.cpp`, Opus): all of SPRITE (HUD, menu and font sprites drawn straight to the GS through GFX_P2's packet buffer) and GFX_P2's texture setters (`GfxP2_Tex`, `GfxP2_TexExt`, `GfxP2_TexFX`, in `src/rdr.cpp`). Every sprite variant passes 2,000 random inputs; `SpriteRenderFont` matched all 924 live calls on level 18. One shared vertex emitter (`SpriteStrip`) and one quad builder cover the variants; they differ in screen size (half height, 8.8 scale, double width), texture flags and depth constants (each has its own, at 0x327974-0x327998). Left in GFX_P2: `GfxP2_Init`, `GfxP2_Term`, `GfxP2_LoadTex`, `GfxP2_LoadTexMip` and `GfxP2_RenderDmaSendActual`, which mostly call the SDK's GS library.
 
-Fonts (2026-11-13, `src/font.cpp`, Opus): all of FONT. `FontPrint` matched all 691 live calls and `FontLength` 344 on level 18; every function also passes random text for the loaded font (`fuzz::fontText`: printable characters, spaces, "}" icon and colour sequences, line breaks), 1,000 inputs for `FontLength` and 40 whole-RAM inputs for the rest. In the fixed-width font `FontPrintFX` advances a full character width for a space and again after a "}" sequence, unlike `FontPrint`; kept.
+Fonts (2026-11-13, `src/font.cpp`, Opus): all of FONT. `FontPrint` matched all 691 live calls and `FontLength` 344 on level 18; every function also passes random text for the loaded font (`fuzz::fontText`: printable characters, spaces, "}" icon and colour sequences, line breaks), 1,000 inputs for `FontLength` and 40 whole-RAM inputs for the rest. LINE (`src/line.cpp`): both debug line functions pass 2,000 random inputs (517 of the 3D ones survive clipping). In the fixed-width font `FontPrintFX` advances a full character width for a space and again after a "}" sequence, unlike `FontPrint`; kept.
 
 ### Open bug: speedometer bar flashes to full (2026-11-12)
 
@@ -278,7 +278,7 @@ A region-only live comparison of every polygon call over a 5-minute demo race on
 
 305 of 2,486 functions native. Done since 2026-11-10: collision, route nodes, AI (all) and the smaller PLAYER functions, and the renderer from the DMA chain up: RDRSTATE, RDR, RDRPOLY, RDR_SHAPE, RDR_SKIN, RDR_WATER, RDRALPHA, RDR_PARTICLE, SPRITE and most of GFX_P2, with the SDK's VIF packet library and three libvu0 helpers.
 
-Next: FONT and LINE, the rest of GFX_P2 and GFX_TEX (these call the SDK's GS library: replace it or use guest_call), then VISFX (the effects: the largest unit of game code, and what the remaining PLAYER and CARCOL functions wait on). Before writing each function, run `tools/asm_facts.py NAME` for its addresses, globals, calls and frame.
+Next: the rest of GFX_P2 and GFX_TEX (these call the SDK's GS library: replace it or use guest_call), then VISFX (the effects: the largest unit of game code, and what the remaining PLAYER and CARCOL functions wait on). Before writing each function, run `tools/asm_facts.py NAME` for its addresses, globals, calls and frame.
 
 Open: the speedometer flash (see "Open bug" above; try `PS2X_GS_THREAD=0`). Unchecked for lack of real calls: the skin renderer, the shiny-pass and Track Editor shape paths (the Track Editor one has random inputs), `RdrTri`, rain particles, the player functions in a real race. A light play test (`RC_SHADOW_FIRST=0`, `RC_SHADOW_RATE=2`, rare functions in `RC_SHADOW_ALWAYS`, `PLAY_BINARY` copy) covers them without slowing the game much.
 
