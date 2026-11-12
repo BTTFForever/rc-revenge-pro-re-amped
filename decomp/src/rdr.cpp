@@ -7,6 +7,8 @@
 
 #include "vifpk.h"
 
+#include <initializer_list>
+
 namespace rc {
 
 bool_ MemBlockAllocLo(ptr32<memHandle> pHandle, uint32 size);
@@ -178,6 +180,87 @@ void GfxP2_ZWriteDisable()
     q[3] = 0x4e;
     q[2] = 0x1010000a0ull; // ZMSK
     G(zWriteEnabled) = 0;
+}
+
+uint64_t gsTex0Of(const _sGfxTexture &texture);
+
+namespace {
+
+void gifRegisters(uint64_t *q, int32_t first, std::initializer_list<uint64_t> values)
+{
+    for (uint64_t value : values)
+        q[first++] = value;
+}
+
+} // namespace
+
+// Sets the GS for a sprite texture unless it is already set: TEX1 (no mipmaps), TEXA, then TEX0.
+void GfxP2_Tex(ptr32<_sGfxTexture> pTex)
+{
+    if (pTex == G(gLastTex))
+        return;
+    sGfxP2 &gfx = G(gGfxP2);
+    uint64_t *q = reinterpret_cast<uint64_t *>((gfx.pDmaBuff + gfx.buffIdx).get());
+    gifRegisters(q, 0, {0x2000000000000001ull, 0xe0, 0x5b, 0, 0, 0x49, 0x2000000000000001ull, 0x6e, 9, 0x42});
+    G(gLastTex) = pTex;
+    q[10] = gsTex0Of(*pTex);
+    q[11] = 0;
+    gfx.buffIdx = gfx.buffIdx + 6;
+    gfx.gifTagIdx = -1;
+}
+
+// As GfxP2_Tex, with filtering (attrib 1: bilinear, 2: blended) and the blend for an alpha type.
+void GfxP2_TexExt(ptr32<_sGfxTexture> pTex, s32 attrib, s32 alphaType)
+{
+    if (pTex == G(gLastTex))
+        return;
+    sGfxP2 &gfx = G(gGfxP2);
+    uint64_t *q = reinterpret_cast<uint64_t *>((gfx.pDmaBuff + gfx.buffIdx).get());
+    const uint64_t blended = (attrib & 2) != 0 ? 1 : 0;
+    gifRegisters(q, 0, {0x2000000000000001ull, 0xe0, (static_cast<uint64_t>(attrib & 1) << 3) | (blended << 6) | 0x13, 0, 0, 0x49,
+                        0x3000000000000001ull, 0xe6e});
+    G(gLastTex) = pTex;
+    uint64_t alpha;
+    if (blended == 0)
+        alpha = 0x3f00000029ull;
+    else if ((alphaType & 1) == 0)
+        alpha = (alphaType & 2) == 0 ? 0x3f00000021ull : 0x7f000000a1ull;
+    else
+        alpha = 0x7f00000029ull;
+    q[8] = alpha; // ALPHA_1
+    q[9] = 0x42;
+    q[10] = gsTex0Of(*pTex);
+    q[11] = 0;
+    q[13] = 0x47;
+    q[12] = 0x703f7; // TEST_1
+    gfx.buffIdx = gfx.buffIdx + 7;
+    gfx.gifTagIdx = -1;
+}
+
+// As GfxP2_Tex for effects: clamping (attrib 0x10: repeat), alpha test (0x20), additive (2) or subtractive (4)
+// blending.
+void GfxP2_TexFX(ptr32<_sGfxTexture> pTex, u32 attrib)
+{
+    if (pTex == G(gLastTex))
+        return;
+    sGfxP2 &gfx = G(gGfxP2);
+    uint64_t *q = reinterpret_cast<uint64_t *>((gfx.pDmaBuff + gfx.buffIdx).get());
+    G(gLastTex) = pTex;
+    gifRegisters(q, 0, {0x4000000000000001ull, 0xeee0, 0x5b, 0, 0, 0x49, (attrib & 0x10) == 0 ? 5u : 0u, 8,
+                        (attrib & 0x20) == 0 ? 0x703f7u : 0x73017u, 0x47, 0x2000000000000001ull, 0x6e});
+    uint64_t blend;
+    if ((attrib & 2) != 0)
+        blend = 0x8000000029ull;
+    else if ((attrib & 4) != 0)
+        blend = 0x80000000a1ull;
+    else
+        blend = (attrib & 0x20) == 0 ? 9 : 1;
+    q[12] = blend;
+    q[13] = 0x42;
+    q[14] = gsTex0Of(*pTex);
+    q[15] = 0;
+    gfx.buffIdx = gfx.buffIdx + 8;
+    gfx.gifTagIdx = -1;
 }
 
 // RDRSTATE.c
@@ -498,10 +581,16 @@ void emitTriangle(ptr32<sceVif1Packet> packet, ptr32<_sRdrPoly> poly, const int 
 
 // The GS TEX0 register for the channel's texture: buffer, width in 64-texel units, format, size, and for the
 // palette formats (0x13, 0x14) the palette's address, loaded with the texture.
+uint64_t gsTex0Of(const _sGfxTexture &texture);
+
 uint64_t gsTex0(const _sGfxTexture *tex)
 {
-    if (!tex)
-        return 0;
+    return tex ? gsTex0Of(*tex) : 0;
+}
+
+uint64_t gsTex0Of(const _sGfxTexture &texture)
+{
+    const _sGfxTexture *tex = &texture;
     const int32_t wd = tex->wd;
     const int32_t blocks = (wd < 0 ? wd + 0x3f : wd) >> 6;
     const uint64_t bufferWidth = 0 < blocks ? static_cast<uint64_t>(blocks) : 1;
@@ -715,6 +804,9 @@ RC_DECOMP_FN_NOFUZZ(Rdr_Term, 0x1a3628)
 RC_DECOMP_FN(GfxP2_BeginScene, 0x18fc88)
 RC_DECOMP_FN(GfxP2_EndScene, 0x18fc90)
 RC_DECOMP_FN(GfxP2_RenderDmaSend, 0x18fcd0)
+RC_DECOMP_FN(GfxP2_Tex, 0x18ea98)
+RC_DECOMP_FN(GfxP2_TexExt, 0x18f018)
+RC_DECOMP_FN(GfxP2_TexFX, 0x18f658)
 RC_DECOMP_FN(GfxP2_DefRenderState, 0x18fe40)
 RC_DECOMP_FN(GfxP2_Scissor, 0x18fee8)
 RC_DECOMP_FN(GfxP2_ZWriteEnable, 0x190058)
