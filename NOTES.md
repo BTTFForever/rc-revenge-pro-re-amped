@@ -211,6 +211,8 @@ All shape programs share their clipping text at different addresses. `decomp/vu1
 
 **Bulk C decompilation** (started 2026-11-10). `tools/decomp_progress.py --files` shows progress by source unit: 1,713 game functions, about 119,000 lines of Ghidra output. The other 773 are SDK, libc and zlib, to be replaced by host libraries. `tools/shadow.sh <level> <seconds> [fuzz]` compares every native function with its recompiled original during a demo race and on random inputs (`RC_SHADOW_ONLY=<name>,<name>` limits the random inputs to those functions). The random inputs for every function at the default 2000 take well over ten minutes, so pass a list, or 1 as the count when only the race matters.
 
+`tools/asm_facts.py NAME...` (or `--unit RDR_SHAPE`) prints what the instructions say and Ghidra's pseudo-C can lose: frame size, locals passed by address, absolute and $gp-relative addresses resolved to globals/functions (or `?`), calls with their constant or stack-address arguments, madd/sqrt use. Read it next to `decomp_extract.py` output before writing a function. Its warnings flag a Ghidra label (`_dma_N`) that stands for different addresses in different functions, an empty Ghidra body that stores, and a store in the delay slot of the final `jr $ra`; `--unit ALL --warnings-only` scans the whole program (last output in `decomp/generated/asm_warnings.txt`). Straight-line register tracking only, so a constant set in one branch arm can leak into another.
+
 Things Ghidra's output hides, all found by the comparison:
 - `4096.0 / SQRT(x)` is a single `rsqrt.s`, which rounds differently: use `ee_rsqrt`.
 - `add` traps on overflow, so random inputs that overflow have no meaningful answer: those functions use `RC_DECOMP_FN_NOFUZZ`.
