@@ -13,6 +13,7 @@ void Rdr_AddDmaCall(ptr32<void> pPacket);
 void Rdr_UploadProg(ptr32<u32> pProg);
 void RdrState_SetStateBlockToDefaults(ptr32<sRdrStateBlock> block);
 void RdrState_SetZTestEnable(ptr32<sRdrStateBlock> block, u32 enable, u32 func);
+void RdrState_SetZBufferWriteEnable(ptr32<sRdrStateBlock> block, u32 enable);
 void RdrState_SetPixelAlphaBlendControlEnable(ptr32<sRdrStateBlock> block, u32 enable);
 void RdrState_SetAlphaBlending(ptr32<sRdrStateBlock> block, u32 A, u32 B, u32 C, u32 D, u8 fixedAlpha);
 void RdrState_ApplyStateBlock(ptr32<sRdrStateBlock> block);
@@ -453,6 +454,190 @@ void TERdr_VUShape(ptr32<sRdrVUShape> pShape, ptr32<_sRdrCamera> pCamera, u32 ti
     Rdr_AddDmaCall(pShape->pTri.cast<void>());
 }
 
+// RDR_SKIN.c: animated models (the drivers). The packet carries the camera like a shape's, then each bone's
+// matrix and position for the skin microprogram.
+
+namespace {
+const uint32_t kSkinTemplate = 0x1e1e50, kSkinProgram = 0x1e3df0;
+const int32_t kSkinPackets = 0x180;
+const uint32_t kWaterTemplate = 0x1d5450, kWaterProgram = 0x1d6470;
+const int32_t kWaterPackets = 0x20;
+
+void putRows(uint8_t *p, uint32_t offset, const sMat33 &m)
+{
+    const Row rows[3] = {rowX(m), rowY(m), rowZ(m)};
+    for (int r = 0; r < 3; ++r)
+    {
+        putf(p, offset + r * 0x10u, rows[r].x);
+        putf(p, offset + r * 0x10u + 4, rows[r].y);
+        putf(p, offset + r * 0x10u + 8, rows[r].z);
+    }
+}
+} // namespace
+
+void Rdr_FixVUSkinDma(ptr32<sRdrVUSkin> pSkin)
+{
+    endListWithReturn(pSkin->pTri.address);
+}
+
+void Rdr_SkinTerm()
+{
+    MemBlockFree(ptr32<memHandle>(guest_addr(&G(gRdr).pSkinData)));
+}
+
+// Fills in each texture's TEX0 register in the skin's triangle list, then makes the list callable.
+void Rdr_FixVUSkin(ptr32<sRdrVUSkin> pSkin)
+{
+    if (pSkin)
+    {
+        uint32_t list = pSkin->pTexFixList.address;
+        for (uint32_t remaining = pSkin->numFixups; remaining != 0; --remaining, list += 4)
+        {
+            const uint32_t at = *static_cast<uint32_t *>(guest_host(list));
+            uint32_t *words = static_cast<uint32_t *>(guest_host(at));
+            const ptr32<_sGfxTexture> texPtr = *ptr32<ptr32<_sGfxTexture>>(pSkin->pTex.address + words[0] * 4u);
+            const uint64_t tex0 = gsTex0(texPtr ? texPtr.get() : nullptr);
+            words[1] = static_cast<uint32_t>(tex0 >> 32);
+            words[0] = static_cast<uint32_t>(tex0);
+        }
+    }
+    Rdr_FixVUSkinDma(pSkin);
+}
+
+void Rdr_SkinInit()
+{
+    GuestFrame frame(0x60); // The handle is a local of the original, at 0.
+    const ptr32<memHandle> handle = frame.local<memHandle>(0);
+    *handle = nullptr;
+    MemBlockAllocLo(handle, 0x2f7000);
+    sRdr &rdr = G(gRdr);
+    rdr.pSkinData = handle->cast<u8>();
+    for (int32_t i = 0; i < kSkinPackets; ++i)
+        std::memcpy((rdr.pSkinData + i * 0x1fa0).get(), guest_host(kSkinTemplate), 0x1fa0);
+    rdr.skinDataSz = 0x1fa0;
+    rdr.currSkinData = 0;
+}
+
+// Draws a skinned model in the pose pAnimOut holds; the root bone places the model.
+void Rdr_VUSkin(ptr32<sRdrVUSkin> pSkin, ptr32<sAnimOutput> pAnimOut, ptr32<_sRdrCamera> pCamera)
+{
+    if (!pSkin || !pCamera)
+        return;
+    sRdr &rdr = G(gRdr);
+    uint32_t address = 0;
+    uint8_t *p = nextPacket(rdr.currSkinData, kSkinPackets, rdr.pSkinData, rdr.skinDataSz, &address);
+    sRdrVUSkin &skin = *pSkin;
+    const sAnimOutput &anim = *pAnimOut;
+    const _sRdrCamera &camera = *pCamera;
+    skin.pos = *anim.aPos[0];
+    skin.mat = *anim.aMat[0];
+    const sMat33 &s = skin.mat, &c = camera.mat;
+    const Row skinRows[3] = {rowX(s), rowY(s), rowZ(s)};
+    for (int i = 0; i < 3; ++i)
+        putf(p, 0xe0 + i * 4u, dot(c.Zx, c.Zy, c.Zz, skinRows[i].x, skinRows[i].y, skinRows[i].z));
+    putw(p, 0xec, 0);
+    const ee_float dx = camera.pos.x - skin.pos.x, dy = camera.pos.y - skin.pos.y, dz = camera.pos.z - skin.pos.z;
+    for (int i = 0; i < 3; ++i)
+        putf(p, 0xf0 + i * 4u, dot(dx, dy, dz, skinRows[i].x, skinRows[i].y, skinRows[i].z));
+    putw(p, 0xfc, 0);
+    putf(p, 0xd0, camera.pos.x);
+    putf(p, 0xd4, camera.pos.y);
+    putf(p, 0xd8, camera.pos.z);
+    putw(p, 0xdc, 0);
+    putf(p, 0x110, camera.dValX);
+    putf(p, 0x114, -camera.dValY);
+    putRows(p, 0x120, s);
+    putf(p, 0x150, skin.pos.x - camera.pos.x);
+    putf(p, 0x154, skin.pos.y - camera.pos.y);
+    putf(p, 0x158, skin.pos.z - camera.pos.z);
+    putw(p, 0x15c, 0x3f800000);
+    const Row columns[3] = {{c.Xx, c.Yx, c.Zx}, {c.Xy, c.Yy, c.Zy}, {c.Xz, c.Yz, c.Zz}};
+    for (int r = 0; r < 3; ++r)
+    {
+        putf(p, 0x160 + r * 0x10u, columns[r].x);
+        putf(p, 0x164 + r * 0x10u, columns[r].y);
+        putf(p, 0x168 + r * 0x10u, columns[r].z);
+    }
+    std::memset(p + 0x190, 0, 12);
+    putw(p, 0x19c, 0x3f800000);
+    // The bones, from offset 4000.
+    for (int32_t bone = 0; bone < anim.numNodes; ++bone)
+    {
+        uint8_t *b = p + 4000 + bone * 0x40;
+        putRows(b, 0, *anim.aMat[bone]);
+        const _sVec3 &pos = *anim.aPos[bone];
+        putf(b, 0x30, pos.x);
+        putf(b, 0x34, pos.y);
+        putf(b, 0x38, pos.z);
+        putw(b, 0x3c, 0x3f800000);
+    }
+    putf(p, 0x104, camera.vertDrawOffset + ee_float(2048.0f));
+    Rdr_UploadProg(ptr32<u32>(kSkinProgram));
+    Rdr_AddDmaCall(ptr32<void>(address + 0xf90));
+    Rdr_AddDmaCall(ptr32<void>(address));
+    Rdr_AddDmaCall(pSkin->pTri.cast<void>());
+}
+
+// RDR_WATER.c
+
+void Rdr_WaterTerm()
+{
+    MemBlockFree(ptr32<memHandle>(guest_addr(&G(gRdr).pWaterShapeData)));
+}
+
+void Rdr_WaterInit()
+{
+    sRdr &rdr = G(gRdr);
+    MemBlockAllocLo(ptr32<memHandle>(guest_addr(&rdr.pWaterShapeData)), 0x20400);
+    for (int32_t i = 0; i < kWaterPackets; ++i)
+        std::memcpy((rdr.pWaterShapeData + i * 0x1020).get(), guest_host(kWaterTemplate), 0x1020);
+    rdr.waterShapeDataSz = 0x1020;
+    rdr.waterCurrShapeData = 0;
+    const ptr32<sRdrStateBlock> state(guest_addr(&G(waterStateBlock)));
+    RdrState_SetStateBlockToDefaults(state);
+    RdrState_SetZBufferWriteEnable(state, 0);
+}
+
+void RdrState_ForceApplyStateBlock(ptr32<sRdrStateBlock> block);
+
+// Water: the shape's bump texture (a pointer kept after the shape header) and a light above and ahead of the camera
+// go into the water template's globals and the packet; drawn without depth writes.
+void Rdr_Water(ptr32<sRdrVUShape> pShape, ptr32<_sRdrCamera> pCamera)
+{
+    if (!pShape || !pCamera)
+        return;
+    const auto global = [](uint32_t address) -> uint32_t & { return *static_cast<uint32_t *>(guest_host(address)); };
+    const ptr32<_sGfxTexture> bump = *ptr32<ptr32<_sGfxTexture>>(pShape.address + 0x60);
+    const uint64_t tex0 = gsTex0(bump ? bump.get() : nullptr);
+    sRdr &rdr = G(gRdr);
+    const int32_t index = rdr.waterCurrShapeData;
+    global(0x1d5524) = static_cast<uint32_t>(tex0 >> 32);
+    rdr.waterCurrShapeData = rdr.waterCurrShapeData + 1;
+    global(0x1d5520) = static_cast<uint32_t>(tex0);
+    if (kWaterPackets - 1 < rdr.waterCurrShapeData)
+        rdr.waterCurrShapeData = 0;
+    const _sRdrCamera &camera = *pCamera;
+    const ee_float lightX = camera.pos.x + camera.mat.Zx * ee_float(2000.0f);
+    std::memcpy(guest_host(0x1d5510), &lightX, 4);
+    const uint32_t address = (rdr.pWaterShapeData + index * rdr.waterShapeDataSz).address;
+    uint8_t *p = static_cast<uint8_t *>(guest_host(address));
+    const ee_float lightY = camera.pos.y + ee_float(1000.0f);
+    std::memcpy(guest_host(0x1d5514), &lightY, 4);
+    global(0x1d551c) = 0;
+    const ee_float lightZ = camera.pos.z + camera.mat.Zz * ee_float(2000.0f);
+    std::memcpy(guest_host(0x1d5518), &lightZ, 4);
+    writeShapeCamera(p, 0x1a0, *pShape, camera);
+    putw(p, 0xa0, global(0x1d54f0));
+    putw(p, 0xa4, global(0x1d54f4));
+    for (uint32_t k = 0; k < 8; ++k)
+        putw(p, 0xc0 + k * 4u, global(0x1d5510 + k * 4u));
+    RdrState_ForceApplyStateBlock(ptr32<sRdrStateBlock>(guest_addr(&G(waterStateBlock))));
+    Rdr_UploadProg(ptr32<u32>(kWaterProgram));
+    Rdr_AddDmaCall(ptr32<void>(address));
+    Rdr_AddDmaCall(pShape->pTri.cast<void>());
+    RdrState_ApplyDefaultStateBlock();
+}
+
 } // namespace rc
 
 RC_DECOMP_FN(Rdr_ShapeConstruct, 0x1a7210)
@@ -468,3 +653,11 @@ RC_DECOMP_FN_NOFUZZ(Rdr_VUShapeSetup, 0x1a6e98)
 RC_DECOMP_FN_NOFUZZ(TRdr_VUShape, 0x1a55b8)
 RC_DECOMP_FN_NOFUZZ(TRdr_VUShapeCell, 0x1a5ec8)
 RC_DECOMP_FN_NOFUZZ(TERdr_VUShape, 0x1a66f8)
+RC_DECOMP_FN_NOFUZZ(Rdr_FixVUSkinDma, 0x1a3498)
+RC_DECOMP_FN_NOFUZZ(Rdr_SkinTerm, 0x1a2910)
+RC_DECOMP_FN_NOFUZZ(Rdr_FixVUSkin, 0x1a2920)
+RC_DECOMP_FN_NOFUZZ(Rdr_SkinInit, 0x1a33f0)
+RC_DECOMP_FN_NOFUZZ(Rdr_VUSkin, 0x1a2e58)
+RC_DECOMP_FN_NOFUZZ(Rdr_WaterTerm, 0x1a9470)
+RC_DECOMP_FN_NOFUZZ(Rdr_WaterInit, 0x1a9310)
+RC_DECOMP_FN_NOFUZZ(Rdr_Water, 0x1a9480)
