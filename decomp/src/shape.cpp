@@ -27,6 +27,7 @@ const uint32_t kTrackEdTemplate = 0x1dec80; // The same for the Track Editor rin
 const uint32_t kShapeProgram = 0x1d9840;   // _dma_48: track and shape renderer.
 const uint32_t kEnvProgram = 0x1dc8a0;     // gTRdr_EndShapeData: the shiny (environment map) pass.
 const uint32_t kVUShapeProgram = 0x1e70e0; // _dma_47: Rdr_VUShape's renderer.
+const uint32_t kTrackEdProgram = 0x1dfc50; // The Track Editor's renderer (Ghidra shows it as _dma_48 too).
 const uint32_t kVUShapePacket = 0x1e60f0;  // Rdr_VUShape's single packet; the gRdr_* globals are inside it.
 const uint32_t kRdrAlphaAddTriangles = 0x1a17b0;
 const int32_t kShapePackets = 0x168, kTrackEdPackets = 0x180;
@@ -449,7 +450,7 @@ void TERdr_VUShape(ptr32<sRdrVUShape> pShape, ptr32<_sRdrCamera> pCamera, u32 ti
             putf(p, 0x160 + light * 0x10u + k * 4u, vals[light][k]);
         putw(p, 0x16c + light * 0x10u, 0);
     }
-    Rdr_UploadProg(ptr32<u32>(kShapeProgram));
+    Rdr_UploadProg(ptr32<u32>(kTrackEdProgram));
     Rdr_AddDmaCall(ptr32<void>(address));
     Rdr_AddDmaCall(pShape->pTri.cast<void>());
 }
@@ -944,11 +945,11 @@ RC_DECOMP_FN_NOFUZZ(Rdr_FixVUShape, 0x1a4c28)
 RC_DECOMP_FN(Rdr_VUShapeExecute, 0x1a7208)
 RC_DECOMP_FN_NOFUZZ(Rdr_ShapeTerm, 0x1a4bf8)
 RC_DECOMP_FN_NOFUZZ(Rdr_ShapeInit, 0x1a4ad0)
-RC_DECOMP_FN_NOFUZZ(Rdr_VUShape, 0x1a5230)
-RC_DECOMP_FN_NOFUZZ(Rdr_VUShapeSetup, 0x1a6e98)
-RC_DECOMP_FN_NOFUZZ(TRdr_VUShape, 0x1a55b8)
+RC_DECOMP_FN(Rdr_VUShape, 0x1a5230)
+RC_DECOMP_FN(Rdr_VUShapeSetup, 0x1a6e98)
+RC_DECOMP_FN_NOFUZZ(TRdr_VUShape, 0x1a55b8) // Random alpha counts would loop for ever.
 RC_DECOMP_FN_NOFUZZ(TRdr_VUShapeCell, 0x1a5ec8)
-RC_DECOMP_FN_NOFUZZ(TERdr_VUShape, 0x1a66f8)
+RC_DECOMP_FN(TERdr_VUShape, 0x1a66f8)
 RC_DECOMP_FN_NOFUZZ(Rdr_FixVUSkinDma, 0x1a3498)
 RC_DECOMP_FN_NOFUZZ(Rdr_SkinTerm, 0x1a2910)
 RC_DECOMP_FN_NOFUZZ(Rdr_FixVUSkin, 0x1a2920)
