@@ -19,6 +19,9 @@ void VfxPutUV0(ee_float u, ee_float v);                   // visfx.cpp
 void VfxPutUV1(ee_float u, ee_float v);
 void VfxPutUV2(ee_float u, ee_float v);
 void VfxPutUV3(ee_float u, ee_float v);
+uint64_t VfxCarVelocityVal(ptr32<_sObject> pObj);         // visfx.cpp
+void VfxCarSortPos(ptr32<_sObject> pObj, ptr32<_sVfx_Object> fx);
+void AINodeRouteFinder(ptr32<_sObject> pObj, int32 iDistance, int32 count); // ai.cpp
 void PS2C_GteMatrixMulVec16(ptr32<_sVec16> pVec);        // psxdefs.cpp
 void PS2C_SetGteMatrix(ptr32<_sMat> pMat);
 void PS2C_GetVec16GteResult(ptr32<_sVec16> pOut);
@@ -28,6 +31,8 @@ namespace {
 using vfx::at;
 using vfx::ringHead;
 using vfx::ringNext;
+using vfx::ringPush;
+using vfx::sortAtScenery;
 
 constexpr uint32_t kLifeSpan = 0x10;
 constexpr uint32_t kRing = 0x40;      // the ring header: mask, count, head, tail
@@ -593,9 +598,505 @@ void Vfx2Renderer_SkullWave(ptr32<_sVfx_Object> mem)
     VfxPutUV3(0.0f, 1.0f);
 }
 
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The fifth batch: the burner, lava, route finder, clock, cannon, fire, feather and swarm effects of the scenery and the
+// cars.
+
+// Four glowing sprites at fixed offsets from a UFO's burner: the offsets are turned by the car's matrix (through the GTE
+// stand-ins) and added to its position; the brightness swings with the effect's counter (0 to 0x40 and back) plus a
+// random flicker.
+void Vfx2Renderer_UFOBurner(ptr32<_sVfx_Object> mem)
+{
+    GuestFrame frame(0xa0);
+    const uint32_t m = mem.address;
+    const ptr32<_sObject> car(at<uint32_t>(m + 0x650));
+    if (car->sDontRenderMe != 0 && G(mainVarG).level == 0x62)
+        return;
+    if (!(VfxHasCarBeenRendered(car) < 0x157c))
+        return;
+    const uint64_t position = VfxCarPositionVal(car);
+    const ptr32<MATRIX> matrix = VfxCarMatrixPoi(car);
+    const int16_t px = static_cast<int16_t>(position), py = static_cast<int16_t>(position >> 16), pz = static_cast<int16_t>(position >> 32);
+    uint32_t level = at<uint32_t>(m + 0x654) & 0x7f;
+    if (level > 0x40)
+        level = 0x80 - level;
+    const int32_t flicker = ((vfx::random15() + 0x28) & 0x3f);
+    const uint32_t sp = vfx::sprite();
+    const uint32_t shade = level + flicker;
+    at<uint8_t>(sp + vfx::spr::kFlipX) = 0;
+    at<uint8_t>(sp + vfx::spr::kCode) = 2;
+    at<uint16_t>(sp + vfx::spr::kAngle) = 0;
+    at<float>(sp + vfx::spr::kScale) = 25.0f;
+    at<uint32_t>(sp + vfx::spr::kRgb) = shade * 0x10101u;
+    at<uint32_t>(sp + vfx::spr::kTexture) = vfx::vfxTexture(1);
+    const uint32_t offset = frame.local<uint8>(0x10).address; // svOffset
+    const uint32_t result = frame.local<uint8>(0x20).address; // svRes
+    // The four burner points: x, y, z in the car's frame.
+    static const int16_t kOffsets[4][3] = {{0xd, 0xc, -0x36}, {-0xd, 0xc, -0x36}, {0x23, 8, -0x3d}, {-0x23, 8, -0x3d}};
+    for (const auto &point : kOffsets)
+    {
+        at<int16_t>(offset) = point[0];
+        at<int16_t>(offset + 2) = point[1];
+        at<int16_t>(offset + 4) = point[2];
+        PS2C_SetGteMatrix(ptr32<_sMat>(matrix.address));
+        PS2C_GteMatrixMulVec16(ptr32<_sVec16>(offset));
+        PS2C_GetVec16GteResult(ptr32<_sVec16>(result));
+        const uint32_t s = vfx::sprite();
+        at<float>(s + vfx::spr::kPos) = ee_itof(px + at<int16_t>(result));
+        at<float>(s + vfx::spr::kPos + 4) = ee_itof(py + at<int16_t>(result + 2));
+        at<float>(s + vfx::spr::kPos + 8) = ee_itof(pz + at<int16_t>(result + 4));
+        VfxPS2SpriteRotated3D(ee_float(-10.0f));
+    }
+}
+
+// Sparks of lava thrown up from a lava pool (0x18-byte particles): each is a sprite at the pool's position plus the
+// particle's own, fading from the lava colour (three bytes at +0x348) as it ages, flipped by the side it flies to and
+// spinning with its own angle. The original draws a random number for each and throws it away.
+void Vfx2Renderer_LavaSpit(ptr32<_sVfx_TSFX> mem)
+{
+    GuestFrame frame(0xa0);
+    const uint32_t m = mem.address;
+    const SceneryPos where = sceneryPosition(m);
+    const uint32_t sp = vfx::sprite();
+    at<uint8_t>(sp + vfx::spr::kCode) = 2;
+    at<uint32_t>(sp + vfx::spr::kTexture) = vfx::vfxTexture(0x15);
+    at<uint16_t>(sp + vfx::spr::kAngle) = static_cast<uint16_t>(vfx::random15());
+    for (int32_t index = ringHead(m); index != at<uint8_t>(m + kRing + 3); index = ringNext(m, index))
+    {
+        const uint32_t p = m + kParticles + static_cast<uint32_t>(index) * 0x18u;
+        at<float>(sp + vfx::spr::kPos) = ee_itof(where.x + (at<int16_t>(p) >> 2));
+        at<float>(sp + vfx::spr::kPos + 4) = ee_itof(where.y + (at<int16_t>(p + 2) >> 2));
+        at<float>(sp + vfx::spr::kPos + 8) = ee_itof(where.z + (at<int16_t>(p + 4) >> 2));
+        rand();
+        const int32_t age = std::max(0x10 - static_cast<int32_t>(at<uint16_t>(p + 0x14)), 0);
+        const int32_t blue = atLeastZero(at<uint8_t>(m + 0x34a) - age * 8);
+        const int32_t red = atLeastZero(at<uint8_t>(m + 0x348) - age * 8);
+        const int32_t green = atLeastZero(at<uint8_t>(m + 0x349) - age * 8);
+        at<uint8_t>(sp + vfx::spr::kFlipX) = at<int16_t>(p + 0x12) < 1 ? 1 : 0;
+        at<uint32_t>(sp + vfx::spr::kRgb) = static_cast<uint32_t>(red + green * 0x100 + blue * 0x10000);
+        at<uint16_t>(sp + vfx::spr::kAngle) = at<uint16_t>(p + 0x10);
+        at<float>(sp + vfx::spr::kScale) = ee_itof(at<uint8_t>(p + 0x16));
+        VfxPS2SpriteRotated3D(ee_float(0.0f));
+    }
+}
+
+// Feathers: a new one every fourth frame while the ring has room, thrown to a random side with a slow fall; the movers
+// run, and each feather's sideways speeds are then nudged towards zero as it flutters (and its sideways speed and
+// height cleared once it has fallen far enough: -0x8fc).
+void Vfx2Handler_Feathers(ptr32<_sVfx_TSFX> mem)
+{
+    const uint32_t m = mem.address;
+    const uint16_t tick = static_cast<uint16_t>(at<uint16_t>(m + 0x184) + 1);
+    at<uint16_t>(m + 0x184) = tick;
+    if ((tick & 3) == 0 && at<uint8_t>(m + kRing + 1) < 0xf)
+    {
+        const uint32_t p = m + kParticles + static_cast<uint32_t>(static_cast<int8_t>(at<uint8_t>(m + kRing + 3))) * 0x14u;
+        at<uint16_t>(p + 2) = 0;
+        at<uint16_t>(p) = static_cast<uint16_t>((vfx::random15() & 0xfff) - 0x800);
+        at<uint16_t>(p + 8) = 0;
+        at<uint16_t>(p + 4) = static_cast<uint16_t>((vfx::random15() & 0xfff) - 0x800);
+        at<uint16_t>(p + 0xc) = 0;
+        at<uint16_t>(p + 0xa) = static_cast<uint16_t>(-4 - (vfx::random15() & 0x1f));
+        at<uint16_t>(p + 0x10) = 0x96;
+        at<uint16_t>(p + 0x12) = static_cast<uint16_t>(vfx::random15());
+        ringPush(m);
+    }
+    VfxSimpleParticleMover(ptr32<_sVfx_PartHeader>(m + kRing), ptr32<_VFX_SIMPLEPARTICLE>(m + kParticles));
+    for (int32_t index = ringHead(m); index != at<uint8_t>(m + kRing + 3); index = ringNext(m, index))
+    {
+        const uint32_t p = m + kParticles + static_cast<uint32_t>(index) * 0x14u;
+        at<uint16_t>(p + 8) = static_cast<uint16_t>(at<uint16_t>(p + 8) + (at<int16_t>(p) < 0 ? 1 : -1));
+        at<uint16_t>(p + 0xc) = static_cast<uint16_t>(at<uint16_t>(p + 0xc) + (at<int16_t>(p + 4) < 0 ? 1 : -1));
+        if (at<int16_t>(p + 2) < -0x8fc)
+        {
+            at<uint16_t>(p + 0xc) = 0;
+            at<uint16_t>(p + 8) = 0;
+            at<uint16_t>(p + 0xa) = 0;
+        }
+    }
+    sortAtScenery(m, 0x70);
+}
+
+// The route finder's arrows: only for the player's own car and with track direction hints on. The counter at +0x48 runs
+// round 64 steps; the finder fills the car's possible routes with 32 points, and each point within three steps of the
+// counter is drawn as a sprite (brightest at the counter).
+void Vfx2Renderer_RouteFinder(ptr32<_sVfx_Object> mem)
+{
+    GuestFrame frame(0xb0);
+    const uint32_t m = mem.address;
+    if (G(frontEndVarG).gameStateData.gameConfig.trackDirHints == 0)
+        return;
+    const uint32_t car = at<uint32_t>(m + 0x40);
+    if (G(cameraVarG).pCamera->pTarget.address != car)
+        return;
+    const uint32_t counter = (at<uint32_t>(m + 0x48) + 1) & 0x3f;
+    at<uint32_t>(m + 0x48) = counter;
+    AINodeRouteFinder(ptr32<_sObject>(car), 0x80, 0);
+    const uint32_t sp = vfx::sprite();
+    at<uint8_t>(sp + vfx::spr::kCode) = 2;
+    at<uint32_t>(sp + vfx::spr::kTexture) = vfx::vfxTexture(0x17);
+    at<uint8_t>(sp + vfx::spr::kFlipX) = 0;
+    at<float>(sp + vfx::spr::kScale) = 32.0f;
+    at<uint16_t>(sp + vfx::spr::kAngle) = 0;
+    for (uint32_t i = 0; i < 0x20; ++i)
+    {
+        uint32_t brightness = 0;
+        if (counter == i)
+            brightness = 0x80;
+        else if (counter == i + 1)
+            brightness = 0x46;
+        else if (counter == i + 2)
+            brightness = 0x30;
+        if (brightness == 0)
+            continue;
+        const int32_t angle = vfx::random15();
+        const SVECTOR &route = G(aiNodeVarG).possibleAIRoutes[i];
+        at<uint32_t>(sp + vfx::spr::kRgb) = brightness * 0x10001u;
+        at<uint16_t>(sp + vfx::spr::kAngle) = static_cast<uint16_t>(angle);
+        at<float>(sp + vfx::spr::kPos) = ee_itof(route.vx);
+        at<float>(sp + vfx::spr::kPos + 4) = ee_itof(route.vy + 0x32);
+        at<float>(sp + vfx::spr::kPos + 8) = ee_itof(route.vz);
+        VfxPS2SpriteRotated3D(ee_float(-80.0f));
+    }
+}
+
+// The time trial clock that floats over the player's car: on its first frame (life 0x80) it takes the car's position
+// (raised 40 units) and, for the player's own car, its velocity in units per frame; the position then follows the
+// velocity, a spin speed and a clock hand angle run down, and a puff of smoke (the 0x14-byte particles from +0x48) is
+// thrown out at random while the clock has more than 7 frames to live.
+void Vfx2Handler_TTclock(ptr32<_sVfx_Object> mem)
+{
+    GuestFrame frame(0x80);
+    const uint32_t m = mem.address;
+    const ptr32<_sObject> car(at<uint32_t>(m + 0x44));
+    if (at<uint16_t>(m + kLifeSpan) == 0x80)
+    {
+        const ptr32<ee_float> where = VfxVUCarPositionPoi(car);
+        at<float>(m + 0xf0) = where[0];
+        const ee_float y = where[1];
+        const ptr32<_sObject> target = G(cameraVarG).pCamera->pTarget;
+        at<float>(m + 0xf4) = y + ee_float(40.0f);
+        at<float>(m + 0xf8) = where[2];
+        if (target.address == car.address)
+        {
+            const uint64_t velocity = VfxCarVelocityVal(car);
+            at<float>(m + 0x100) = ee_itof(static_cast<int16_t>(velocity)) * ee_float(0.00390625f);
+            at<float>(m + 0x104) = ee_itof(static_cast<int16_t>(velocity >> 16)) * ee_float(0.00390625f);
+            at<float>(m + 0x108) = ee_itof(static_cast<int16_t>(velocity >> 32)) * ee_float(0.00390625f);
+        }
+        at<int16_t>(m + 0x110) = -0x334;
+        at<int16_t>(m + 0x112) = 0x280;
+    }
+    at<float>(m + 0xf0) = ee_float(at<float>(m + 0xf0)) + ee_float(at<float>(m + 0x100));
+    at<float>(m + 0xf4) = ee_float(at<float>(m + 0xf4)) + ee_float(at<float>(m + 0x104));
+    at<float>(m + 0xf8) = ee_float(at<float>(m + 0xf8)) + ee_float(at<float>(m + 0x108));
+    sceVu0CopyVector(ptr32<ee_float>(m + 0x20), ptr32<ee_float>(m + 0xf0));
+    const uint16_t life = at<uint16_t>(m + kLifeSpan);
+    int16_t spin = at<int16_t>(m + 0x112);
+    if (life < 0x41)
+        at<uint16_t>(m + 0x110) = 0;
+    else
+        at<uint16_t>(m + 0x110) = static_cast<uint16_t>(at<uint16_t>(m + 0x110) + static_cast<uint16_t>(spin));
+    spin = static_cast<int16_t>(static_cast<uint16_t>(spin) - 0x10);
+    at<int16_t>(m + 0x112) = spin < 0 ? 0 : spin;
+    if (life > 7 && at<uint8_t>(m + kRing + 1) < at<uint8_t>(m + kRing))
+    {
+        const uint32_t p = m + 0x48 + static_cast<uint32_t>(at<uint8_t>(m + kRing + 3)) * 0x14u;
+        at<uint16_t>(p) = static_cast<uint16_t>((vfx::random15() & 0x7f) - 0x40);
+        at<uint16_t>(p + 2) = static_cast<uint16_t>((vfx::random15() & 0x7f) - 0x40);
+        at<uint16_t>(p + 4) = static_cast<uint16_t>((vfx::random15() & 0x7f) - 0x40);
+        at<uint16_t>(p + 8) = static_cast<uint16_t>((vfx::random15() & 0xff) - 0x80);
+        at<uint16_t>(p + 0xa) = static_cast<uint16_t>((vfx::random15() & 0xff) - 0x80);
+        at<uint16_t>(p + 0xc) = static_cast<uint16_t>((vfx::random15() & 0xff) - 0x80);
+        at<uint16_t>(p + 0x10) = 7;
+        ringPush(m);
+    }
+    VfxSimpleParticleMover(ptr32<_sVfx_PartHeader>(m + kRing), ptr32<_VFX_SIMPLEPARTICLE>(m + 0x48));
+    VfxCarSortPos(car, mem);
+    at<uint16_t>(m + kLifeSpan) = static_cast<uint16_t>(at<uint16_t>(m + kLifeSpan) - 1);
+}
+
+// The clock itself, for every car but the human players' second kind (type 2): the smoke puffs around the clock's
+// position (pulled towards a point in front of the camera over the clock's last 0x40 frames), then the clock face
+// with its hand angle swinging on the game timer.
+void Vfx2Renderer_TTclock(ptr32<_sVfx_Object> mem)
+{
+    GuestFrame frame(0xe0);
+    const uint32_t m = mem.address;
+    const uint32_t hud = G(pLvlG)->pHudRes.address;
+    const uint32_t car = at<uint32_t>(m + 0x44);
+    if (at<uint8_t>(car + 0x44) == 2)
+        return;
+    if (!(VfxHasCarBeenRendered(ptr32<_sObject>(car)) < 0x157c))
+        return;
+    uint32_t sp = vfx::sprite();
+    at<float>(sp + vfx::spr::kPos) = at<float>(m + 0xf0);
+    at<float>(sp + vfx::spr::kPos + 4) = at<float>(m + 0xf4);
+    at<float>(sp + vfx::spr::kPos + 8) = at<float>(m + 0xf8);
+    sceVu0CopyVector(ptr32<ee_float>(m + 0x20), ptr32<ee_float>(m + 0xf0));
+    const uint32_t offset = frame.local<uint8>(0).address; // vuOffset
+    const uint32_t pos = frame.local<uint8>(0x10).address;  // vuPos
+    at<float>(offset) = 6.0f;
+    at<float>(offset + 4) = at<float>(0x3278d8u);
+    at<float>(offset + 8) = 13.5f;
+    sceVu0ApplyMatrix(ptr32<ee_float>(offset), ptr32<ee_float>(0x1f1170u), ptr32<ee_float>(offset));
+    vfx::vu0Add(offset, 0x1f1160u, offset);
+    int32_t remaining = static_cast<int32_t>(at<uint16_t>(m + kLifeSpan)) - 0x40;
+    remaining = remaining > -1 ? remaining : 0;
+    guest_call(0x1c8308u, ee_float(1.0f) - ee_itof(remaining) * ee_float(0.015625f), ptr32<ee_float>(pos), ptr32<ee_float>(offset),
+               ptr32<ee_float>(sp + vfx::spr::kPos)); // sceVu0InterVectorXYZ
+    sp = vfx::sprite();
+    at<uint8_t>(sp + vfx::spr::kCode) = 2;
+    at<uint32_t>(sp + vfx::spr::kRgb) = 0x80808080;
+    at<uint32_t>(sp + vfx::spr::kTexture) = vfx::vfxTexture(0xe);
+    for (uint32_t index = at<uint8_t>(m + kRing + 2); index != at<uint8_t>(m + kRing + 3); index = (index + 1) & at<uint8_t>(m + kRing))
+    {
+        const uint32_t p = m + 0x48 + index * 0x14u;
+        at<float>(sp + vfx::spr::kScale) = ee_itof(at<uint16_t>(p + 0x10) + 6) * ee_float(at<float>(0x3278dcu)) + ee_float(at<float>(0x3278e0u));
+        const ee_float step = ee_float(0.00390625f);
+        const ee_float dx = ee_itof(at<int16_t>(p) >> 4) * step, dy = ee_itof(at<int16_t>(p + 2) >> 4) * step, dz = ee_itof(at<int16_t>(p + 4) >> 4) * step;
+        at<float>(sp + vfx::spr::kPos) = ee_float(at<float>(pos)) + dx;
+        at<float>(sp + vfx::spr::kPos + 4) = ee_float(at<float>(pos + 4)) + dy;
+        at<float>(sp + vfx::spr::kPos + 8) = ee_float(at<float>(pos + 8)) + dz;
+        at<uint16_t>(sp + vfx::spr::kAngle) = static_cast<uint16_t>(vfx::random15());
+        VfxPS2SpriteRotated3D(ee_float(0.0f));
+    }
+    remaining = static_cast<int32_t>(at<uint16_t>(m + kLifeSpan)) - 0x40;
+    remaining = remaining > -1 ? remaining : 0;
+    at<float>(sp + vfx::spr::kScale) = ee_itof(remaining) * ee_float(at<float>(0x3278e4u)) + ee_float(at<float>(0x3278e8u));
+    guest_call(0x1b4188u, ptr32<uint8>(0x1ed910u)); // TimerGet(&mainVarG.gameTimer)
+    const uint32_t time = guest_call<uint32_t>(0x1b4188u, ptr32<uint8>(0x1ed910u));
+    const ee_float turn = ee_itof(static_cast<int32_t>((time << 3) & 0xfff));
+    const ee_float sine = ee_sinf((turn + turn) * ee_float(at<float>(0x3278ecu)));
+    at<uint16_t>(sp + vfx::spr::kAngle) = static_cast<uint16_t>(at<uint16_t>(m + 0x110) + (ee_ftoi(sine * ee_float(4096.0f)) >> 5));
+    at<uint8_t>(sp + vfx::spr::kFlipX) = 1;
+    sp = vfx::sprite();
+    at<uint8_t>(sp + vfx::spr::kCode) = 0;
+    at<uint32_t>(sp + vfx::spr::kRgb) = 0x80c0c0c0;
+    at<uint32_t>(sp + vfx::spr::kTexture) = at<uint32_t>(hud + 0xd4);
+    guest_call(0x1c82e8u, ptr32<ee_float>(sp + vfx::spr::kPos), ptr32<ee_float>(pos)); // sceVu0CopyVectorXYZ
+    VfxPS2SpriteRotated3D(ee_float(0.0f));
+}
+
+// Not ported: `Vfx2PodiumInitialise` (0x16ab88), which creates the podium's cars (through `ObjectCreate`, from the front end's
+// car definitions and the level's start data) after a race. No demo race reaches it, and a random test would need a
+// whole front end and level start record; its second-to-fourth place paths also use a register ($s1) from the previous loop
+// pass or the caller when neither of its two conditions hold, which Ghidra shows as `unaff_s1_lo`. It stays recompiled.
+
+// The cannon's smoke: the scenery's position raised (and moved back) 0x10e units; each 0x14-byte particle is drawn twice,
+// first as a puff that cools from yellow to red as it ages, then as a smaller spinning grey disc.
+void Vfx2Renderer_Cannon(ptr32<_sVfx_TSFX> mem)
+{
+    GuestFrame frame(0x90);
+    const uint32_t m = mem.address;
+    const uint32_t tob = at<uint32_t>(m + 0x10);
+    const int16_t x = static_cast<int16_t>(at<int32_t>(tob + 4) >> 8);
+    const int16_t z = static_cast<int16_t>(static_cast<int16_t>(at<int32_t>(tob + 0xc) >> 8) - 0x10e);
+    const int16_t y = static_cast<int16_t>(static_cast<int16_t>(at<int32_t>(tob + 8) >> 8) + 0x10e);
+    const uint32_t sp = vfx::sprite();
+    at<uint8_t>(sp + vfx::spr::kFlipX) = 0;
+    at<uint8_t>(sp + vfx::spr::kCode) = 2;
+    at<uint32_t>(sp + vfx::spr::kTexture) = vfx::vfxTexture(0);
+    for (int32_t index = ringHead(m); index != at<uint8_t>(m + kRing + 3); index = ringNext(m, index))
+    {
+        const uint32_t p = m + kParticles + static_cast<uint32_t>(index) * 0x14u;
+        const int32_t life = at<uint16_t>(p + 0x10);
+        const int32_t warm = std::max(life * -4 + 200, 0);
+        const int32_t green = std::max(200 - (warm + (warm >> 1)), 0);
+        const int32_t blue = std::max(warm * -4 + 200, 0);
+        at<uint16_t>(sp + vfx::spr::kAngle) = at<uint16_t>(p + 0x12);
+        at<float>(sp + vfx::spr::kPos) = ee_itof(x + at<int16_t>(p));
+        at<float>(sp + vfx::spr::kPos + 4) = ee_itof(y + (at<int16_t>(p + 2) >> 3));
+        at<float>(sp + vfx::spr::kPos + 8) = ee_itof(z + (at<int16_t>(p + 4) >> 1));
+        at<uint32_t>(sp + vfx::spr::kRgb) = static_cast<uint32_t>((200 - warm) + green * 0x100 + blue * 0x10000);
+        at<float>(sp + vfx::spr::kScale) = ee_itof((life * -2 + 0x50) * 4) + ee_float(40.0f);
+        VfxPS2SpriteRotated3D(ee_float(0.0f));
+    }
+    at<uint8_t>(sp + vfx::spr::kCode) = 2;
+    at<uint32_t>(sp + vfx::spr::kTexture) = vfx::vfxTexture(5);
+    for (int32_t index = ringHead(m); index != at<uint8_t>(m + kRing + 3); index = ringNext(m, index))
+    {
+        const uint32_t p = m + kParticles + static_cast<uint32_t>(index) * 0x14u;
+        const uint32_t life = at<uint16_t>(p + 0x10);
+        at<float>(sp + vfx::spr::kPos) = ee_itof(x + (at<int16_t>(p) >> 1));
+        at<float>(sp + vfx::spr::kPos + 4) = ee_itof(y + (at<int16_t>(p + 2) >> 1));
+        at<uint16_t>(sp + vfx::spr::kAngle) = static_cast<uint16_t>(-static_cast<int32_t>(at<uint16_t>(p + 0x12)));
+        at<uint32_t>(sp + vfx::spr::kRgb) = life * 0x10101u;
+        at<float>(sp + vfx::spr::kScale) = ee_itof(static_cast<int32_t>((life * static_cast<uint32_t>(-2) + 0x50) * 8)) + ee_float(20.0f);
+        at<float>(sp + vfx::spr::kPos + 8) = ee_itof(z + at<int16_t>(p + 4));
+        VfxPS2SpriteRotated3D(ee_float(0.0f));
+    }
+}
+
+// The jungle fire's sprites: every flame particle (0x18 bytes) is drawn twice, a dull glow (texture 5) that is brighter
+// the older the flame, then a hot core (texture 0) that fades from yellow-white to red as it ages.
+void Vfx2Renderer_JungleFire(ptr32<_sVfx_TSFX> mem)
+{
+    GuestFrame frame(0x80);
+    const uint32_t m = mem.address;
+    const SceneryPos where = sceneryPosition(m);
+    const uint32_t sp = vfx::sprite();
+    at<uint8_t>(sp + vfx::spr::kCode) = 4;
+    at<uint32_t>(sp + vfx::spr::kTexture) = vfx::vfxTexture(5);
+    for (int32_t index = ringHead(m); index != at<uint8_t>(m + kRing + 3); index = ringNext(m, index))
+    {
+        const uint32_t p = m + kParticles + static_cast<uint32_t>(index) * 0x18u;
+        const uint32_t life = at<uint16_t>(p + 0x14);
+        at<float>(sp + vfx::spr::kPos) = ee_itof(where.x + (at<int16_t>(p) >> 2));
+        at<float>(sp + vfx::spr::kPos + 4) = ee_itof(where.y + (at<int16_t>(p + 2) >> 1) + 0x5a);
+        at<float>(sp + vfx::spr::kPos + 8) = ee_itof(where.z + (at<int16_t>(p + 4) >> 2));
+        at<uint16_t>(sp + vfx::spr::kAngle) = at<uint16_t>(p + 0x10);
+        at<uint32_t>(sp + vfx::spr::kRgb) = (life + (life >> 2)) * 0x10101u;
+        at<float>(sp + vfx::spr::kScale) = ee_itof(at<uint8_t>(p + 0x16));
+        VfxPS2SpriteRotated3D(ee_float(50.0f));
+    }
+    at<uint8_t>(sp + vfx::spr::kCode) = 2;
+    at<uint32_t>(sp + vfx::spr::kTexture) = vfx::vfxTexture(0);
+    for (int32_t index = ringHead(m); index != at<uint8_t>(m + kRing + 3); index = ringNext(m, index))
+    {
+        const uint32_t p = m + kParticles + static_cast<uint32_t>(index) * 0x18u;
+        const uint32_t life = at<uint16_t>(p + 0x14);
+        const int32_t age = static_cast<int32_t>(life) * -2 + 0x40;
+        at<float>(sp + vfx::spr::kPos) = ee_itof(where.x + (at<int16_t>(p) >> 2));
+        at<float>(sp + vfx::spr::kPos + 8) = ee_itof(where.z + (at<int16_t>(p + 4) >> 2));
+        at<float>(sp + vfx::spr::kPos + 4) = ee_itof(where.y + (at<int16_t>(p + 2) >> 2) + 0x28);
+        const int32_t green = std::max(age * -2 + 0x46, 0);
+        const int32_t blue = std::max(age * -3 + 0x46, 0);
+        const uint32_t size = at<uint8_t>(p + 0x16);
+        at<uint8_t>(sp + vfx::spr::kFlipX) = 0;
+        at<float>(sp + vfx::spr::kScale) = ee_itof(static_cast<int32_t>(size + (size >> 1)));
+        at<uint16_t>(sp + vfx::spr::kAngle) = at<uint16_t>(p + 0x10);
+        at<uint32_t>(sp + vfx::spr::kRgb) = static_cast<uint32_t>(static_cast<int32_t>(life * 2 + 0xd) + green * 0x100 + blue * 0x10000);
+        VfxPS2SpriteRotated3D(ee_float(50.0f));
+    }
+}
+
+// The bees' (and the flies') first frame: every one of the swarm's particles gets a random position, no speed
+// to start with, a random angle and a random long life (about 60000 as a 16-bit count). Its two halves of the loop
+// each fill one particle: 15 passes fill particles 1 to 30 (the ring header then claims 0x3f of them, or 0x1f, in
+// use). After the movers run, the swarm's sideways, up and down speeds are nudged by eight towards zero.
+static void swarmHandler(uint32_t m, uint32_t inUse)
+{
+    if (at<int16_t>(m + 0x544) == 0)
+    {
+        at<int16_t>(m + 0x544) = 1;
+        const auto fill = [](uint32_t p)
+        {
+            at<uint16_t>(p) = static_cast<uint16_t>((vfx::random15() & 0xfff) - 0x800);
+            at<uint16_t>(p + 2) = static_cast<uint16_t>((vfx::random15() & 0xfff) - 0x800);
+            const uint16_t z = static_cast<uint16_t>((vfx::random15() & 0xfff) - 0x800);
+            at<uint16_t>(p + 8) = 0;
+            at<uint16_t>(p + 0xa) = 0;
+            at<uint16_t>(p + 0xc) = 0;
+            at<uint16_t>(p + 4) = z;
+            at<uint16_t>(p + 0x12) = static_cast<uint16_t>(vfx::random15());
+            at<uint16_t>(p + 0x10) = static_cast<uint16_t>((vfx::random15() & 0xfff) - 0x15a0);
+        };
+        fill(m + kParticles);
+        for (uint32_t pair = m + 0x58; pair < m + 0x2b0; pair += 0x28)
+        {
+            fill(pair);
+            fill(pair + 0x14);
+        }
+        at<uint8_t>(m + kRing + 1) = static_cast<uint8_t>(inUse);
+        at<uint8_t>(m + kRing + 3) = static_cast<uint8_t>(inUse);
+    }
+    VfxSimpleParticleMover(ptr32<_sVfx_PartHeader>(m + kRing), ptr32<_VFX_SIMPLEPARTICLE>(m + kParticles));
+    for (int32_t index = ringHead(m); index != at<uint8_t>(m + kRing + 3); index = ringNext(m, index))
+    {
+        const uint32_t p = m + kParticles + static_cast<uint32_t>(index) * 0x14u;
+        at<uint16_t>(p + 8) = static_cast<uint16_t>(at<uint16_t>(p + 8) + (at<int16_t>(p) < 0 ? 8 : -8));
+        at<uint16_t>(p + 0xa) = static_cast<uint16_t>(at<uint16_t>(p + 0xa) + (at<int16_t>(p + 2) < 0 ? 8 : -8));
+        at<uint16_t>(p + 0xc) = static_cast<uint16_t>(at<uint16_t>(p + 0xc) + (at<int16_t>(p + 4) < 0 ? 8 : -8));
+    }
+}
+
+void Vfx2Handler_Bees(ptr32<_sVfx_TSFX> mem)
+{
+    swarmHandler(mem.address, 0x3f);
+    sortAtScenery(mem.address, 0x90);
+}
+
+void Vfx2Handler_Flies(ptr32<_sVfx_TSFX> mem)
+{
+    swarmHandler(mem.address, 0x1f);
+    sortAtScenery(mem.address, 0x90);
+}
+
+// The rocket car's exhaust (only on one level, 0x62, where the cars are rockets): each frame while the ring has room a
+// puff starts behind the car (0, 11, -75 turned by the car's matrix) with a random speed minus the car's own
+// forward direction, living 15 frames; every puff is drawn twice at the car's position plus its own offset: a bright
+// one and a bigger, redder one, both fading with the puff's age.
+void Vfx3Renderer_RocketCar(ptr32<_sVfx_Object> mem)
+{
+    GuestFrame frame(0x100);
+    const uint32_t m = mem.address;
+    const ptr32<_sObject> car(at<uint32_t>(m + 0x350));
+    if (car->sDontRenderMe != 0 && G(mainVarG).level == 0x62)
+        return;
+    if (G(mainVarG).level == 0x62)
+    {
+        const ptr32<MATRIX> matrix = VfxCarMatrixPoi(car);
+        const ptr32<ee_float> vuMatrix = VfxPSXToVUMatrix(matrix);
+        const ee_float spread = at<float>(0x327914u), push = at<float>(0x327918u);
+        if (at<uint8_t>(m + kRing + 1) < at<uint8_t>(m + kRing))
+        {
+            const uint32_t p = m + 0x50 + static_cast<uint32_t>(at<uint8_t>(m + kRing + 3)) * 0x30u;
+            at<float>(p) = 0.0f;
+            at<float>(p + 4) = 11.0f;
+            at<float>(p + 8) = -75.0f;
+            sceVu0ApplyMatrix(ptr32<ee_float>(p), vuMatrix, ptr32<ee_float>(p));
+            at<float>(p + 0x10) = ee_itof((vfx::random15() & 0x3f) - 0x1f) * spread - ee_itof(matrix->m[0][2]) * push;
+            at<float>(p + 0x14) = ee_itof((vfx::random15() & 0x3f) - 0x1f) * spread - ee_itof(matrix->m[1][2]) * push;
+            const int32_t z = (vfx::random15() & 0x3f) - 0x1f;
+            at<int32_t>(p + 0x24) = 15;
+            at<float>(p + 0x18) = ee_itof(z) * spread - ee_itof(matrix->m[2][2]) * push;
+            ringPush(m);
+        }
+    }
+    if (!(VfxHasCarBeenRendered(car) < 0x157c))
+        return;
+    const ptr32<ee_float> where = VfxVUCarPositionPoi(car);
+    const ptr32<ee_float> pos = frame.local<ee_float>(0x10);
+    pos[0] = where[0];
+    pos[1] = where[1];
+    pos[2] = where[2];
+    const uint32_t sp = vfx::sprite();
+    at<uint8_t>(sp + vfx::spr::kFlipX) = 0;
+    at<uint8_t>(sp + vfx::spr::kCode) = 2;
+    at<uint32_t>(sp + vfx::spr::kTexture) = vfx::vfxTexture(1);
+    at<uint16_t>(sp + vfx::spr::kAngle) = static_cast<uint16_t>(vfx::random15());
+    for (uint32_t index = at<uint8_t>(m + kRing + 2); index != at<uint8_t>(m + kRing + 3); index = (index + 1) & at<uint8_t>(m + kRing))
+    {
+        const uint32_t p = m + 0x50 + index * 0x30u;
+        const uint32_t life = static_cast<uint32_t>(at<int32_t>(p + 0x24)) * 2 + 10;
+        if (static_cast<int32_t>(life) < 0)
+            at<float>(sp + vfx::spr::kScale) = ee_itof(static_cast<int32_t>(life >> 1)) + ee_itof(static_cast<int32_t>(life >> 1));
+        else
+            at<float>(sp + vfx::spr::kScale) = ee_itof(static_cast<int32_t>(life));
+        at<uint32_t>(sp + vfx::spr::kRgb) = static_cast<uint32_t>(at<int32_t>(p + 0x24)) * 0x102u;
+        sceVu0CopyVector(ptr32<ee_float>(sp + vfx::spr::kPos), pos);
+        vfx::vu0Add(sp + vfx::spr::kPos, sp + vfx::spr::kPos, p);
+        VfxPS2SpriteRotated3D(ee_float(-10.0f));
+        at<uint32_t>(sp + vfx::spr::kRgb) = static_cast<uint32_t>(at<int32_t>(p + 0x24)) * 0x40200u;
+        at<float>(sp + vfx::spr::kScale) = ee_float(at<float>(sp + vfx::spr::kScale)) * ee_float(at<float>(0x32791cu));
+        VfxPS2SpriteRotated3D(ee_float(-10.0f));
+    }
+}
 } // namespace rc
 
 namespace rc::fuzz {
+void vfxUfoBurnerRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxLavaSpit(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxFeathersHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxRouteFinderRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxTTclockHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxTTclockRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxCannon(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxJungleFireRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxBeesHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxRocketCar(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxMonkeySmokeRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxBigVolcanoRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxFountainRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch);
@@ -630,3 +1131,14 @@ RC_DECOMP_FN_SETUP(Vfx2Handler_CartoonTrainSmoke, 0x16dd30, rc::fuzz::vfxCartoon
 RC_DECOMP_FN_SETUP(Vfx2Renderer_CartoonTrainSmoke, 0x16df28, rc::fuzz::vfxCartoonTrainRenderer)
 RC_DECOMP_FN_SETUP(Vfx2Handler_FinishPosition, 0x173c20, rc::fuzz::vfxFinishPosition)
 RC_DECOMP_FN_SETUP(Vfx2Renderer_SkullWave, 0x170640, rc::fuzz::vfxSkullWave)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_UFOBurner, 0x171978, rc::fuzz::vfxUfoBurnerRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_LavaSpit, 0x1755f8, rc::fuzz::vfxLavaSpit)
+RC_DECOMP_FN_SETUP(Vfx2Handler_Feathers, 0x172a78, rc::fuzz::vfxFeathersHandler)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_RouteFinder, 0x176788, rc::fuzz::vfxRouteFinderRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Handler_TTclock, 0x174418, rc::fuzz::vfxTTclockHandler)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_TTclock, 0x174710, rc::fuzz::vfxTTclockRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_Cannon, 0x177e10, rc::fuzz::vfxCannon)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_JungleFire, 0x16fe80, rc::fuzz::vfxJungleFireRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Handler_Bees, 0x176a10, rc::fuzz::vfxBeesHandler)
+RC_DECOMP_FN_SETUP(Vfx2Handler_Flies, 0x176ec0, rc::fuzz::vfxBeesHandler)
+RC_DECOMP_FN_SETUP(Vfx3Renderer_RocketCar, 0x17a158, rc::fuzz::vfxRocketCar)
