@@ -17,6 +17,11 @@ namespace rc {
 using vfx::at;
 using vfx::sortPosFromCar;
 using vfx::sortPosFromInts;
+using vfx::ringAtTail;
+using vfx::ringHead;
+using vfx::ringNext;
+using vfx::ringPush;
+using vfx::sortAtScenery;
 
 namespace {
 
@@ -24,21 +29,6 @@ constexpr uint32_t kLifeSpan = 0x10;
 constexpr uint32_t kCar = 0x40;
 constexpr uint32_t kRing = 0x40; // the ring header: mask, count, head, tail
 constexpr uint32_t kParticles = 0x44;
-
-// The scenery object instance's position, in whole units, becomes the sort position.
-void sortAtScenery(uint32_t mem, uint32_t frameSize)
-{
-    const uint32_t tob = at<uint32_t>(mem + 0x10);
-    sortPosFromInts(mem, at<int32_t>(tob + 4) >> 8, at<int32_t>(tob + 8) >> 8, at<int32_t>(tob + 0xc) >> 8, frameSize);
-}
-
-// Adds one to the ring's count and moves its tail on.
-void ringPush(uint32_t mem)
-{
-    uint8_t &tail = at<uint8_t>(mem + kRing + 3);
-    tail = static_cast<uint8_t>(at<uint8_t>(mem + kRing) & (tail + 1));
-    at<uint8_t>(mem + kRing + 1) = static_cast<uint8_t>(at<uint8_t>(mem + kRing + 1) + 1);
-}
 
 // Removes the particle at `index` by moving the head particle into its place, then moves the head on.
 void ringRemove(uint32_t mem, int32_t index, uint32_t stride)
@@ -53,15 +43,6 @@ void ringRemove(uint32_t mem, int32_t index, uint32_t stride)
     at<uint8_t>(mem + kRing + 1) = static_cast<uint8_t>(at<uint8_t>(mem + kRing + 1) - 1);
     at<uint8_t>(mem + kRing + 2) = static_cast<uint8_t>(at<uint8_t>(mem + kRing) & (at<uint8_t>(mem + kRing + 2) + 1));
 }
-
-// The next index after one, as a signed byte as the original loads it.
-int32_t ringNext(uint32_t mem, int32_t index)
-{
-    return static_cast<int8_t>(static_cast<uint8_t>(at<uint8_t>(mem + kRing) & static_cast<uint8_t>(index + 1)));
-}
-
-int32_t ringHead(uint32_t mem) { return static_cast<int8_t>(at<uint8_t>(mem + kRing + 2)); }
-bool ringAtTail(uint32_t mem, int32_t index) { return static_cast<uint32_t>(index) == at<uint8_t>(mem + kRing + 3); }
 
 // The fountain's and Moby Dick's spout: particles of 0x18 bytes (position, velocity, a 32-bit life, a spin angle and
 // spin). Each frame a particle moves by its velocity (which falls by `gravity`), spins, and loses a life; at the end of its
@@ -429,10 +410,12 @@ void Vfx3RainInit()
     copyVector(0x1f3700u, kCamTrans);
 }
 
+
 } // namespace rc
 
 namespace rc::fuzz { // visfx_fuzz.cpp
 void vfxTSFXOnly(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+
 void vfxLights(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxRouteFinder(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxUfoBurner(R5900Context *ctx, uint64_t &state, uint32_t scratch);

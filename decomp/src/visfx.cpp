@@ -50,17 +50,17 @@ const _sFPhysLibWheel &wheelOf(ptr32<_sObject> pObj, int32 iWheel)
 
 namespace vfx {
 
-void sortPosFromInts(uint32_t fx, int32_t x, int32_t y, int32_t z, uint32_t frameSize)
+void sortPosFromInts(uint32_t fx, int32_t x, int32_t y, int32_t z, uint32_t frameSize, uint32_t localOffset)
 {
-    const int32_t w = stale_stack<int32_t>(frameSize, 0xc);
+    const int32_t w = stale_stack<int32_t>(frameSize, localOffset + 0xc);
     const __m128i ints = _mm_set_epi32(w, z, y, x);
     _mm_storeu_ps(&at<float>((fx + kSortPos) & ~0xFu), _mm_cvtepi32_ps(ints));
 }
 
-void sortPosFromCar(uint32_t fx, ptr32<_sObject> pObj, uint32_t frameSize)
+void sortPosFromCar(uint32_t fx, ptr32<_sObject> pObj, uint32_t frameSize, uint32_t localOffset)
 {
     const sVec32 &pos = pObj->pPhysics->pInteger->renderPos;
-    sortPosFromInts(fx, pos.x >> 8, pos.y >> 8, pos.z >> 8, frameSize);
+    sortPosFromInts(fx, pos.x >> 8, pos.y >> 8, pos.z >> 8, frameSize, localOffset);
 }
 
 void vu0Add(uint32_t dst, uint32_t a, uint32_t b)
@@ -916,6 +916,422 @@ void VfxPS2SpriteGroundRotated3D(ptr32<SVECTOR> svNormal, ee_float zOffset)
     spriteQuadFinish(mat, vPos, sprite, quad, false, true, zOffset);
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// The third batch: level set-up and tear-down, the aerial's world position, and the first effect handlers and
+// renderers with their own update code.
+
+namespace vfx {
+
+// Frees every block of an effect list, walking the list's next pointers (each is read before its block is freed). The
+// original keeps the list cursor in a local that MemBlockFree clears, in a frame of 0x80 bytes.
+void freeList(uint32_t head)
+{
+    GuestFrame frame(0x80);
+    const ptr32<memHandle> handle = frame.local<memHandle>(0x40);
+    *handle = memHandle(head);
+    while (handle->address != 0)
+    {
+        const uint32_t next = at<uint32_t>(handle->address);
+        MemBlockFree(handle);
+        *handle = memHandle(next);
+    }
+}
+
+} // namespace vfx
+
+namespace {
+
+constexpr uint32_t kVfxAddNew = 0x157c50, kNodeCalcWorldPos = 0x1339d0, kTaskSet = 0x1afad8, kTaskDelete = 0x1afc48, kTaskCachedInsert = 0x1afb68;
+
+// The world position of a car's aerial tip: the aerial node's position through the car's render matrix, in 24.8
+// fixed point, in a local of the caller's frame (at +0x10).
+void aerialWorldPosition(const GuestFrame &frame, ptr32<_sObject> pObj)
+{
+    const uint32_t rendObj = pObj->pRendObj.address;
+    guest_call(kNodeCalcWorldPos, ptr32<uint8>(pObj->pAerialNode.address), ptr32<uint8>(rendObj + 0x18), ptr32<uint8>(rendObj + 4),
+               frame.local<uint8>(0x10));
+}
+
+// The section n of the aerial's chain plus that position in whole units, as shorts in the shared vector svVelTemp.
+void aerialSectionPosition(const GuestFrame &frame, ptr32<_sObject> pObj, int32 n)
+{
+    const uint32_t position = frame.local<uint8>(0x10).address;
+    const uint32_t section = pObj->pVfx_Aerial.address + 0x40u + (static_cast<uint32_t>(n) << 4);
+    const ee_float scale = 0.00390625f; // 1/256
+    const ee_float x = ee_float(at<float>(section)) + ee_itof(at<int32_t>(position)) * scale;
+    const ee_float y = ee_float(at<float>(section + 4)) + ee_itof(at<int32_t>(position + 4)) * scale;
+    const ee_float z = ee_float(at<float>(section + 8)) + ee_itof(at<int32_t>(position + 8)) * scale;
+    SVECTOR &out = G(svVelTemp);
+    out.vx = static_cast<int16>(ee_ftoi(x));
+    out.vy = static_cast<int16>(ee_ftoi(y));
+    out.vz = static_cast<int16>(ee_ftoi(z));
+}
+
+} // namespace
+
+ptr32<_sVfx_Object> VfxAddNewPlace(int32 iX, int32 iY, int32 iZ, int32 iType)
+{
+    return guest_call<ptr32<_sVfx_Object>>(kVfxAddNew, iX, iY, iZ, iType + 0x400); // VfxAddNew, with the position as its object
+}
+
+ptr32<SVECTOR> VfxCarAerialPoi(ptr32<_sObject> pObj, int32 n)
+{
+    GuestFrame frame(0x50);
+    aerialWorldPosition(frame, pObj);
+    aerialSectionPosition(frame, pObj, n);
+    return ptr32<SVECTOR>(guest_addr(&G(svVelTemp)));
+}
+
+uint64_t VfxCarAerialVal(ptr32<_sObject> pObj, int32 n)
+{
+    GuestFrame frame(0x50);
+    aerialWorldPosition(frame, pObj);
+    aerialSectionPosition(frame, pObj, n);
+    const SVECTOR &out = G(svVelTemp);
+    return static_cast<uint64_t>(static_cast<uint16_t>(out.vx)) | (static_cast<uint64_t>(static_cast<uint16_t>(out.vy)) << 16) |
+           (static_cast<uint64_t>(static_cast<uint16_t>(out.vz)) << 32) | (static_cast<uint64_t>(static_cast<uint16_t>(out.pad)) << 48);
+}
+
+// Draws the effects: camera, then the podium, the sky, the scenery effects, the object effects, the rain and the
+// glints, and flushes the polygons.
+void VfxRender()
+{
+    guest_call(0x156dc0u); // VfxSetupCameraMatrix
+    guest_call(0x1a9208u, 0); // RdrZedsWriteOff
+    visFxClass &fx = G(visFxVarG);
+    fx.sprite = fx.uiScratchSpriteAddress;
+    at<uint32_t>(fx.uiScratchSpriteAddress.address + 0x1c) = 0; // vuPos[3]
+    guest_call(0x16ae30u); // Vfx2PodiumPlay
+    guest_call(0x16b2c0u); // VfxSkyChangeStuff
+    guest_call(0x16d8f0u); // Vfx2RenderTSFX
+    guest_call(0x157768u); // VfxCallRenderers
+    guest_call(0x1793d8u); // Vfx3Rain
+    guest_call(0x179a20u); // Vfx3Glint
+    guest_call(0x1a8fa0u, 0); // RdrPolyFlush
+}
+
+// Sets up the effects at the start of a level: clears the lists and the sky state, points the polygon and sprite at the
+// scratchpad, starts the task that runs the handlers, and (in the front end world) places the three butterflies.
+void VfxLvlInit()
+{
+    visFxClass &fx = G(visFxVarG);
+    fx.iCueForward = 0;
+    fx.iSkyTerror = 0;
+    fx.vfxHeader = nullptr;
+    fx.vfxFooter = nullptr;
+    fx.iSlowSkyChange = 0;
+    if (G(mainVarG).status != MAIN_RACE_RESULT)
+        fx.iResultTrigger = 0;
+    fx.pGT4 = ptr32<_sRdrPoly>(0x70000030u);
+    fx.sprite = ptr32<_sVfx_CommonSprite>(0x70000000u);
+    fx.uiScratchSpriteAddress = ptr32<_sVfx_CommonSprite>(0x70000000u);
+    guest_call(kTaskSet, ptr32<uint8>(0x1f1000u), 0x157190u, 1, 0); // TaskSet(&Task, VfxUpdate, 1, 0)
+    guest_call(kTaskCachedInsert, ptr32<uint8>(0x1f1000u));
+    if (G(mainVarG).level == 0x62 && G(frontEndVarG).active != 5)
+    {
+        VfxAddNewPlace(0x22a, 0x10e, -0x9dd, 0x29);
+        VfxAddNewPlace(-0x6ee, 0x122, 0x1e5, 0x29);
+        VfxAddNewPlace(-0xeb4, 0x1e, -0x1067, 0x29);
+    }
+    guest_call(0x1791e0u); // Vfx3RainInit
+}
+
+// The effects list is emptied when the level ends: its task stops and every effect is freed.
+void VfxLvlTerm()
+{
+    guest_call(kTaskDelete, ptr32<uint8>(0x1f1000u)); // visFxVarG.Task
+    vfx::freeList(G(visFxVarG).vfxHeader.address);
+    G(visFxVarG).vfxFooter = nullptr;
+    G(visFxVarG).vfxHeader = nullptr;
+}
+
+// The spark effect's handler: moves its particles (if it has any) and sorts at its car.
+void VfxHandler_Sparks(ptr32<_sVfx_Object> mem)
+{
+    const uint32_t m = mem.address;
+    const ptr32<_sObject> car(at<uint32_t>(m + 0x44));
+    if (at<uint8_t>(m + 0x41) != 0)
+        VfxSimpleParticleMover(ptr32<_sVfx_PartHeader>(m + 0x40), ptr32<_VFX_SIMPLEPARTICLE>(m + 0x48));
+    sortPosFromCar(m, car, 0x40);
+}
+
+
+// The rocket's smoke trail: while it has more than 0x1f frames of life, a puff starts at the rocket's hook position each
+// frame the ring has room. Puffs are 0x14 bytes: position (8 bytes, copied from the hook), velocity (0, 3, 0), a life of
+// 0x1f and a random spin.
+void VfxHandler_RocketSmoke(ptr32<_sVfx_Object> mem)
+{
+    const uint32_t m = mem.address;
+    if (at<uint16_t>(m + kLifeSpan) >= 0x20 && at<uint8_t>(m + 0x41) < 0x1f)
+    {
+        const uint32_t p = m + 0x44 + static_cast<uint32_t>(static_cast<int8_t>(at<uint8_t>(m + 0x43))) * 0x14u;
+        std::memcpy(&at<uint8_t>(p), &at<uint8_t>(m + 0x14), 8);
+        at<uint16_t>(p + 8) = 0;
+        at<uint16_t>(p + 0xc) = 0;
+        at<uint16_t>(p + 0xa) = 3;
+        at<uint16_t>(p + 0x10) = 0x1f;
+        at<uint16_t>(p + 0x12) = static_cast<uint16_t>(vfx::random15());
+        vfx::ringPush(m);
+    }
+    VfxSimpleParticleMover(ptr32<_sVfx_PartHeader>(m + 0x40), ptr32<_VFX_SIMPLEPARTICLE>(m + 0x44));
+    sortPosFromInts(m, at<int16_t>(m + 0x14), at<int16_t>(m + 0x16), at<int16_t>(m + 0x18), 0x60);
+    at<uint16_t>(m + kLifeSpan) = static_cast<uint16_t>(at<uint16_t>(m + kLifeSpan) - 1);
+}
+
+// The explosion: sorted at the blast's centre (+0x1c4, three shorts). On its first frame (life 200) it throws 15 chunks
+// of 0x18 bytes in random directions; every frame after, the particle mover carries them on. The spin of a chunk and its
+// colour are random too.
+void VfxHandler_Explosion(ptr32<_sVfx_Object> mem)
+{
+    const uint32_t m = mem.address;
+    sortPosFromInts(m, at<int16_t>(m + 0x1c4), at<int16_t>(m + 0x1c6), at<int16_t>(m + 0x1c8), 0x70);
+    if (at<uint16_t>(m + kLifeSpan) == 200)
+    {
+        for (uint32_t i = 0; i < 15; ++i)
+        {
+            const uint32_t p = m + 0x44 + i * 0x18;
+            at<uint16_t>(p) = static_cast<uint16_t>((vfx::random15() & 0x1ff) - 0x100);
+            at<uint16_t>(p + 2) = static_cast<uint16_t>((vfx::random15() & 0x1ff) - 0x100);
+            at<uint16_t>(p + 4) = static_cast<uint16_t>((vfx::random15() & 0x1ff) - 0x100);
+            at<uint16_t>(p + 8) = static_cast<uint16_t>((vfx::random15() & 0xff) - 0x80);
+            at<uint16_t>(p + 0xa) = static_cast<uint16_t>((vfx::random15() & 0xff) - 0x80);
+            at<uint16_t>(p + 0xc) = static_cast<uint16_t>((vfx::random15() & 0xff) - 0x80);
+            at<uint16_t>(p + 0x10) = static_cast<uint16_t>(vfx::random15());
+            at<uint16_t>(p + 0x12) = static_cast<uint16_t>((vfx::random15() & 0x3f) - 0xf);
+            at<uint16_t>(p + 0x14) = static_cast<uint16_t>((vfx::random15() & 0x1f) + 0x1f);
+            at<uint8_t>(p + 0x17) = 0xfe;
+            at<uint8_t>(p + 0x16) = static_cast<uint8_t>((vfx::random15() & 0x3f) + 0x87);
+        }
+        at<uint8_t>(m + 0x41) = 0xf;
+        at<uint8_t>(m + 0x43) = 0xf;
+    }
+    VfxParticleMover(ptr32<_sVfx_PartHeader>(m + 0x40), ptr32<_VFX_PARTICLE>(m + 0x44));
+    at<uint16_t>(m + kLifeSpan) = static_cast<uint16_t>(at<uint16_t>(m + kLifeSpan) - 1);
+}
+
+// Draws the explosion's chunks as sprites: each fades from white through yellow to red as its life runs out (the
+// colour channels fall off at different rates), spins by its own angle and is as big as its size byte says.
+void VfxRenderer_Explosion(ptr32<_sVfx_Object> mem)
+{
+    GuestFrame frame(0x80);
+    const uint32_t m = mem.address;
+    at<uint8_t>(vfx::sprite() + vfx::spr::kFlipX) = 0;
+    at<uint32_t>(vfx::sprite() + vfx::spr::kTexture) = vfx::vfxTexture(0);
+    at<uint8_t>(vfx::sprite() + vfx::spr::kCode) = 2;
+    for (int32_t index = vfx::ringHead(m); index != at<uint8_t>(m + 0x43); index = vfx::ringNext(m, index))
+    {
+        const uint32_t p = m + 0x44 + static_cast<uint32_t>(index) * 0x18u;
+        const int32_t red = std::max(100 - static_cast<int32_t>(at<uint16_t>(p + 0x14)) * 2, 0);
+        const int32_t green = std::max(100 - red * 2, 0);
+        const int32_t blue = std::max(100 - red * 4, 0);
+        const uint32_t sp = vfx::sprite();
+        at<float>(sp + vfx::spr::kPos) = ee_itof(at<int16_t>(m + 0x1c4) + (at<int16_t>(p) >> 5));
+        at<float>(sp + vfx::spr::kPos + 4) = ee_itof(at<int16_t>(m + 0x1c6) + (at<int16_t>(p + 2) >> 5));
+        at<float>(sp + vfx::spr::kPos + 8) = ee_itof(at<int16_t>(m + 0x1c8) + (at<int16_t>(p + 4) >> 5));
+        at<uint32_t>(sp + vfx::spr::kRgb) = static_cast<uint32_t>((100 - red) + green * 0x100 + blue * 0x10000);
+        at<uint16_t>(sp + vfx::spr::kAngle) = at<uint16_t>(p + 0x10);
+        at<float>(sp + vfx::spr::kScale) = ee_itof(at<uint8_t>(p + 0x16));
+        VfxPS2SpriteRotated3D(0.0f);
+    }
+}
+
+// The smoke a damaged car trails: sorted at the car; every fourth frame while it has life left, a puff starts at the
+// car's rear (from its integer physics: the position of the exhaust and the car's own speed, so the smoke is left behind
+// and rises).
+void VfxHandler_CarSmoke(ptr32<_sVfx_Object> mem)
+{
+    const uint32_t m = mem.address;
+    const ptr32<_sObject> car(at<uint32_t>(m + 0x1c4));
+    sortPosFromCar(m, car, 0x80);
+    const uint16_t life = static_cast<uint16_t>(at<uint16_t>(m + kLifeSpan) - 1);
+    at<uint16_t>(m + kLifeSpan) = life;
+    if (life >= 0x20 && (life & 3) == 0 && at<uint8_t>(m + 0x41) < 0xf)
+    {
+        const uint32_t state = car->pPhysics->pInteger.address;
+        const uint32_t p = m + 0x44 + static_cast<uint32_t>(static_cast<int8_t>(at<uint8_t>(m + 0x43))) * 0x18u;
+        at<uint16_t>(p) = static_cast<uint16_t>(at<int16_t>(state + 0x2c) >> 1);
+        at<uint16_t>(p + 2) = static_cast<uint16_t>((at<int16_t>(state + 0x32) >> 1) + 0x1c2);
+        at<uint16_t>(p + 4) = static_cast<uint16_t>(at<int16_t>(state + 0x38) >> 1);
+        at<uint16_t>(p + 8) = static_cast<uint16_t>((vfx::random15() & 0x3f) - ((at<int16_t>(state + 0x1c) >> 3) + 0x20));
+        at<uint16_t>(p + 0xa) = static_cast<uint16_t>(0x87 - (at<int16_t>(state + 0x1e) >> 3));
+        at<uint16_t>(p + 0xc) = static_cast<uint16_t>((vfx::random15() & 0x3f) - ((at<int16_t>(state + 0x20) >> 3) + 0x20));
+        at<uint16_t>(p + 0x10) = static_cast<uint16_t>(vfx::random15());
+        at<uint16_t>(p + 0x12) = static_cast<uint16_t>((vfx::random15() & 0x80) - 0x3f);
+        at<uint16_t>(p + 0x14) = static_cast<uint16_t>((vfx::random15() & 0x1f) + 0x1f);
+        at<uint8_t>(p + 0x17) = 0;
+        at<uint8_t>(p + 0x16) = static_cast<uint8_t>(vfx::random15() & 0xf);
+        vfx::ringPush(m);
+    }
+    VfxParticleMover(ptr32<_sVfx_PartHeader>(m + 0x40), ptr32<_VFX_PARTICLE>(m + 0x44));
+}
+
+// Draws the car's smoke puffs as sprites around the car's position: grey, fading as the puff's life runs out, growing
+// as it falls to a quarter of that life. Nothing is drawn when the car is far from the camera.
+void VfxRenderer_CarSmoke(ptr32<_sVfx_Object> mem)
+{
+    GuestFrame frame(0x60);
+    const uint32_t m = mem.address;
+    const ptr32<_sObject> car(at<uint32_t>(m + 0x1c4));
+    if (VfxHasCarBeenRendered(car) >= 0x157c)
+        return;
+    const sVec32 &pos = car->pPhysics->pInteger->renderPos;
+    SVECTOR &where = G(svVelTemp);
+    const uint32_t texture = vfx::vfxTexture(5);
+    where.vx = static_cast<int16>(pos.x >> 8);
+    where.vy = static_cast<int16>(pos.y >> 8);
+    where.vz = static_cast<int16>(pos.z >> 8);
+    at<uint8_t>(vfx::sprite() + vfx::spr::kCode) = 4;
+    at<uint32_t>(vfx::sprite() + vfx::spr::kTexture) = texture;
+    for (int32_t index = vfx::ringHead(m); index != at<uint8_t>(m + 0x43); index = vfx::ringNext(m, index))
+    {
+        const uint32_t p = m + 0x44 + static_cast<uint32_t>(index) * 0x18u;
+        uint32_t sp = vfx::sprite();
+        const uint32_t life = at<uint16_t>(p + 0x14) >> 1;
+        at<float>(sp + vfx::spr::kPos) = ee_itof(G(svVelTemp).vx + (at<int16_t>(p) >> 5));
+        at<float>(sp + vfx::spr::kPos + 4) = ee_itof(G(svVelTemp).vy + (at<int16_t>(p + 2) >> 5));
+        at<float>(sp + vfx::spr::kPos + 8) = ee_itof(G(svVelTemp).vz + (at<int16_t>(p + 4) >> 5));
+        at<uint8_t>(sp + vfx::spr::kFlipX) = at<uint8_t>(p + 0x16) & 1;
+        sp = vfx::sprite();
+        at<uint32_t>(sp + vfx::spr::kRgb) = life * 0x10101;
+        at<uint16_t>(sp + vfx::spr::kAngle) = at<uint16_t>(p + 0x10);
+        at<float>(sp + vfx::spr::kScale) = ee_itof(static_cast<int32_t>(at<uint8_t>(p + 0x16)) + 0x44 - (static_cast<int32_t>(life) >> 2));
+        VfxPS2SpriteRotated3D(0.0f);
+    }
+}
+
+// The sparks: streaks from the car's body. Each live spark is drawn as a camera-facing ribbon from its position to
+// where its velocity takes it a moment later, bright at the head and dim at the tail, as the spark's life shortens.
+void VfxRenderer_Sparks(ptr32<_sVfx_Object> mem)
+{
+    GuestFrame frame(0xB0);
+    const uint32_t m = mem.address;
+    const ptr32<_sObject> car(at<uint32_t>(m + 0x44));
+    if (at<uint8_t>(m + 0x41) == 0 || VfxHasCarBeenRendered(car) >= 0x157c)
+        return;
+    const sVec32 &pos = car->pPhysics->pInteger->renderPos;
+    SVECTOR &where = G(svVelTemp);
+    where.vx = static_cast<int16>(pos.x >> 8);
+    where.vy = static_cast<int16>(pos.y >> 8);
+    where.vz = static_cast<int16>(pos.z >> 8);
+    const ptr32<SVECTOR> head = frame.local<SVECTOR>(0), tail = frame.local<SVECTOR>(8);
+    for (uint32_t index = at<uint8_t>(m + 0x42); index != at<uint8_t>(m + 0x43); index = (index + 1) & at<uint8_t>(m + 0x40))
+    {
+        const uint32_t p = m + 0x48 + index * 0x14;
+        head->vx = static_cast<int16>(where.vx + (at<int16_t>(p) >> 4));
+        head->vy = static_cast<int16>(where.vy + (at<int16_t>(p + 2) >> 4));
+        head->vz = static_cast<int16>(where.vz + (at<int16_t>(p + 4) >> 4));
+        tail->vx = static_cast<int16>(head->vx + (at<int16_t>(p + 8) >> 2));
+        tail->vy = static_cast<int16>(head->vy + (at<int16_t>(p + 0xa) >> 2));
+        tail->vz = static_cast<int16>(head->vz + (at<int16_t>(p + 0xc) >> 2));
+        const int32_t brightness = at<uint16_t>(p + 0x10) * 0x20 + 0xb;
+        VfxPutGT4rgba0(brightness >> 1);
+        VfxPutGT4rgba1(brightness >> 1);
+        VfxPutGT4rgba2(brightness * 0x101);
+        VfxPutGT4rgba3(brightness * 0x101);
+        VfxPutGT4FacingPoly(head, tail, ptr32<_sGfxTexture>(vfx::vfxTexture(0x19)), 2, 4.0f, at<float>(0x3280ecu));
+    }
+}
+
+// The take-terror effect (the sky flash on the "terror" pickup): the effect it follows loses a frame of its own life, and
+// between 0xf and 0x30 frames from its end two particles a frame start at the origin with random velocities.
+void VfxHandler_TakeTerror(ptr32<_sVfx_Object> mem)
+{
+    const uint32_t m = mem.address;
+    const ptr32<_sObject> car(at<uint32_t>(m + 0x2cc));
+    at<uint16_t>(m + 0x2d0) = static_cast<uint16_t>(at<uint16_t>(m + 0x2d0) - 1);
+    if (static_cast<uint32_t>(at<uint16_t>(m + kLifeSpan)) - 0xfu < 0x22u)
+    {
+        // The position is three zero shorts followed by the two stale bytes next to them on the stack, as the original
+        // copies all eight bytes of a local it set only the first six of.
+        const uint16_t pad = stale_stack<uint16_t>(0xB0, 6);
+        for (int attempt = 0; attempt < 2; ++attempt)
+        {
+            if (at<uint8_t>(m + 0x41) >= at<uint8_t>(m + 0x40))
+                continue;
+            const uint32_t p = m + 0x44 + static_cast<uint32_t>(at<uint8_t>(m + 0x43)) * 0x14u;
+            at<uint16_t>(p) = 0;
+            at<uint16_t>(p + 2) = 0;
+            at<uint16_t>(p + 4) = 0;
+            at<uint16_t>(p + 6) = pad;
+            at<uint16_t>(p + 8) = static_cast<uint16_t>((vfx::random15() & 0x7f) - 0x40);
+            at<uint16_t>(p + 0xa) = static_cast<uint16_t>(vfx::random15() & 0x7f);
+            at<uint16_t>(p + 0xc) = static_cast<uint16_t>((vfx::random15() & 0x7f) - 0x40);
+            at<uint16_t>(p + 0x10) = 0xf;
+            vfx::ringPush(m);
+        }
+    }
+    VfxSimpleParticleMover(ptr32<_sVfx_PartHeader>(m + 0x40), ptr32<_VFX_SIMPLEPARTICLE>(m + 0x44));
+    sortPosFromCar(m, car, 0xB0, 0x10);
+    at<uint16_t>(m + kLifeSpan) = static_cast<uint16_t>(at<uint16_t>(m + kLifeSpan) - 1);
+}
+
+// The moon rover's weapon beam: the rover's rotation applied to a fixed offset (30, 10, 10) gives the beam's far end,
+// which with the effect's two stored points (+0x50 and +0x60) makes a ribbon of 45 units width, continued by a second
+// ribbon (+0x70 is the step between them) and capped with a glowing sprite at each of the three points. Its first
+// frame (life 0xffff) draws nothing.
+void VfxRenderer_BlastMoonrover(ptr32<_sVfx_Object> mem)
+{
+    const uint32_t m = mem.address;
+    if (at<uint16_t>(m + kLifeSpan) == 0xffff)
+        return;
+    GuestFrame frame(0x100);
+    const ptr32<ee_float> vA = frame.local<ee_float>(0x60);
+    const ptr32<ee_float> vB = frame.local<ee_float>(0x70);
+    const ptr32<ee_float> vC = frame.local<ee_float>(0x80);
+    const ptr32<_sObject> car(at<uint32_t>(m + 0x40));
+    const ptr32<ee_float> rotation = VfxPSXToVUMatrix(ptr32<MATRIX>(car->pPhysics->pInteger.address + 0x28));
+    const uint32_t quad = G(visFxVarG).pGT4.address;
+    at<uint32_t>(quad + 0x6c) = 0x2fff00;
+    vB[0] = 30.0f;
+    vB[2] = 10.0f;
+    at<uint32_t>(quad + 0x60) = 0;
+    at<uint32_t>(quad + 0x68) = 0x2fff00;
+    vB[1] = 10.0f;
+    sceVu0ApplyMatrix(vB, rotation, vB);
+    vfx::vu0Add(vA.address, m + 0x50, vB.address);
+    vfx::vu0Add(vB.address, m + 0x60, vB.address);
+    VfxPutGT4FacingPolyVU(vA, vB, ptr32<_sGfxTexture>(vfx::vfxTexture(0x19)), 0x12, 45.0f, 0.0f);
+    const int32_t random = vfx::random15();
+    vC[0] = ee_float(vB[0]) + ee_float(at<float>(m + 0x70));
+    vC[1] = ee_float(vB[1]) + ee_float(at<float>(m + 0x74));
+    vC[2] = ee_float(vB[2]) + ee_float(at<float>(m + 0x78));
+    at<uint16_t>(vfx::sprite() + vfx::spr::kAngle) = static_cast<uint16_t>(random & 0xfff);
+    VfxPutGT4FacingContinueVU(vC, vB);
+    sceVu0CopyVector(ptr32<ee_float>(vfx::sprite() + vfx::spr::kPos), vA);
+    const ee_float zOffset = at<float>(0x3280f0u);
+    const uint32_t sp = vfx::sprite();
+    at<uint8_t>(sp + vfx::spr::kCode) = 2;
+    at<uint32_t>(sp + vfx::spr::kRgb) = 0x400000;
+    at<uint32_t>(sp + vfx::spr::kTexture) = vfx::vfxTexture(1);
+    at<float>(sp + vfx::spr::kScale) = 80.0f;
+    VfxPS2SpriteRotated3D(zOffset);
+    sceVu0CopyVector(ptr32<ee_float>(vfx::sprite() + vfx::spr::kPos), vB);
+    VfxPS2SpriteRotated3D(zOffset);
+    sceVu0CopyVector(ptr32<ee_float>(vfx::sprite() + vfx::spr::kPos), vC);
+    VfxPS2SpriteRotated3D(zOffset);
+}
+
+// The lightning between two cars (the blast): drawn when either is near the camera, from the tip of one car's aerial to
+// the tip of the other's, 12 units wide.
+void VfxRenderer_BlastLightning(ptr32<_sVfx_Object> mem)
+{
+    GuestFrame frame(0xD0);
+    const uint32_t m = mem.address;
+    const ptr32<_sObject> first(at<uint32_t>(m + 0x40)), second(at<uint32_t>(m + 0x44));
+    if (VfxHasCarBeenRendered(first) >= 0x157c && VfxHasCarBeenRendered(second) >= 0x157c)
+        return;
+    const uint64_t a = VfxCarAerialVal(first, 5);
+    const uint64_t b = VfxCarAerialVal(second, 5);
+    const ptr32<ee_float> from = frame.local<ee_float>(0x80), to = frame.local<ee_float>(0x90);
+    from[0] = ee_itof(static_cast<int16_t>(a));
+    from[1] = ee_itof(static_cast<int16_t>(a >> 16));
+    from[2] = ee_itof(static_cast<int16_t>(a >> 32));
+    to[0] = ee_itof(static_cast<int16_t>(b));
+    to[1] = ee_itof(static_cast<int16_t>(b >> 16));
+    to[2] = ee_itof(static_cast<int16_t>(b >> 32));
+    guest_call(0x1681f0u, from, to, 1, ee_float(12.0f), ee_float(at<float>(0x32780cu))); // VfxDrawLightningBetween
+}
+
 } // namespace rc
 
 namespace rc::fuzz { // visfx_fuzz.cpp
@@ -935,6 +1351,25 @@ void vfxRibbonShorts(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxFourEnds(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxSprite(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxGroundSprite(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+}
+
+namespace rc::fuzz { // visfx_fuzz.cpp
+void vfxAddNewPlace(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxLvlInit(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxLvlTerm(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxDelete(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxHandOver(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxAerial(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxSparkHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxRocketSmoke(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxExplosion(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxExplosionRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxCarSmoke(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxCarSmokeRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxSparksRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxTakeTerror(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxBlastMoonroverRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxBlastLightningRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 }
 
 RC_DECOMP_FN(VfxSpriteRotated3D, 0x16a5c0)
@@ -975,8 +1410,8 @@ RC_DECOMP_FN_SETUP(VfxHandler_BlastLightning, 0x16a780, rc::fuzz::vfxEffectOnCar
 RC_DECOMP_FN_SETUP(VfxHandler_SargeLights, 0x16a938, rc::fuzz::vfxEffectOnCar)
 RC_DECOMP_FN(VfxInit, 0x156bb8)
 RC_DECOMP_FN(VfxPSXToVUMatrix, 0x156aa8)
-RC_DECOMP_FN_NOFUZZ(VfxDelete, 0x16a0c8)           // Frees a heap block that is on the effect list.
-RC_DECOMP_FN_NOFUZZ(VfxHandOverFXDelete, 0x157668) // As above, for every effect.
+RC_DECOMP_FN_SETUP_HEAP(VfxDelete, 0x16a0c8, rc::fuzz::vfxDelete)           // Frees a heap block that is on the effect list.
+RC_DECOMP_FN_SETUP_HEAP(VfxHandOverFXDelete, 0x157668, rc::fuzz::vfxHandOver) // As above, for every effect.
 RC_DECOMP_FN_NOFUZZ(VfxCallHandlers, 0x16a470)     // Runs every live effect's handler.
 RC_DECOMP_FN_SETUP(VfxCarPositionVal, 0x16a1f8, rc::fuzz::aiCar)
 RC_DECOMP_FN_SETUP(VfxWheelPositionPoi, 0x156840, rc::fuzz::vfxWheel)
@@ -995,3 +1430,19 @@ RC_DECOMP_FN_SETUP(VfxPutGT4FacingPoly, 0x167cd0, rc::fuzz::vfxRibbonShorts)
 RC_DECOMP_FN_SETUP(VfxPutGT4FacingPolyVU, 0x167fa8, rc::fuzz::vfxRibbon)
 RC_DECOMP_FN_SETUP(VfxPS2SpriteRotated3D, 0x167788, rc::fuzz::vfxSprite)
 RC_DECOMP_FN_SETUP(VfxPS2SpriteGroundRotated3D, 0x167a20, rc::fuzz::vfxGroundSprite)
+RC_DECOMP_FN_SETUP_HEAP(VfxAddNewPlace, 0x16a158, rc::fuzz::vfxAddNewPlace)
+RC_DECOMP_FN_SETUP(VfxCarAerialPoi, 0x16a370, rc::fuzz::vfxAerial)
+RC_DECOMP_FN_SETUP(VfxCarAerialVal, 0x156718, rc::fuzz::vfxAerial)
+RC_DECOMP_FN_NOFUZZ(VfxRender, 0x157be0)
+RC_DECOMP_FN_SETUP_HEAP(VfxLvlInit, 0x156cc0, rc::fuzz::vfxLvlInit)
+RC_DECOMP_FN_SETUP_HEAP(VfxLvlTerm, 0x16a030, rc::fuzz::vfxLvlTerm)
+RC_DECOMP_FN_SETUP(VfxHandler_Sparks, 0x16a998, rc::fuzz::vfxSparkHandler)
+RC_DECOMP_FN_SETUP(VfxHandler_RocketSmoke, 0x164f70, rc::fuzz::vfxRocketSmoke)
+RC_DECOMP_FN_SETUP(VfxHandler_Explosion, 0x159e70, rc::fuzz::vfxExplosion)
+RC_DECOMP_FN_SETUP(VfxRenderer_Explosion, 0x15a000, rc::fuzz::vfxExplosionRenderer)
+RC_DECOMP_FN_SETUP(VfxHandler_CarSmoke, 0x1590d8, rc::fuzz::vfxCarSmoke)
+RC_DECOMP_FN_SETUP(VfxRenderer_CarSmoke, 0x1592c0, rc::fuzz::vfxCarSmokeRenderer)
+RC_DECOMP_FN_SETUP(VfxRenderer_Sparks, 0x1643d0, rc::fuzz::vfxSparksRenderer)
+RC_DECOMP_FN_SETUP(VfxHandler_TakeTerror, 0x160790, rc::fuzz::vfxTakeTerror)
+RC_DECOMP_FN_SETUP(VfxRenderer_BlastMoonrover, 0x168f20, rc::fuzz::vfxBlastMoonroverRenderer)
+RC_DECOMP_FN_SETUP(VfxRenderer_BlastLightning, 0x15f6e8, rc::fuzz::vfxBlastLightningRenderer)

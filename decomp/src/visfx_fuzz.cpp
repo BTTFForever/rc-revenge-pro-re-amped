@@ -3,6 +3,7 @@
 
 #include "ai_fuzz.h"
 #include "ee_math.h"
+#include "visfx.h"
 
 namespace rc::fuzz {
 
@@ -10,6 +11,7 @@ namespace {
 
 constexpr uint32_t kEffect = 0x4000u;   // an effect object placed after the car's records (0x0..0x2300)
 constexpr uint32_t kEffectSize = 0x700u;
+constexpr uint32_t kQuad = 0x4700u;     // the quad the sprites draw, clear of the effect (its UVs would overwrite the ring header)
 constexpr uint32_t kDef = 0x3800u;      // a copy of the car's object definition
 constexpr uint32_t kAuxA = 0x4800u, kAuxB = 0x5000u, kAuxC = 0x5800u; // small records the effects point at (0x200 each)
 constexpr uint32_t kTobInst = 0x6000u, kTob = 0x6200u, kShape = 0x6400u; // a scenery instance, its object and shape
@@ -53,7 +55,7 @@ struct Claim
 
 struct Table { uint32_t words[17]; };
 
-Claim<uint32_t> g_quad, g_sprite, g_trackHints;
+Claim<uint32_t> g_quad, g_sprite, g_trackHints, g_res, g_time;
 Claim<Table> g_rain, g_glint;
 
 void restoreGlobals()
@@ -61,6 +63,8 @@ void restoreGlobals()
     g_quad.restore();
     g_sprite.restore();
     g_trackHints.restore();
+    g_res.restore();
+    g_time.restore();
     g_rain.restore();
     g_glint.restore();
 }
@@ -516,7 +520,7 @@ void vfxFourEnds(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 // The camera-facing sprite: the current sprite is a record in scratch (scale, position, texture, flags, angle, colour).
 void buildSprite(uint64_t &state, uint32_t scratch)
 {
-    g_quad.set(0x1f1030u, scratch + kEffect);
+    g_quad.set(0x1f1030u, scratch + kQuad);
     g_sprite.set(0x1f3720u, scratch + kSprite); // visFxVarG.sprite
     const uint32_t sprite = scratch + kSprite;
     mem<float>(sprite) = rnd(state, 8) ? frnd(state, 40.0f) : 0.0f;
@@ -546,6 +550,517 @@ void vfxGroundSprite(R5900Context *ctx, uint64_t &state, uint32_t scratch)
         mem<int16_t>(scratch + kNormal + 2 * axis) = static_cast<int16_t>(static_cast<int32_t>(nextFuzz(state) % 8193u) - 4096 + (axis == 1 ? 4096 : 0));
     setArg(ctx, 0, scratch + kNormal);
     setFloatArg(ctx, 0, float_bits(frnd(state, 4.0f)));
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The third batch: effect lists on the heap, the handlers and renderers of the smoke, steam and fire effects, and the
+// level set-up and tear-down.
+
+namespace {
+
+constexpr uint32_t kRes = 0x7e00u;    // a stand-in for the level's effects resource: word i is vfxTex[i]
+constexpr uint32_t kHandle = 0x7f00u; // a handle word for heap allocations
+
+// The renderers' state: the current quad and sprite (see buildSprite), and the effects resource, whose textures all point
+// at texture records in scratch.
+void renderState(uint64_t &state, uint32_t scratch)
+{
+    buildSprite(state, scratch);
+    g_res.set(0x1f106cu, scratch + kRes);
+    for (uint32_t i = 0; i < 0x1c; ++i)
+        mem<uint32_t>(scratch + kRes + 4 * i) = scratch + kTexture + 16 * rnd(state, 8);
+}
+
+// A scenery effect with a ring of particles: the instance behind it (buildScenery) and the ring (buildRing).
+uint32_t sceneryEffect(uint64_t &state, uint32_t scratch, uint32_t mask, uint32_t stride, uint32_t lifeOffset, uint32_t frameMax = 0x40)
+{
+    restoreGlobals();
+    const uint32_t effect = scratch + kEffect;
+    buildScenery(state, scratch, effect, frameMax);
+    buildRing(state, effect, mask, effect + 0x44, stride, lifeOffset, 2);
+    return effect;
+}
+
+// The car's draw distance, mostly near enough to be drawn.
+void nearCar(uint64_t &state, uint32_t scratch)
+{
+    _sObject &car = *static_cast<_sObject *>(guest_host(scratch));
+    car.sDontRenderMe = static_cast<int16>(rnd(state, 2) ? 0 : nextFuzz(state));
+    car.zDrawnDist = static_cast<uint16>(rnd(state, 5) ? rnd(state, 0x1800) : nextFuzz(state));
+    car.zShortestDrawnDist = static_cast<uint16>(rnd(state, 5) ? rnd(state, 0x1800) : nextFuzz(state));
+}
+
+// Makes the car at scratch+0 one with an aerial: a node, a render object and a chain of sections, all in scratch.
+void aerialCar(uint64_t &state, uint32_t scratch)
+{
+    _sObject &car = *static_cast<_sObject *>(guest_host(scratch));
+    car.pAerialNode = ptr32<_sNode>(scratch + kAuxA);
+    car.pRendObj = ptr32<_sRendObj>(scratch + kAuxB);
+    car.pVfx_Aerial = ptr32<_sVfx_Aerial>(scratch + kAuxC);
+    for (uint32_t offset = 0x40; offset < 0xc0; offset += 4)
+        mem<float>(scratch + kAuxC + offset) = frnd(state, 800.0f);
+    for (uint32_t axis = 0; axis < 3; ++axis)
+        mem<int32_t>(scratch + kAuxB + 4 + 4 * axis) = static_cast<int32_t>(nextFuzz(state) % 400000u) - 200000;
+}
+
+// A block from the game's heap, with its address returned (0 if the heap is full).
+uint32_t heapBlock(uint32_t scratch, uint32_t size)
+{
+    mem<uint32_t>(scratch + kHandle) = 0;
+    if (!MemBlockAllocLo(ptr32<memHandle>(scratch + kHandle), size))
+        return 0;
+    return mem<uint32_t>(scratch + kHandle);
+}
+
+// A list of `count` effects of `size` bytes on the heap, linked as the game links them (Next at +0, Prev at +4), with the
+// handler at +8, the life at +0x10 and the type at +0x12 given by the callbacks. The head and footer are returned.
+struct FxList
+{
+    uint32_t head = 0, foot = 0;
+    uint32_t items[6] = {};
+    uint32_t count = 0;
+};
+
+FxList buildFxList(uint64_t &state, uint32_t scratch, uint32_t count, uint32_t size, uint32_t handler, bool types)
+{
+    FxList list;
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        const uint32_t block = heapBlock(scratch, size);
+        if (block == 0)
+            break;
+        for (uint32_t offset = 0; offset < 0x40; offset += 4)
+            mem<uint32_t>(block + offset) = nextFuzz(state);
+        mem<uint32_t>(block) = 0;
+        mem<uint32_t>(block + 4) = list.foot;
+        mem<uint32_t>(block + 8) = handler;
+        if (types)
+            mem<uint16_t>(block + 0x12) = static_cast<uint16_t>(rnd(state, 3) == 0 ? (rnd(state, 2) ? 0x23 : 0x29) : rnd(state, 0x40));
+        if (list.foot)
+            mem<uint32_t>(list.foot) = block;
+        else
+            list.head = block;
+        list.foot = block;
+        list.items[list.count++] = block;
+    }
+    return list;
+}
+
+} // namespace
+
+// a0..a3 a position and a type: only the types that make an effect from the position alone (butterflies, the explosion,
+// the oil slick), now and then one that makes nothing; the effect list holds nothing, or one or two effects.
+void vfxAddNewPlace(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    static constexpr int32_t kTypes[] = {0x29, 9, 0xa, 0x29, 0x31, 0x7f};
+    const FxList list = buildFxList(state, scratch, rnd(state, 3), 0x60, 0, false);
+    visFxClass &fx = G(visFxVarG);
+    fx.vfxHeader = ptr32<_sVfx_Object>(list.head);
+    fx.vfxFooter = ptr32<_sVfx_Object>(list.foot);
+    setArg(ctx, 0, static_cast<uint32_t>(static_cast<int32_t>(rnd(state, 6000)) - 3000));
+    setArg(ctx, 1, static_cast<uint32_t>(static_cast<int32_t>(rnd(state, 6000)) - 3000));
+    setArg(ctx, 2, static_cast<uint32_t>(static_cast<int32_t>(rnd(state, 6000)) - 3000));
+    setArg(ctx, 3, static_cast<uint32_t>(kTypes[rnd(state, 6)]));
+}
+
+// a0 a car with an aerial, a1 a section of its chain (0..6, now and then beyond).
+void vfxAerial(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    aerialCar(state, scratch);
+    setArg(ctx, 1, rnd(state, 8) ? rnd(state, 7) : rnd(state, 9));
+}
+
+// a0 a spark effect: its car at +0x44, a ring from +0x48 with a count (often zero), particles of 0x14 bytes.
+void vfxSparkHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    const uint32_t effect = scratch + kEffect;
+    buildRing(state, effect, rnd(state, 2) ? 15 : 31, effect + 0x48, 0x14, 0x10, 2);
+    mem<uint8_t>(effect + 0x41) = static_cast<uint8_t>(rnd(state, 3) ? mem<uint8_t>(effect + 0x41) : 0);
+    mem<uint32_t>(effect + 0x44) = scratch;
+    setArg(ctx, 0, effect);
+}
+
+// The rocket smoke: a ring of 32 particles of 0x14 bytes, a hook position at +0x14, and a life mostly above 0x1f.
+void vfxRocketSmoke(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    const uint32_t effect = scratch + kEffect;
+    buildRing(state, effect, 31, effect + 0x44, 0x14, 0x10, 2);
+    mem<uint8_t>(effect + 0x41) = static_cast<uint8_t>(rnd(state, 6) == 0 ? 0x1f + rnd(state, 3) : rnd(state, 0x20));
+    mem<uint16_t>(effect + 0x10) = static_cast<uint16_t>(rnd(state, 4) ? 0x20 + rnd(state, 100) : rnd(state, 0x22));
+    setArg(ctx, 0, effect);
+}
+
+// The explosion: a ring of 16 particles of 0x18 bytes, a life that is 200 (the first frame) a third of the time, and the
+// centre as three shorts at +0x1c4.
+void vfxExplosion(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    const uint32_t effect = scratch + kEffect;
+    buildRing(state, effect, 15, effect + 0x44, 0x18, 0x14, 2);
+    mem<uint16_t>(effect + 0x10) = static_cast<uint16_t>(rnd(state, 3) == 0 ? 200 : rnd(state, 2) ? rnd(state, 200) : nextFuzz(state));
+    for (uint32_t axis = 0; axis < 3; ++axis)
+        mem<int16_t>(effect + 0x1c4 + 2 * axis) = static_cast<int16_t>(static_cast<int32_t>(nextFuzz(state) % 8001u) - 4000);
+    setArg(ctx, 0, effect);
+}
+
+void vfxExplosionRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    vfxExplosion(ctx, state, scratch);
+    const uint32_t effect = scratch + kEffect;
+    renderState(state, scratch);
+    for (uint32_t i = 0; i < 16; ++i)
+        mem<uint16_t>(effect + 0x44 + i * 0x18 + 0x14) = static_cast<uint16_t>(rnd(state, 8) ? rnd(state, 80) : nextFuzz(state));
+    setArg(ctx, 0, effect);
+}
+
+// The car smoke: the car at +0x1c4, a ring of 16 particles of 0x18 bytes, a life that is often a multiple of four above 0x20.
+void vfxCarSmoke(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    const uint32_t effect = scratch + kEffect;
+    buildRing(state, effect, 15, effect + 0x44, 0x18, 0x14, 2);
+    mem<uint32_t>(effect + 0x1c4) = scratch;
+    mem<uint16_t>(effect + 0x10) = static_cast<uint16_t>(rnd(state, 2) ? 0x21 + 4 * rnd(state, 30) : rnd(state, 3) ? rnd(state, 0x30) : nextFuzz(state));
+    setArg(ctx, 0, effect);
+}
+
+void vfxCarSmokeRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    vfxCarSmoke(ctx, state, scratch);
+    if (!levelHasCars())
+        return;
+    nearCar(state, scratch);
+    const uint32_t effect = scratch + kEffect;
+    renderState(state, scratch);
+    for (uint32_t i = 0; i < 16; ++i)
+        mem<uint16_t>(effect + 0x44 + i * 0x18 + 0x14) = static_cast<uint16_t>(rnd(state, 8) ? rnd(state, 80) : nextFuzz(state));
+}
+
+// The spark renderer: the car at +0x44, a ring from +0x48 with a count that is rarely zero.
+void vfxSparksRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    vfxSparkHandler(ctx, state, scratch);
+    if (!levelHasCars())
+        return;
+    nearCar(state, scratch);
+    const uint32_t effect = scratch + kEffect;
+    renderState(state, scratch);
+    if (mem<uint8_t>(effect + 0x41) == 0 && rnd(state, 4))
+        mem<uint8_t>(effect + 0x41) = 1;
+    for (uint32_t i = 0; i < 32; ++i)
+        mem<uint16_t>(effect + 0x48 + i * 0x14 + 0x10) = static_cast<uint16_t>(rnd(state, 8) ? rnd(state, 80) : nextFuzz(state));
+}
+
+// The take-terror effect: a ring of 16 or 32 particles of 0x14 bytes, a count often below the mask (so particles start),
+// the car at +0x2cc and a counter at +0x2d0, and a life mostly in the range where it starts particles.
+void vfxTakeTerror(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    const uint32_t effect = scratch + kEffect;
+    const uint32_t mask = rnd(state, 2) ? 15 : 31;
+    buildRing(state, effect, mask, effect + 0x44, 0x14, 0x10, 2);
+    mem<uint8_t>(effect + 0x41) = static_cast<uint8_t>(rnd(state, 4) ? rnd(state, mask) : mask + rnd(state, 2));
+    mem<uint32_t>(effect + 0x2cc) = scratch;
+    mem<uint16_t>(effect + 0x10) = static_cast<uint16_t>(rnd(state, 4) ? 0xd + rnd(state, 0x28) : nextFuzz(state));
+    setArg(ctx, 0, effect);
+}
+
+// The moon rover's beam: the car at +0x40 (its integer physics hold the rotation), the vectors at +0x50, +0x60 and +0x70,
+// and a life that is 0xffff now and then.
+void vfxBlastMoonroverRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    const uint32_t effect = scratch + kEffect;
+    renderState(state, scratch);
+    mem<uint32_t>(effect + 0x40) = scratch;
+    mem<uint16_t>(effect + 0x10) = static_cast<uint16_t>(rnd(state, 8) == 0 ? 0xffff : nextFuzz(state));
+    for (uint32_t offset : {0x50u, 0x54u, 0x58u, 0x60u, 0x64u, 0x68u, 0x70u, 0x74u, 0x78u})
+        mem<float>(effect + offset) = frnd(state, 400.0f);
+    setArg(ctx, 0, effect);
+}
+
+// The blast lightning: two cars (both the one in scratch, now and then far from the camera), each with an aerial.
+void vfxBlastLightningRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    aerialCar(state, scratch);
+    nearCar(state, scratch);
+    const uint32_t effect = scratch + kEffect;
+    mem<uint32_t>(effect + 0x40) = scratch;
+    mem<uint32_t>(effect + 0x44) = scratch;
+    setArg(ctx, 0, effect);
+}
+
+// --- VISFX2 and VISFX3 -------------------------------------------------------------------------------------------------
+
+void vfxSteamingHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t effect = sceneryEffect(state, scratch, 15, 0x14, 0x10);
+    mem<uint16_t>(effect + 0x184) = static_cast<uint16_t>(rnd(state, 0x100));
+    setArg(ctx, 0, effect);
+}
+
+void vfxSteamingRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t effect = sceneryEffect(state, scratch, 15, 0x14, 0x10);
+    renderState(state, scratch);
+    for (uint32_t i = 0; i < 16; ++i)
+        mem<uint16_t>(effect + 0x44 + i * 0x14 + 0x10) = static_cast<uint16_t>(rnd(state, 8) ? rnd(state, 0x50) : nextFuzz(state));
+    setArg(ctx, 0, effect);
+}
+
+// The pipe steam: the countdown at +0x186 is 1 (it flips) a third of the time, the on/off count at +0x184 random.
+void vfxPipeSteam(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t effect = sceneryEffect(state, scratch, 15, 0x14, 0x10);
+    mem<uint16_t>(effect + 0x184) = static_cast<uint16_t>(nextFuzz(state));
+    mem<uint16_t>(effect + 0x186) = static_cast<uint16_t>(rnd(state, 3) == 0 ? 1 : rnd(state, 40));
+    setArg(ctx, 0, effect);
+}
+
+void vfxMonkeySmoke(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t effect = sceneryEffect(state, scratch, 15, 0x14, 0x10);
+    setArg(ctx, 0, effect);
+}
+
+// The volcano and smoking scenery: a tick at +0x184 that starts a particle every eighth frame, and the scenery's level
+// byte at +0x18b either side of 0x50.
+void vfxBigVolcano(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t effect = sceneryEffect(state, scratch, 15, 0x14, 0x10);
+    mem<uint16_t>(effect + 0x184) = static_cast<uint16_t>(rnd(state, 2) ? 7 + 8 * rnd(state, 100) : nextFuzz(state));
+    mem<uint8_t>(effect + 0x18b) = static_cast<uint8_t>(rnd(state, 2) ? 0x4c + rnd(state, 8) : nextFuzz(state));
+    setArg(ctx, 0, effect);
+}
+
+void vfxSmoking(R5900Context *ctx, uint64_t &state, uint32_t scratch) { vfxBigVolcano(ctx, state, scratch); }
+
+// The jungle fire: a ring of 32 particles of 0x18 bytes (the life at +0x14), a tick at +0x344 and a colour byte at +0x34b.
+void vfxJungleFire(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t effect = sceneryEffect(state, scratch, 31, 0x18, 0x14);
+    mem<uint16_t>(effect + 0x344) = static_cast<uint16_t>(nextFuzz(state));
+    mem<uint8_t>(effect + 0x34b) = static_cast<uint8_t>(nextFuzz(state));
+    setArg(ctx, 0, effect);
+}
+
+void vfxScifiRocket(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t effect = sceneryEffect(state, scratch, 15, 0x18, 0x14);
+    mem<uint8_t>(effect + 0x34b) = static_cast<uint8_t>(nextFuzz(state));
+    setArg(ctx, 0, effect);
+}
+
+void vfxFeathers(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t effect = sceneryEffect(state, scratch, 15, 0x14, 0x10);
+    renderState(state, scratch);
+    setArg(ctx, 0, effect);
+}
+
+void vfxBees(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t effect = sceneryEffect(state, scratch, 63, 0x14, 0x10);
+    renderState(state, scratch);
+    setArg(ctx, 0, effect);
+}
+
+void vfxFlies(R5900Context *ctx, uint64_t &state, uint32_t scratch) { vfxBees(ctx, state, scratch); }
+
+// The gulls: drawn only when bit 0 of the instance's flags (+0x16) is set.
+void vfxGulls(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t effect = sceneryEffect(state, scratch, 15, 0x14, 0x10);
+    renderState(state, scratch);
+    mem<uint16_t>(scratch + kTobInst + 0x16) = static_cast<uint16_t>(rnd(state, 4) ? 1 | (nextFuzz(state) & 0xfffe) : nextFuzz(state) & 0xfffe);
+    setArg(ctx, 0, effect);
+}
+
+void vfxTumbleWeedRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t effect = sceneryEffect(state, scratch, 15, 0x14, 0x10);
+    renderState(state, scratch);
+    setArg(ctx, 0, effect);
+}
+
+void vfxCloudCarousel(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    renderState(state, scratch);
+    // The car's render object, a record of our own: the game's would be rewritten under the test once the race is over.
+    _sObject &car = *static_cast<_sObject *>(guest_host(scratch));
+    car.pRendObj = ptr32<_sRendObj>(scratch + kAuxB);
+    for (uint32_t axis = 0; axis < 3; ++axis)
+        mem<int32_t>(scratch + kAuxB + 4 + 4 * axis) = static_cast<int32_t>(nextFuzz(state) % 400000u) - 200000;
+    g_time.set(guest_addr(&G(mainVarG).time), nextFuzz(state) >> rnd(state, 12));
+    mem<uint32_t>(scratch + 0x34) = scratch + kTexture + 16 * rnd(state, 8); // the car's shadow texture
+}
+
+void vfxTargetCar(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    vfxCloudCarousel(ctx, state, scratch);
+}
+
+// The skull's fart: the car at +0x1c4, a ring of 16 particles of 0x18 bytes, a life mostly above 0x1f.
+void vfxSkullFartHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    const uint32_t effect = scratch + kEffect;
+    buildRing(state, effect, 15, effect + 0x44, 0x18, 0x14, 2);
+    mem<uint32_t>(effect + 0x1c4) = scratch;
+    mem<uint16_t>(effect + 0x10) = static_cast<uint16_t>(rnd(state, 4) ? 0x20 + rnd(state, 100) : rnd(state, 0x22));
+    setArg(ctx, 0, effect);
+}
+
+void vfxSkullFartRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    vfxSkullFartHandler(ctx, state, scratch);
+    if (!levelHasCars())
+        return;
+    nearCar(state, scratch);
+    renderState(state, scratch);
+}
+
+// The right-the-car effect: life 0x10 (the first frame) half the time, else 1 or 2 (about to end) or random.
+void vfxCarRight(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    vfxSkullFartHandler(ctx, state, scratch);
+    const uint32_t effect = scratch + kEffect;
+    mem<uint16_t>(effect + 0x10) = static_cast<uint16_t>(rnd(state, 2) ? 0x10 : rnd(state, 3) == 0 ? 1 + rnd(state, 2) : nextFuzz(state));
+}
+
+// The oil on a car: the car at +0x40 and two counters.
+void vfxOilCoveredRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    nearCar(state, scratch);
+    renderState(state, scratch);
+    const uint32_t effect = scratch + kEffect;
+    mem<uint32_t>(effect + 0x40) = scratch;
+    mem<uint16_t>(effect + 0x44) = static_cast<uint16_t>(nextFuzz(state));
+    mem<int16_t>(effect + 0x46) = static_cast<int16_t>(0x30 + rnd(state, 0x30));
+    setArg(ctx, 0, effect);
+}
+
+// The spray: the car at +0x44, half the time a boat (so the wheel and sphere paths both run), a ring from +0x48 with
+// particles of 0x1c bytes (the life at +0x18) and a count that is rarely zero.
+void vfxSprayRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    nearCar(state, scratch);
+    renderState(state, scratch);
+    _sObject &car = *static_cast<_sObject *>(guest_host(scratch));
+    _sObjectDef &def = *static_cast<_sObjectDef *>(guest_host(scratch + kDef));
+    def = *car.pDef;
+    def.type = static_cast<eObjectType>(rnd(state, 2) ? OBJECT_TYPE_BADDRC_BOAT + rnd(state, 4) : rnd(state, 8));
+    car.pDef = ptr32<_sObjectDef>(scratch + kDef);
+    const uint32_t effect = scratch + kEffect;
+    buildRing(state, effect, 15, effect + 0x48, 0x1c, 0x18, 2);
+    if (mem<uint8_t>(effect + 0x41) == 0 && rnd(state, 4))
+        mem<uint8_t>(effect + 0x41) = 1;
+    for (uint32_t i = 0; i < 16; ++i)
+        mem<uint16_t>(effect + 0x48 + i * 0x1c + 0x18) = static_cast<uint16_t>(rnd(state, 8) ? rnd(state, 0x60) : nextFuzz(state));
+    mem<uint32_t>(effect + 0x44) = scratch;
+    setArg(ctx, 0, effect);
+}
+
+// --- the scenery effect list and the level's set-up and tear-down ----------------------------------------------------
+
+// a0 a scenery instance, a1 its flags, a2 a size, a3 a type: mostly the 29 kinds, now and then beyond. The list is empty or
+// holds one to three effects.
+void vfxTSFXAdd(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    const FxList list = buildFxList(state, scratch, rnd(state, 4), 0x60, 0, false);
+    visFxClass &fx = G(visFxVarG);
+    fx.vfxTSFXHeader = ptr32<_sVfx_TSFX>(list.head);
+    fx.vfxTSFXFooter = ptr32<_sVfx_TSFX>(list.foot);
+    setArg(ctx, 0, scratch + kTobInst);
+    setArg(ctx, 1, nextFuzz(state) & 0xffffff);
+    setArg(ctx, 2, nextFuzz(state) & 0xff);
+    setArg(ctx, 3, rnd(state, 8) ? rnd(state, 0x1d) : rnd(state, 0x24));
+}
+
+// The set-up and tear-down of the lists: the effect list or the scenery list holds some effects on the heap (the tear-down
+// frees them all).
+void vfxLvlTerm(R5900Context *, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    const FxList list = buildFxList(state, scratch, rnd(state, 5), 0x60, 0, false);
+    G(visFxVarG).vfxHeader = ptr32<_sVfx_Object>(list.head);
+    G(visFxVarG).vfxFooter = ptr32<_sVfx_Object>(list.foot);
+}
+
+void vfxTSFXLvlTerm(R5900Context *, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    const FxList list = buildFxList(state, scratch, rnd(state, 5), 0x60, 0, false);
+    G(visFxVarG).vfxTSFXHeader = ptr32<_sVfx_TSFX>(list.head);
+    G(visFxVarG).vfxTSFXFooter = ptr32<_sVfx_TSFX>(list.foot);
+}
+
+// The level start: the level number is the front end's (0x62) half the time, with the front end active or not.
+void vfxLvlInit(R5900Context *, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    const FxList list = buildFxList(state, scratch, rnd(state, 3), 0x60, 0, false);
+    G(visFxVarG).vfxHeader = ptr32<_sVfx_Object>(list.head);
+    G(visFxVarG).vfxFooter = ptr32<_sVfx_Object>(list.foot);
+    G(mainVarG).level = rnd(state, 2) ? 0x62 : rnd(state, 30);
+    G(frontEndVarG).active = static_cast<uint8_t>(rnd(state, 2) ? 5 : rnd(state, 8));
+    G(mainVarG).status = rnd(state, 2) ? MAIN_RACE_RESULT : static_cast<eMain>(rnd(state, 0x80));
+    G(visFxVarG).iResultTrigger = static_cast<int32>(nextFuzz(state));
+}
+
+void vfxTSFXLvlInit(R5900Context *, uint64_t &state, uint32_t scratch) { vfxTSFXLvlTerm(nullptr, state, scratch); }
+
+// The scenery update: a list of one to three effects whose handler is the tumbleweed's (a call that needs no scenery
+// instance) or none, and a time.
+void vfxTSFXUpdate(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    const uint32_t handler = rnd(state, 3) ? 0x179020u : 0u;
+    const FxList list = buildFxList(state, scratch, 1 + rnd(state, 3), 0x60, handler, false);
+    G(visFxVarG).vfxTSFXHeader = ptr32<_sVfx_TSFX>(list.head);
+    G(visFxVarG).vfxTSFXFooter = ptr32<_sVfx_TSFX>(list.foot);
+    for (uint32_t i = 0; i < list.count; ++i)
+        if (rnd(state, 4) == 0)
+            mem<uint32_t>(list.items[i] + 8) = 0;
+    setArg(ctx, 1, nextFuzz(state));
+}
+
+// a0 an effect from a list of two to five on the heap (VfxDelete); the head or the footer of it now and then.
+void vfxDelete(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    const FxList list = buildFxList(state, scratch, 1 + rnd(state, 5), 0x60, 0, true);
+    G(visFxVarG).vfxHeader = ptr32<_sVfx_Object>(list.head);
+    G(visFxVarG).vfxFooter = ptr32<_sVfx_Object>(list.foot);
+    setArg(ctx, 0, list.items[rnd(state, list.count ? list.count : 1)]);
+}
+
+// VfxHandOverFXDelete: a list of up to five effects of random types, some of them 0x23 and 0x29, which are kept.
+void vfxHandOver(R5900Context *, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    const FxList list = buildFxList(state, scratch, rnd(state, 6), 0x60, 0, true);
+    G(visFxVarG).vfxHeader = ptr32<_sVfx_Object>(list.head);
+    G(visFxVarG).vfxFooter = ptr32<_sVfx_Object>(list.foot);
+    G(carListVarG).alternativeRendObj = nextFuzz(state);
 }
 
 } // namespace rc::fuzz
