@@ -5,6 +5,10 @@
 #include "ee_math.h"
 #include "visfx.h"
 
+namespace rc {
+uint32_t &randState(); // ai.cpp: newlib's rand state
+}
+
 namespace rc::fuzz {
 
 namespace {
@@ -19,6 +23,7 @@ constexpr uint32_t kRing = 0x6800u, kRingParticles = 0x6900u;            // a pa
 constexpr uint32_t kVectors = 0x7000u, kTexture = 0x7400u, kSprite = 0x7800u, kNormal = 0x7c00u;
 
 void scrambleStack(R5900Context *ctx, uint64_t &state);
+void seedRand(uint64_t &state);
 
 // Every setup sets its first argument last-ish, so this is also where the stack is scrambled (see scrambleStack) for the
 // setups that do not do it themselves. The words come from a generator of their own: only the original and the
@@ -27,7 +32,10 @@ void setArg(R5900Context *ctx, int index, uint32_t value)
 {
     static uint64_t stackState = 0x5eed5eed12345678ull;
     if (index == 0)
+    {
         scrambleStack(ctx, stackState);
+        seedRand(stackState);
+    }
     SET_GPR_S32(ctx, 4 + index, static_cast<int32_t>(value));
 }
 void setFloatArg(R5900Context *ctx, int index, uint32_t bits) { std::memcpy(&ctx->f[12 + index], &bits, 4); }
@@ -42,6 +50,10 @@ void scrambleStack(R5900Context *ctx, uint64_t &state)
     for (uint32_t offset = 0x400; offset >= 4; offset -= 4)
         *static_cast<uint32_t *>(guest_host(sp - offset)) = nextFuzz(state);
 }
+
+// Gives the game's rand a random state. A whole-RAM input (RC_DECOMP_FN_SETUP_HEAP) starts from RAM as the step began,
+// rand's state included, so without this every input of such a function would draw the same random numbers.
+void seedRand(uint64_t &state) { randState() = nextFuzz(state); }
 
 // Globals the setups point at their scratch data. The harness keeps what a setup leaves in the globals until the end of
 // its step (the next input starts from it, and so does every function tested after this one in the step), so each setup
@@ -2931,6 +2943,236 @@ void vfxFinishPositionRenderer(R5900Context *ctx, uint64_t &state, uint32_t scra
     mem<uint32_t>(scratch + kCameraRecord + 0xac) = rnd(state, 2) ? 0 : 1 + rnd(state, 4);
     mem<int32_t>(effect + 0x1a4) = rnd(state, 8) ? static_cast<int32_t>(rnd(state, 5)) : -1;
     setArg(ctx, 0, effect);
+}
+
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The last batch (visfx12.cpp): the effect constructor, the effects task, the draw lists, the scenery tags, the podium,
+// the sky and the rain. All of them compare and restore all of RAM (RC_DECOMP_FN_SETUP_HEAP); several run on the
+// dump's real effect lists, cars and level.
+
+namespace {
+
+constexpr uint32_t kFxHeaderAddr = 0x1f3710u, kTsfxHeaderAddr = 0x1f3718u;
+constexpr uint32_t kSkyTerrorAddr = 0x1f3728u, kResultTriggerAddr = 0x1f3730u;
+
+// Walks a real effect list (Next at +0) and gives about one effect in `oneIn` a life of zero (VfxUpdate frees those,
+// the renderers skip them). At most 400 effects are visited, in case a list is damaged.
+void killSome(uint64_t &state, uint32_t header, uint32_t oneIn)
+{
+    uint32_t visited = 0;
+    for (uint32_t fx = mem<uint32_t>(header); fx && visited < 400; fx = mem<uint32_t>(fx), ++visited)
+        if (fx < 0x2000000u && rnd(state, oneIn) == 0)
+            mem<uint16_t>(fx + 0x10) = 0;
+}
+
+// Moves the camera position the effects are sorted from by up to `range` units now and then (more culled or kept).
+void nudgeCamera(uint64_t &state, float range)
+{
+    if (rnd(state, 2))
+        return;
+    for (uint32_t axis = 0; axis < 3; ++axis)
+        mem<float>(0x1f1160u + 4 * axis) += frnd(state, range);
+}
+
+// A random real object slot (0 to the object count, now and then one past it).
+uint32_t objectSlot(uint64_t &state)
+{
+    const uint32_t count = G(objectVarG).noObjects;
+    return count == 0 ? 0u : rnd(state, count + 1);
+}
+
+} // namespace
+
+// a0 a car (a copy in scratch), a1/a2 parameters (a1 for the spin pickup a record with its position at +0x78), a3 a type:
+// mostly the 0x38 kinds, now and then 0x2e or beyond, and now and then a placed effect (+0x400, a0..a2 a position) of a
+// kind that does not reach into a car. The effect list holds nothing or one or two effects.
+void vfxAddNew(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    const FxList list = buildFxList(state, scratch, rnd(state, 3), 0x60, 0, false);
+    G(visFxVarG).vfxHeader = ptr32<_sVfx_Object>(list.head);
+    G(visFxVarG).vfxFooter = ptr32<_sVfx_Object>(list.foot);
+    const uint32_t pickup = scratch + kAuxA;
+    for (uint32_t offset = 0x78; offset <= 0x80; offset += 4)
+        mem<float>(pickup + offset) = frnd(state, 3000.0f);
+    uint32_t type = rnd(state, 10) ? rnd(state, 0x38) : rnd(state, 0x60);
+    const uint32_t y = type == 0x15 ? pickup : (rnd(state, 2) ? rnd(state, 8) : nextFuzz(state));
+    const uint32_t z = rnd(state, 2) ? rnd(state, 0x40) : nextFuzz(state);
+    const bool reachesCar = type == 3 || type == 0x15 || type == 0x1b || type == 0x24 || type == 0x30;
+    if (!reachesCar && rnd(state, 4) == 0)
+    {
+        setArg(ctx, 0, static_cast<uint32_t>(static_cast<int32_t>(rnd(state, 0x10000)) - 0x8000));
+        setArg(ctx, 1, static_cast<uint32_t>(static_cast<int32_t>(rnd(state, 0x10000)) - 0x8000));
+        setArg(ctx, 2, static_cast<uint32_t>(static_cast<int32_t>(rnd(state, 0x10000)) - 0x8000));
+        setArg(ctx, 3, type + 0x400);
+        return;
+    }
+    setArg(ctx, 0, scratch);
+    setArg(ctx, 1, y);
+    setArg(ctx, 2, z);
+    setArg(ctx, 3, type);
+}
+
+// The effects task on the dump's real state: some cars lose their attachments (they are made again), the car viewer's
+// mode now and then, some effects' lives end (they are freed), the players' old states and the sky terror vary, and a1 is
+// a time.
+void vfxUpdate(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    (void)scratch;
+    const bool reattach = rnd(state, 2) == 0; // otherwise the list's footer is an old effect, which may be freed
+    for (uint32_t i = 0; i < G(objectVarG).noObjects && i < 0x5c; ++i)
+    {
+        const uint32_t obj = mem<uint32_t>(0x1ee390u + 4 * i);
+        if (reattach && obj && obj < 0x2000000u && rnd(state, 3) == 0)
+            mem<uint8_t>(obj + 0x177) = 0;
+        mem<int16_t>(0x1f37e2u + 4 * i) = static_cast<int16_t>(rnd(state, 2) ? 0 : nextFuzz(state));
+    }
+    if (rnd(state, 4) == 0)
+        G(frontEndVarG).active = 5;
+    killSome(state, kFxHeaderAddr, 4);
+    const uint32_t terror = rnd(state, 3);
+    mem<int32_t>(kSkyTerrorAddr) = terror == 0 ? 0 : terror == 1 ? 0x7f : static_cast<int32_t>(rnd(state, 0x80));
+    setArg(ctx, 0, nextFuzz(state));
+    setArg(ctx, 1, nextFuzz(state) >> rnd(state, 16));
+}
+
+// The effect draw list on the dump's real effects: some lives ended, the camera now and then moved.
+void vfxCallRenderers(R5900Context *, uint64_t &state, uint32_t)
+{
+    restoreGlobals();
+    seedRand(state);
+    killSome(state, kFxHeaderAddr, 5);
+    nudgeCamera(state, 3000.0f);
+}
+
+// The scenery effect draw list on the dump's real scenery effects, the camera now and then moved.
+void vfxRenderTSFX(R5900Context *, uint64_t &state, uint32_t)
+{
+    restoreGlobals();
+    seedRand(state);
+    nudgeCamera(state, 3000.0f);
+}
+
+// a0 a scenery instance, a1 a tag: mostly one of the tags that start an effect (or a rain area, or two effects) or a
+// neighbour of one, now and then anything. The scenery list holds nothing or up to three effects.
+void vfxCallBack(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    static constexpr uint32_t kTags[] = {0x3e8, 0x3e9, 0x3ea, 0x3eb, 0x3ec, 0x3ed, 0x3ee, 0x3ef, 0x3f0, 0x3f1, 0x3f2, 0x1000023a,
+                                         0x10000244, 0x10000245, 0x1000025e, 0x10000264, 0x10000265, 0x10000269, 0x1000026a,
+                                         0x1000026b, 0x1000026c, 0x1000026d, 0x1000026e, 0x1000026f, 0x10000270, 0x10000271,
+                                         0x10000272, 0x10000273, 0x10000274, 0x10000275, 0x10000276, 0x10000277, 0x10000278,
+                                         0x10000279, 0x1000027a, 0x1000027b, 0x1000027c, 0x1000027d, 0x1000027e, 0x1000027f,
+                                         0x10000280, 0x10000281, 0x1000034e, 0x1000035c, 0x1000036f, 0x10000374, 0x10000428,
+                                         0x10000457, 0x10000476, 0x1000047b, 0x10000480, 0x100004bd, 0x100004d6, 0x100004d8,
+                                         0x100004d9, 0x100004ef, 0x100004f2, 0x10000501, 0x10000540, 0x100005d4, 0x100005f1,
+                                         0x100005f3, 0x100005f4, 0x10000623, 0x10000649, 0x10000678, 0x10000679};
+    restoreGlobals();
+    const FxList list = buildFxList(state, scratch, rnd(state, 4), 0x60, 0, false);
+    G(visFxVarG).vfxTSFXHeader = ptr32<_sVfx_TSFX>(list.head);
+    G(visFxVarG).vfxTSFXFooter = ptr32<_sVfx_TSFX>(list.foot);
+    uint32_t tag = kTags[rnd(state, std::size(kTags))];
+    const uint32_t kind = rnd(state, 8);
+    if (kind == 0)
+        tag += 1;
+    else if (kind == 1)
+        tag -= 1;
+    else if (kind == 2)
+        tag = rnd(state, 2) ? nextFuzz(state) : 0x10000000u + rnd(state, 0x800);
+    setArg(ctx, 0, scratch + kTobInst);
+    setArg(ctx, 1, tag);
+}
+
+// The podium: the result count near each of its moments (the car releases, the firework rates, the menu set-up), the
+// podium's car slots (0x13 to 0x17) a car copy in scratch with its hold flag set or not, or empty, and the crackle count.
+// The count never reaches 0x100 here (that hands over to the front end).
+void vfxPodiumPlay(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    seedRand(state);
+    static constexpr int32_t kMoments[] = {0, 1, 0xf97, 0xf6f, 0xf27, 0xeeb, 0xe76, 0xe75, 0xdac, 0xdad, 0x102, 0x100, 0x50, 0x1000};
+    const uint32_t kind = rnd(state, 3);
+    const int32_t trigger = kind == 0 ? static_cast<int32_t>(0x102 + rnd(state, 0xf00)) : kMoments[rnd(state, std::size(kMoments))];
+    mem<int32_t>(kResultTriggerAddr) = trigger;
+    for (uint32_t slot = 0x13; slot <= 0x17; ++slot)
+        mem<uint32_t>(0x1ee390u + 4 * slot) = rnd(state, 3) ? scratch : 0u;
+    mem<uint8_t>(scratch + 0x1000 + 0x1cd) = static_cast<uint8_t>(nextFuzz(state));
+    mem<int32_t>(0x328108u) = rnd(state, 2) ? static_cast<int32_t>(rnd(state, 0x22)) : static_cast<int32_t>(nextFuzz(state));
+}
+
+// The rain: up to three rain areas (scenery instances near the camera with a radius) or none, every drop in some state
+// (waiting, falling, just landed), split screen 0 or 1, and the renderers' sprite, quad and textures in scratch.
+void vfxRain(R5900Context *, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    seedRand(state);
+    renderState(state, scratch);
+    for (uint32_t i = 0x1c; i < 0x20; ++i)
+        mem<uint32_t>(scratch + kRes + 4 * i) = scratch + kTexture + 16 * rnd(state, 8);
+    const uint32_t areas = rnd(state, 5) ? 1 + rnd(state, 3) : 0;
+    const int32_t cam[3] = {mem<int16_t>(0x1f1108u), mem<int16_t>(0x1f110au), mem<int16_t>(0x1f110cu)};
+    for (uint32_t i = 0; i < 17; ++i)
+    {
+        const uint32_t tob = scratch + kTobInst + 0x40 * i;
+        mem<uint32_t>(0x1f1e64u + 4 * i) = i < areas ? tob : 0u;
+        if (i >= areas)
+            continue;
+        for (uint32_t axis = 0; axis < 3; ++axis)
+            mem<int32_t>(tob + 4 + 4 * axis) = (cam[axis] + static_cast<int32_t>(rnd(state, 6001)) - 3000) * 256;
+        mem<uint16_t>(tob + 0x2c) = static_cast<uint16_t>(rnd(state, 4000));
+    }
+    mem<int32_t>(0x1edc78u) = rnd(state, 4) ? 0 : 1;
+    const float camera[3] = {mem<float>(0x1f1160u), mem<float>(0x1f1164u), mem<float>(0x1f1168u)};
+    for (uint32_t i = 0; i < 64; ++i)
+    {
+        const uint32_t p = 0x1f11c0u + 0x30 * i;
+        const uint32_t life = rnd(state, 4);
+        mem<int16_t>(p + 0x10) = static_cast<int16_t>(life == 0 ? 0 : life == 1 ? 1 + rnd(state, 12) : rnd(state, 3) ? rnd(state, 60) : nextFuzz(state));
+        mem<int16_t>(p + 0x12) = static_cast<int16_t>(rnd(state, 0x60));
+        for (uint32_t axis = 0; axis < 3; ++axis)
+            mem<float>(p + 4 * axis) = camera[axis] + frnd(state, 2000.0f);
+        mem<float>(p + 0x14) = 30.0f + frnd(state, 170.0f);
+        mem<float>(p + 0x18) = camera[1] + frnd(state, 1000.0f);
+        for (uint32_t axis = 0; axis < 3; ++axis)
+            mem<int16_t>(p + 0x1c + 2 * axis) = static_cast<int16_t>(static_cast<int32_t>(rnd(state, 8193)) - 4096 + (axis == 1 ? 4096 : 0));
+    }
+}
+
+// The sky terror's merged sky: its weight (0 to 0x7f), the time, and the quad in scratch.
+void vfxSkyMerge(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    renderState(state, scratch);
+    mem<int32_t>(kSkyTerrorAddr) = static_cast<int32_t>(rnd(state, 0x80));
+    g_time.set(guest_addr(&G(mainVarG).time), nextFuzz(state) >> rnd(state, 12));
+    setArg(ctx, 0, nextFuzz(state));
+}
+
+// The sky and the podium's texts: the sky terror (mostly off), the result count (off, or in any of its ranges), the sky
+// flag, the players' places (0 to 5) and their podium cars (real object slots). The front end's level data is a record
+// in scratch whose font is the one now loaded, so the texts print with a real font (no text if none is loaded).
+void vfxSkyChange(R5900Context *, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    seedRand(state);
+    renderState(state, scratch);
+    mem<int32_t>(kSkyTerrorAddr) = rnd(state, 3) ? 0 : static_cast<int32_t>(rnd(state, 2) ? rnd(state, 0x80) : nextFuzz(state));
+    const uint32_t font = G(fontVarG).pFont.address;
+    const uint32_t kind = rnd(state, 4);
+    int32_t trigger = kind == 0 ? 0 : kind == 1 ? static_cast<int32_t>(rnd(state, 0x100)) : static_cast<int32_t>(0x100 + rnd(state, 0xf00));
+    if (font == 0 && trigger >= 0x100)
+        trigger = 0x80;
+    mem<int32_t>(kResultTriggerAddr) = trigger;
+    mem<uint16_t>(0x1f48e4u) = static_cast<uint16_t>(rnd(state, 3) ? 1 : 0);
+    mem<uint32_t>(0x1eca58u) = scratch + kAuxB;
+    mem<uint32_t>(scratch + kAuxB + 0x1c) = font;
+    mem<uint16_t>(0x1e9464u) = static_cast<uint16_t>(rnd(state, 6));
+    mem<uint16_t>(0x1e9466u) = static_cast<uint16_t>(rnd(state, 2) ? 0 : rnd(state, 6));
+    mem<uint16_t>(0x1e9468u) = static_cast<uint16_t>(objectSlot(state));
+    mem<uint16_t>(0x1e946au) = static_cast<uint16_t>(objectSlot(state));
 }
 
 } // namespace rc::fuzz
