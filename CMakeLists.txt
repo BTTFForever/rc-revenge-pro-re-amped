@@ -118,3 +118,20 @@ if(NOT TARGET vu1_recomp)
     target_link_libraries(vu1_recomp PRIVATE ps2_runtime)
     target_include_directories(vu1_recomp PRIVATE "${PS2RECOMP_DIR}/ps2xRuntime/src/lib/vu")
 endif()
+
+# The offline oracle (decomp/oracle/rc_oracle.cpp, tools/oracle.sh): the same recompiled, decompiled and override code as
+# the game, run on RAM dumps without the window, game loop or threads. Built in its own folder so the game's build is
+# left alone: cmake -S . -B build-oracle -G Ninja && ninja -C build-oracle rc_oracle
+set(RC_ORACLE_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/decomp/oracle/rc_oracle.cpp")
+add_executable(rc_oracle EXCLUDE_FROM_ALL ${GAME_SOURCES} ${OVERRIDE_SOURCES} ${DECOMP_SOURCES} "${RC_ORACLE_SOURCE}"
+    third_party/port_engine/rc_backend.cpp)
+target_include_directories(rc_oracle PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/output")
+target_link_libraries(rc_oracle PRIVATE ps2_runtime rc_port_engine)
+set_target_properties(rc_oracle PROPERTIES UNITY_BUILD ON UNITY_BUILD_BATCH_SIZE 32)
+target_compile_options(rc_oracle PRIVATE ${RC_GAME_OPT_LIST})
+set_source_files_properties("${RC_ORACLE_SOURCE}" PROPERTIES SKIP_UNITY_BUILD_INCLUSION TRUE
+    COMPILE_OPTIONS "-O2;-fwrapv;-fno-strict-aliasing"
+    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/decomp;${CMAKE_CURRENT_SOURCE_DIR}/decomp/generated;${CMAKE_CURRENT_SOURCE_DIR}/decomp/oracle")
+if(TARGET rc_vu1_code)
+    target_link_libraries(rc_oracle PRIVATE -Wl,--whole-archive rc_vu1_code -Wl,--no-whole-archive)
+endif()

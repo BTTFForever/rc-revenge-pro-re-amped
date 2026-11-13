@@ -50,6 +50,31 @@ void shadowCall(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, Entry &e
 // Called once when the game is loaded.
 void installDecomp(PS2Runtime &runtime);
 
+// The random test's memory: the scratch area its inputs are built in, and the game's globals (the ELF's data and bss).
+constexpr uint32_t kFuzzScratch = 0x01F00000u, kFuzzScratchSize = 0x8000u;
+constexpr uint32_t kFuzzDataStart = 0x001E9400u, kFuzzDataEnd = 0x004C7190u;
+constexpr int kFuzzWholeRamInputs = 40; // At most, for a function registered with RC_DECOMP_FN_SETUP_HEAP.
+
+struct FuzzCaseResult
+{
+    bool cutShort = false; // The original did not return (a scheduling point or a wait); nothing was compared.
+    bool same = true;
+    bool returnedNonZero = false;
+    bool wroteMemory = false;
+};
+
+// One random input of a function's random test, original against decompiled (rc_decomp.cpp). Used by the live test and
+// by the offline oracle (decomp/oracle).
+FuzzCaseResult fuzzCase(Entry &entry, uint8_t *rdram, const R5900Context &live, PS2Runtime *runtime, uint64_t &state,
+                        const uint8_t *ramBackup, int iteration, uint64_t mismatchesSoFar);
+
+// Every registered function, in registration order.
+std::vector<Entry *> registeredEntries();
+
+// For the offline oracle: installs every function as under RC_SHADOW=1 (nested calls inside a comparison reach the
+// originals), without the log thread, and allocates the comparison's buffers.
+void installForOracle(PS2Runtime &runtime);
+
 // The decompiled version of the function at an address, or fallback if it has none or decompilation is off.
 RecompFn decompOr(uint32_t address, RecompFn fallback);
 

@@ -12,6 +12,7 @@
 #include "ps2_runtime_macros.h"
 #include "runtime/ee_scheduler.h"
 #include "ps2_stubs.h"
+#include "../decomp/oracle/ram_dump.h"
 
 #include <filesystem>
 
@@ -56,6 +57,7 @@ extern "C" void __gcov_dump(void);
 namespace
 {
     std::atomic<uint64_t> g_gameFrames{0};
+    std::atomic<uint64_t> g_levelFrames{0}; // since the last level start, for RC_RAMDUMP_FRAME
 
     constexpr uint32_t kSceCdSearchFileAddr = 0x001CC110u;
     constexpr uint32_t kSectorSize = 2048u;
@@ -354,6 +356,7 @@ namespace
     void mainGameLevelInit(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         MainGameLevelInit_0x12fc58(rdram, ctx, runtime);
+        g_levelFrames.store(0u);
         g_inputClock.store(((g_inputClock.load() >> 32) + 1u) << 32);
     }
 
@@ -372,10 +375,42 @@ namespace
         ps2_stubs::sceMpegGetPicture(rdram, ctx, runtime);
     }
 
+    // RC_RAMDUMP=<file> RC_RAMDUMP_FRAME=<n>: at the start of the n-th game frame after the level started (after boot if
+    // none has), writes the state the offline oracle needs (decomp/oracle/ram_dump.h) and exits.
+    void writeRamDump(const char *path, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        rc::RamDumpHeader header{};
+        std::memcpy(header.magic, rc::kRamDumpMagic, sizeof(header.magic));
+        header.contextSize = sizeof(R5900Context);
+        header.level = static_cast<uint32_t>(bootLevel());
+        header.frame = g_levelFrames.load();
+        header.totalFrames = g_gameFrames.load();
+        header.guestHeapBase = runtime->guestHeapBase();
+        header.guestHeapEnd = runtime->guestHeapEnd();
+        header.guestHeapLimit = runtime->guestHeapLimit();
+        PS2Memory &memory = runtime->memory();
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char *>(&header), sizeof(header));
+        out.write(reinterpret_cast<const char *>(ctx), sizeof(R5900Context));
+        out.write(reinterpret_cast<const char *>(memory.getRDRAM()), PS2_RAM_SIZE);
+        out.write(reinterpret_cast<const char *>(memory.getScratchpad()), PS2_SCRATCHPAD_SIZE);
+        out.write(reinterpret_cast<const char *>(memory.getVU0Code()), PS2_VU0_CODE_SIZE);
+        out.write(reinterpret_cast<const char *>(memory.getVU0Data()), PS2_VU0_DATA_SIZE);
+        out.close();
+        std::cerr << "[rc_revenge_pro] RAM dump written to " << path << " (level " << header.level << ", frame "
+                  << header.frame << ", sp 0x" << std::hex << getRegU32(ctx, 29) << std::dec << ")"
+                  << (out ? "" : " FAILED") << std::endl;
+        std::_Exit(out ? 0 : 1);
+    }
+
     // Counts real game frames for RC_DEBUG_DUMP.
     void countGameFrame(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         g_gameFrames.fetch_add(1u, std::memory_order_relaxed);
+        static const char *dumpPath = std::getenv("RC_RAMDUMP");
+        static const uint64_t dumpFrame = std::getenv("RC_RAMDUMP_FRAME") ? std::strtoull(std::getenv("RC_RAMDUMP_FRAME"), nullptr, 10) : 600u;
+        if (dumpPath && g_levelFrames.fetch_add(1u, std::memory_order_relaxed) + 1u >= dumpFrame)
+            writeRamDump(dumpPath, ctx, runtime);
         g_inputClock.fetch_add(1u, std::memory_order_relaxed);
         static const auto swapBuffers = rc::decompOr(0x18e988u, &GfxP2_SwapBuffers_0x18e988);
         swapBuffers(rdram, ctx, runtime);

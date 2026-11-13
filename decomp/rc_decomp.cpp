@@ -232,8 +232,190 @@ void writeSummary(const std::string &path)
     out << "total compared " << totalCompared << " mismatches " << totalMismatches << '\n';
 }
 
+} // namespace
+
+// One random input of the random test: builds it (the function's setup, or random arguments), runs the original and
+// the decompiled function from identical state and compares the result, the scratch area, the game's globals, the
+// scratchpad and, for a function that uses the heap, all of RAM. Shared by the live test (fuzzStep) and the offline
+// oracle (decomp/oracle). ramBackup is RAM as the step began; a whole-RAM input puts it back afterwards. Detail lines go
+// to stderr while mismatchesSoFar < 4. On a cut-short original the scratch area and globals are put back and nothing
+// is compared.
+FuzzCaseResult fuzzCase(Entry &entry, uint8_t *rdram, const R5900Context &live, PS2Runtime *runtime, uint64_t &state,
+                        const uint8_t *ramBackup, int iteration, uint64_t mismatchesSoFar)
+{
+    constexpr uint32_t kScratch = kFuzzScratch, kScratchSize = kFuzzScratchSize;
+    constexpr uint32_t kDataStart = kFuzzDataStart, kDataEnd = kFuzzDataEnd;
+    static std::unique_ptr<uint8_t[]> scratchStart(new uint8_t[kScratchSize]), globalsStart(new uint8_t[kDataEnd - kDataStart]);
+    static std::unique_ptr<uint8_t[]> scratchAfter(new uint8_t[kScratchSize]), globalsAfter(new uint8_t[kDataEnd - kDataStart]);
+    static std::unique_ptr<uint8_t[]> stackStart(new uint8_t[kStackScratch]);
+    const bool wasComparing = g_comparing;
+    g_comparing = true; // Calls nested in either run reach the recompiled originals, as in shadowCall.
+    FuzzCaseResult result;
+
+    for (uint32_t pos = 0u; pos < kScratchSize; pos += 4u)
+    {
+        // Mostly small values: fixed-point vectors are 16-bit, and huge ones only overflow.
+        const uint32_t word = (nextFuzz(state) & 1u) != 0u ? nextFuzz(state) : (nextFuzz(state) & 0x0FFF0FFFu);
+        std::memcpy(rdram + kScratch + pos, &word, 4u);
+    }
+    // A function registered with its own setup builds valid data in the scratch area and the globals here.
+    R5900Context inputs = live;
+    entry.randomiseArgs(&inputs, state, kScratch);
+    std::memcpy(scratchStart.get(), rdram + kScratch, kScratchSize);
+    std::memcpy(globalsStart.get(), rdram + kDataStart, kDataEnd - kDataStart);
+    if (entry.fuzzWholeRam)
+        std::memcpy(g_before.get(), rdram, PS2_RAM_SIZE);
+
+    // The dead stack below $sp as the original finds it: some functions read stack words they never wrote, and the
+    // native run must find the same ones, not what the original's run left there.
+    const uint32_t stackBase = (getRegU32(&inputs, 29) & PS2_RAM_MASK) - kStackScratch;
+    const bool stackInRam = (getRegU32(&inputs, 29) & PS2_RAM_MASK) >= kStackScratch;
+    if (stackInRam)
+        std::memcpy(stackStart.get(), rdram + stackBase, kStackScratch);
+    g_pad.save();
+    R5900Context originalCtx = inputs;
+    runOriginal(entry, rdram, &originalCtx, runtime);
+    g_pad.keepAndRevert();
+    if (entry.fuzzWholeRam)
+    {
+        std::memcpy(g_expected.get(), rdram, PS2_RAM_SIZE);
+        revertWrites(rdram, g_before.get(), 0u, PS2_RAM_SIZE);
+    }
+    if (originalCtx.pc != getRegU32(&inputs, 31))
+    {
+        // Cut short by a scheduling point: the caller decides whether to try the input again.
+        std::memcpy(rdram + kScratch, scratchStart.get(), kScratchSize);
+        std::memcpy(rdram + kDataStart, globalsStart.get(), kDataEnd - kDataStart);
+        result.cutShort = true;
+        g_comparing = wasComparing;
+        return result;
+    }
+    const uint8_t *after = entry.fuzzWholeRam ? g_expected.get() : rdram;
+    std::memcpy(scratchAfter.get(), after + kScratch, kScratchSize);
+    // The globals (3 MB) by 4 KB blocks, since a function changes few of them: globalsAfter holds the original's result
+    // in the blocks it changed, and the start elsewhere once completeAfter() has run.
+    constexpr uint32_t kDataSize = kDataEnd - kDataStart, kBlock = 4096u, kBlocks = (kDataSize + kBlock - 1u) / kBlock;
+    static bool changed[kBlocks];
+    bool globalsWritten = false;
+    for (uint32_t block = 0; block < kBlocks; ++block)
+    {
+        const uint32_t offset = block * kBlock, size = std::min(kBlock, kDataSize - offset);
+        changed[block] = std::memcmp(after + kDataStart + offset, globalsStart.get() + offset, size) != 0;
+        if (changed[block])
+        {
+            std::memcpy(globalsAfter.get() + offset, after + kDataStart + offset, size);
+            std::memcpy(rdram + kDataStart + offset, globalsStart.get() + offset, size);
+            globalsWritten = true;
+        }
+    }
+    const auto completeAfter = [&]
+    {
+        for (uint32_t block = 0; block < kBlocks; ++block)
+            if (!changed[block])
+            {
+                const uint32_t offset = block * kBlock;
+                std::memcpy(globalsAfter.get() + offset, globalsStart.get() + offset, std::min(kBlock, kDataSize - offset));
+            }
+    };
+    result.returnedNonZero = entry.returns == ReturnKind::Gpr && GPR_U64((&originalCtx), 2) != 0u;
+    result.wroteMemory = std::memcmp(scratchAfter.get(), scratchStart.get(), kScratchSize) != 0 || globalsWritten;
+    std::memcpy(rdram + kScratch, scratchStart.get(), kScratchSize);
+
+    if (stackInRam)
+        std::memcpy(rdram + stackBase, stackStart.get(), kStackScratch);
+    R5900Context nativeCtx = inputs;
+    runComparedNative(entry, rdram, &nativeCtx, runtime);
+
+    const bool regsSame = entry.returns == ReturnKind::None ||
+                          (entry.returns == ReturnKind::Gpr ? GPR_U64((&nativeCtx), 2) == GPR_U64((&originalCtx), 2)
+                                                            : std::memcmp(&nativeCtx.f[0], &originalCtx.f[0], 4u) == 0);
+    const bool scratchSame = std::memcmp(rdram + kScratch, scratchAfter.get(), kScratchSize) == 0;
+    bool globalsSame = true;
+    for (uint32_t block = 0; block < kBlocks && globalsSame; ++block)
+    {
+        const uint32_t offset = block * kBlock;
+        const uint8_t *expected = (changed[block] ? globalsAfter.get() : globalsStart.get()) + offset;
+        globalsSame = std::memcmp(rdram + kDataStart + offset, expected, std::min(kBlock, kDataSize - offset)) == 0;
+    }
+    if (!globalsSame)
+        completeAfter(); // for the reports below
+    const uint32_t padDifference = g_pad.firstDifference();
+    const bool padSame = padDifference == PS2_SCRATCHPAD_SIZE;
+    if (!padSame && mismatchesSoFar < 4u)
+        std::fprintf(stderr, "[decomp] FUZZ DETAIL %s: scratchpad+0x%x original=%02x decompiled=%02x\n", entry.name, padDifference,
+                     g_pad.expected[padDifference], ps2GetScratchpadHostPtr()[padDifference]);
+    if (!scratchSame && std::getenv("RC_SHADOW_DIFFS") != nullptr)
+    {
+        int shown = 0;
+        for (uint32_t i = 0; i < kScratchSize && shown < 8; ++i)
+            if (rdram[kScratch + i] != scratchAfter[i])
+            {
+                std::fprintf(stderr, "[decomp] FUZZ SCRATCH %s +0x%x original=%02x decompiled=%02x\n", entry.name, i, scratchAfter[i],
+                             rdram[kScratch + i]);
+                ++shown;
+            }
+    }
+    if (!globalsSame && std::getenv("RC_SHADOW_DIFFS") != nullptr)
+    {
+        // RC_SHADOW_DIFFS=1: the first differing globals of a random input.
+        int shown = 0;
+        for (uint32_t i = 0; i < kDataEnd - kDataStart && shown < 8; ++i)
+            if (rdram[kDataStart + i] != globalsAfter[i])
+            {
+                std::fprintf(stderr, "[decomp] FUZZ GLOBAL %s 0x%x original=%02x decompiled=%02x\n", entry.name, kDataStart + i,
+                             globalsAfter[i], rdram[kDataStart + i]);
+                ++shown;
+            }
+    }
+    bool ramSame = true;
+    if (entry.fuzzWholeRam)
+    {
+        // As for the game's own calls: everything but the dead stack below $sp.
+        const uint32_t stackTop = getRegU32(&inputs, 29) & PS2_RAM_MASK;
+        const uint32_t stackLow = stackTop > kStackScratch ? stackTop - kStackScratch : 0u;
+        for (const auto &[begin, end] : {std::pair<uint32_t, uint32_t>{0u, stackLow}, {stackTop, static_cast<uint32_t>(PS2_RAM_SIZE)}})
+        {
+            const uint32_t difference = firstDifference(rdram, g_expected.get(), begin, end);
+            if (difference != end && ramSame && mismatchesSoFar < 4u)
+                std::fprintf(stderr, "[decomp] FUZZ DETAIL %s: ram 0x%x original=%02x decompiled=%02x\n", entry.name, difference,
+                             g_expected[difference], rdram[difference]);
+            ramSame = ramSame && difference == end;
+        }
+        revertWrites(rdram, ramBackup, 0u, PS2_RAM_SIZE); // The heap as it was, for the next input.
+    }
+    result.same = regsSame && scratchSame && globalsSame && ramSame && padSame;
+    if (!result.same)
+    {
+        if (mismatchesSoFar < 4u && !scratchSame)
+        {
+            const uint32_t at = firstDifference(rdram + kScratch, scratchAfter.get(), 0u, kScratchSize) & ~3u;
+            uint32_t native, original;
+            std::memcpy(&native, rdram + kScratch + at, 4u);
+            std::memcpy(&original, scratchAfter.get() + at, 4u);
+            std::fprintf(stderr, "[decomp] FUZZ DETAIL %s: scratch+0x%x original=%08x decompiled=%08x\n", entry.name, at, original, native);
+        }
+        if (mismatchesSoFar < 4u && !globalsSame)
+        {
+            const uint32_t at = firstDifference(rdram + kDataStart, globalsAfter.get(), 0u, kDataEnd - kDataStart) & ~3u;
+            uint32_t native, original;
+            std::memcpy(&native, rdram + kDataStart + at, 4u);
+            std::memcpy(&original, globalsAfter.get() + at, 4u);
+            std::fprintf(stderr, "[decomp] FUZZ DETAIL %s: global 0x%x original=%08x decompiled=%08x\n", entry.name, kDataStart + at, original, native);
+        }
+        if (mismatchesSoFar < 4u)
+            std::fprintf(stderr, "[decomp] FUZZ MISMATCH %s iteration %d: return %s scratch %s globals %s | a0=%x a1=%x a2=%x f12=%g f13=%g sp=%x | v0 %llx vs %llx\n",
+                         entry.name, iteration, regsSame ? "same" : "DIFF", scratchSame ? "same" : "DIFF", globalsSame ? "same" : "DIFF",
+                         getRegU32(&inputs, 4), getRegU32(&inputs, 5), getRegU32(&inputs, 6), inputs.f[12], inputs.f[13], getRegU32(&inputs, 29),
+                         (unsigned long long)GPR_U64((&originalCtx), 2), (unsigned long long)GPR_U64((&nativeCtx), 2));
+    }
+    g_comparing = wasComparing;
+    return result;
+}
+
+namespace {
+
 // Random inputs reach the code that a demo race does not. Each input runs through the original and the
-// decompiled function from identical state, comparing the result, the scratch area and the game's globals.
+// decompiled function from identical state (fuzzCase).
 //
 // Recompiled code stops at its next call or loop once the scheduler has an interrupt or a thread switch due, and
 // nothing can service that from in here. So the test runs in steps: when an original is cut short, the step ends,
@@ -252,18 +434,14 @@ struct FuzzProgress
 // Returns true once every function has been tested.
 bool fuzzStep(uint8_t *rdram, const R5900Context &live, PS2Runtime *runtime, int iterations)
 {
-    constexpr uint32_t kScratch = 0x01F00000u, kScratchSize = 0x8000u;
-    constexpr uint32_t kDataStart = 0x001E9400u, kDataEnd = 0x004C7190u;
     static FuzzProgress progress;
     static std::unique_ptr<uint8_t[]> backup(new uint8_t[PS2_RAM_SIZE]);
-    static std::unique_ptr<uint8_t[]> scratchStart(new uint8_t[kScratchSize]), globalsStart(new uint8_t[kDataEnd - kDataStart]);
-    static std::unique_ptr<uint8_t[]> scratchAfter(new uint8_t[kScratchSize]), globalsAfter(new uint8_t[kDataEnd - kDataStart]);
     static const std::string only = [] // RC_SHADOW_ONLY=name,name limits the test to those functions.
     {
         const char *names = std::getenv("RC_SHADOW_ONLY");
         return names ? "," + std::string(names) + "," : std::string();
     }();
-    constexpr int kWholeRamInputs = 40, kTries = 2, kLongTries = 80;
+    constexpr int kTries = 2, kLongTries = 80;
 
     std::memcpy(backup.get(), rdram, PS2_RAM_SIZE);
     ++progress.steps;
@@ -284,47 +462,16 @@ bool fuzzStep(uint8_t *rdram, const R5900Context &live, PS2Runtime *runtime, int
             progress.state = 0x5EEDu + entry.address;
             progress.mismatches = progress.returnedNonZero = progress.wroteMemory = progress.cutShort = 0u;
         }
-        const int inputs = entry.fuzzWholeRam ? std::min(iterations, kWholeRamInputs) : iterations;
+        const int inputs = entry.fuzzWholeRam ? std::min(iterations, kFuzzWholeRamInputs) : iterations;
         for (; progress.iteration < inputs; ++progress.iteration, firstOfStep = false, progress.retries = 0)
         {
             uint64_t state = progress.state;
-            for (uint32_t pos = 0u; pos < kScratchSize; pos += 4u)
+            const FuzzCaseResult result = fuzzCase(entry, rdram, live, runtime, state, backup.get(), progress.iteration, progress.mismatches);
+            if (result.cutShort)
             {
-                // Mostly small values: fixed-point vectors are 16-bit, and huge ones only overflow.
-                const uint32_t word = (nextFuzz(state) & 1u) != 0u ? nextFuzz(state) : (nextFuzz(state) & 0x0FFF0FFFu);
-                std::memcpy(rdram + kScratch + pos, &word, 4u);
-            }
-            // A function registered with its own setup builds valid data in the scratch area and the globals here.
-            R5900Context inputs = live;
-            entry.randomiseArgs(&inputs, state, kScratch);
-            std::memcpy(scratchStart.get(), rdram + kScratch, kScratchSize);
-            std::memcpy(globalsStart.get(), rdram + kDataStart, kDataEnd - kDataStart);
-            if (entry.fuzzWholeRam)
-                std::memcpy(g_before.get(), rdram, PS2_RAM_SIZE);
-
-            // The dead stack below $sp as the original finds it: some functions read stack words they never wrote, and the
-            // native run must find the same ones, not what the original's run left there.
-            static std::unique_ptr<uint8_t[]> stackStart(new uint8_t[kStackScratch]);
-            const uint32_t stackBase = (getRegU32(&inputs, 29) & PS2_RAM_MASK) - kStackScratch;
-            const bool stackInRam = (getRegU32(&inputs, 29) & PS2_RAM_MASK) >= kStackScratch;
-            if (stackInRam)
-                std::memcpy(stackStart.get(), rdram + stackBase, kStackScratch);
-            g_pad.save();
-            R5900Context originalCtx = inputs;
-            runOriginal(entry, rdram, &originalCtx, runtime);
-            g_pad.keepAndRevert();
-            if (entry.fuzzWholeRam)
-            {
-                std::memcpy(g_expected.get(), rdram, PS2_RAM_SIZE);
-                revertWrites(rdram, g_before.get(), 0u, PS2_RAM_SIZE);
-            }
-            if (originalCtx.pc != getRegU32(&inputs, 31))
-            {
-                // Cut short by a scheduling point. Try the input again in the next step, unless it has had several
-                // whole steps to itself: then it is something the function cannot finish, and it is counted and skipped.
-                // A function that runs for longer than the usual gap between interrupts needs many tries.
-                std::memcpy(rdram + kScratch, scratchStart.get(), kScratchSize);
-                std::memcpy(rdram + kDataStart, globalsStart.get(), kDataEnd - kDataStart);
+                // Try the input again in the next step, unless it has had several whole steps to itself: then it is
+                // something the function cannot finish, and it is counted and skipped. A function that runs for longer
+                // than the usual gap between interrupts needs many tries.
                 paused = true;
                 if (firstOfStep && ++progress.retries >= (entry.fuzzWholeRam ? kLongTries : kTries))
                 {
@@ -336,95 +483,9 @@ bool fuzzStep(uint8_t *rdram, const R5900Context &live, PS2Runtime *runtime, int
                 break;
             }
             progress.state = state;
-            const uint8_t *after = entry.fuzzWholeRam ? g_expected.get() : rdram;
-            std::memcpy(scratchAfter.get(), after + kScratch, kScratchSize);
-            std::memcpy(globalsAfter.get(), after + kDataStart, kDataEnd - kDataStart);
-            progress.returnedNonZero += entry.returns == ReturnKind::Gpr && GPR_U64((&originalCtx), 2) != 0u ? 1u : 0u;
-            progress.wroteMemory += std::memcmp(scratchAfter.get(), scratchStart.get(), kScratchSize) != 0 ||
-                                            std::memcmp(globalsAfter.get(), globalsStart.get(), kDataEnd - kDataStart) != 0
-                                        ? 1u
-                                        : 0u;
-            std::memcpy(rdram + kScratch, scratchStart.get(), kScratchSize);
-            std::memcpy(rdram + kDataStart, globalsStart.get(), kDataEnd - kDataStart);
-
-            if (stackInRam)
-                std::memcpy(rdram + stackBase, stackStart.get(), kStackScratch);
-            R5900Context nativeCtx = inputs;
-            runComparedNative(entry, rdram, &nativeCtx, runtime);
-
-            const bool regsSame = entry.returns == ReturnKind::None ||
-                                  (entry.returns == ReturnKind::Gpr ? GPR_U64((&nativeCtx), 2) == GPR_U64((&originalCtx), 2)
-                                                                    : std::memcmp(&nativeCtx.f[0], &originalCtx.f[0], 4u) == 0);
-            const bool scratchSame = std::memcmp(rdram + kScratch, scratchAfter.get(), kScratchSize) == 0;
-            const bool globalsSame = std::memcmp(rdram + kDataStart, globalsAfter.get(), kDataEnd - kDataStart) == 0;
-            const uint32_t padDifference = g_pad.firstDifference();
-            const bool padSame = padDifference == PS2_SCRATCHPAD_SIZE;
-            if (!padSame && progress.mismatches < 4u)
-                std::fprintf(stderr, "[decomp] FUZZ DETAIL %s: scratchpad+0x%x original=%02x decompiled=%02x\n", entry.name, padDifference,
-                             g_pad.expected[padDifference], ps2GetScratchpadHostPtr()[padDifference]);
-            if (!scratchSame && std::getenv("RC_SHADOW_DIFFS") != nullptr)
-            {
-                int shown = 0;
-                for (uint32_t i = 0; i < kScratchSize && shown < 8; ++i)
-                    if (rdram[kScratch + i] != scratchAfter[i])
-                    {
-                        std::fprintf(stderr, "[decomp] FUZZ SCRATCH %s +0x%x original=%02x decompiled=%02x\n", entry.name, i, scratchAfter[i],
-                                     rdram[kScratch + i]);
-                        ++shown;
-                    }
-            }
-            if (!globalsSame && std::getenv("RC_SHADOW_DIFFS") != nullptr)
-            {
-                // RC_SHADOW_DIFFS=1: the first differing globals of a random input.
-                int shown = 0;
-                for (uint32_t i = 0; i < kDataEnd - kDataStart && shown < 8; ++i)
-                    if (rdram[kDataStart + i] != globalsAfter[i])
-                    {
-                        std::fprintf(stderr, "[decomp] FUZZ GLOBAL %s 0x%x original=%02x decompiled=%02x\n", entry.name, kDataStart + i,
-                                     globalsAfter[i], rdram[kDataStart + i]);
-                        ++shown;
-                    }
-            }
-            bool ramSame = true;
-            if (entry.fuzzWholeRam)
-            {
-                // As for the game's own calls: everything but the dead stack below $sp.
-                const uint32_t stackTop = getRegU32(&inputs, 29) & PS2_RAM_MASK;
-                const uint32_t stackLow = stackTop > kStackScratch ? stackTop - kStackScratch : 0u;
-                for (const auto &[begin, end] : {std::pair<uint32_t, uint32_t>{0u, stackLow}, {stackTop, static_cast<uint32_t>(PS2_RAM_SIZE)}})
-                {
-                    const uint32_t difference = firstDifference(rdram, g_expected.get(), begin, end);
-                    if (difference != end && ramSame && progress.mismatches < 4u)
-                        std::fprintf(stderr, "[decomp] FUZZ DETAIL %s: ram 0x%x original=%02x decompiled=%02x\n", entry.name, difference,
-                                     g_expected[difference], rdram[difference]);
-                    ramSame = ramSame && difference == end;
-                }
-                revertWrites(rdram, backup.get(), 0u, PS2_RAM_SIZE); // The heap as it was, for the next input.
-            }
-            if (!regsSame || !scratchSame || !globalsSame || !ramSame || !padSame)
-            {
-                if (progress.mismatches < 4u && !scratchSame)
-                {
-                    const uint32_t at = firstDifference(rdram + kScratch, scratchAfter.get(), 0u, kScratchSize) & ~3u;
-                    uint32_t native, original;
-                    std::memcpy(&native, rdram + kScratch + at, 4u);
-                    std::memcpy(&original, scratchAfter.get() + at, 4u);
-                    std::fprintf(stderr, "[decomp] FUZZ DETAIL %s: scratch+0x%x original=%08x decompiled=%08x\n", entry.name, at, original, native);
-                }
-                if (progress.mismatches < 4u && !globalsSame)
-                {
-                    const uint32_t at = firstDifference(rdram + kDataStart, globalsAfter.get(), 0u, kDataEnd - kDataStart) & ~3u;
-                    uint32_t native, original;
-                    std::memcpy(&native, rdram + kDataStart + at, 4u);
-                    std::memcpy(&original, globalsAfter.get() + at, 4u);
-                    std::fprintf(stderr, "[decomp] FUZZ DETAIL %s: global 0x%x original=%08x decompiled=%08x\n", entry.name, kDataStart + at, original, native);
-                }
-                if (++progress.mismatches <= 4u)
-                    std::fprintf(stderr, "[decomp] FUZZ MISMATCH %s iteration %d: return %s scratch %s globals %s | a0=%x a1=%x a2=%x f12=%g f13=%g sp=%x | v0 %llx vs %llx\n",
-                                 entry.name, progress.iteration, regsSame ? "same" : "DIFF", scratchSame ? "same" : "DIFF", globalsSame ? "same" : "DIFF",
-                                 getRegU32(&inputs, 4), getRegU32(&inputs, 5), getRegU32(&inputs, 6), inputs.f[12], inputs.f[13], getRegU32(&inputs, 29),
-                                 (unsigned long long)GPR_U64((&originalCtx), 2), (unsigned long long)GPR_U64((&nativeCtx), 2));
-            }
+            progress.returnedNonZero += result.returnedNonZero ? 1u : 0u;
+            progress.wroteMemory += result.wroteMemory ? 1u : 0u;
+            progress.mismatches += result.same ? 0u : 1u;
         }
         if (progress.iteration >= inputs)
         {
@@ -695,6 +756,24 @@ RecompFn decompOr(uint32_t address, RecompFn fallback)
             return skipped(item.entry->name) ? fallback : item.entry->native;
     }
     return fallback;
+}
+
+std::vector<Entry *> registeredEntries()
+{
+    std::vector<Entry *> entries;
+    for (const Registered &item : registry())
+        entries.push_back(item.entry);
+    return entries;
+}
+
+void installForOracle(PS2Runtime &runtime)
+{
+    g_rdram = runtime.memory().getRDRAM();
+    g_runtime = &runtime;
+    g_before.reset(new uint8_t[PS2_RAM_SIZE]);
+    g_expected.reset(new uint8_t[PS2_RAM_SIZE]);
+    for (const Registered &item : registry())
+        runtime.replaceFunction(item.entry->address, item.shadow);
 }
 
 void installDecomp(PS2Runtime &runtime)

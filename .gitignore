@@ -1,6 +1,7 @@
 # Generated, or derived from the game disc. Regenerate with the steps in NOTES.md.
 build/
 build-decomp/
+build-oracle/
 decomp/generated/
 output/
 /vu1/

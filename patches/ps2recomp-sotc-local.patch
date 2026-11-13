@@ -360,7 +360,7 @@ index e671f2f..b9da579 100644
  	u32 ReadZ32(u8* data, u32 bp, u32 bw, u32 x, u32 y);
  
 diff --git a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
-index 6784aca..4f02764 100644
+index 6784aca..18d322d 100644
 --- a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
 +++ b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
 @@ -1,5 +1,11 @@
@@ -435,7 +435,7 @@ index 6784aca..4f02764 100644
  
          processPendingEvents();
          if (m_rescheduleRequested && m_currentThreadId != 0)
-@@ -442,6 +478,119 @@ void EeScheduler::run()
+@@ -442,6 +478,134 @@ void EeScheduler::run()
      publishSnapshotNow();
  }
  
@@ -542,6 +542,21 @@ index 6784aca..4f02764 100644
 +        {
 +            break;
 +        }
++        if (ico_fiber_current() == nullptr)
++        {
++            // Not on a fiber: native code called from outside the dispatcher (the decompilation's offline oracle).
++            // Only what the dispatcher would do at once can happen here: resuming a recompiled function that
++            // returned early (a call to itself became a jump, so pc holds the outer call's return address).
++            if (ownWork && !transferred && !m_fiberError && m_runtime.hasFunction(ctx.pc))
++            {
++                m_fiberJob.function = m_runtime.lookupFunction(ctx.pc);
++                m_fiberJob.context = &ctx;
++                continue;
++            }
++            if (m_fiberError)
++                std::rethrow_exception(std::exchange(m_fiberError, nullptr));
++            throw std::runtime_error("guest code called from native code waited, outside the dispatcher");
++        }
 +        // Blocked, preempted or interrupted. The dispatcher runs whatever it needs to and comes back
 +        // here, with the native frames below still intact, carrying the next piece of work.
 +        ico_fiber_yield();
@@ -555,7 +570,7 @@ index 6784aca..4f02764 100644
  void EeScheduler::requestStop()
  {
      m_stopRequested.store(true, std::memory_order_release);
-@@ -470,6 +619,8 @@ bool EeScheduler::checkpointDue(uint32_t cycles) noexcept
+@@ -470,6 +634,8 @@ bool EeScheduler::checkpointDue(uint32_t cycles) noexcept
      accountCycles(cycles);
      if (m_hostPacing && m_eeCycle >= m_pacingCheckCycle)
          hostCatchUp();
@@ -564,7 +579,7 @@ index 6784aca..4f02764 100644
  
      if (m_checkpointPending.load(std::memory_order_acquire) ||
          m_stopRequested.load(std::memory_order_acquire))
-@@ -1915,6 +2066,9 @@ void EeScheduler::makeDormant(GuestThread &item)
+@@ -1915,6 +2081,9 @@ void EeScheduler::makeDormant(GuestThread &item)
  {
      removeReady(item);
      removeFromWaitObject(item);
