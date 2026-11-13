@@ -1063,4 +1063,205 @@ void vfxHandOver(R5900Context *, uint64_t &state, uint32_t scratch)
     G(carListVarG).alternativeRendObj = nextFuzz(state);
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// The fourth batch: the rest of the effect handlers and renderers.
+
+// The heat ray aerial and the car fire: a ring of 32 particles of 0x18 bytes, the car (a copy in scratch) at +0x344, the
+// car's own counter at +0x198 now and then zero, and a life mostly above 11.
+void vfxCarHeatRayAerial(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    const uint32_t effect = scratch + kEffect;
+    buildRing(state, effect, 31, effect + 0x44, 0x18, 0x14, 2);
+    mem<uint32_t>(effect + 0x344) = scratch;
+    mem<int16_t>(scratch + 0x198) = static_cast<int16_t>(rnd(state, 2) ? 0 : nextFuzz(state));
+    mem<int8_t>(scratch + 0x19c) = static_cast<int8_t>(rnd(state, 3) ? 0 : nextFuzz(state));
+    mem<uint16_t>(effect + 0x10) = static_cast<uint16_t>(rnd(state, 4) ? 0xc + rnd(state, 40) : rnd(state, 0x10));
+    mem<uint8_t>(effect + 0x41) = static_cast<uint8_t>(rnd(state, 4) ? rnd(state, 32) : 31);
+    setArg(ctx, 0, effect);
+}
+
+// The kaboom and the firework: a ring of 64 particles of 0x14 bytes, life 64 (the first frame) a third of the time.
+void vfxKaboom(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    const uint32_t effect = scratch + kEffect;
+    buildRing(state, effect, 63, effect + 0x44, 0x14, 0x10, 2);
+    mem<uint16_t>(effect + 0x10) = static_cast<uint16_t>(rnd(state, 3) == 0 ? 0x40 : rnd(state, 2) ? rnd(state, 0x40) : nextFuzz(state));
+    for (uint32_t axis = 0; axis < 3; ++axis)
+        mem<int16_t>(effect + 0x544 + 2 * axis) = static_cast<int16_t>(static_cast<int32_t>(nextFuzz(state) % 8001u) - 4000);
+    for (uint32_t i = 0; i < 64; ++i)
+        for (uint32_t offset : {8u, 10u, 12u})
+            mem<int16_t>(effect + 0x44 + i * 0x14 + offset) = static_cast<int16_t>(nextFuzz(state));
+    setArg(ctx, 0, effect);
+}
+
+// The invincibility halo: the car (a copy) at +0x250 with a render object and a shape in scratch (the shape's bounding
+// box is shorts at +0x68..+0x72), life 0xffff a third of the time.
+void vfxInvincible(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    _sObject &car = *static_cast<_sObject *>(guest_host(scratch));
+    car.pRendObj = ptr32<_sRendObj>(scratch + kAuxB);
+    mem<uint32_t>(scratch + kAuxB) = scratch + kAuxC;
+    for (uint32_t offset = 0x68; offset <= 0x72; offset += 2)
+        mem<int16_t>(scratch + kAuxC + offset) = static_cast<int16_t>(static_cast<int32_t>(nextFuzz(state) % 801u) - 400);
+    const uint32_t effect = scratch + kEffect;
+    mem<uint32_t>(effect + 0x250) = scratch;
+    mem<uint16_t>(effect + 0x10) = static_cast<uint16_t>(rnd(state, 3) == 0 ? 0xffff : nextFuzz(state));
+    setArg(ctx, 0, effect);
+}
+
+// The arm cannon smoke: a ring of 16 particles of 0x14 bytes, the hook (shorts at +0x14) and the last hook position
+// (+0x184), equal about half the time, and a life around 0x10.
+void vfxArmCannon(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    const uint32_t effect = scratch + kEffect;
+    buildRing(state, effect, 15, effect + 0x44, 0x14, 0x10, 2);
+    mem<uint8_t>(effect + 0x41) = static_cast<uint8_t>(rnd(state, 4) ? rnd(state, 16) : 0xf + rnd(state, 2));
+    mem<uint16_t>(effect + 0x10) = static_cast<uint16_t>(rnd(state, 4) ? 0x10 + rnd(state, 20) : rnd(state, 0x12));
+    for (uint32_t axis = 0; axis < 3; ++axis)
+    {
+        mem<int16_t>(effect + 0x14 + 2 * axis) = static_cast<int16_t>(static_cast<int32_t>(nextFuzz(state) % 8001u) - 4000);
+        mem<int16_t>(effect + 0x184 + 2 * axis) = static_cast<int16_t>(rnd(state, 3) ? mem<int16_t>(effect + 0x14 + 2 * axis) : nextFuzz(state));
+    }
+    setArg(ctx, 0, effect);
+}
+
+
+// The car fire's renderer: the car (a copy) at +0x344 and a ring of 32 particles of 0x18 bytes with random lives.
+void vfxCarFireRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    vfxCarHeatRayAerial(ctx, state, scratch);
+    if (!levelHasCars())
+        return;
+    const uint32_t effect = scratch + kEffect;
+    renderState(state, scratch);
+    for (uint32_t i = 0; i < 32; ++i)
+        mem<uint16_t>(effect + 0x44 + i * 0x18 + 0x14) = static_cast<uint16_t>(rnd(state, 8) ? rnd(state, 0x20) : nextFuzz(state));
+}
+
+// The arm cannon's renderer: the particle ring of vfxArmCannon, and a cannon-ball shape in scratch whose version is not
+// the 2.0 or 3.0 that draws it (the shape renderers are not run on made-up shapes).
+void vfxArmCannonRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    vfxArmCannon(ctx, state, scratch);
+    const uint32_t effect = scratch + kEffect;
+    renderState(state, scratch);
+    for (uint32_t i = 0; i < 16; ++i)
+        mem<uint16_t>(effect + 0x44 + i * 0x14 + 0x10) = static_cast<uint16_t>(rnd(state, 8) ? rnd(state, 0x40) : nextFuzz(state));
+    mem<uint32_t>(scratch + kRes + 0x84) = scratch + kAuxA;
+    mem<float>(scratch + kAuxA) = rnd(state, 2) ? 0.0f : frnd(state, 5.0f);
+    if (mem<float>(scratch + kAuxA) == 2.0f || mem<float>(scratch + kAuxA) == 3.0f)
+        mem<float>(scratch + kAuxA) = 1.0f;
+}
+
+// The barge oil: the hook (shorts at +0x14) within a few thousand units of the camera, mostly on every axis.
+void vfxBargeOilRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    const uint32_t effect = scratch + kEffect;
+    renderState(state, scratch);
+    const visFxClass &fx = G(visFxVarG);
+    const int32_t cam[3] = {fx.vCamPos.x >> 8, fx.vCamPos.y >> 8, fx.vCamPos.z >> 8};
+    for (uint32_t axis = 0; axis < 3; ++axis)
+        mem<int16_t>(effect + 0x14 + 2 * axis) = static_cast<int16_t>(rnd(state, 6) ? cam[axis] + static_cast<int32_t>(rnd(state, 16000)) - 8000 : static_cast<int32_t>(nextFuzz(state)));
+    mem<uint16_t>(effect + 0x44) = static_cast<uint16_t>(nextFuzz(state));
+    mem<int16_t>(effect + 0x46) = static_cast<int16_t>(rnd(state, 2) ? rnd(state, 200) : nextFuzz(state));
+    setArg(ctx, 0, effect);
+}
+
+// The kaboom renderer: the burst of vfxKaboom with particle lives from zero up to over 30.
+void vfxKaboomRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    vfxKaboom(ctx, state, scratch);
+    const uint32_t effect = scratch + kEffect;
+    renderState(state, scratch);
+    for (uint32_t i = 0; i < 64; ++i)
+    {
+        mem<uint16_t>(effect + 0x44 + i * 0x14 + 0x10) = static_cast<uint16_t>(rnd(state, 8) ? rnd(state, 0x40) : nextFuzz(state));
+        for (uint32_t offset : {0u, 2u, 4u})
+            mem<int16_t>(effect + 0x44 + i * 0x14 + offset) = static_cast<int16_t>(nextFuzz(state));
+    }
+}
+
+
+// The wheel dust: the car (a copy) at +0x1c4 with a wheel number and a material index at +0x1c8, a ring of 16 particles of
+// 0x18 bytes with lives that reach both ends of the fade.
+void vfxWheelDust(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    renderState(state, scratch);
+    const uint32_t effect = scratch + kEffect;
+    buildRing(state, effect, 15, effect + 0x44, 0x18, 0x14, 2);
+    mem<uint32_t>(effect + 0x1c4) = scratch;
+    mem<uint16_t>(effect + 0x1c8) = static_cast<uint16_t>(rnd(state, 8) ? rnd(state, 4) : rnd(state, 64));
+    mem<uint16_t>(effect + 0x1ca) = static_cast<uint16_t>(rnd(state, 8) ? rnd(state, 0x30) : nextFuzz(state));
+    for (uint32_t i = 0; i < 16; ++i)
+        mem<uint16_t>(effect + 0x44 + i * 0x18 + 0x14) = static_cast<uint16_t>(rnd(state, 8) ? rnd(state, 0x20) : nextFuzz(state));
+    // The wheel position record is read from the car's physics: the wheel number set above is mostly 0 to 3.
+    setArg(ctx, 0, effect);
+}
+
+// The heat ray damage renderer: the car at +0x344, a ring of 32 particles, lives from 0 to 0x20 and a glow count.
+void vfxHeatRayDamage(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    vfxCarHeatRayAerial(ctx, state, scratch);
+    if (!levelHasCars())
+        return;
+    nearCar(state, scratch);
+    renderState(state, scratch);
+    const uint32_t effect = scratch + kEffect;
+    for (uint32_t i = 0; i < 32; ++i)
+    {
+        mem<uint16_t>(effect + 0x44 + i * 0x18 + 0x14) = static_cast<uint16_t>(rnd(state, 8) ? rnd(state, 0x20) : nextFuzz(state));
+        mem<uint8_t>(effect + 0x44 + i * 0x18 + 0x16) = static_cast<uint8_t>(rnd(state, 3) ? 0 : rnd(state, 4));
+    }
+    setArg(ctx, 0, effect);
+}
+
+// The firework renderer: the burst of vfxKaboom, a colour at +0x54c and particle lives from zero up to over 32.
+void vfxFireworkRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    vfxKaboomRenderer(ctx, state, scratch);
+    const uint32_t effect = scratch + kEffect;
+    for (uint32_t i = 0; i < 3; ++i)
+        mem<uint8_t>(effect + 0x54c + i) = static_cast<uint8_t>(rnd(state, 4) ? 0x40 + rnd(state, 0x40) : nextFuzz(state));
+}
+
+// The car rocket: the car (a copy with an aerial) at +0x350, a ring of 16 particles of 0x30 bytes from +0x50, and the
+// level's own rocket shape (the effects resource's, which the renderer rewrites: the harness puts it back).
+void vfxCarRocket(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    const uint32_t realRes = G(visFxVarG).pVfxRes.address;
+    const uint32_t shape = realRes ? mem<uint32_t>(realRes + 0x88) : 0;
+    aerialCar(state, scratch);
+    nearCar(state, scratch);
+    renderState(state, scratch);
+    const uint32_t effect = scratch + kEffect;
+    mem<uint32_t>(scratch + kRes + 0x88) = shape;
+    if (!shape)
+    {
+        _sObject &car = *static_cast<_sObject *>(guest_host(scratch));
+        car.sDontRenderMe = 1;
+        car.zDrawnDist = 0x7fff;
+    }
+    mem<uint32_t>(effect + 0x350) = scratch;
+    buildRing(state, effect, 15, effect + 0x50, 0x30, 0x10, 2);
+    for (uint32_t i = 0; i < 16; ++i)
+    {
+        for (uint32_t axis = 0; axis < 3; ++axis)
+            mem<float>(effect + 0x50 + i * 0x30 + 4 * axis) = frnd(state, 60.0f);
+        mem<float>(effect + 0x50 + i * 0x30 + 0xc) = 0.0f;
+        mem<uint32_t>(effect + 0x50 + i * 0x30 + 0x24) = rnd(state, 4) ? rnd(state, 0x20) : nextFuzz(state);
+    }
+    setArg(ctx, 0, effect);
+}
+
 } // namespace rc::fuzz
