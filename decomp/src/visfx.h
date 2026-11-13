@@ -98,6 +98,11 @@ inline void sortAtScenery(uint32_t mem, uint32_t frameSize, uint32_t localOffset
     sortPosFromInts(mem, at<int32_t>(tob + 4) >> 8, at<int32_t>(tob + 8) >> 8, at<int32_t>(tob + 0xc) >> 8, frameSize, localOffset);
 }
 
+// A lightning bolt of sixteen camera-facing segments from `from` to `to` (visfx9.cpp; diff, offset, shake and last are
+// the caller's frame locals the original uses).
+void lightningBolt(uint32_t from, uint32_t to, uint32_t colour, uint32_t texture, ee_float width, ee_float zOffset, uint32_t diff, uint32_t offset,
+                   uint32_t shake, uint32_t last);
+
 // Frees every block of an effect list that starts at `head` (VfxLvlTerm and Vfx2TSFXLvlTerm).
 void freeList(uint32_t head);
 

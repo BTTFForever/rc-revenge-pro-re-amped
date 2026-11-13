@@ -137,12 +137,14 @@ namespace {
 constexpr uint32_t kScaleVectorXYZ = 0x1c8338, kCopyVectorXYZ = 0x1c82e8;
 inline void scaleXYZ(ee_float factor, uint32_t dst, uint32_t src) { guest_call(kScaleVectorXYZ, factor, ptr32<ee_float>(dst), ptr32<ee_float>(src)); }
 inline void copyXYZ(uint32_t dst, uint32_t src) { guest_call(kCopyVectorXYZ, ptr32<ee_float>(dst), ptr32<ee_float>(src)); }
+} // namespace
 
 // A lightning bolt from `from` to `to` (VU vectors): sixteen camera-facing segments of the given texture, each point at
 // a sixteenth more of the way, shaken by up to 31 units at random, black at both ends and `colour` between. `diff`,
 // `offset`, `shake` and `last` are the original's locals (the difference, the point, the random shake, the last point).
-void lightningBolt(uint32_t from, uint32_t to, uint32_t colour, uint32_t texture, ee_float width, ee_float zOffset, uint32_t diff, uint32_t offset,
-                   uint32_t shake, uint32_t last)
+// (Shared with the give-terror renderer in visfx11.cpp.)
+void vfx::lightningBolt(uint32_t from, uint32_t to, uint32_t colour, uint32_t texture, ee_float width, ee_float zOffset, uint32_t diff, uint32_t offset,
+                        uint32_t shake, uint32_t last)
 {
     vfx::vu0Sub(diff, to, from);
     const ee_float step(0.0625f);
@@ -181,6 +183,7 @@ void lightningBolt(uint32_t from, uint32_t to, uint32_t colour, uint32_t texture
     VfxPutGT4FacingContinueVU(ptr32<ee_float>(last), ptr32<ee_float>(to));
 }
 
+namespace {
 // The lightning's colour: three random bytes from `base` up (none below zero), blue lowest.
 uint32_t boltColour(int32_t base)
 {
@@ -232,7 +235,7 @@ void VfxRenderer_TakeTerror(ptr32<_sVfx_Object> mem)
     int32_t base = (static_cast<int32_t>(at<uint16_t>(m + 0x10)) - 4) * 16;
     base = base < 0xc1 ? base : 0xc0;
     const uint32_t colour = boltColour(base);
-    lightningBolt(ground, sky, colour, vfx::vfxTexture(0x19), ee_float(25.0f), ee_float(-10.0f), frame.local<float>(0x40).address, frame.local<float>(0x60).address,
+    vfx::lightningBolt(ground, sky, colour, vfx::vfxTexture(0x19), ee_float(25.0f), ee_float(-10.0f), frame.local<float>(0x40).address, frame.local<float>(0x60).address,
                   frame.local<float>(0x50).address, frame.local<float>(0x70).address);
 }
 
@@ -291,7 +294,7 @@ void VfxRenderer_Bomb(ptr32<_sVfx_Object> mem)
     }
     if ((vfx::random15() & 1) == 0)
         colour = colour + (colour << 16);
-    lightningBolt(from, to, colour, vfx::vfxTexture(0x19), ee_float(8.0f), ee_float(0.0f), frame.local<float>(0x40).address,
+    vfx::lightningBolt(from, to, colour, vfx::vfxTexture(0x19), ee_float(8.0f), ee_float(0.0f), frame.local<float>(0x40).address,
                   frame.local<float>(0x50).address, frame.local<float>(0x60).address, frame.local<float>(0x70).address);
     at<uint8_t>(vfx::sprite() + vfx::spr::kCode) = 2;
     at<uint32_t>(vfx::sprite() + vfx::spr::kTexture) = vfx::vfxTexture(0);
