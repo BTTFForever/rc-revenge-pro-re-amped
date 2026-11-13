@@ -417,6 +417,14 @@ void RenderAllocateBuffers(uint32 size)
     render.gpuPrimitiveEvenPtr = ptr32<uint8>(size);
 }
 
+// Sets aside the renderer's buffers and sets up the renderer.
+void RenderInit(uint32 size)
+{
+    GuestFrame frame(0x10);
+    RenderAllocateBuffers(size);
+    guest_call(0x1a35b0u); // Rdr_Init
+}
+
 void RenderFreeBuffers() {}
 void RenderTerm() {}
 
@@ -825,6 +833,7 @@ RC_DECOMP_FN(RdrState_ApplyStateBlock, 0x1a1050)
 RC_DECOMP_FN(RdrState_ApplyDefaultStateBlock, 0x1a1040)
 RC_DECOMP_FN_NOFUZZ(RdrState_Init, 0x1a1268)
 RC_DECOMP_FN(RenderFrameInit, 0x183c38)
+RC_DECOMP_FN_BLOCKING(RenderInit, 0x183c10) // Once, at start-up: only a whole-game check.
 RC_DECOMP_FN(RenderAllocateBuffers, 0x183c80)
 RC_DECOMP_FN(RenderFreeBuffers, 0x183c98)
 RC_DECOMP_FN(RenderTerm, 0x183c30)

@@ -12,6 +12,7 @@ void ResTypeSetConstructDaemon(ptr32<char> pType, uint32 constructDaemon, int16 
 namespace {
 
 const uint32_t kPrintf = 0x12e9e8, kLoadTexMip = 0x18fd70, kSetDefLoadImage = 0x1c4140, kExecLoadImage = 0x1c4328;
+const uint32_t kResReadAlloc = 0x1ab860, kResReAlloc = 0x1ab850;
 const uint32_t kFirstTexAddr = 0x1e0000, kLastTexAddr = 0x400000;
 
 // The GS memory a level of the given (padded) size takes, in units of 256 bytes, by format.
@@ -216,6 +217,26 @@ void TexInit()
     ResTypeSetConstructDaemon(ptr32<char>(0x328160u), 0x183e68u, 2);
 }
 
+// Places a loaded texture in GS memory. One that is a single frame and not flagged otherwise is then moved: its
+// 0x50-byte header is copied to the end of the loader's read area (just below what it has read so far), so the
+// bitmap data that follows the header can be released when the loader trims the area.
+void TextureConstructDaemon(ptr32<memHandle> pHandle)
+{
+    GuestFrame frame(0x30);
+    if (!pHandle)
+        return;
+    const ptr32<_sGfxTexture> texture(pHandle->address);
+    GfxTex_ManageTexture(texture);
+    if (texture->frames == 1 && (texture->flags & 0x8000) == 0)
+    {
+        const uint32_t end = guest_call<uint32_t>(kResReadAlloc);
+        const uint32_t moved = end - 0x50u;
+        std::memcpy(guest_host(moved), texture.get(), 0x50);
+        guest_call(kResReAlloc, moved);
+        *pHandle = ptr32<void>(moved);
+    }
+}
+
 } // namespace rc
 
 RC_DECOMP_FN(GfxTex_Init, 0x190670)
@@ -225,3 +246,4 @@ RC_DECOMP_FN_NOFUZZ(GfxTex_ManageTexture, 0x190130) // Uploads to the GS.
 RC_DECOMP_FN_NOFUZZ(GfxTex_Update, 0x1906c8)
 RC_DECOMP_FN(TexReset, 0x183e60)
 RC_DECOMP_FN_NOFUZZ(TexInit, 0x183e30)
+RC_DECOMP_FN_NOFUZZ(TextureConstructDaemon, 0x183e68) // Uploads to the GS.

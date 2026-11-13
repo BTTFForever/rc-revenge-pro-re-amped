@@ -375,6 +375,42 @@ angle ArcTan(int32 x, int32 y)
     return static_cast<angle>(steep ? 0x4000 - value : value);
 }
 
+// The angle of (x, y) and its distance from the origin: the larger of |x| and |y| scaled by the cosine (or sine)
+// of the angle in the octant, as 12-bit fixed point. The division is a 64-bit unsigned one in the original.
+void ArcTanDistance(int32 x, int32 y, ptr32<angle> anglePtr, ptr32<uint32> distance)
+{
+    GuestFrame frame(0x60);
+    uint64_t absY = static_cast<uint64_t>(static_cast<int64_t>(y));
+    uint64_t absX = static_cast<uint64_t>(static_cast<int64_t>(x));
+    if (absX == 0 && absY == 0)
+    {
+        *anglePtr = 0;
+        *distance = 0;
+        return;
+    }
+    const angle theta = ArcTan(x, y);
+    if (static_cast<int64_t>(absX) < 0)
+        absX = static_cast<uint64_t>(static_cast<int64_t>(-x));
+    if (static_cast<int64_t>(absY) < 0)
+        absY = static_cast<uint64_t>(static_cast<int64_t>(-y));
+    *anglePtr = theta;
+    ee_float ratio;
+    const ee_float turns = ee_itof((static_cast<int32_t>(static_cast<int16_t>(theta)) >> 4) & 0xfff);
+    if (absY < absX)
+    {
+        ratio = ee_cosf((turns + turns) * *static_cast<ee_float *>(guest_host(0x327bbcu)));
+        absY = absX;
+    }
+    else
+        ratio = ee_sinf((turns + turns) * *static_cast<ee_float *>(guest_host(0x327bc0u)));
+    const int32_t scaled = static_cast<int16_t>(ee_ftoi(ratio * ee_float(4096.0f)));
+    uint64_t divisor = static_cast<uint64_t>(static_cast<int64_t>(scaled));
+    if (static_cast<int64_t>(divisor) < 0)
+        divisor = static_cast<uint64_t>(static_cast<int64_t>(-scaled));
+    const uint64_t dividend = (absY & 0xffffffffu) << 12;
+    *distance = static_cast<uint32>(divisor == 0 ? 0 : dividend / divisor);
+}
+
 // MATHTRIG.c
 
 void Trig_Init() {}
@@ -402,5 +438,6 @@ RC_DECOMP_FN(Mat3nReOrthogonalise, 0x19e630)
 RC_DECOMP_FN_NOFUZZ(Vec32MulMatPsx, 0x19e8d8)
 RC_DECOMP_FN_NOFUZZ(Vec32MulMatPsxT, 0x19ea20)
 RC_DECOMP_FN(ArcTan, 0x19fdf8)
+RC_DECOMP_FN(ArcTanDistance, 0x19ff60)
 RC_DECOMP_FN(Trig_Init, 0x1a7508)
 RC_DECOMP_FN(Trig_Term, 0x1a7510)
