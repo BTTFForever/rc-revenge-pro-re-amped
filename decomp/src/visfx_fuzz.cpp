@@ -1264,4 +1264,152 @@ void vfxCarRocket(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     setArg(ctx, 0, effect);
 }
 
+
+// --- the fifth batch: VISFX2 renderers ------------------------------------------------------------------------------
+
+namespace {
+
+// Gives each particle of a ring (count particles of `stride` bytes) a random position (shorts at +0, +2, +4: wide enough
+// that sums and shifts wrap now and then) and a life of 0 to `lifeMax` (a 16-bit one at lifeOffset), now and then wild.
+void scatterParticles(uint64_t &state, uint32_t first, uint32_t count, uint32_t stride, uint32_t lifeOffset, uint32_t lifeBytes, uint32_t lifeMax)
+{
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        const uint32_t p = first + i * stride;
+        for (uint32_t offset : {0u, 2u, 4u})
+            mem<int16_t>(p + offset) = static_cast<int16_t>(rnd(state, 4) ? static_cast<int32_t>(rnd(state, 2000)) - 1000 : static_cast<int32_t>(nextFuzz(state)));
+        const uint32_t life = rnd(state, 8) ? rnd(state, lifeMax) : nextFuzz(state);
+        if (lifeBytes == 2)
+            mem<uint16_t>(p + lifeOffset) = static_cast<uint16_t>(life);
+        else
+            mem<uint32_t>(p + lifeOffset) = life;
+        mem<uint16_t>(p + 0x12) = static_cast<uint16_t>(nextFuzz(state));
+        if (lifeOffset == 0x14) // the car-style particle: an angle at +0x10 and a size byte at +0x16
+        {
+            mem<uint16_t>(p + 0x10) = static_cast<uint16_t>(nextFuzz(state));
+            mem<uint8_t>(p + 0x16) = static_cast<uint8_t>(nextFuzz(state));
+        }
+    }
+}
+
+// A scenery effect for a renderer: ring, scenery, the renderers' state, and three colour bytes at colourOffset.
+uint32_t sceneryRenderer(uint64_t &state, uint32_t scratch, uint32_t mask, uint32_t stride, uint32_t lifeOffset, uint32_t lifeBytes,
+                         uint32_t colourOffset, uint32_t lifeMax)
+{
+    const uint32_t effect = sceneryEffect(state, scratch, mask, stride, lifeOffset);
+    if (lifeBytes == 4)
+        buildRing(state, effect, mask, effect + 0x44, stride, lifeOffset, 4);
+    renderState(state, scratch);
+    for (uint32_t i = 0; i < 4; ++i)
+        mem<uint8_t>(effect + colourOffset + i) = static_cast<uint8_t>(rnd(state, 4) ? rnd(state, 0x80) : nextFuzz(state));
+    scatterParticles(state, effect + 0x44, mask + 1, stride, lifeOffset, lifeBytes, lifeMax);
+    return effect;
+}
+
+} // namespace
+
+void vfxMonkeySmokeRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    setArg(ctx, 0, sceneryRenderer(state, scratch, 15, 0x14, 0x10, 2, 0x188, 0x40));
+}
+
+void vfxBigVolcanoRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    setArg(ctx, 0, sceneryRenderer(state, scratch, 15, 0x14, 0x10, 2, 0x188, 0x80));
+}
+
+void vfxFountainRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    setArg(ctx, 0, sceneryRenderer(state, scratch, 31, 0x18, 0x10, 4, 0x344, 0x60));
+}
+
+void vfxMobyDickRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    setArg(ctx, 0, sceneryRenderer(state, scratch, rnd(state, 2) ? 31 : 15, 0x18, 0x10, 4, 0x344, 0x60));
+}
+
+void vfxPipeSteamRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    setArg(ctx, 0, sceneryRenderer(state, scratch, 15, 0x14, 0x10, 2, 0x188, 0x40));
+}
+
+void vfxSciFiBubblesRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    setArg(ctx, 0, sceneryRenderer(state, scratch, 15, 0x14, 0x10, 2, 0x188, 0x60));
+}
+
+
+void vfxSciFiSteamRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    setArg(ctx, 0, sceneryRenderer(state, scratch, 15, 0x14, 0x10, 2, 0x188, 0x40));
+}
+
+void vfxSmokingRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    setArg(ctx, 0, sceneryRenderer(state, scratch, 15, 0x14, 0x10, 2, 0x188, 0x80));
+}
+
+void vfxGargoyleRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    setArg(ctx, 0, sceneryRenderer(state, scratch, 15, 0x14, 0x10, 2, 0x188, 0x40));
+}
+
+// The right-the-car dust: the car (a copy) at +0x1c4 and a ring of 16 particles of 0x18 bytes (life at +0x14).
+void vfxCarRightRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    renderState(state, scratch);
+    const uint32_t effect = scratch + kEffect;
+    buildRing(state, effect, 15, effect + 0x44, 0x18, 0x14, 2);
+    mem<uint32_t>(effect + 0x1c4) = scratch;
+    scatterParticles(state, effect + 0x44, 16, 0x18, 0x14, 2, 0x20);
+    setArg(ctx, 0, effect);
+}
+
+// The sci-fi rocket: the scenery's object chain leads to a vector of floats (the rocket's place in the model), now and
+// then so large that converting it to an integer saturates. The particles are 0x18 bytes (life at +0x14, size at +0x16).
+void vfxScifiRocketRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t effect = sceneryRenderer(state, scratch, 15, 0x18, 0x14, 2, 0x344, 0x20);
+    mem<uint32_t>(scratch + kTob + 0x3c) = scratch + kVectors;
+    mem<uint32_t>(scratch + kVectors + 8) = scratch + kVectors + 0x10;
+    mem<uint32_t>(scratch + kVectors + 0x10) = scratch + kVectors + 0x20;
+    for (uint32_t axis = 0; axis < 3; ++axis)
+        mem<float>(scratch + kVectors + 0x20 + 4 * axis) = rnd(state, 8) ? frnd(state, 40000.0f) : frnd(state, 1.0e11f);
+    setArg(ctx, 0, effect);
+}
+
+void vfxScifiRocketOldRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    setArg(ctx, 0, sceneryRenderer(state, scratch, 15, 0x18, 0x14, 2, 0x344, 0x20));
+}
+
+
+// The cartoon train's smoke: a ring of 16 particles of 0x14 bytes, a counter at +0x194 (every fourth value starts a puff),
+// the last position at +0x184 (the scenery's own one about half the time) and the last movement at +0x18c.
+void vfxCartoonTrainHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t effect = sceneryEffect(state, scratch, 15, 0x14, 0x10);
+    mem<uint32_t>(effect + 0x194) = rnd(state, 2) ? 3 + 4 * rnd(state, 100) : nextFuzz(state);
+    const uint32_t tob = scratch + kTobInst;
+    for (uint32_t axis = 0; axis < 3; ++axis)
+    {
+        const int16_t here = static_cast<int16_t>(mem<int32_t>(tob + 4 + 4 * axis) >> 8);
+        mem<int16_t>(effect + 0x184 + 2 * axis) = static_cast<int16_t>(rnd(state, 2) ? here : static_cast<int16_t>(nextFuzz(state)));
+        mem<int16_t>(effect + 0x18c + 2 * axis) = static_cast<int16_t>(rnd(state, 2) ? rnd(state, 40) : nextFuzz(state));
+    }
+    setArg(ctx, 0, effect);
+}
+
+// The cartoon train's renderer: the scenery's matrix (in the instance at +0x18) is a real rotation matrix of shorts.
+void vfxCartoonTrainRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t effect = sceneryRenderer(state, scratch, 15, 0x14, 0x10, 2, 0x188, 0x20);
+    const uint32_t tob = scratch + kTobInst;
+    for (uint32_t offset = 0x18; offset < 0x2a; offset += 2)
+        mem<int16_t>(tob + offset) = static_cast<int16_t>(static_cast<int32_t>(rnd(state, 8193)) - 4096);
+    setArg(ctx, 0, effect);
+}
+
 } // namespace rc::fuzz
