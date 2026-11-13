@@ -82,12 +82,24 @@ bool levelHasCars()
     return false;
 }
 
-// A car at scratch+0 if a race is loaded (see aiCar); the route-node setup also needs nodes, which every race has.
+// A car at scratch+0 (aiCar copies one of the race's cars there with its physics, as the next lines check). When no race is
+// loaded (or the AI nodes are gone: the demo race has ended) aiCar builds nothing and the scratch area holds random words,
+// whose pointers lead outside the 32 MB of RAM, where the original wraps the address and a native function does not. The
+// setups then get a car of zeroes with sane pointers instead: type 0, zero physics and integer state.
 bool buildCar(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 {
     restoreGlobals();
     aiCar(ctx, state, scratch);
-    return levelHasCars();
+    _sObject &car = *static_cast<_sObject *>(guest_host(scratch));
+    if (levelHasCars() && car.pPhysics.address == scratch + 0x1000u)
+        return true;
+    std::memset(guest_host(scratch), 0, 0x2300);
+    std::memset(guest_host(scratch + kDef), 0, 0x200);
+    car.pDef = ptr32<_sObjectDef>(scratch + kDef);
+    car.pPhysics = ptr32<_sFPhysLibCar>(scratch + 0x1000u);
+    static_cast<_sFPhysLibCar *>(guest_host(scratch + 0x1000u))->pInteger = ptr32<_sOPhysLibIntegerCarState>(scratch + 0x2000u);
+    setArg(ctx, 0, scratch);
+    return true;
 }
 
 } // namespace
@@ -733,8 +745,6 @@ void vfxCarSmoke(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 void vfxCarSmokeRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 {
     vfxCarSmoke(ctx, state, scratch);
-    if (!levelHasCars())
-        return;
     nearCar(state, scratch);
     const uint32_t effect = scratch + kEffect;
     renderState(state, scratch);
@@ -746,8 +756,6 @@ void vfxCarSmokeRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 void vfxSparksRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 {
     vfxSparkHandler(ctx, state, scratch);
-    if (!levelHasCars())
-        return;
     nearCar(state, scratch);
     const uint32_t effect = scratch + kEffect;
     renderState(state, scratch);
@@ -927,8 +935,6 @@ void vfxSkullFartHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 void vfxSkullFartRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 {
     vfxSkullFartHandler(ctx, state, scratch);
-    if (!levelHasCars())
-        return;
     nearCar(state, scratch);
     renderState(state, scratch);
 }
@@ -1136,8 +1142,6 @@ void vfxArmCannon(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 void vfxCarFireRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 {
     vfxCarHeatRayAerial(ctx, state, scratch);
-    if (!levelHasCars())
-        return;
     const uint32_t effect = scratch + kEffect;
     renderState(state, scratch);
     for (uint32_t i = 0; i < 32; ++i)
@@ -1219,8 +1223,6 @@ void vfxWheelDust(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 void vfxHeatRayDamage(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 {
     vfxCarHeatRayAerial(ctx, state, scratch);
-    if (!levelHasCars())
-        return;
     nearCar(state, scratch);
     renderState(state, scratch);
     const uint32_t effect = scratch + kEffect;
