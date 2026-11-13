@@ -74,6 +74,7 @@ std::vector<Entry *> registeredEntries();
 // For the offline oracle: installs every function as under RC_SHADOW=1 (nested calls inside a comparison reach the
 // originals), without the log thread, and allocates the comparison's buffers.
 void installForOracle(PS2Runtime &runtime);
+extern bool g_offline; // Set by installForOracle: running in the offline oracle, not the game.
 
 // The decompiled version of the function at an address, or fallback if it has none or decompilation is off.
 RecompFn decompOr(uint32_t address, RecompFn fallback);

@@ -4,6 +4,7 @@
 // accumulated as impulses on each car, then FUpdateCarBody turns them into velocity and position. 0.59375 is the
 // physics timestep. Each wheel is also a collision sphere: the first four spheres are the wheels.
 
+#include "ai_fuzz.h"
 #include "ee_math.h"
 
 #define F(value) ::rc::ee_float(value##f)
@@ -212,6 +213,82 @@ void FInitialiseCar(ptr32<_sFPhysLibCar> pCar)
     data.rearWheels.invMass = F(16777216.0) / data.rearWheels.mass;
     data.rearWheels.invInertia = F(16777216.0) / data.rearWheels.inertia;
     FPhysLibSphereInitFixup(pCar);
+}
+
+// A test car's handling, used before the real car data existed: every field is set, those it does not name to -1
+// (all ones, as the original's memset leaves them). The original also works out the point between the wheels into a
+// local it never uses.
+int32_t FPhysLibInitTESTCarData(ptr32<_sFPhysLibCar> pCar)
+{
+    _sFPhysLibCar &car = *pCar;
+    _sFPhysLibCarData &data = *car.pData;
+    std::memset(&data, 0xff, sizeof(_sFPhysLibCarData));
+    data.carExtents = {float_from_bits(0x46147000u), float_from_bits(0x45D48000u), float_from_bits(0x4684D000u)};
+    data.comFromWheelMidPoint = {F(0.0), F(2000.0), F(0.0)};
+    data.inertiaZ = 16384.0f;
+    data.inertiaX = 16384.0f;
+    data.inertiaY = 16384.0f;
+    data.maxSteerAngle = 0x32;
+    data.linDampConstant = 15.0f;
+    data.angDampConstant = 4000.0f;
+    data.frontWheels.inertia = 4096.0f;
+    data.frontWheels.springConstant = 125.0f;
+    data.frontWheels.suspLength = 6000.0f;
+    data.frontWheels.gripConstant = 7000.0f;
+    data.frontWheels.maxFrictionalForce = 150.0f;
+    data.mass = 4096.0f;
+    data.colFricConstant = 100.0f;
+    data.frontWheels.mass = 150.0f;
+    data.frontWheels.springConstant2 = 300.0f;
+    data.frontWheels.springDampConstant = 100.0f;
+    data.frontWheels.maxNormalForce = float_from_bits(0x4E800000u);
+    data.frontWheels.maxDrivingImpulse = 480.0f;
+    data.frontWheels.axleDampingConstant = 100.0f;
+    data.rearWheels = data.frontWheels; // radius, invMass, invInertia and maxFrictionalForce2 are still all ones
+    data.rearWheels.maxFrictionalForce = 130.0f;
+    const ee_float scale = float_from_bits(0x39638E39u);
+    const _sFPhysLibColSphere *sphere = car.pSphere.get();
+    data.frontWheels.maxDrivingImpulse = data.frontWheels.maxDrivingImpulse * sphere[0].radius * scale;
+    data.maxBoatThrust = 450.0f;
+    data.waterDragCoef = 300.0f;
+    data.waterDragCoefForwards = 25.0f;
+    data.rudderConstant = 400.0f;
+    data.bouyancyConstant = 100.0f;
+    data.rearWheels.maxDrivingImpulse = data.rearWheels.maxDrivingImpulse * sphere[2].radius * scale;
+    data.motorOffset = {F(0.0), float_from_bits(0xC5915000u), float_from_bits(0xC69C4000u)};
+    return 0;
+}
+
+// The test car's nine collision spheres: four wheels, a big body sphere and four corners.
+int32_t FPhysLibInitTESTCarSpheres(ptr32<_sFPhysLibCar> pCar)
+{
+    _sFPhysLibCar &car = *pCar;
+    _sFPhysLibColSphere *sphere = car.pSphere.get();
+    car.numSpheres = 9;
+    const ee_float wheelRadius = float_from_bits(0x455AC000u), wheelY = float_from_bits(0xC5915000u);
+    const ee_float frontZ = float_from_bits(0x46192000u), rearZ = float_from_bits(0xC6192000u);
+    const ee_float cornerFrontZ = float_from_bits(0x4625A000u), cornerRearZ = float_from_bits(0xC625A000u);
+    const ee_float cornerLeft = float_from_bits(0xC573C000u), cornerRight = float_from_bits(0x4573C000u);
+    sphere[0].radius = wheelRadius;
+    G(bUsingTestSpheres) = 1;
+    sphere[0].sphereOffset = {float_from_bits(0xC601B000u), wheelY, frontZ};
+    sphere[1].radius = wheelRadius;
+    sphere[1].sphereOffset = {float_from_bits(0x4601B000u), wheelY, frontZ};
+    sphere[2].radius = wheelRadius;
+    sphere[2].sphereOffset = {float_from_bits(0xC604D000u), wheelY, rearZ};
+    sphere[3].radius = wheelRadius;
+    sphere[3].sphereOffset = {float_from_bits(0x4604D000u), wheelY, rearZ};
+    sphere[4].radius = 5600.0f;
+    sphere[4].sphereOffset = {F(0.0), F(4000.0), F(0.0)};
+    sphere[5].radius = 4000.0f;
+    sphere[5].sphereOffset = {cornerLeft, F(2000.0), cornerFrontZ};
+    sphere[6].radius = 4000.0f;
+    sphere[6].sphereOffset = {cornerRight, F(2000.0), cornerFrontZ};
+    sphere[7].radius = 4000.0f;
+    sphere[7].sphereOffset = {cornerLeft, F(2000.0), cornerRearZ};
+    sphere[8].radius = 4000.0f;
+    sphere[8].sphereOffset = {cornerRight, F(2000.0), cornerRearZ};
+    return 0;
 }
 
 // FPHYSLIB.c
@@ -752,7 +829,10 @@ void FUpdateCarWheels(ptr32<_sFPhysLibCar> pCar)
             const _sFPhysLibWheelData &params = i < 2 ? data.frontWheels : data.rearWheels;
             _sFPhysLibWheel &wheel = car.wheel[i];
             const ee_float limit = params.suspLength;
-            wheel.vertVel = wheel.vertVel + params.invMass * -(wheel.vertPos * params.springConstant + wheel.vertVel * params.springDampConstant) * kS * kS;
+            // In the original's order: the scale by 1/4096 before the mass. A power of two scales exactly, except when
+            // the spring has decayed into the denormals (a wheel long at rest), where the order changes the result.
+            const ee_float spring = -(wheel.vertPos * params.springConstant + wheel.vertVel * params.springDampConstant) * kS;
+            wheel.vertVel = wheel.vertVel + params.invMass * spring * kS;
             wheel.vertPos = wheel.vertPos + wheel.vertVel * kTimestep;
             if (limit < wheel.vertPos)
                 wheel.vertPos = limit;
@@ -1305,6 +1385,8 @@ void FCalcCarBodyForces(ptr32<_sFPhysLibCar> pCar)
 RC_DECOMP_FN_NOFUZZ(FMatRotateY, 0x1992c8)
 RC_DECOMP_FN_NOFUZZ(FUpdateOrientationFromAngVel, 0x198a60)
 RC_DECOMP_FN(FPhysLibInit, 0x196b98)
+RC_DECOMP_FN_SETUP(FPhysLibInitTESTCarData, 0x196400, rc::fuzz::physicsCarCopy)
+RC_DECOMP_FN_SETUP(FPhysLibInitTESTCarSpheres, 0x196790, rc::fuzz::physicsCarCopy)
 RC_DECOMP_FN(FPhysLibTerm, 0x196c00)
 // These follow pointers held inside the car, so random inputs would only produce meaningless addresses.
 RC_DECOMP_FN_NOFUZZ(FPhysLibSphereInitFixup, 0x1962a8)
@@ -1312,7 +1394,7 @@ RC_DECOMP_FN_NOFUZZ(FInitialiseCar, 0x195fa0)
 RC_DECOMP_FN_NOFUZZ(FPhysLibCollisionReponse, 0x196c10)
 RC_DECOMP_FN_NOFUZZ(FPhysLibAddCar, 0x196df0)
 RC_DECOMP_FN_NOFUZZ(FPhysLibDeleteCar, 0x196e38)
-RC_DECOMP_FN_NOFUZZ(FPhysLibSimulation, 0x196a60)
+RC_DECOMP_FN_SETUP(FPhysLibSimulation, 0x196a60, rc::fuzz::physicsCars)
 RC_DECOMP_FN_NOFUZZ(FCollisionResponse, 0x196f68)
 RC_DECOMP_FN_NOFUZZ(FCollisionResponseOther, 0x197b50)
 RC_DECOMP_FN_NOFUZZ(FCollisionResponseCarCar, 0x197e40)

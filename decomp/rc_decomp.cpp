@@ -20,6 +20,8 @@
 
 namespace rc {
 
+uint32_t &randState(); // src/ai.cpp: newlib's rand state
+
 uint32_t g_nativeExtraCycles = []
 {
     const char *value = std::getenv("RC_DECOMP_CHARGE");
@@ -258,6 +260,10 @@ FuzzCaseResult fuzzCase(Entry &entry, uint8_t *rdram, const R5900Context &live, 
         const uint32_t word = (nextFuzz(state) & 1u) != 0u ? nextFuzz(state) : (nextFuzz(state) & 0x0FFF0FFFu);
         std::memcpy(rdram + kScratch + pos, &word, 4u);
     }
+    // A whole-RAM input starts from RAM as the step began, rand's state (newlib's, in the reentrancy struct) included,
+    // so without this every input would draw the same random numbers. A setup may seed it again.
+    if (entry.fuzzWholeRam)
+        randState() = nextFuzz(state);
     // A function registered with its own setup builds valid data in the scratch area and the globals here.
     R5900Context inputs = live;
     entry.randomiseArgs(&inputs, state, kScratch);
@@ -766,8 +772,11 @@ std::vector<Entry *> registeredEntries()
     return entries;
 }
 
+bool g_offline = false;
+
 void installForOracle(PS2Runtime &runtime)
 {
+    g_offline = true;
     g_rdram = runtime.memory().getRDRAM();
     g_runtime = &runtime;
     g_before.reset(new uint8_t[PS2_RAM_SIZE]);

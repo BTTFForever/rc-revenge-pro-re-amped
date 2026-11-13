@@ -7,6 +7,7 @@
 
 namespace rc {
 uint32_t &randState(); // ai.cpp: newlib's rand state
+int32 AINodeDistanceAlong(ptr32<_sObject> pObj);
 }
 
 namespace rc::fuzz {
@@ -103,6 +104,8 @@ Claim<FourFloats> g_cameraVector; // visFxVarG.ps2CameraTrans
 Claim<uint32_t> g_playerState;    // one player's u8PlayerStates word (sNew, sOld)
 Claim<EightFloats> g_lastSpots;   // where the glints last started, a vector per screen
 
+void restoreLeftoverGlobals();
+
 void restoreGlobals()
 {
     g_quad.restore();
@@ -121,6 +124,7 @@ void restoreGlobals()
     g_cameraVector.restore();
     g_lastSpots.restore();
     g_playerState.restore();
+    restoreLeftoverGlobals();
 }
 
 uint32_t rnd(uint64_t &state, uint32_t n) { return nextFuzz(state) % n; }
@@ -3173,6 +3177,479 @@ void vfxSkyChange(R5900Context *, uint64_t &state, uint32_t scratch)
     mem<uint16_t>(0x1e9466u) = static_cast<uint16_t>(rnd(state, 2) ? 0 : rnd(state, 6));
     mem<uint16_t>(0x1e9468u) = static_cast<uint16_t>(objectSlot(state));
     mem<uint16_t>(0x1e946au) = static_cast<uint16_t>(objectSlot(state));
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The leftovers that waited on the effects: the human players' control and input, lap counting, the route's debug
+// display, the cars' collision grouping and liquids, the test car set-up and the physics step.
+
+namespace {
+
+template <size_t N>
+struct Block { uint8_t bytes[N]; };
+
+Claim<Block<sizeof(sPlayerClass)>> g_players;     // playerVarG
+Claim<Block<sizeof(inputClass)>> g_input;         // inputVarG
+Claim<Block<8>> g_mirror;                         // mirrorVarG
+Claim<Block<0x40>> g_playerConfigs;               // frontEndVarG.gameStateData.playerConfig[0..1]
+Claim<uint32_t> g_world;                          // frontEndVarG.world
+Claim<Block<0xc0>> g_timeTrials;                  // frontEndVarG's time trial records (0x30 words)
+Claim<uint32_t> g_raceType, g_laps, g_mainTime;   // mainVarG.raceType, iNumberOfLaps, time
+Claim<uint8_t> g_noHuman;                         // mainVarG.noHuman
+Claim<uint16_t> g_startBoost;                     // mainVarG.startBoostOn[0..1]
+Claim<uint32_t> g_readySteadyGo;                  // hudVarG.iReadySteadyGo
+Claim<uint32_t> g_ppp;                            // AINODE's debug counter
+Claim<Block<sizeof(FPhysLibGlobals)>> g_physics;  // FPhysLib
+Claim<Block<sizeof(sObjectClass)>> g_objects;     // objectVarG
+Claim<Block<sizeof(sCarColClass)>> g_carCol;      // carColG
+Claim<uint8_t> g_levelLeftover;                   // mainVarG.level
+Claim<uint8_t> g_sfxInit;                         // sfxVarG.bInitOk
+
+// Sound off (as before the sound library has started): a sound request then returns at once. Offline there is no IOP
+// to answer the sound driver's calls, so an original that plays a sound would wait for ever. The sound code is all
+// recompiled, so nothing native is left out.
+void soundOff()
+{
+    g_sfxInit.set(0x31e488u, 0);
+}
+
+template <typename T>
+void claimCopy(Claim<T> &claim, uint32_t address) { claim.set(address, mem<T>(address)); }
+
+uint32_t mainField(size_t offset) { return guest_addr(&G(mainVarG)) + static_cast<uint32_t>(offset); }
+
+// A float now and then scaled down towards (or into) the denormals, where the order of operations matters.
+float tiny(uint64_t &state, float value)
+{
+    return value * std::ldexp(1.0f, -static_cast<int>(100 + rnd(state, 50)));
+}
+
+// The pad: buttons held and their pressure, the sticks, which pads report pressure, the mirror, and both players'
+// controller layouts, keys and last inputs. Each player's car is the one at scratch+0.
+void randomPads(uint64_t &state, uint32_t scratch)
+{
+    // Offline no pad port has been opened, so the pad library never reports a pressure-sensitive pad and the pressure
+    // paths would not run. Opening ports 0 and 1 (in the runtime's pad stub; the game has them open already) lets
+    // InputPressureModePadPresent answer from padState as in the game.
+    static bool portsOpen = false;
+    if (g_offline && !portsOpen)
+    {
+        portsOpen = true;
+        for (int32_t port = 0; port < 2; ++port)
+            guest_call<int32_t>(0x1c6718u, port, 0, 0); // scePadPortOpen(port, slot 0, no DMA buffer)
+    }
+    claimCopy(g_players, 0x1ee7e0u);
+    claimCopy(g_input, 0x1f4c80u);
+    claimCopy(g_mirror, 0x328148u);
+    claimCopy(g_playerConfigs, guest_addr(&G(frontEndVarG).gameStateData.playerConfig[0]));
+    sPlayerClass &players = G(playerVarG);
+    for (sPlayer &p : players.player)
+    {
+        p.pObject = ptr32<_sObject>(scratch);
+        for (uint8 &key : p.keys)
+            key = static_cast<uint8>(rnd(state, 5) == 0 ? 0xff : rnd(state, 32));
+        uint8_t *input = reinterpret_cast<uint8_t *>(&p.input);
+        for (uint32_t i = 0; i < 2 * sizeof(sPlayerInput); ++i)
+            input[i] = static_cast<uint8_t>(nextFuzz(state));
+    }
+    inputClass &in = G(inputVarG);
+    const uint32_t held = rnd(state, 4); // how many buttons are held: few to most
+    for (uint8 &button : in.inactiveBuffer)
+        button = static_cast<uint8>((rnd(state, 4) < held ? 1u : 0u) | (nextFuzz(state) & 0xfeu));
+    for (uint8 &pressure : in.pressureBuffer)
+        pressure = static_cast<uint8>(rnd(state, 3) ? rnd(state, 0x100) : rnd(state, 2) ? 0x5a + rnd(state, 3) : 0x3c + rnd(state, 3));
+    uint8_t *sticks = reinterpret_cast<uint8_t *>(&in.analog1A);
+    for (uint32_t i = 0; i < 8; ++i)
+        sticks[i] = static_cast<uint8_t>(rnd(state, 3) ? nextFuzz(state) : rnd(state, 2) ? 0x78 + rnd(state, 3) : 0x86 + rnd(state, 3));
+    static constexpr int32 kPadStates[] = {0, 2, 6, 1, 7};
+    for (int32 &pad : in.padState)
+        pad = kPadStates[rnd(state, std::size(kPadStates))];
+    G(mirrorVarG).bMirrored = rnd(state, 3) == 0 ? 1 : 0;
+    for (auto &config : G(frontEndVarG).gameStateData.playerConfig)
+        config.controllerConfig = static_cast<int32>(rnd(state, 8) ? rnd(state, 5) : nextFuzz(state));
+}
+
+// The car at scratch+0 (buildCar) as a human player's: player type 0 or 1 (now and then a computer's), its weapon,
+// the cars near it, its state and the race's start boost, with the pads set at random.
+void humanCar(uint64_t &state, uint32_t scratch)
+{
+    _sObject &car = mem<_sObject>(scratch);
+    car.playerType = static_cast<uint8>(rnd(state, 8) ? rnd(state, 2) : rnd(state, 4));
+    car.playerNo = static_cast<uint8>(rnd(state, 8) ? rnd(state, 2) : rnd(state, 8));
+    static const uint8 kWeapons[] = {0, 1, 1, 2, 4, 5, 8, 11, 11};
+    car.weaponType = kWeapons[rnd(state, std::size(kWeapons))];
+    car.weaponFiring = rnd(state, 5) ? 0 : 1;
+    car.respawn = rnd(state, 6) ? 0 : 1;
+    car.rightCar = rnd(state, 3) ? 0 : 1;
+    car.weaponAffect = static_cast<int16>(rnd(state, 2) ? 0 : rnd(state, 3) ? (rnd(state, 2) ? 5 : 0xd) : rnd(state, 16));
+    car.carAI.iTimeFinishedRace = rnd(state, 6) ? 0 : static_cast<int32>(nextFuzz(state));
+    const uint32_t count = G(objectVarG).noObjects;
+    car.carAI.pNearestObjInFront = rnd(state, 3) && count ? G(objectVarG).list[rnd(state, count)] : ptr32<_sObject>(nullptr);
+    car.carAI.pNearestObjBehind = rnd(state, 2) && count ? G(objectVarG).list[rnd(state, count)] : ptr32<_sObject>(nullptr);
+    _sFPhysLibCar &physics = *car.pPhysics;
+    physics.flags = static_cast<uint8>(nextFuzz(state));
+    physics.mode = static_cast<int8>(rnd(state, 3));
+    physics.mat.Yy = rnd(state, 2) ? frnd(state, 4096.0f) : physics.mat.Yy.v;
+    randomPads(state, scratch);
+    claimCopy(g_startBoost, mainField(offsetof(mainClass, startBoostOn)));
+    claimCopy(g_noHuman, mainField(offsetof(mainClass, noHuman)));
+    claimCopy(g_readySteadyGo, guest_addr(&G(hudVarG).iReadySteadyGo));
+    G(mainVarG).startBoostOn[0] = static_cast<uint8>(rnd(state, 4));
+    G(mainVarG).startBoostOn[1] = static_cast<uint8>(rnd(state, 4));
+    G(mainVarG).noHuman = static_cast<uint8>(1 + rnd(state, 2));
+    G(hudVarG).iReadySteadyGo = rnd(state, 3) ? 0 : 1;
+}
+
+// One car's physics block (the car, its integer state, its data and spheres, in that order after it in the game's
+// allocation) copied to scratch at `to`, with the pointers into the block moved along. A zero car if there is none.
+void copyPhysicsCar(uint32_t from, uint32_t to)
+{
+    constexpr uint32_t kBlock = 0x1300u;
+    _sFPhysLibCar &car = mem<_sFPhysLibCar>(to);
+    const auto inside = [&](uint32_t address) { return address >= from && address + 0x10u <= from + kBlock; };
+    const bool usable = from != 0 && from + kBlock <= 0x2000000u && inside(mem<uint32_t>(from + 0x1e0)) && inside(mem<uint32_t>(from + 0x1e4)) &&
+                        inside(mem<uint32_t>(from + 0x1e8));
+    if (!usable)
+    {
+        std::memset(guest_host(to), 0, kBlock);
+        car.pInteger = ptr32<_sOPhysLibIntegerCarState>(to + 0x1ec);
+        car.pData = ptr32<_sFPhysLibCarData>(to + 0x304);
+        car.pSphere = ptr32<_sFPhysLibColSphere>(to + 0x484);
+        car.numSpheres = 9;
+        return;
+    }
+    std::memmove(guest_host(to), guest_host(from), kBlock);
+    car.pSphere.address += to - from;
+    car.pData.address += to - from;
+    car.pInteger.address += to - from;
+}
+
+void restoreLeftoverGlobals()
+{
+    g_players.restore();
+    g_input.restore();
+    g_mirror.restore();
+    g_playerConfigs.restore();
+    g_world.restore();
+    g_timeTrials.restore();
+    g_raceType.restore();
+    g_laps.restore();
+    g_mainTime.restore();
+    g_noHuman.restore();
+    g_startBoost.restore();
+    g_readySteadyGo.restore();
+    g_ppp.restore();
+    g_physics.restore();
+    g_objects.restore();
+    g_carCol.restore();
+    g_levelLeftover.restore();
+    g_sfxInit.restore();
+}
+
+} // namespace
+
+// a0 a human player's car (a copy), a1 a time, a2 an owner (0 or 1) for PlayerSpawnWeapon.
+void playerCar(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    humanCar(state, scratch);
+    soundOff();
+    // A time near the game's: a weapon's task is inserted in the time-sorted task list, which a time past its end
+    // marker would walk off.
+    setArg(ctx, 1, G(mainVarG).time + rnd(state, 0x10000));
+    setArg(ctx, 2, rnd(state, 2));
+}
+
+// a0 player 0 or 1, with the pads at random and the player's car (for the steering-swap weapon) a zero record.
+void playerInput(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    std::memset(guest_host(scratch), 0, sizeof(_sObject));
+    mem<_sObject>(scratch).weaponAffect = static_cast<int16>(rnd(state, 3) ? 0xd : rnd(state, 16));
+    randomPads(state, scratch);
+    setArg(ctx, 0, rnd(state, 2));
+    setArg(ctx, 1, nextFuzz(state));
+}
+
+// a0 a car on its route with its lap state near the moments that count: crossing the line either way, the last lap,
+// the end of the race, a time trial record (also on a Track Editor track).
+void aiFinishDistance(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    soundOff();
+    _sObject &car = mem<_sObject>(scratch);
+    _sCar_AI &ai = car.carAI;
+    claimCopy(g_raceType, mainField(offsetof(mainClass, raceType)));
+    claimCopy(g_laps, mainField(offsetof(mainClass, iNumberOfLaps)));
+    claimCopy(g_mainTime, mainField(offsetof(mainClass, time)));
+    claimCopy(g_levelLeftover, mainField(offsetof(mainClass, level)));
+    claimCopy(g_world, guest_addr(&G(frontEndVarG).world));
+    claimCopy(g_timeTrials, guest_addr(&G(frontEndVarG)) + 0x19c);
+    mainClass &main = G(mainVarG);
+    main.raceType = rnd(state, 3) ? main.raceType : 0x100001feu;
+    main.iNumberOfLaps = static_cast<int32>(1 + rnd(state, 5));
+    main.time = nextFuzz(state) >> rnd(state, 8);
+    main.level = static_cast<uint8>(rnd(state, 4) ? main.level : rnd(state, 0x60));
+    G(frontEndVarG).world = static_cast<int32>(rnd(state, 3) ? G(frontEndVarG).world : 0x1000006b);
+    for (uint32_t i = 0; i < 0x30; ++i)
+        mem<int32_t>(guest_addr(&G(frontEndVarG)) + 0x19c + 4 * i) = static_cast<int32_t>(rnd(state, 0x40000));
+    car.playerType = static_cast<uint8>(rnd(state, 4));
+    car.iRacePos = static_cast<int16>(rnd(state, 8));
+    car.iBestLapTime = static_cast<int32>(rnd(state, 0x40000));
+    for (int32 &lap : car.iLapTimes)
+        lap = static_cast<int32>(main.time - rnd(state, 0x40000));
+    const int32_t total = G(aiNodeVarG).nodeTotalDist;
+    const int32_t nodeDist = ai.pCurNode ? ai.pCurNode->iFinishDist : 0;
+    // The distance the function will find for the car now (the same lookup, from the same position).
+    int32_t now = 0;
+    if (ai.pCurNode)
+    {
+        now = nodeDist - AINodeDistanceAlong(ptr32<_sObject>(scratch));
+        if (now < 0)
+            now += total;
+    }
+    const uint32_t kind = rnd(state, 8);
+    switch (kind)
+    {
+    case 5:
+    case 6:
+    {
+        // Just behind where the car now is (the wrong-way counter's window), moving the way it faces, mostly.
+        ai.iFinishDist = now - 1 - static_cast<int32_t>(rnd(state, 510));
+        _sOPhysLibIntegerCarState &integer = *car.pPhysics->pInteger;
+        const int16_t *m = reinterpret_cast<const int16_t *>(&integer.mat);
+        const int sign = rnd(state, 4) ? 1 : -1;
+        integer.vel.x = static_cast<int16>(sign * m[2]);
+        integer.vel.y = static_cast<int16>(sign * m[5]);
+        integer.vel.z = static_cast<int16>(sign * m[8]);
+        break;
+    }
+    case 0: ai.iFinishDist = static_cast<int32>(rnd(state, static_cast<uint32_t>(std::max(total, 1)))); break;
+    case 1: ai.iFinishDist = now + static_cast<int32_t>(rnd(state, 1201)) - 600; break;
+    case 2: // Crossing the line forwards (now and then just short of it).
+    case 7: ai.iFinishDist = now - total + static_cast<int32_t>(rnd(state, 6100)); break;
+    case 3: ai.iFinishDist = now + total - static_cast<int32_t>(rnd(state, 4600)); break; // backwards
+    default: ai.iFinishDist = rnd(state, 2) ? 0 : static_cast<int32>(nextFuzz(state)); break;
+    }
+    ai.iHalfLapDone = static_cast<int16>(kind == 2 || kind == 7 || rnd(state, 3) ? 1 : 0);
+    ai.iLapsCompleted = static_cast<int16>(rnd(state, 6) ? main.iNumberOfLaps - 2 + static_cast<int32_t>(rnd(state, 3)) : static_cast<int32_t>(rnd(state, 14)) - 1);
+    ai.iLineClockOver = static_cast<int16>(rnd(state, 3) ? 0 : -1);
+    ai.iTimeFinishedRace = rnd(state, 4) ? 0 : static_cast<int32>(rnd(state, 0x10000));
+    ai.iGoingWrongWay = static_cast<int32>(kind >= 5 || rnd(state, 3) == 0 ? 0x5c0 + rnd(state, 0x20) : rnd(state, 2) ? rnd(state, 0x600) : nextFuzz(state));
+    ai.iTotalRacedDist = static_cast<int32>(nextFuzz(state));
+}
+
+// No arguments: the dump's route and cars, with the debug counter at random.
+void aiNodeRender(R5900Context *, uint64_t &state, uint32_t)
+{
+    restoreGlobals();
+    claimCopy(g_ppp, 0x327c18u);
+    G(ppp) = static_cast<int32>(nextFuzz(state));
+    // The computer cars' stuck nodes (none in most dumps): their current node, another node, or none. Offline only:
+    // these are the race's own cars.
+    if (g_offline)
+        for (uint32_t i = 0; i < G(objectVarG).noObjects && i < 46; ++i)
+            if (const ptr32<_sObject> obj = G(objectVarG).list[i]; obj && obj.address < 0x2000000u && G(aiNodeVarG).pNode)
+                obj->carAI.pStuckOnNode = rnd(state, 3) == 0 ? ptr32<_sAINode>(nullptr)
+                                          : rnd(state, 2) ? obj->carAI.pCurNode
+                                                          : G(aiNodeVarG).pNode + static_cast<int32_t>(rnd(state, std::max<int>(G(aiNodeVarG).noNodesSingle, 1)));
+}
+
+// a0 a copy of one of the race's physics cars with its spheres and data, those filled with random words now and then.
+void physicsCarCopy(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    const FPhysLibGlobals &phys = G(FPhysLib);
+    const uint32_t from = phys.numCars > 0 ? phys.pCarList[rnd(state, static_cast<uint32_t>(std::min(phys.numCars, 24)))].address : 0u;
+    copyPhysicsCar(from, scratch);
+    _sFPhysLibCar &car = mem<_sFPhysLibCar>(scratch);
+    if (rnd(state, 2))
+        for (uint32_t i = 0; i < sizeof(_sFPhysLibCarData); i += 4)
+            mem<uint32_t>(car.pData.address + i) = nextFuzz(state);
+    _sFPhysLibColSphere *spheres = car.pSphere.get();
+    for (int i = 0; i < 9; ++i)
+    {
+        if (rnd(state, 2))
+            spheres[i].radius = rnd(state, 4) ? ee_float(1000.0f + frnd(state, 3000.0f)) : float_from_bits(nextFuzz(state));
+        spheres[i].sphereOffset.x = frnd(state, 9000.0f);
+    }
+    setArg(ctx, 0, scratch);
+}
+
+// The physics car list: copies of up to four of the race's cars (some not colliding: flags bit 1), their wheels' and
+// bodies' motion now and then scaled down towards the denormals.
+void physicsCars(R5900Context *, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    claimCopy(g_physics, 0x1faa30u);
+    FPhysLibGlobals &phys = G(FPhysLib);
+    const int32_t real = std::min(phys.numCars, 24);
+    if (real <= 0)
+        return;
+    const int32_t count = 1 + static_cast<int32_t>(rnd(state, static_cast<uint32_t>(std::min(real, 4))));
+    std::array<uint32_t, 4> sources{};
+    for (int32_t i = 0; i < count; ++i)
+        sources[i] = phys.pCarList[rnd(state, static_cast<uint32_t>(real))].address;
+    for (int32_t i = 0; i < count; ++i)
+    {
+        const uint32_t to = scratch + 0x1400u * static_cast<uint32_t>(i);
+        copyPhysicsCar(sources[i], to);
+        _sFPhysLibCar &car = mem<_sFPhysLibCar>(to);
+        phys.pCarList[i] = ptr32<_sFPhysLibCar>(to);
+        if (rnd(state, 5) == 0)
+            car.flags = static_cast<uint8>(nextFuzz(state) | 2);
+        for (_sFPhysLibWheel &wheel : car.wheel)
+        {
+            if (rnd(state, 3) == 0)
+            {
+                // A wheel long at rest: its spring has decayed into the denormals.
+                const int shift = 112 + static_cast<int>(rnd(state, 40));
+                wheel.vertVel = std::ldexp(frnd(state, 1.0f), -shift);
+                wheel.vertPos = std::ldexp(frnd(state, 1.0f), -shift - static_cast<int>(rnd(state, 4)));
+                continue;
+            }
+            if (rnd(state, 3) == 0)
+                wheel.vertVel = tiny(state, rnd(state, 2) ? wheel.vertVel.v : frnd(state, 100.0f));
+            if (rnd(state, 3) == 0)
+                wheel.vertPos = tiny(state, rnd(state, 2) ? wheel.vertPos.v : frnd(state, 100.0f));
+            if (rnd(state, 4) == 0)
+                wheel.angVel = tiny(state, frnd(state, 100.0f));
+        }
+        if (rnd(state, 4) == 0)
+        {
+            car.vel.x = tiny(state, car.vel.x.v);
+            car.vel.y = tiny(state, car.vel.y.v);
+            car.angVel.z = tiny(state, car.angVel.z.v);
+        }
+    }
+    phys.numCars = count;
+}
+
+// The object list: copies of up to four of the race's cars (each with its physics, collision record and spheres, which
+// the game allocates in one block after the object), now and then in the same cell, their spheres given contacts with
+// polys of the special materials (liquids, triggers, effects), the levels that check the sci-fi doors, and the doors.
+void carColObjects(R5900Context *, uint64_t &state, uint32_t scratch)
+{
+    constexpr uint32_t kBlock = 0x1720u, kPolys = 0x5d00u, kNumPolys = 24u, kDefs = 0x6600u;
+    restoreGlobals();
+    claimCopy(g_objects, 0x1ee390u);
+    claimCopy(g_carCol, 0x1eb698u);
+    claimCopy(g_levelLeftover, mainField(offsetof(mainClass, level)));
+    soundOff();
+    sObjectClass &objects = G(objectVarG);
+    std::array<uint32_t, 4> sources{};
+    uint32_t found = 0;
+    for (uint32_t tries = 0; tries < 16 && found < 4 && objects.noObjects > 0; ++tries)
+    {
+        const uint32_t obj = objects.list[rnd(state, std::min<uint32_t>(objects.noObjects, 46))].address;
+        const auto inside = [&](uint32_t address) { return address >= obj && address + 0x10u <= obj + kBlock; };
+        if (obj == 0 || obj + kBlock > 0x2000000u)
+            continue;
+        const uint32_t physics = mem<uint32_t>(obj + 0x20), carCol = mem<uint32_t>(obj + 0x24);
+        if (inside(physics) && inside(carCol) && inside(mem<uint32_t>(carCol + 4)) && inside(mem<uint32_t>(carCol + 0x10)) &&
+            inside(mem<uint32_t>(physics + 0x1e0)) && inside(mem<uint32_t>(physics + 0x1e4)) && inside(mem<uint32_t>(physics + 0x1e8)))
+            sources[found++] = obj;
+    }
+    if (found == 0)
+    {
+        objects.noObjects = 0;
+        return;
+    }
+    const uint32_t count = 1 + rnd(state, found);
+
+    static constexpr uint8 kMats[] = {0x12, 0x13, 0x45, 0x14, 0x15, 0x22, 0x19, 0x1a, 0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x40,
+                                      0x41, 0x1b, 0x1c, 0x1e, 0x1f, 0x16, 0x1d, 0x20, 0x42, 0x01, 0x11};
+    for (uint32_t k = 0; k < kNumPolys; ++k)
+    {
+        const uint32_t poly = scratch + kPolys + 0x60u * k;
+        for (uint32_t i = 0; i < 0x60; i += 4)
+            mem<uint32_t>(poly + i) = nextFuzz(state);
+        mem<uint8_t>(poly + 0x53) = rnd(state, 8) ? kMats[rnd(state, std::size(kMats))] : static_cast<uint8_t>(nextFuzz(state));
+        mem<int16_t>(poly + 0x5c) = static_cast<int16_t>(rnd(state, 8) ? rnd(state, 64) : nextFuzz(state) & 0x3ff);
+    }
+
+    std::array<uint32_t, 4> cells{};
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        const uint32_t from = sources[i], to = scratch + kBlock * i;
+        std::memmove(guest_host(to), guest_host(from), kBlock);
+        const auto move = [&](uint32_t field)
+        {
+            const uint32_t value = mem<uint32_t>(field);
+            if (value >= from && value < from + kBlock)
+                mem<uint32_t>(field) = value - from + to;
+        };
+        move(to + 0x20);
+        move(to + 0x24);
+        const uint32_t physics = mem<uint32_t>(to + 0x20), carColAddr = mem<uint32_t>(to + 0x24);
+        move(carColAddr + 4);
+        move(carColAddr + 0x10);
+        move(physics + 0x1e0);
+        move(physics + 0x1e4);
+        move(physics + 0x1e8);
+        objects.list[i] = ptr32<_sObject>(to);
+
+        _sObject &obj = mem<_sObject>(to);
+        _sCarCol &carCol = *obj.pCarCol;
+        _sOColObj &bounds = *carCol.pOcol;
+        cells[i] = bounds.cellId;
+        if (i > 0 && rnd(state, 2))
+            bounds.cellId = cells[rnd(state, i)];
+        obj.pPhysics->flags = static_cast<uint8>(rnd(state, 4) ? obj.pPhysics->flags & ~2u : obj.pPhysics->flags | 2u);
+        obj.playerNo = static_cast<uint8>(rnd(state, 2) ? rnd(state, 2) : rnd(state, 8));
+        obj.playerType = static_cast<uint8>(rnd(state, 4));
+        obj.respawn = static_cast<int8>(rnd(state, 4) ? 0 : 1);
+        obj.metamorphosis = static_cast<uint8>(rnd(state, 4) ? 0 : 1);
+        if (rnd(state, 2))
+        {
+            const uint32_t def = scratch + kDefs + 0x60u * i;
+            std::memmove(guest_host(def), guest_host(obj.pDef.address), sizeof(_sObjectDef));
+            obj.pDef = ptr32<_sObjectDef>(def);
+            mem<uint32_t>(def + 4) = rnd(state, 2) ? rnd(state, 0x14) : 0x14 + rnd(state, 4);
+        }
+        carCol.numSpheres = static_cast<uint8>(rnd(state, 6) ? std::min<uint32_t>(carCol.numSpheres, 9u) : rnd(state, 10));
+        _sFPhysLibColSphere *spheres = carCol.pSphere.get();
+        for (uint32_t s = 0; s < carCol.numSpheres && s < 9; ++s)
+        {
+            _sFPhysLibColSphere &sphere = spheres[s];
+            if (rnd(state, 3) == 0)
+                continue; // keeps the contacts it has
+            sphere.numCarCarCols = static_cast<int8>(rnd(state, 3) ? 0 : rnd(state, 3));
+            sphere.numOtherCols = static_cast<int8>(rnd(state, 3) ? 0 : rnd(state, 3));
+            const int32_t first = sphere.numCarCarCols + sphere.numOtherCols;
+            sphere.totalCols = static_cast<int8>(first + static_cast<int32_t>(rnd(state, static_cast<uint32_t>(13 - first))));
+            for (int32_t c = 0; c < 12; ++c)
+            {
+                sphere.polyPtr[c] = ptr32<_sColPolyPSX>(scratch + kPolys + 0x60u * rnd(state, kNumPolys));
+                sphere.type[c] = static_cast<int8>(rnd(state, 4));
+                sphere.normal[c].depth = frnd(state, 500.0f);
+            }
+            for (uint32_t axis = 0; axis < 3; ++axis)
+                (&sphere.pos.x)[axis] = frnd(state, 30000.0f);
+        }
+    }
+    objects.noObjects = count;
+    G(mainVarG).level = static_cast<uint8>(rnd(state, 4) ? G(mainVarG).level : std::array<uint8, 4>{0x14, 0x2c, 0x44, 0x5c}[rnd(state, 4)]);
+    for (uint32 &door : G(carColG).triggerState)
+        door = rnd(state, 2);
+}
+
+// a0 a collision poly (random corners, 0 to 4 of them, now and then more), a1-a3 a colour; the renderers' state in
+// scratch.
+void colDrawPoly(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    renderState(state, scratch);
+    const uint32_t poly = scratch + 0x100;
+    for (uint32_t i = 0; i < 0x60; i += 4)
+        mem<float>(poly + i) = rnd(state, 8) ? frnd(state, 30000.0f) : float_from_bits(nextFuzz(state)).v;
+    mem<uint8_t>(poly + 0x50) = static_cast<uint8_t>(rnd(state, 8) ? rnd(state, 5) : rnd(state, 12));
+    setArg(ctx, 0, poly);
+    setArg(ctx, 1, nextFuzz(state) & 0xff);
+    setArg(ctx, 2, nextFuzz(state) & 0xff);
+    setArg(ctx, 3, nextFuzz(state) & 0xff);
 }
 
 } // namespace rc::fuzz

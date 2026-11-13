@@ -6,6 +6,7 @@
 // is sorted by the height of the polys' first vertex, highest first, so a search going down can stop at the first
 // poly that lies below what it is looking for. Positions are floats in world units; normals are unit vectors.
 
+#include "ai_fuzz.h"
 #include "collision_fuzz.h"
 #include "ee_math.h"
 
@@ -22,6 +23,14 @@ void ResTypeSetConstructDaemon(ptr32<char> pType, uint32 constructDaemon, int16 
 void ResTypeUnSetConstructDaemon(ptr32<char> pType);
 ptr32<_sTSO> TSOFindByTag(uint32 tag);
 void AColRCAConstructDaemon(ptr32<memHandle> pHandle);
+void CarColPostDetectProcess();
+ptr32<_sVfx_Object> VfxAddNew(ptr32<_sObject> pPlayerObj, int32 iY, int32 iZ, int32 iType); // visfx12.cpp
+int32 VfxAreWeInCar(ptr32<_sObject> pObj);                                                   // ai.cpp
+void PlayerSetVibrate(uint8 vibLeft, uint8 vibRight, uint8 playerNum);                       // ai.cpp
+void VfxPutGT4vecs(ptr32<SVECTOR> svA, ptr32<SVECTOR> svB, ptr32<SVECTOR> svC, ptr32<SVECTOR> svD);
+void VfxPutGT4rgba(uint32 v1, uint32 v2, uint32 v3, uint32 v4);
+void RdrPolyTexture(int32_t channel, ptr32<_sGfxTexture> pTexture, u32 style);
+void RdrPoly(int32_t channel, ptr32<_sRdrPoly> poly);
 
 namespace {
 
@@ -832,6 +841,263 @@ void CarColCheckScifiTriggers()
     }
 }
 
+// Groups the cars by the collision cell they are in, for CarColDetect: carColHead[0..numCells-1] each hold a cell and
+// the tail of the chain of cars in it (linked through pPrev/pNext, in the reverse order of the object list). Each
+// car's dead flags start as "skip" for a car its physics marks as not colliding (flags bit 1).
+void CarColColDetCars()
+{
+    _sCarColClass &carCol = G(carColG);
+    const sObjectClass &objects = G(objectVarG);
+    G(oldSp) = 0;
+    G(numCells) = 0;
+    for (int32_t i = static_cast<int32_t>(objects.noObjects) - 1; i != -1; --i)
+    {
+        const _sObject &obj = *objects.list[i];
+        const ptr32<_sCarCol> carPtr = obj.pCarCol;
+        _sCarCol &car = *carPtr;
+        const uint8 dead = static_cast<uint8>(obj.pPhysics->flags & 2);
+        car.dead[0] = dead;
+        car.dead[1] = dead;
+        const int32_t count = G(numCells);
+        if (count == 0)
+        {
+            car.pNext = nullptr;
+            carCol.carColHead[0].pTail = carPtr;
+            carCol.carColHead[0].cellId = car.pOcol->cellId;
+            car.pPrev = nullptr;
+            G(numCells) = 1;
+            continue;
+        }
+        const uint32 cellId = car.pOcol->cellId;
+        int32_t head = 0;
+        for (; head != count; ++head)
+            if (cellId == carCol.carColHead[head].cellId)
+                break;
+        if (head != count)
+        {
+            _sCarColLL &group = carCol.carColHead[head];
+            const ptr32<_sCarCol> tail = group.pTail;
+            group.pTail = carPtr;
+            car.pPrev = tail;
+            tail->pNext = carPtr;
+            car.pNext = nullptr;
+            continue;
+        }
+        car.pNext = nullptr;
+        carCol.carColHead[count].cellId = cellId;
+        carCol.carColHead[count].pTail = carPtr;
+        G(numCells) = count + 1;
+        car.pPrev = nullptr;
+    }
+    CarColDetect(G(numCells));
+    CarColPostDetectProcess();
+}
+
+namespace {
+
+const uint32_t kAnimFindByTSOTag = 0x10f960, kRevSfxSpecialTrigger = 0x143878, kRevSfxPlay3D = 0x1418a8;
+
+// A car dropping into deep water or lava: an effect for the kind (iY, iType), a splash sound, the splash effect, and
+// the car stops being drawn (it respawns).
+void sinkCar(ptr32<_sObject> pObj, int32 iY, int32 iType)
+{
+    VfxAddNew(pObj, iY, 0, iType);
+    _sObject &obj = *pObj;
+    guest_call(kRevSfxPlay3D, 0x42, 0xc4, 0x100, ptr32<vec32>(obj.pRendObj.address + offsetof(_sRendObj, pos)), obj.playerType + 4, 5000);
+    VfxAddNew(pObj, 0, 0, 0x24);
+    obj.sDontRenderMe = 1;
+}
+
+} // namespace
+
+// After the collision detection: the polys each sphere touches that are special by their material. Liquids (water,
+// fast river, lava and the like) become the sphere's liquid with its depth and flow, and the fifth sphere (the body)
+// going under sinks a car; trigger materials fire sounds, door states, effects and rumble. A contact on a material
+// that is a trigger rather than a surface is turned into type 3, which the response ignores.
+void CarColPostDetectProcess()
+{
+    GuestFrame frame(0xc0); // The sound trigger's position is a local, at 0.
+    const ptr32<_sColGridPSX> grid = G(acolG).pGrid;
+    const sObjectClass &objects = G(objectVarG);
+    const uint8 level = G(mainVarG).level;
+    int32_t i = static_cast<int32_t>(objects.noObjects);
+    if (level == 0x14 || level == 0x2c || level == 0x44 || level == 0x5c)
+        CarColCheckScifiTriggers();
+    for (--i; i != -1; --i)
+    {
+        const ptr32<_sObject> pObj = objects.list[i];
+        const _sCarCol &carCol = *pObj->pCarCol;
+        _sFPhysLibColSphere *sphere = carCol.pSphere.get();
+        const int32 inCar = VfxAreWeInCar(pObj);
+        const int32_t numSpheres = carCol.numSpheres;
+        for (int32_t s = 0; s < numSpheres; ++s, ++sphere)
+        {
+            _sFPhysLibColSphere &sp = *sphere;
+            const int32_t first = sp.numCarCarCols + sp.numOtherCols;
+            sp.liquidType = -1;
+            sp.liquidDepth = -1.0f;
+            for (int32_t c = sp.totalCols - 1; c >= first; --c)
+            {
+                const ptr32<_sColPolyPSX> poly = (&sp.polyPtr[0])[c];
+                const uint8 mat = poly->mat;
+                int8 &type = (&sp.type[0])[c];
+                _sObject &obj = *pObj;
+                // A liquid: the sphere takes its kind and depth; the body sphere going under sinks a car.
+                const auto liquid = [&]
+                {
+                    type = 3;
+                    sp.liquidType = static_cast<int8>(mat);
+                    sp.liquidDepth = (&sp.normal[0])[c].depth;
+                };
+                const auto sinks = [&] { return inCar != 0 && s == 4 && obj.respawn == 0 && obj.metamorphosis == 0; };
+                // A door trigger: ignored as a surface once its door is open.
+                const auto trigger = [&](int door)
+                {
+                    if (G(carColG).triggerState[door] == 1)
+                        type = 3;
+                };
+                switch (mat)
+                {
+                case 0x12: // Water.
+                    liquid();
+                    sp.waterFlow.x = 0.0f;
+                    sp.waterFlow.z = 0.0f;
+                    sp.waterFlow.y = 0.0f;
+                    if (sinks())
+                        sinkCar(pObj, 0xf, 0x27);
+                    break;
+                case 0x13: // Flowing water: the flow is the poly's grid vector, scaled.
+                case 0x45:
+                {
+                    liquid();
+                    const _sColCellVecPSX &flow = *(grid->pVec + static_cast<int32_t>(poly->sid));
+                    sp.waterFlow.x = flow.x * G(fastRiverModXG);
+                    sp.waterFlow.y = flow.y * G(fastRiverModYG);
+                    sp.waterFlow.z = flow.z * G(fastRiverModZG);
+                    if (sinks())
+                        sinkCar(pObj, 0xf, 0x27);
+                    break;
+                }
+                case 0x14: // Lava.
+                    liquid();
+                    if (sinks())
+                        sinkCar(pObj, 0x55, 1);
+                    break;
+                case 0x15:
+                case 0x22:
+                    liquid();
+                    if (sinks())
+                        sinkCar(pObj, 0, 0x27);
+                    break;
+                case 0x19:
+                {
+                    // Opens three animated pieces of scenery the first time, and triggers a positional sound.
+                    _sCarColClass &state = G(carColG);
+                    if (state.triggerState[0] == 0)
+                    {
+                        state.triggerState[0] = 1;
+                        for (uint32_t tag : {0x1000062du, 0x1000062cu, 0x1000062bu})
+                        {
+                            const ptr32<animHead> anim = guest_call<ptr32<animHead>>(kAnimFindByTSOTag, tag);
+                            *ptr32<uint16>(anim.address + 8) = static_cast<uint16>(*ptr32<uint16>(anim.address + 8) | 0x80);
+                        }
+                    }
+                    int32 *pos = frame.local<int32>(0).get();
+                    pos[0] = ee_ftoi(sp.pos.x);
+                    pos[1] = ee_ftoi(sp.pos.y);
+                    pos[2] = ee_ftoi(sp.pos.z);
+                    guest_call(kRevSfxSpecialTrigger, 2, frame.local<vec32>(0), G(mainVarG).time);
+                    break;
+                }
+                case 0x1a: trigger(0); break;
+                case 0x3a: trigger(1); break;
+                case 0x3b: trigger(2); break;
+                case 0x3c: trigger(3); break;
+                case 0x3d: trigger(4); break;
+                case 0x3e: trigger(5); break;
+                case 0x3f: trigger(6); break;
+                case 0x40: trigger(7); break;
+                case 0x41: trigger(8); break;
+                case 0x1b: // Boat to car and car to boat changers.
+                    if (static_cast<uint32_t>(obj.pDef->type) >= 0x14u && obj.metamorphosis == 0)
+                        VfxAddNew(pObj, 0, 0, 0x1b);
+                    type = 3;
+                    break;
+                case 0x1c:
+                    if (static_cast<uint32_t>(obj.pDef->type) < 0x14u && obj.metamorphosis == 0)
+                        VfxAddNew(pObj, 1, 0, 0x1b);
+                    type = 3;
+                    break;
+                case 0x1e: // Rumble strip.
+                    if (obj.playerNo < 2)
+                        PlayerSetVibrate(0x28, 0xe, obj.playerNo);
+                    break;
+                case 0x1f:
+                    if (obj.respawn == 0)
+                        VfxAddNew(pObj, 0, 0, 0x24);
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
+    }
+}
+
+namespace {
+
+// ColDrawColPoly's corner i of the poly in 16-bit units.
+SVECTOR polyCorner(const _sColPolyPSX &poly, int i)
+{
+    SVECTOR v{};
+    v.vx = static_cast<int16>(ee_ftoi(poly.v[i].x));
+    v.vy = static_cast<int16>(ee_ftoi(poly.v[i].y));
+    v.vz = static_cast<int16>(ee_ftoi(poly.v[i].z));
+    return v;
+}
+
+} // namespace
+
+// Debug drawing of a collision poly as a quad in the effects' white texture (nothing calls it). The original also
+// builds a line for each edge in the colour given, but the call that drew them was compiled out.
+void ColDrawColPoly(ptr32<_sColPolyPSX> pPoly, uint8 red, uint8 green, uint8 blue)
+{
+    GuestFrame frame(0x90);
+    const _sColPolyPSX &poly = *pPoly;
+    _sLine3D &line = *frame.local<_sLine3D>(0);
+    line.red = red;
+    line.green = green;
+    line.blue = blue;
+    line.flags = 2;
+    const int32_t numVerts = poly.numVerts;
+    for (int32_t i = 0; i < numVerts;)
+    {
+        const int32_t next = i + 1 == numVerts ? 0 : i + 1;
+        const SVECTOR start = polyCorner(poly, i), end = polyCorner(poly, next);
+        line.start.vx = start.vx;
+        line.start.vy = start.vy;
+        line.start.vz = start.vz;
+        line.end.vx = end.vx;
+        line.end.vy = end.vy;
+        line.end.vz = end.vz;
+        i = i + 1;
+    }
+    // A triangle repeats its first corner; a quad's corners are stored in the order 0, 1, 3, 2 around it.
+    const SVECTOR corners[4] = {polyCorner(poly, 0), polyCorner(poly, 1), polyCorner(poly, numVerts == 3 ? 2 : 3),
+                                polyCorner(poly, numVerts == 3 ? 0 : 2)};
+    for (int k = 0; k < 4; ++k)
+    {
+        SVECTOR &v = *frame.local<SVECTOR>(0x20 + 8 * k);
+        v.vx = corners[k].vx;
+        v.vy = corners[k].vy;
+        v.vz = corners[k].vz;
+    }
+    VfxPutGT4vecs(frame.local<SVECTOR>(0x20), frame.local<SVECTOR>(0x28), frame.local<SVECTOR>(0x30), frame.local<SVECTOR>(0x38));
+    VfxPutGT4rgba(0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu);
+    RdrPolyTexture(0, G(visFxVarG).pVfxRes->vfxTex[0x12], 0);
+    RdrPoly(0, G(visFxVarG).pGT4.cast<_sRdrPoly>());
+}
+
 // TCOL.c
 //
 // A Track Editor track is a list of modules, each a piece of track with its own collision mesh, placed at an offset,
@@ -1187,6 +1453,9 @@ RC_DECOMP_FN_SETUP(CarColInitObj, 0x119c50, rc::fuzz::objectForCarCol)
 RC_DECOMP_FN(ColDebugInfoRenderPolys, 0x119c88)
 RC_DECOMP_FN_SETUP(CarColTriggerScifiAnim, 0x119438, rc::fuzz::scifiDoor)
 RC_DECOMP_FN_SETUP(CarColCheckScifiTriggers, 0x119570, rc::fuzz::scifiTriggers)
+RC_DECOMP_FN_SETUP_HEAP(CarColColDetCars, 0x118488, rc::fuzz::carColObjects)
+RC_DECOMP_FN_SETUP_HEAP(CarColPostDetectProcess, 0x118e60, rc::fuzz::carColObjects)
+RC_DECOMP_FN_SETUP_HEAP(ColDrawColPoly, 0x119908, rc::fuzz::colDrawPoly)
 
 RC_DECOMP_FN_NOFUZZ(TColInit, 0x144ed0)
 RC_DECOMP_FN_NOFUZZ(TColTerm, 0x144ef0)

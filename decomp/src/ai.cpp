@@ -851,9 +851,309 @@ void AINodeUpdateAngleToRacingLine(ptr32<_sObject> pObj)
     pObj->carAI.cosAngleToRacingLine = static_cast<int16>(G(gteOut).x);
 }
 
-// AI.c
+namespace {
 
-const uint32_t kAINodeUpdateFinishDistance = 0x102fc8; // Not native yet: lap counting, sound, music and effects.
+const uint32_t kTEditGetBestLapTime = 0x154688, kTEditSetBestLapTime = 0x154698, kRCMusicSwitchLastLap = 0x141828;
+const uint32_t kSfxPlay = 0x1ad0a0, kSprintf = 0x1b8910, kFptodp = 0x1b6e50, kAIControlAddress = 0x1000c0;
+const uint32_t kTimeTrialRace = 0x100001fe, kTrackEditorWorld = 0x1000006b;
+
+} // namespace
+
+ptr32<_sVfx_Object> VfxAddNew(ptr32<_sObject> pPlayerObj, int32 iY, int32 iZ, int32 iType); // visfx12.cpp
+ptr32<MATRIX> VfxCarMatrixPoi(ptr32<_sObject> pObj);
+ptr32<SVECTOR> VfxCarVelocityPoi(ptr32<_sObject> pObj);
+void PS2C_SetGteMatrixForDotProduct(ptr32<_sVec16> pVec);
+void PS2C_GteMatrixMulVec16(ptr32<_sVec16> pVec);
+int32 PS2C_GetDotProductResult();
+void InputSetVibrationFlags(eInputPad ePad, uint8 padFlags);
+void LineRender3D(ptr32<_sLine3D> pLine);
+ptr32<char> FontPrint(int16 x, int16 y, ptr32<char> pString);
+
+// Updates the car's distance to the finish line from its current node, and counts laps: the distance jumping up by
+// most of a lap (and a half lap done since) is crossing the line, jumping down the other way is crossing it backwards
+// (iLineClockOver -1 until it crosses again). A lap records its time, the best lap, the last-lap music and, after the
+// last lap, hands the car to the computer driver. A human player in a time trial also checks the record. Then the
+// wrong-way counter, from whether the car moves forwards while its distance grows, and the total distance raced.
+// Returns 0 if the car has no node.
+int32 AINodeUpdateFinishDistance(ptr32<_sObject> pObj)
+{
+    GuestFrame frame(0x60); // The facing vector is a local, at 0.
+    if (!pObj || !pObj->carAI.pCurNode)
+        return 0;
+    _sObject &obj = *pObj;
+    _sCar_AI &carAI = obj.carAI;
+    mainClass &main = G(mainVarG);
+    const sAINodeClass &ai = G(aiNodeVarG);
+    if (main.raceType == kTimeTrialRace && obj.playerType == 0)
+    {
+        if (static_cast<uint32_t>(G(frontEndVarG).world) == kTrackEditorWorld)
+        {
+            if (obj.iBestLapTime < guest_call<int32_t>(kTEditGetBestLapTime))
+            {
+                guest_call(kTEditSetBestLapTime, obj.iBestLapTime);
+                main.timeTrialBeaten = 1;
+                VfxAddNew(pObj, 0, 1, 0x2c);
+            }
+        }
+        else
+        {
+            const uint32_t times = guest_addr(&G(frontEndVarG)) + 0x19c; // gameStateData.gameConfig.timeTrials.times
+            int32 &record = *ptr32<int32>(times + 4 * ee_rem(static_cast<int32_t>(main.level) - 1, 0x30));
+            if (obj.iBestLapTime < record)
+            {
+                record = obj.iBestLapTime;
+                main.timeTrialBeaten = 1;
+                VfxAddNew(pObj, 0, 1, 0x2c);
+            }
+        }
+    }
+    const int32 along = AINodeDistanceAlong(pObj);
+    carAI.iAlongNodeDist = along;
+    int32_t distance = carAI.pCurNode->iFinishDist - along;
+    const int32_t total = ai.nodeTotalDist;
+    if (distance < 0)
+        distance += total;
+    int32_t previous = carAI.iFinishDist;
+    const int32_t jump = previous - distance;
+    if (jump < 6000 - total)
+    {
+        carAI.iLineClockOver = 0;
+        if (carAI.iHalfLapDone != 0)
+        {
+            // Crossed the line forwards.
+            const uint8 playerType = obj.playerType;
+            const int16 laps = static_cast<int16>(carAI.iLapsCompleted + 1);
+            carAI.iHalfLapDone = 0;
+            carAI.iLapsCompleted = laps;
+            if (playerType < 2)
+            {
+                if (playerType == 0)
+                    G(pickupVarG).ultimatesGiven = laps;
+                if (carAI.iLapsCompleted == main.iNumberOfLaps - 1)
+                {
+                    guest_call(kRCMusicSwitchLastLap, carAI.iLapsCompleted); // $a0 still holds the lap count
+                    guest_call(kSfxPlay, 0x37, 0xff, 0xf, 0xf, 0x128, 0, 0);
+                }
+            }
+            const int32_t lap = carAI.iLapsCompleted;
+            if (lap < 10)
+            {
+                const ptr32<_sTask> task = obj.pTask;
+                const tTime now = main.time;
+                obj.iLapTimes[lap] = now;
+                if (task->pFnCallback.address != kAIControlAddress && lap != 0)
+                {
+                    const int32_t lapTime = now - obj.iLapTimes[lap - 1];
+                    if (lapTime < obj.iBestLapTime)
+                        obj.iBestLapTime = lapTime;
+                }
+                if (lap == main.iNumberOfLaps)
+                {
+                    // The race is over for this car: the computer drives it home.
+                    obj.pPhysics->inputBrake = 0;
+                    task->pFnCallback.address = kAIControlAddress;
+                    carAI.sStuckOnNodeCount = 0x6e;
+                    carAI.iTimeFinishedRace = obj.iLapTimes[lap] - obj.iLapTimes[0];
+                    obj.tBoxMask = obj.tBoxMask | 0x8000000u;
+                    carAI.sAIStateCount = 0;
+                    carAI.bAIState = 0;
+                    carAI.iSlowSpeedAccum = 0;
+                    carAI.pStuckOnNode = nullptr;
+                    const uint8 player = obj.playerType;
+                    if (player < 2)
+                    {
+                        if (main.raceType != kTimeTrialRace)
+                            VfxAddNew(pObj, obj.iRacePos, 0, 0x2b);
+                        InputSetVibrationFlags(player == 0 ? INPUT_MULTITAP_1 : INPUT_MULTITAP_2, 0);
+                    }
+                }
+            }
+        }
+    }
+    else if (total - 0x1194 < jump)
+        carAI.iLineClockOver = -1; // Crossed the line backwards.
+    previous = carAI.iFinishDist;
+    if (obj.playerType < 2 && previous != 0)
+    {
+        const MATRIX &m = *VfxCarMatrixPoi(pObj);
+        SVECTOR &facing = *frame.local<SVECTOR>(0);
+        facing.vx = m.m[0][2];
+        facing.vy = m.m[1][2];
+        facing.vz = m.m[2][2];
+        PS2C_SetGteMatrixForDotProduct(VfxCarVelocityPoi(pObj).cast<_sVec16>());
+        PS2C_GteMatrixMulVec16(frame.local<_sVec16>(0));
+        const int32 forwards = PS2C_GetDotProductResult();
+        previous = carAI.iFinishDist;
+        if (0 < forwards)
+        {
+            const int32_t gained = distance - previous;
+            if (static_cast<uint32_t>(gained - 1) < 499u)
+            {
+                carAI.iGoingWrongWay = carAI.iGoingWrongWay + gained;
+                if (0x5dc < carAI.iGoingWrongWay)
+                    carAI.iGoingWrongWay = 0x5dc;
+            }
+            else
+            {
+                carAI.iGoingWrongWay = carAI.iGoingWrongWay - 0x14;
+                if (carAI.iGoingWrongWay < 0)
+                    carAI.iGoingWrongWay = 0;
+            }
+        }
+    }
+    const int32_t half = ai.nodeTotalDist >> 1;
+    if (!(previous < half && previous < half - (ai.nodeTotalDist >> 2)))
+    {
+        if (previous < half && distance < half - (ai.nodeTotalDist >> 2))
+            carAI.iHalfLapDone = 1;
+    }
+    const int32_t finished = carAI.iTimeFinishedRace;
+    carAI.iFinishDist = distance;
+    if (finished == 0)
+    {
+        const int32_t lapLength = ai.nodeTotalDist;
+        const uint32_t length = static_cast<uint32_t>(lapLength);
+        carAI.iTotalRacedDist = static_cast<int32>((length - static_cast<uint32_t>(distance)) + static_cast<uint32_t>(carAI.iLapsCompleted) * length +
+                                                   static_cast<uint32_t>(carAI.iLineClockOver) * length);
+    }
+    return 1;
+}
+
+namespace {
+
+// sprintf into the debug text buffer, then printed at (20, y). The value goes in $a2 whole (64 bits, as the original
+// passes the double fptodp returns).
+void debugPrint(int16 y, uint32_t format, uint64_t value)
+{
+    const uint32_t buffer = 0x1f3980; // buff
+    EeScheduler &scheduler = g_runtime->eeScheduler();
+    R5900Context &ctx = scheduler.runningContext();
+    SET_GPR_S32((&ctx), 4, static_cast<int32_t>(buffer));
+    SET_GPR_S32((&ctx), 5, static_cast<int32_t>(format));
+    SET_GPR_U64((&ctx), 6, value);
+    scheduler.callGuestFromNative(ctx, kSprintf);
+    FontPrint(0x14, y, ptr32<char>(buffer));
+}
+
+uint64_t signExtend(int32_t value) { return static_cast<uint64_t>(static_cast<int64_t>(value)); }
+
+} // namespace
+
+// Debug display of the route (nothing calls it): each node's edges, racing line and overtaking line to its next nodes;
+// each car's current node and, for the computer cars, the line to the point it steers at and its stuck node. Then the
+// first car's distance to the finish, a counter, its node's priority and its speed as text.
+void AINodeRender()
+{
+    GuestFrame frame(0x1f0);
+    const auto line = [&](uint32_t offset) -> _sLine3D & { return *frame.local<_sLine3D>(offset); };
+    _sLine3D &left = line(0x60), &right = line(0x80), &racing = line(0xa0), &centre = line(0xc0), &overtake = line(0xe0);
+    const auto setColour = [](_sLine3D &l, uint8 r, uint8 g, uint8 b)
+    {
+        l.red = r;
+        l.green = g;
+        l.blue = b;
+    };
+    overtake.blue = 0xa8;
+    centre.flags = 2;
+    left.flags = 2;
+    setColour(left, 0xa8, 0, 0);
+    line(0x100).flags = 2; // Two lines it sets up and never draws.
+    setColour(line(0x100), 0xa8, 0, 0);
+    right.flags = 2;
+    setColour(right, 0, 0xa8, 0);
+    line(0x120).flags = 2;
+    setColour(line(0x120), 0, 0xa8, 0);
+    racing.flags = 2;
+    setColour(racing, 0xa8, 0xa8, 0xa8);
+    overtake.flags = 2;
+    overtake.red = 0xa8;
+    overtake.green = 0;
+
+    const sAINodeClass &ai = G(aiNodeVarG);
+    const auto copyPoint = [](SVECTOR &to, const SVECTOR &from) { to.vx = from.vx, to.vy = from.vy, to.vz = from.vz; };
+    ptr32<_sAINode> node = ai.pNode;
+    for (int32_t i = 0; i < static_cast<int16>(ai.noNodesSingle); ++i, node = node + 1)
+    {
+        const _sAINode &n = *node;
+        const _sAINode &next = *n.next[0];
+        copyPoint(left.start, n.node[0]);
+        copyPoint(left.end, next.node[0]);
+        copyPoint(right.start, n.node[1]);
+        copyPoint(right.end, next.node[1]);
+        racing.start = n.centre;
+        racing.end = next.centre;
+        overtake.start = n.overCentre;
+        overtake.end = next.overCentre;
+        LineRender3D(frame.local<_sLine3D>(0x60));
+        LineRender3D(frame.local<_sLine3D>(0x80));
+        LineRender3D(frame.local<_sLine3D>(0xa0));
+        LineRender3D(frame.local<_sLine3D>(0xe0));
+        if (n.next[1])
+        {
+            racing.start = n.centre;
+            racing.end = n.next[1]->centre;
+            overtake.start = n.overCentre;
+            overtake.end = n.next[1]->overCentre;
+            LineRender3D(frame.local<_sLine3D>(0xa0));
+            LineRender3D(frame.local<_sLine3D>(0xe0));
+        }
+    }
+
+    const sObjectClass &objects = G(objectVarG);
+    for (uint32_t i = 0; i < objects.noObjects; ++i)
+    {
+        const ptr32<_sObject> pObj = objects.list[i];
+        if (!pObj)
+            continue;
+        if (pObj->carAI.pCurNode)
+        {
+            centre.start = pObj->carAI.pCurNode->centre;
+            centre.end = pObj->carAI.pCurNode->centre;
+            setColour(centre, 0, 0, 0xff);
+            centre.end.vy = static_cast<int16>(centre.end.vy + 0x96);
+            LineRender3D(frame.local<_sLine3D>(0xc0));
+        }
+        if (pObj->pTask->pFnCallback.address != kAIControlAddress)
+            continue;
+        const _sObject &obj = *objects.list[i];
+        const sVec32 &pos = obj.pPhysics->pInteger->pos;
+        SVECTOR &glob = G(svGlob);
+        glob.vx = static_cast<int16>(pos.x >> 8);
+        glob.vy = static_cast<int16>(pos.y >> 8);
+        glob.vz = static_cast<int16>(pos.z >> 8);
+        centre.start = glob;
+        *frame.local<SVECTOR>(0x140) = glob;
+        centre.end = obj.carAI.svLookingPoint;
+        setColour(centre, 0xff, 0xff, 0);
+        LineRender3D(frame.local<_sLine3D>(0xc0));
+        const ptr32<_sAINode> stuck = objects.list[i]->carAI.pStuckOnNode;
+        if (stuck)
+        {
+            centre.start = stuck->centre;
+            centre.end = stuck->centre;
+            setColour(centre, 0xff, 0xff, 0);
+            centre.end.vy = static_cast<int16>(centre.end.vy + 0xfa);
+            LineRender3D(frame.local<_sLine3D>(0xc0));
+        }
+    }
+
+    const _sObject &first = *objects.list[0];
+    const uint32_t intFormat = 0x327c08, speedFormat = 0x322658; // "%d", "speed %d"
+    debugPrint(0x28, intFormat, signExtend(first.carAI.pCurNode->iFinishDist));
+    debugPrint(0x32, intFormat, signExtend(G(ppp)));
+    debugPrint(0x3c, intFormat, signExtend(first.carAI.pCurNode->priority));
+    const uint64_t speed = [&]
+    {
+        EeScheduler &scheduler = g_runtime->eeScheduler();
+        R5900Context &ctx = scheduler.runningContext();
+        ctx.f[12] = objects.list[0]->pPhysics->speed;
+        scheduler.callGuestFromNative(ctx, kFptodp);
+        return static_cast<uint64_t>(GPR_U64((&ctx), 2));
+    }();
+    debugPrint(0x44, speedFormat, speed);
+}
+
+// AI.c
 
 void AIInit(int32 noAI)
 {
@@ -963,7 +1263,7 @@ void AIUpdateObjectNode(ptr32<_sObject> pObj)
     }
     if (current->priority == 10)
         carAI.iHalfLapDone = 1;
-    guest_call(kAINodeUpdateFinishDistance, pObj);
+    AINodeUpdateFinishDistance(pObj);
 }
 
 // Resets every car's race state before the start.
@@ -1392,6 +1692,228 @@ void AITestWeapon(ptr32<_sObject> pObject, tTime time)
     obj.oCol.updated = 1;
 }
 
+// PLAYER.c: the human players' cars.
+
+namespace {
+
+const uint32_t kObjectTestWaterEscape = 0x1398d8, kCameraNextMode = 0x117480, kInputPressureModePadPresent = 0x1919f0;
+
+} // namespace
+
+// Fires the car's weapon, if it has one ready, it is not already firing or respawning, and there is ground below it.
+// The target is the nearest car in front, else the nearest behind. Holding down fires the rocket backwards, holding up
+// the weapon 11 the other way.
+void PlayerSpawnWeapon(ptr32<_sObject> pObject, tTime time, int32 owner)
+{
+    // The original's 0xb0-byte frame: the weapon definition at 0 (fields it does not set keep what the stack held),
+    // the down cast's results at 0x20 to 0x40 and the position at 0x60, copied to 0x50.
+    GuestFrame frame(0xb0);
+    _sObject &obj = *pObject;
+    if (obj.weaponType == 0 || obj.weaponFiring != 0 || obj.respawn != 0)
+        return;
+    if (!AColDownCast(ptr32<_sColCellVecPSX>(guest_addr(&obj.pos16)), frame.local<_sColCellVecPSX>(0x30), frame.local<_sColNormalPSX>(0x20),
+                      frame.local<uint8>(0x40)))
+        return;
+    if (obj.weaponAffect == 5)
+        return;
+    _sWeaponDef &def = *frame.local<_sWeaponDef>(0);
+    def.owner = static_cast<int16>(owner);
+    const ptr32<_sObject> target = obj.carAI.pNearestObjInFront ? obj.carAI.pNearestObjInFront : obj.carAI.pNearestObjBehind;
+    def.target = target ? static_cast<int16>(target->playerNo) : 0x7f;
+    def.specialFire = 0;
+    const uint8 weapon = obj.weaponType;
+    const ePlayerInput response = G(playerVarG).player[obj.playerNo].input.response;
+    if (weapon == 1 && (response & PLAYER_INPUT_DOWN) != 0)
+        def.specialFire = 1;
+    if (weapon == 0xb && (G(playerVarG).player[obj.playerNo].input.response & PLAYER_INPUT_UP) != 0)
+        def.specialFire = 1;
+    def.no = obj.weaponType;
+    int16_t *built = frame.local<int16_t>(0x60).get();
+    built[0] = static_cast<int16_t>(ee_ftoi(obj.pos16.x));
+    built[1] = static_cast<int16_t>(ee_ftoi(obj.pos16.y));
+    built[2] = static_cast<int16_t>(ee_ftoi(obj.pos16.z));
+    std::memcpy(frame.local<int16_t>(0x50).get(), built, 6);
+    guest_call(kWeaponSpawn, frame.local<void>(0x50), frame.local<void>(0), time);
+    obj.weaponType = 0;
+    obj.oCol.updated = 1;
+}
+
+// Picks up the next weapon if one is due, keeps the rocket's lock-on, and fires when the fire button goes down.
+void PlayerTestWeapon(ptr32<_sObject> pObject, tTime time)
+{
+    GuestFrame frame(0x60); // PlayerSpawnWeapon's frame (and its stale definition fields) sits below it.
+    _sObject &obj = *pObject;
+    const sPlayer &player = G(playerVarG).player[obj.playerNo];
+    guest_call(kObjectGiveNextWeapon, pObject);
+    if (obj.weaponType == 1)
+        guest_call(kWeaponRocketTestLockon, pObject);
+    const uint8 playerType = obj.playerType;
+    if (playerType > 1)
+        return;
+    if ((player.input.response & PLAYER_INPUT_FIRE) == 0 || (player.input.lastResponse & PLAYER_INPUT_FIRE) != 0)
+        return;
+    PlayerSpawnWeapon(pObject, time, playerType);
+    guest_call(kObjectTestWaterEscape, pObject);
+}
+
+// Reads a player's pad into their input: the buttons of their controller layout (keys) as responses, the sticks, and
+// the pressure of the accelerate and handbrake buttons on a pad that reports it (hard presses). The previous input is
+// kept. With the track mirrored, left and right swap; the weapon that reverses the steering (13) swaps them back, and
+// flips the stick.
+ptr32<sPlayerInput> PlayerGetInput(uint32 player, tTime)
+{
+    sPlayerClass &players = G(playerVarG);
+    sPlayer &p = players.player[player];
+    const int32 layout = G(frontEndVarG).gameStateData.playerConfig[player].controllerConfig;
+    const bool_ mirrored = G(mirrorVarG).bMirrored;
+    sPlayerInput &input = p.input;
+    p.prevInput = input;
+    input.lastResponse = input.response;
+    input.response = PLAYER_INPUT_NONE;
+    const auto add = [&](uint32_t bits) { input.response = static_cast<ePlayerInput>(input.response | bits); };
+    const uint8 *keys = p.keys;
+
+    if (keys[0] != 0xff && InputHeld(keys[0]))
+        add(mirrored == 0 ? PLAYER_INPUT_LEFT : PLAYER_INPUT_RIGHT);
+    else if (keys[1] != 0xff && InputHeld(keys[1]))
+        add(mirrored == 0 ? PLAYER_INPUT_RIGHT : PLAYER_INPUT_LEFT);
+    if (p.pObject->weaponAffect == 0xd)
+    {
+        const uint32_t r = static_cast<uint32_t>(input.response);
+        if ((r & PLAYER_INPUT_LEFT) != 0)
+            input.response = static_cast<ePlayerInput>((r & 0xfffffffeu) | PLAYER_INPUT_RIGHT);
+        else if ((r & PLAYER_INPUT_RIGHT) != 0)
+            input.response = static_cast<ePlayerInput>((r & 0xfffffffdu) | PLAYER_INPUT_LEFT);
+    }
+    const eInputPad pad = player == 0 ? INPUT_MULTITAP_1 : INPUT_MULTITAP_2;
+    if (keys[2] != 0xff && InputHeld(keys[2]))
+    {
+        add(PLAYER_INPUT_ACCELERATE);
+        // No pressure pad: never a hard press.
+        const int32_t pressure = guest_call<int32_t>(kInputPressureModePadPresent, pad) != 0 ? InputPressureHit(keys[2]) : 0;
+        if (!(pressure < 0x5b))
+            add(PLAYER_INPUT_ACCELERATE_HARD);
+    }
+    if (keys[3] != 0xff && InputHeld(keys[3]))
+        add(PLAYER_INPUT_REVERSE);
+    if (InputHeld(keys[4]))
+    {
+        add(PLAYER_INPUT_HANDBRAKE);
+        // No pressure pad: always a hard press.
+        const int32_t pressure = guest_call<int32_t>(kInputPressureModePadPresent, pad) != 0 ? InputPressureHit(keys[4]) : 0xff;
+        if (!(pressure < 0x3d))
+            add(PLAYER_INPUT_HANDBRAKE_HARD);
+    }
+    static constexpr uint32_t kButtons[7] = {PLAYER_INPUT_FIRE, PLAYER_INPUT_RIGHT_CAR, PLAYER_INPUT_RESET_CAR, PLAYER_INPUT_CAMERA_MODE,
+                                             PLAYER_INPUT_UP, PLAYER_INPUT_DOWN, PLAYER_INPUT_LOOK_BACKWARDS};
+    for (int k = 0; k < 7; ++k)
+        if (InputHeld(keys[5 + k]))
+            add(kButtons[k]);
+
+    // The sticks: four signed bytes per pad.
+    const inputClass &in = G(inputVarG);
+    if (player == 0)
+        std::memcpy(&input.x0, &in.analog1A, 4);
+    else if (player == 1)
+        std::memcpy(&input.x0, &in.analog2A, 4);
+    if ((layout & ~2) == 0) // Layouts 0 and 2 do not use the right stick.
+    {
+        input.x1 = 0;
+        input.y1 = 0;
+    }
+    if (mirrored != 0)
+    {
+        input.x0 = static_cast<int8>(~input.x0);
+        input.x1 = static_cast<int8>(~input.x1);
+    }
+    if (input.y0 < -0x78)
+        add(PLAYER_INPUT_UP);
+    if (!(input.y0 < 0x79))
+        add(PLAYER_INPUT_DOWN);
+    if (p.pObject->weaponAffect == 0xd)
+        input.x0 = static_cast<int8>(~input.x0);
+    return ptr32<sPlayerInput>(guest_addr(&input));
+}
+
+// One frame of a human player's car, run by its task every 20 time units: steering and throttle from the pad (the
+// right stick pulled back also accelerates), the start boost (releasing the throttle on the countdown arms it, pressing
+// it at the start fires it), the handbrake, catch-up in a two-player race, turning the car upright, resetting it,
+// changing the camera, weapons, brake lights and looking backwards. A car whose race is over is left to its task.
+void PlayerControl(ptr32<void> pData, tTime time)
+{
+    GuestFrame frame(0x90);
+    const ptr32<_sObject> pObj = pData.cast<_sObject>();
+    _sObject &obj = *pObj;
+    const ptr32<int16> inputs = ptr32<int16>(obj.pPhysics.address); // inputSteerAngle, throttle, brake, hard throttle
+    AIUpdateObjectNode(pObj);
+    if (obj.carAI.iTimeFinishedRace == 0)
+    {
+        const ptr32<sPlayerInput> pInput = PlayerGetInput(obj.playerType, time);
+        const sPlayerInput &input = *pInput;
+        uint8_t *boost = &G(mainVarG).startBoostOn[0];
+        int32_t digital = (input.response & PLAYER_INPUT_LEFT) != 0 ? -1 : (input.response & PLAYER_INPUT_RIGHT) != 0 ? 1 : 0;
+        ProcessControlInput(inputs, input.x0, digital, ptr32<int8>(pInput.address + offsetof(sPlayerInput, dataX)));
+        digital = (input.response & PLAYER_INPUT_REVERSE) != 0 ? -1 : (input.response & PLAYER_INPUT_ACCELERATE) != 0 ? 1 : 0;
+        if (((input.response & PLAYER_INPUT_ACCELERATE) != 0 || input.y1 < -0x27) && boost[obj.playerType] == 2)
+        {
+            obj.pPhysics->powerUpCounter = 0x3c;
+            inputs[1] = 0x7f;
+            VfxAddNew(pObj, 1, 0, 0x2d);
+            boost[obj.playerType] = 0;
+        }
+        if ((input.response & PLAYER_INPUT_ACCELERATE) == 0)
+        {
+            const int32_t pull = input.y1 < 0 ? -input.y1 : input.y1;
+            if (pull < 0x28 && boost[obj.playerType] == 1)
+                boost[obj.playerType] = 2;
+        }
+        ProcessControlInput(ptr32<int16>(inputs.address + 2), -static_cast<int32_t>(input.y1), digital,
+                            ptr32<int8>(pInput.address + offsetof(sPlayerInput, dataY)));
+        ePlayerInput response = input.response;
+        inputs[3] = 0;
+        inputs[2] = 0;
+        if ((response & PLAYER_INPUT_HANDBRAKE) != 0)
+            inputs[2] = 1;
+        if ((response & PLAYER_INPUT_HANDBRAKE_HARD) != 0)
+            inputs[2] = 0xff;
+        if ((response & PLAYER_INPUT_ACCELERATE_HARD) != 0)
+            inputs[3] = 0xff;
+        if (G(mainVarG).noHuman == 2)
+        {
+            inputs[1] = static_cast<int16>(PlayerCatchup(pObj, inputs[1]));
+            response = input.response;
+        }
+        if ((response & PLAYER_INPUT_RIGHT_CAR) != 0 && obj.rightCar == 0)
+        {
+            const _sFPhysLibCar &physics = *obj.pPhysics;
+            if (physics.mat.Yy.v < 2048.0f && ((physics.flags & 0x20) != 0 || physics.mode == 2))
+            {
+                VfxAddNew(pObj, 0, 0, 0x2a);
+                guest_call<int32_t>(kPhysicsRightCar, pObj);
+                response = input.response;
+            }
+        }
+        if ((response & PLAYER_INPUT_RESET_CAR) != 0 && G(hudVarG).iReadySteadyGo == 0)
+        {
+            guest_call<int32_t>(kPhysicsResetCar, pObj);
+            response = input.response;
+        }
+        if ((response & PLAYER_INPUT_CAMERA_MODE) != 0 && (input.lastResponse & PLAYER_INPUT_CAMERA_MODE) == 0)
+        {
+            sCameraClass &cameras = G(cameraVarG);
+            cameras.pCamera = ptr32<_sCamera>(guest_addr(&cameras.camera[obj.playerType]));
+            guest_call(kCameraNextMode, cameras.pCamera);
+        }
+        guest_call(kObjectWeaponAffect, pObj, time);
+        PlayerTestWeapon(pObj, time);
+        PlayerDetectBraking(pObj);
+        G(cameraVarG).camera[obj.playerType].lookBackwards = static_cast<bool_>(input.response & PLAYER_INPUT_LOOK_BACKWARDS);
+    }
+    const ptr32<_sTask> task = obj.pTask;
+    task->time = time + 0x14;
+    guest_call(kTaskCachedInsert, task);
+}
+
 // One frame of a computer-driven car, run by its task every 100 time units.
 //
 // The car steers towards a point on the racing line further ahead the faster it goes, corrected for the track edges
@@ -1713,3 +2235,9 @@ RC_DECOMP_FN_NOFUZZ(AITestWeapon, 0x1014c0) // Spawns real weapons.
 RC_DECOMP_FN_NOFUZZ(AIControl, 0x1000c0) // A copied car's task would join the real task list.
 RC_DECOMP_FN_NOFUZZ(AIDoRaceOrder, 0x1005d8)
 RC_DECOMP_FN_NOFUZZ(AIRespawnFurther, 0x100b68) // Moves the real camera and plays sound.
+RC_DECOMP_FN_SETUP_HEAP(AINodeUpdateFinishDistance, 0x102fc8, rc::fuzz::aiFinishDistance)
+RC_DECOMP_FN_SETUP_HEAP(AINodeRender, 0x101d50, rc::fuzz::aiNodeRender)
+RC_DECOMP_FN_SETUP_HEAP(PlayerSpawnWeapon, 0x1401b8, rc::fuzz::playerCar)
+RC_DECOMP_FN_SETUP_HEAP(PlayerTestWeapon, 0x1406f8, rc::fuzz::playerCar)
+RC_DECOMP_FN_SETUP(PlayerGetInput, 0x13fdd8, rc::fuzz::playerInput)
+RC_DECOMP_FN_SETUP_HEAP(PlayerControl, 0x13fa98, rc::fuzz::playerCar)

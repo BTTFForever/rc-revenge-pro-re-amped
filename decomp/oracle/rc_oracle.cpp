@@ -465,9 +465,13 @@ int main(int argc, char **argv)
         results[job.entry].back().second.seconds = seconds;
         if (options.verbose)
             std::fprintf(stderr, "oracle: %s %s %.2f s\n", labels[job.dump].c_str(), job.entry->name, seconds);
-        std::filesystem::remove(logFor(job.entry, job.dump));
+        if (!std::getenv("RC_ORACLE_KEEP_LOGS"))
+            std::filesystem::remove(logFor(job.entry, job.dump));
     }
-    std::filesystem::remove_all(logDir);
+    if (std::getenv("RC_ORACLE_KEEP_LOGS")) // Each child's whole log, for looking into a failure.
+        std::fprintf(stderr, "oracle: logs kept in %s\n", logDir.c_str());
+    else
+        std::filesystem::remove_all(logDir);
 
     // One line per function: ok with the inputs per dump, or the first problem.
     // Known artefacts still print their differences, as "known", but do not fail the run.
