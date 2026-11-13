@@ -167,6 +167,40 @@ void revertWrites(uint8_t *ram, const uint8_t *before, uint32_t begin, uint32_t 
     }
 }
 
+// The 16 KB scratchpad (0x70000000) is not part of main RAM, and the game keeps live data there (the effects' sprite
+// record and quad, visFxVarG.sprite and pGT4). A comparison must give the native run the scratchpad the original
+// started with and compare what both leave there, like RAM.
+struct Scratchpad
+{
+    uint8_t before[PS2_SCRATCHPAD_SIZE];
+    uint8_t expected[PS2_SCRATCHPAD_SIZE];
+
+    void save() { std::memcpy(before, ps2GetScratchpadHostPtr(), PS2_SCRATCHPAD_SIZE); }
+    // After the original's run: keeps its result and puts the starting contents back.
+    void keepAndRevert()
+    {
+        std::memcpy(expected, ps2GetScratchpadHostPtr(), PS2_SCRATCHPAD_SIZE);
+        std::memcpy(ps2GetScratchpadHostPtr(), before, PS2_SCRATCHPAD_SIZE);
+    }
+    // After the native run: the first differing offset, or PS2_SCRATCHPAD_SIZE.
+    // Not compared: the w lanes of the effects' quad (pGT4 at 0x70000030: four vertices of 16 bytes). The sprite
+    // drawing adds a stack word nobody wrote to them, which is often a register a recompiled function saved in an
+    // earlier call; native functions save none, so the lanes cannot match across calls. Nothing reads them: RdrPoly
+    // and RdrTri send x, y, z and a constant 1.
+    uint32_t firstDifference() const
+    {
+        const uint8_t *now = ps2GetScratchpadHostPtr();
+        for (uint32_t i = 0; i < PS2_SCRATCHPAD_SIZE; ++i)
+        {
+            const bool quadW = i >= 0x30u && i < 0x70u && (i & 0xcu) == 0xcu;
+            if (now[i] != expected[i] && !quadW)
+                return i;
+        }
+        return PS2_SCRATCHPAD_SIZE;
+    }
+};
+Scratchpad g_pad; // Comparisons do not nest.
+
 void reportMismatch(const Entry &entry, const R5900Context &in, const char *what, uint64_t original, uint64_t decompiled,
                     uint32_t address)
 {
@@ -275,8 +309,10 @@ bool fuzzStep(uint8_t *rdram, const R5900Context &live, PS2Runtime *runtime, int
             const bool stackInRam = (getRegU32(&inputs, 29) & PS2_RAM_MASK) >= kStackScratch;
             if (stackInRam)
                 std::memcpy(stackStart.get(), rdram + stackBase, kStackScratch);
+            g_pad.save();
             R5900Context originalCtx = inputs;
             runOriginal(entry, rdram, &originalCtx, runtime);
+            g_pad.keepAndRevert();
             if (entry.fuzzWholeRam)
             {
                 std::memcpy(g_expected.get(), rdram, PS2_RAM_SIZE);
@@ -321,6 +357,11 @@ bool fuzzStep(uint8_t *rdram, const R5900Context &live, PS2Runtime *runtime, int
                                                                     : std::memcmp(&nativeCtx.f[0], &originalCtx.f[0], 4u) == 0);
             const bool scratchSame = std::memcmp(rdram + kScratch, scratchAfter.get(), kScratchSize) == 0;
             const bool globalsSame = std::memcmp(rdram + kDataStart, globalsAfter.get(), kDataEnd - kDataStart) == 0;
+            const uint32_t padDifference = g_pad.firstDifference();
+            const bool padSame = padDifference == PS2_SCRATCHPAD_SIZE;
+            if (!padSame && progress.mismatches < 4u)
+                std::fprintf(stderr, "[decomp] FUZZ DETAIL %s: scratchpad+0x%x original=%02x decompiled=%02x\n", entry.name, padDifference,
+                             g_pad.expected[padDifference], ps2GetScratchpadHostPtr()[padDifference]);
             if (!scratchSame && std::getenv("RC_SHADOW_DIFFS") != nullptr)
             {
                 int shown = 0;
@@ -360,7 +401,7 @@ bool fuzzStep(uint8_t *rdram, const R5900Context &live, PS2Runtime *runtime, int
                 }
                 revertWrites(rdram, backup.get(), 0u, PS2_RAM_SIZE); // The heap as it was, for the next input.
             }
-            if (!regsSame || !scratchSame || !globalsSame || !ramSame)
+            if (!regsSame || !scratchSame || !globalsSame || !ramSame || !padSame)
             {
                 if (progress.mismatches < 4u && !scratchSame)
                 {
@@ -442,10 +483,12 @@ void shadowCallRegions(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, E
     std::vector<std::vector<uint8_t>> before, expected;
     for (const auto &[begin, end] : ranges)
         before.emplace_back(rdram + begin, rdram + end);
+    g_pad.save();
     R5900Context originalCtx = *ctx;
     g_comparing = true;
     runOriginal(entry, rdram, &originalCtx, runtime);
     g_comparing = false;
+    g_pad.keepAndRevert();
     for (size_t i = 0; i < ranges.size(); ++i)
     {
         expected.emplace_back(rdram + ranges[i].first, rdram + ranges[i].second);
@@ -535,10 +578,12 @@ void shadowCall(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, Entry &e
     std::memcpy(g_before.get(), rdram, kRamSize);
 
     // The original runs on a copy of the registers, then its writes to RAM are undone.
+    g_pad.save();
     R5900Context originalCtx = *ctx;
     g_comparing = true;
     runOriginal(entry, rdram, &originalCtx, runtime);
     g_comparing = false;
+    g_pad.keepAndRevert();
     std::memcpy(g_expected.get(), rdram, kRamSize);
     revertWrites(rdram, g_before.get(), 0u, kRamSize);
 
@@ -571,6 +616,9 @@ void shadowCall(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, Entry &e
         std::memcpy(&decompiled, &ctx->f[0], 4);
         fail("f0", original, decompiled, 0u);
     }
+
+    if (const uint32_t at = g_pad.firstDifference(); at != PS2_SCRATCHPAD_SIZE)
+        fail("scratchpad", g_pad.expected[at], ps2GetScratchpadHostPtr()[at], PS2_SCRATCHPAD_BASE + at);
 
     // The dead stack area below $sp is the one place the two are expected to differ.
     for (const auto &[begin, end] : {std::pair<uint32_t, uint32_t>{0u, stackLow}, {stackTop, kRamSize}})

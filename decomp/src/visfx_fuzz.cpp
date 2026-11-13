@@ -81,6 +81,14 @@ Claim<uint32_t> g_quad, g_sprite, g_trackHints, g_res, g_time;
 Claim<Table> g_rain, g_glint;
 Claim<uint32_t> g_camera, g_levelRecord; // cameraVarG.pCamera, pLvlG
 Claim<uint8_t> g_level;                   // mainVarG.level
+Claim<uint8_t> g_split;                   // mainVarG.splitScreen
+Claim<uint32_t> g_screen;                 // mainVarG.iWhichSplitScreen
+struct GlintBlock { uint8_t bytes[0x1800]; }; // visFxVarG.glint: 128 glints of 0x30 bytes
+struct FourFloats { float v[4]; };
+struct EightFloats { float v[8]; };
+Claim<GlintBlock> g_glints;
+Claim<FourFloats> g_cameraVector; // visFxVarG.ps2CameraTrans
+Claim<EightFloats> g_lastSpots;   // where the glints last started, a vector per screen
 
 void restoreGlobals()
 {
@@ -94,6 +102,11 @@ void restoreGlobals()
     g_camera.restore();
     g_levelRecord.restore();
     g_level.restore();
+    g_split.restore();
+    g_screen.restore();
+    g_glints.restore();
+    g_cameraVector.restore();
+    g_lastSpots.restore();
 }
 
 uint32_t rnd(uint64_t &state, uint32_t n) { return nextFuzz(state) % n; }
@@ -1816,6 +1829,402 @@ void vfxLightningBetween(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     setArg(ctx, 2, rnd(state, 4) ? 1 : rnd(state, 3));
     setFloatArg(ctx, 0, float_bits(frnd(state, 40.0f)));
     setFloatArg(ctx, 1, float_bits(frnd(state, 4.0f)));
+}
+
+
+// --- the sixth batch: the camera set-up, aerial, quake, water, oil, pickup, rocket and countdown effects -----------------
+
+namespace {
+
+// A ring effect for a renderer: the render state, the ring of `mask + 1` particles of `stride` bytes from `first`, with
+// positions, lives and the car-style fields scattered over them (lifeOffset as in scatterParticles).
+uint32_t ringEffect(uint64_t &state, uint32_t scratch, uint32_t mask, uint32_t first, uint32_t stride, uint32_t lifeOffset, uint32_t lifeMax,
+                    uint32_t lifeBytes = 2)
+{
+    restoreGlobals();
+    renderState(state, scratch);
+    const uint32_t effect = scratch + kEffect;
+    buildRing(state, effect, mask, effect + first, stride, lifeOffset, lifeBytes);
+    scatterParticles(state, effect + first, mask + 1, stride, lifeOffset, lifeBytes, lifeMax);
+    return effect;
+}
+
+uint32_t someTexture(uint64_t &state, uint32_t scratch) { return scratch + kTexture + 16 * rnd(state, 8); }
+
+// The HUD's resource record, reached through the level record (pLvlG->pHudRes at +0x40): a weapon sprite at +0x80 (a
+// record whose first word is its texture) and the countdown's textures from +0x88.
+void hudResource(uint64_t &state, uint32_t scratch)
+{
+    g_levelRecord.set(0x327e80u, scratch + kAuxC);
+    mem<uint32_t>(scratch + kAuxC + 0x40) = scratch + kAuxB;
+    mem<uint32_t>(scratch + kAuxB + 0x80) = scratch + kAuxA;
+    mem<uint32_t>(scratch + kAuxA) = someTexture(state, scratch);
+    for (uint32_t i = 0; i < 8; ++i)
+        mem<uint32_t>(scratch + kAuxB + 0x88 + 4 * i) = someTexture(state, scratch);
+}
+
+} // namespace
+
+// The camera set-up reads the game's own camera, view matrix and screen state; the split screen path needs the main state
+// to say so now and then.
+void vfxCameraMatrix(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    (void)ctx;
+    (void)scratch;
+    if (rnd(state, 2))
+    {
+        g_split.set(0x1edc68u, 1);
+        g_screen.set(0x1edc78u, rnd(state, 4) ? 0 : 1);
+    }
+}
+
+// The heat ray aerial's renderer: the fire renderer's car and ring (32 particles of 0x18 bytes, scattered), with an
+// aerial on the car.
+void vfxCarHeatRayAerialRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    vfxCarFireRenderer(ctx, state, scratch);
+    aerialCar(state, scratch);
+    nearCar(state, scratch);
+    const uint32_t effect = scratch + kEffect;
+    scatterParticles(state, effect + 0x44, 32, 0x18, 0x14, 2, 0x20);
+}
+
+// The water splash: a ring of 16, 32 or 64 particles of 0x14 bytes whose flag at +0x12 is zero half the time (the streaks), the
+// centre (shorts at +0x544), the water's height (+0x54e), a life and the ground normal (shorts at +0x14).
+void vfxWaterSploosh(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t mask = rnd(state, 3) == 0 ? 15 : rnd(state, 2) ? 31 : 63; // the game's own is 64 drops
+    const uint32_t effect = ringEffect(state, scratch, mask, 0x44, 0x14, 0x10, 0x20);
+    for (uint32_t i = 0; i <= mask; ++i)
+        mem<uint16_t>(effect + 0x44 + i * 0x14 + 0x12) = static_cast<uint16_t>(rnd(state, 2) ? 0 : nextFuzz(state));
+    for (uint32_t i = 0; i < 3; ++i)
+        mem<int16_t>(effect + 0x544 + 2 * i) = static_cast<int16_t>(static_cast<int32_t>(rnd(state, 6000)) - 3000);
+    mem<int16_t>(effect + 0x54e) = static_cast<int16_t>(static_cast<int32_t>(rnd(state, 6000)) - 3000);
+    mem<uint16_t>(effect + 0x10) = static_cast<uint16_t>(rnd(state, 4) ? rnd(state, 0x60) : nextFuzz(state));
+    for (uint32_t axis = 0; axis < 3; ++axis)
+        mem<int16_t>(effect + 0x14 + 2 * axis) = static_cast<int16_t>(static_cast<int32_t>(nextFuzz(state) % 8193u) - 4096 + (axis == 1 ? 4096 : 0));
+    setArg(ctx, 0, effect);
+}
+
+// The oil slick: a ring of 16 or 32 blobs of 0x18 bytes (a fade-in at +0x14, zero now and then), the ground normal at +8
+// and the effect's age (past 0xd0 it fades).
+void vfxOilSlick(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t mask = rnd(state, 2) ? 15 : 31;
+    const uint32_t effect = ringEffect(state, scratch, mask, 0x44, 0x18, 0x14, 0x14);
+    for (uint32_t i = 0; i <= mask; ++i)
+    {
+        const uint32_t p = effect + 0x44 + i * 0x18;
+        for (uint32_t axis = 0; axis < 3; ++axis)
+            mem<int16_t>(p + 8 + 2 * axis) = static_cast<int16_t>(static_cast<int32_t>(nextFuzz(state) % 8193u) - 4096 + (axis == 1 ? 4096 : 0));
+        mem<uint8_t>(p + 0x17) = static_cast<uint8_t>(nextFuzz(state));
+    }
+    mem<uint16_t>(effect + 0x10) = static_cast<uint16_t>(rnd(state, 4) ? 0xa0 + rnd(state, 0x100) : nextFuzz(state));
+    setArg(ctx, 0, effect);
+}
+
+// The car's aerial as a ribbon: the car (with an aerial) at +0xb0, six vectors from +0x40, and now and then the level that
+// hides cars that ask not to be drawn.
+void vfxAerialRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    aerialCar(state, scratch);
+    nearCar(state, scratch);
+    renderState(state, scratch);
+    g_level.set(0x1edc4au, rnd(state, 2) ? 0x62 : 0x10);
+    const uint32_t effect = scratch + kEffect;
+    mem<uint32_t>(effect + 0xb0) = scratch;
+    for (uint32_t i = 0; i < 24; ++i)
+        mem<float>(effect + 0x40 + 4 * i) = frnd(state, 200.0f);
+    mem<uint32_t>(scratch + 0x48) = nextFuzz(state);
+    setArg(ctx, 0, effect);
+}
+
+// The spinning pickup: the car at +0x44 (its player type at +0x44, screen at +0x45), a ring of 8 sparkles from +0x48,
+// the pickup's position (shorts at +0xe8) and spin (+0xf8), a life up to 0x40, on one screen or two.
+void vfxSpinPickup(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    nearCar(state, scratch);
+    const uint32_t effect = ringEffect(state, scratch, 7, 0x48, 0x14, 0x10, 0x20);
+    mem<uint32_t>(effect + 0x44) = scratch;
+    mem<uint8_t>(scratch + 0x44) = static_cast<uint8_t>(rnd(state, 4) ? rnd(state, 2) : 2);
+    mem<uint8_t>(scratch + 0x45) = static_cast<uint8_t>(rnd(state, 2));
+    g_split.set(0x1edc68u, static_cast<uint8_t>(rnd(state, 2)));
+    g_screen.set(0x1edc78u, rnd(state, 2));
+    hudResource(state, scratch);
+    for (uint32_t i = 0; i < 3; ++i)
+        mem<int16_t>(effect + 0xe8 + 2 * i) = static_cast<int16_t>(static_cast<int32_t>(rnd(state, 6000)) - 3000);
+    mem<uint16_t>(effect + 0xf8) = static_cast<uint16_t>(nextFuzz(state));
+    mem<uint16_t>(effect + 0x10) = static_cast<uint16_t>(rnd(state, 8) ? rnd(state, 0x44) : nextFuzz(state));
+    setArg(ctx, 0, effect);
+}
+
+// The aerial's ribbon: the car (with an aerial) at +0x124, a ring of 8 particles of 0x18 bytes from +0x44 (life at +0x14,
+// velocities at +8) and its three-byte trail offsets from +0x104.
+void vfxCarAerialRibbon(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    aerialCar(state, scratch);
+    restoreGlobals();
+    const uint32_t effect = scratch + kEffect;
+    buildRing(state, effect, 7, effect + 0x44, 0x18, 0x14, 2);
+    scatterParticles(state, effect + 0x44, 8, 0x18, 0x14, 2, 6);
+    for (uint32_t i = 0; i < 8; ++i)
+        for (uint32_t offset : {8u, 0xau, 0xcu})
+            mem<int16_t>(effect + 0x44 + i * 0x18 + offset) = static_cast<int16_t>(static_cast<int32_t>(rnd(state, 200)) - 100);
+    for (uint32_t i = 0; i < 0x20; ++i)
+        mem<uint8_t>(effect + 0x104 + i) = static_cast<uint8_t>(nextFuzz(state));
+    mem<uint32_t>(effect + 0x124) = scratch;
+    setArg(ctx, 0, effect);
+}
+
+// A drop ring of 32 particles of 0x30 bytes from +0x50 (positions, velocities and the ground height as floats; the life, a
+// 32-bit word, at +0x24), the ball's position (shorts at +0x14) and its spin (+0x654).
+void waterBall(uint64_t &state, uint32_t scratch, uint32_t effect, bool handler)
+{
+    buildRing(state, effect, 31, effect + 0x50, 0x30, 0x24, 4);
+    const uint32_t mask = 31;
+    for (uint32_t i = 0; i <= mask; ++i)
+    {
+        const uint32_t p = effect + 0x50 + i * 0x30;
+        for (uint32_t offset : {0u, 4u, 8u, 0x10u, 0x14u, 0x18u, 0x20u})
+            mem<float>(p + offset) = frnd(state, 100.0f);
+        mem<uint32_t>(p + 0x24) = rnd(state, 8) ? rnd(state, 0x24) : nextFuzz(state);
+    }
+    const _sObject &car = *static_cast<_sObject *>(guest_host(scratch));
+    const sVec32 &pos = *static_cast<sVec32 *>(guest_host(car.pPhysics.address ? mem<uint32_t>(car.pPhysics.address + 0x1e8) + 4 : scratch));
+    const int32_t base[3] = {pos.x >> 8, pos.y >> 8, pos.z >> 8};
+    for (uint32_t axis = 0; axis < 3; ++axis)
+        mem<int16_t>(effect + 0x14 + 2 * axis) = static_cast<int16_t>(base[axis] + static_cast<int32_t>(rnd(state, 100)) - 50);
+    mem<uint16_t>(effect + 0x10) = static_cast<uint16_t>(rnd(state, 8) ? rnd(state, 0x60) : nextFuzz(state));
+    mem<uint32_t>(effect + 0x654) = nextFuzz(state);
+    // The handler casts straight down on the level's collision grid: only with one that is really there.
+    const uint32_t grid = G(acolG).pGrid.address;
+    if (handler && (grid < 0x100000u || grid >= 0x1ffff00u))
+        mem<uint8_t>(effect + 0x41) = static_cast<uint8_t>(mem<uint8_t>(effect + 0x40));
+}
+
+void vfxWaterBallHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    waterBall(state, scratch, scratch + kEffect, true);
+    setArg(ctx, 0, scratch + kEffect);
+}
+
+void vfxWaterBallRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    renderState(state, scratch);
+    waterBall(state, scratch, scratch + kEffect, false);
+    setArg(ctx, 0, scratch + kEffect);
+}
+
+// The countdown: its pictures from the HUD's resource, a ring of 16 sparkles of 0x14 bytes from +0x48, the picture's
+// position (shorts at +0x188), spin (+0x1a0) and number (+0x1a4, 0 to 3), on one screen or two.
+void vfxReadySteadyGo(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t effect = ringEffect(state, scratch, 15, 0x48, 0x14, 0x10, 0x20);
+    g_split.set(0x1edc68u, static_cast<uint8_t>(rnd(state, 2)));
+    g_screen.set(0x1edc78u, rnd(state, 2));
+    hudResource(state, scratch);
+    for (uint32_t i = 0; i < 3; ++i)
+        mem<int16_t>(effect + 0x188 + 2 * i) = static_cast<int16_t>(static_cast<int32_t>(rnd(state, 600)) - 300);
+    mem<uint16_t>(effect + 0x1a0) = static_cast<uint16_t>(nextFuzz(state));
+    mem<uint32_t>(effect + 0x1a4) = rnd(state, 8) ? rnd(state, 4) : rnd(state, 8);
+    mem<uint16_t>(effect + 0x10) = static_cast<uint16_t>(rnd(state, 4) ? rnd(state, 0x40) : nextFuzz(state));
+    setArg(ctx, 0, effect);
+}
+
+// The rocket's smoke: a ring of 32 puffs of 0x14 bytes, the rocket's position (shorts at +0x14) and direction (+0x2cc), a
+// spin counter (+0x2d4) and a life that is mostly above 0x20 (which draws the rocket itself with the level's own shape).
+void vfxRocketSmokeRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t realRes = G(visFxVarG).pVfxRes.address;
+    const uint32_t shape = realRes ? mem<uint32_t>(realRes + 0x88) : 0;
+    const uint32_t effect = ringEffect(state, scratch, 31, 0x44, 0x14, 0x10, 0x20);
+    mem<uint32_t>(scratch + kRes + 0x88) = shape;
+    for (uint32_t i = 0; i < 3; ++i)
+    {
+        mem<int16_t>(effect + 0x14 + 2 * i) = static_cast<int16_t>(static_cast<int32_t>(rnd(state, 6000)) - 3000);
+        mem<int16_t>(effect + 0x2cc + 2 * i) = static_cast<int16_t>(rnd(state, 16) ? static_cast<int32_t>(rnd(state, 8000)) - 4000 : 0);
+    }
+    mem<uint32_t>(effect + 0x2d4) = nextFuzz(state);
+    mem<uint16_t>(effect + 0x10) = static_cast<uint16_t>(shape && rnd(state, 4) ? 0x20 + rnd(state, 0x40) : rnd(state, 0x20));
+    setArg(ctx, 0, effect);
+}
+
+// The car rocket's handler: the car (with an aerial) at +0x350 whose weapon byte is zero now and then, a ring of 16
+// particles of 0x30 bytes from +0x50 with floats and a 32-bit life at +0x24.
+void vfxCarRocketHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    aerialCar(state, scratch);
+    const uint32_t effect = scratch + kEffect;
+    mem<uint32_t>(effect + 0x350) = scratch;
+    mem<int8_t>(scratch + 0x194) = static_cast<int8_t>(rnd(state, 4) ? 1 + rnd(state, 100) : 0);
+    buildRing(state, effect, 15, effect + 0x50, 0x30, 0x24, 4);
+    for (uint32_t i = 0; i < 16; ++i)
+    {
+        const uint32_t p = effect + 0x50 + i * 0x30;
+        for (uint32_t offset : {0u, 4u, 8u, 0x10u, 0x14u, 0x18u})
+            mem<float>(p + offset) = frnd(state, 60.0f);
+        mem<uint32_t>(p + 0x24) = rnd(state, 4) ? rnd(state, 0x12) : nextFuzz(state);
+    }
+    setArg(ctx, 0, effect);
+}
+
+
+// A scenery instance's position, in whole units a short way from the camera (visFxVarG.svCamPos, as the game has it) most of
+// the time, else anywhere: the effects that fade with the distance, or are drawn only near the camera.
+void nearTheCamera(uint64_t &state, uint32_t scratch, uint32_t range)
+{
+    for (uint32_t axis = 0; axis < 3; ++axis)
+    {
+        const int32_t camera = mem<int16_t>(0x1f1108u + 2 * axis);
+        const int32_t where = rnd(state, 8) ? camera + static_cast<int32_t>(rnd(state, 2 * range)) - static_cast<int32_t>(range)
+                                            : static_cast<int32_t>(rnd(state, 16000)) - 8000;
+        mem<int32_t>(scratch + kTobInst + 4 + 4 * axis) = where * 256 + static_cast<int32_t>(rnd(state, 256));
+    }
+}
+
+void vfxBatsHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t effect = sceneryEffect(state, scratch, 31, 0x14, 0x10);
+    scatterParticles(state, effect + 0x44, 32, 0x14, 0x10, 2, 0x40);
+    mem<uint16_t>(effect + 0x2c4) = static_cast<uint16_t>(rnd(state, 2) ? 1 + 2 * rnd(state, 50) : nextFuzz(state));
+    mem<uint16_t>(effect + 0x2c6) = static_cast<uint16_t>(rnd(state, 2) ? 1 : rnd(state, 20));
+    setArg(ctx, 0, effect);
+}
+
+void vfxSciFiBubblesHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t effect = sceneryEffect(state, scratch, 15, 0x14, 0x10);
+    scatterParticles(state, effect + 0x44, 16, 0x14, 0x10, 2, 0x40);
+    mem<uint16_t>(effect + 0x184) = static_cast<uint16_t>(rnd(state, 2) ? 4 * rnd(state, 50) : nextFuzz(state));
+    mem<uint16_t>(effect + 0x186) = static_cast<uint16_t>(rnd(state, 2) ? 1 : rnd(state, 20));
+    setArg(ctx, 0, effect);
+}
+
+// The lights: the scenery instance near the camera, a colour (three bytes at +0x48, some zero) and the flare's size count at
+// +0x4c (now and then a negative or huge one).
+void vfxLight(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    renderState(state, scratch);
+    const uint32_t effect = scratch + kEffect;
+    buildScenery(state, scratch, effect, 0x40);
+    nearTheCamera(state, scratch, 6000);
+    for (uint32_t i = 0; i < 3; ++i)
+        mem<uint8_t>(effect + 0x48 + i) = static_cast<uint8_t>(rnd(state, 4) ? rnd(state, 256) : 0);
+    mem<uint32_t>(effect + 0x4c) = rnd(state, 8) ? rnd(state, 12) : nextFuzz(state);
+    mem<uint16_t>(scratch + kTobInst + 0x2c) = static_cast<uint16_t>(rnd(state, 4) ? 10 + rnd(state, 200) : nextFuzz(state));
+    setArg(ctx, 0, effect);
+}
+
+// The butterflies: a ring of 16 particles of 0x70 bytes from +0x50 (positions, a phase at +0x10, a 4x4 matrix from +0x20,
+// colours at +0x60 and +0x64), the centre (shorts at +0x750) near the camera most of the time.
+void vfxButterflies(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    renderState(state, scratch);
+    const uint32_t effect = scratch + kEffect;
+    buildRing(state, effect, 15, effect + 0x50, 0x70, 0x10, 2);
+    for (uint32_t i = 0; i < 16; ++i)
+    {
+        const uint32_t p = effect + 0x50 + i * 0x70;
+        for (uint32_t offset : {0u, 2u, 4u})
+            mem<int16_t>(p + offset) = static_cast<int16_t>(static_cast<int32_t>(rnd(state, 4000)) - 2000);
+        mem<uint16_t>(p + 0x10) = static_cast<uint16_t>(nextFuzz(state));
+        for (uint32_t lane = 0; lane < 16; ++lane)
+            mem<float>(p + 0x20 + 4 * lane) = frnd(state, 1.0f);
+        mem<uint32_t>(p + 0x60) = nextFuzz(state);
+        mem<uint32_t>(p + 0x64) = nextFuzz(state);
+    }
+    for (uint32_t axis = 0; axis < 3; ++axis)
+    {
+        const int32_t camera = mem<int16_t>(0x1f1108u + 2 * axis);
+        const int32_t where = rnd(state, 8) ? camera + static_cast<int32_t>(rnd(state, 16000)) - 8000 : static_cast<int32_t>(nextFuzz(state));
+        mem<int16_t>(effect + 0x750 + 2 * axis) = static_cast<int16_t>(where);
+    }
+    setArg(ctx, 0, effect);
+}
+
+// The pirate lava: a ring of 32 blobs of 0x18 bytes (an age at +0x14, a size byte at +0x16 mostly above 100) and the lava
+// colour (three bytes at +0x648).
+void vfxPirateLava(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t effect = sceneryRenderer(state, scratch, 31, 0x18, 0x14, 2, 0x648, 0x20);
+    for (uint32_t i = 0; i < 32; ++i)
+        mem<uint8_t>(effect + 0x44 + i * 0x18 + 0x16) = static_cast<uint8_t>(rnd(state, 3) ? 0x60 + rnd(state, 0x40) : nextFuzz(state));
+    setArg(ctx, 0, effect);
+}
+
+// The car splash: a ring of 16, 32 or 64 drops of 0x14 bytes (a flag at +0x12 that is zero half the time), the centre (shorts at
+// +0x548) and a life up to 0x58.
+void vfxCarSplash(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t mask = rnd(state, 3) == 0 ? 15 : rnd(state, 2) ? 31 : 63; // the game's own is 64 drops
+    const uint32_t effect = ringEffect(state, scratch, mask, 0x44, 0x14, 0x10, 0x20);
+    for (uint32_t i = 0; i <= mask; ++i)
+        mem<uint16_t>(effect + 0x44 + i * 0x14 + 0x12) = static_cast<uint16_t>(rnd(state, 2) ? 0 : nextFuzz(state));
+    for (uint32_t i = 0; i < 3; ++i)
+        mem<int16_t>(effect + 0x548 + 2 * i) = static_cast<int16_t>(static_cast<int32_t>(rnd(state, 6000)) - 3000);
+    mem<uint16_t>(effect + 0x10) = static_cast<uint16_t>(rnd(state, 8) ? rnd(state, 0x58) : nextFuzz(state));
+    setArg(ctx, 0, effect);
+}
+
+// The cannon's handler: the scenery's shape is in the first frames of its animation (below 8) most of the time.
+void vfxCannonHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t effect = sceneryEffect(state, scratch, 15, 0x14, 0x10, 12);
+    scatterParticles(state, effect + 0x44, 16, 0x14, 0x10, 2, 0x30);
+    setArg(ctx, 0, effect);
+}
+
+// The glints: 128 glints round the camera (a vector the setup chooses, near the real car when there is one), some alive
+// with lives that wrap now and then, the "last started" spots for both screens, and the screen being drawn. Without a
+// collision grid to cast on, the camera has not moved (no glint is started).
+void vfxGlint(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    renderState(state, scratch);
+    const _sObject &car = *static_cast<_sObject *>(guest_host(scratch));
+    const sVec32 &pos = *static_cast<sVec32 *>(guest_host(mem<uint32_t>(car.pPhysics.address + 0x1e8) + 4));
+    FourFloats camera;
+    camera.v[0] = static_cast<float>(pos.x >> 8) + frnd(state, 50.0f);
+    camera.v[1] = static_cast<float>(pos.y >> 8) + frnd(state, 50.0f);
+    camera.v[2] = static_cast<float>(pos.z >> 8) + frnd(state, 50.0f);
+    camera.v[3] = frnd(state, 10.0f);
+    g_cameraVector.set(0x1f1160u, camera);
+    g_screen.set(0x1edc78u, rnd(state, 4) ? 0 : 1);
+    const uint32_t grid = G(acolG).pGrid.address;
+    const bool haveGrid = grid >= 0x100000u && grid < 0x1ffff00u;
+    EightFloats spots;
+    for (uint32_t screen = 0; screen < 2; ++screen)
+        for (uint32_t axis = 0; axis < 4; ++axis)
+            spots.v[4 * screen + axis] = (!haveGrid || rnd(state, 2)) ? camera.v[axis] + frnd(state, 150.0f) : camera.v[axis] + frnd(state, 1000.0f);
+    g_lastSpots.set(0x1f36f0u, spots);
+    GlintBlock block;
+    std::memset(&block, 0, sizeof(block));
+    g_glints.set(0x1f1eb0u, block);
+    for (uint32_t i = 0; i < 0x80; ++i)
+    {
+        const uint32_t glint = 0x1f1eb0u + i * 0x30;
+        for (uint32_t axis = 0; axis < 4; ++axis)
+            mem<float>(glint + 4 * axis) = camera.v[axis] + frnd(state, 3500.0f);
+        const uint32_t kind = rnd(state, 4);
+        mem<int16_t>(glint + 0x10) = static_cast<int16_t>(kind < 2 ? 0 : kind == 2 ? 1 + rnd(state, 200) : nextFuzz(state));
+        mem<uint16_t>(glint + 0x12) = static_cast<uint16_t>(nextFuzz(state));
+    }
 }
 
 } // namespace rc::fuzz
