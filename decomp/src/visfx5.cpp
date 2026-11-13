@@ -8,10 +8,17 @@
 #include "visfx.h"
 
 #include <algorithm>
+#include <emmintrin.h>
 
 namespace rc {
 
 ptr32<SVECTOR> VfxCarPositionPoi(ptr32<_sObject> pObj); // ai.cpp
+ptr32<MATRIX> VfxCarMatrixPoi(ptr32<_sObject> pObj);      // ai.cpp
+uint64_t VfxCarPositionVal(ptr32<_sObject> pObj);        // visfx.cpp
+void VfxPutUV0(ee_float u, ee_float v);                   // visfx.cpp
+void VfxPutUV1(ee_float u, ee_float v);
+void VfxPutUV2(ee_float u, ee_float v);
+void VfxPutUV3(ee_float u, ee_float v);
 void PS2C_GteMatrixMulVec16(ptr32<_sVec16> pVec);        // psxdefs.cpp
 void PS2C_SetGteMatrix(ptr32<_sMat> pMat);
 void PS2C_GetVec16GteResult(ptr32<_sVec16> pOut);
@@ -447,6 +454,145 @@ void Vfx2Renderer_CartoonTrainSmoke(ptr32<_sVfx_TSFX> mem)
     }
 }
 
+
+// The "finish position" text effect's puffs of dust (a number rising from the car after the race): on its first frame
+// (life 0x43f) it takes its position from the car, nudged half a matrix column up, with an upward speed of 0x280 that
+// it keeps adding to the position, losing 0x10 a frame (and holding position for the first 0x27 frames, where the speed
+// is not applied). Each frame it adds a puff with random small velocity, runs the particles and sorts at the car.
+void Vfx2Handler_FinishPosition(ptr32<_sVfx_Object> mem)
+{
+    const uint32_t m = mem.address;
+    const ptr32<_sObject> car(at<uint32_t>(m + 0x44));
+    if (at<uint16_t>(m + kLifeSpan) == 0x43f)
+    {
+        at<uint16_t>(m + 0x198) = 0;
+        at<uint16_t>(m + 0x19a) = 0;
+        at<uint16_t>(m + 0x19c) = 0;
+        at<uint16_t>(m + 0x1a0) = 0xfccc;
+        at<uint16_t>(m + 0x1a2) = 0x280;
+        at<uint64_t>(m + 0x188) = VfxCarPositionVal(car); // x, y, z and the shared vector's fourth short
+        const uint32_t matrix = VfxCarMatrixPoi(car).address;
+        at<uint16_t>(m + 0x188) = static_cast<uint16_t>(at<uint16_t>(m + 0x188) + (at<int16_t>(matrix + 4) >> 1));
+        at<uint16_t>(m + 0x18a) = static_cast<uint16_t>(at<uint16_t>(m + 0x18a) + 0x15e + (at<int16_t>(matrix + 0xa) >> 1));
+        at<uint16_t>(m + 0x18c) = static_cast<uint16_t>(at<uint16_t>(m + 0x18c) + (at<int16_t>(matrix + 0x10) >> 1));
+    }
+    at<uint16_t>(m + 0x188) = static_cast<uint16_t>(at<uint16_t>(m + 0x188) + at<uint16_t>(m + 0x198));
+    at<uint16_t>(m + 0x18a) = static_cast<uint16_t>(at<uint16_t>(m + 0x18a) + at<uint16_t>(m + 0x19a));
+    at<uint16_t>(m + 0x18c) = static_cast<uint16_t>(at<uint16_t>(m + 0x18c) + at<uint16_t>(m + 0x19c));
+    vfx::sortPosFromInts(m, at<int16_t>(m + 0x188), at<int16_t>(m + 0x18a), at<int16_t>(m + 0x18c), 0x70 + 0x20);
+    const uint32_t p = m + 0x48 + at<uint8_t>(m + kRing + 3) * 0x14u;
+    at<uint16_t>(p) = static_cast<uint16_t>((vfx::random15() & 0x7f) - 0x40);
+    at<uint16_t>(p + 2) = static_cast<uint16_t>((vfx::random15() & 0x7f) - 0x40);
+    at<uint16_t>(p + 4) = static_cast<uint16_t>((vfx::random15() & 0x7f) - 0x40);
+    at<uint16_t>(p + 8) = static_cast<uint16_t>((vfx::random15() & 0x7f) - 0x3f);
+    at<uint16_t>(p + 0xa) = static_cast<uint16_t>((vfx::random15() & 0x7f) - 0x3f);
+    at<uint16_t>(p + 0xc) = static_cast<uint16_t>((vfx::random15() & 0x7f) - 0x3f);
+    at<uint16_t>(p + 0x10) = 0xf;
+    vfx::ringPush(m);
+    uint16_t speed;
+    if (at<uint16_t>(m + kLifeSpan) < 0x418)
+    {
+        at<uint16_t>(m + 0x1a0) = 0;
+        speed = at<uint16_t>(m + 0x1a2);
+    }
+    else
+    {
+        at<uint16_t>(m + 0x1a0) = static_cast<uint16_t>(at<uint16_t>(m + 0x1a0) + at<uint16_t>(m + 0x1a2));
+        if (at<int16_t>(m + 0x1a2) < 0)
+        {
+            at<uint16_t>(m + 0x1a2) = 0;
+            speed = 0;
+        }
+        else
+            speed = at<uint16_t>(m + 0x1a2);
+    }
+    at<uint16_t>(m + 0x1a2) = static_cast<uint16_t>(speed - 0x10);
+    VfxSimpleParticleMover(ptr32<_sVfx_PartHeader>(m + kRing), ptr32<_VFX_SIMPLEPARTICLE>(m + 0x48));
+    vfx::sortPosFromCar(m, car, 0x70 + 0x20);
+    at<uint16_t>(m + kLifeSpan) = static_cast<uint16_t>(at<uint16_t>(m + kLifeSpan) - 1);
+}
+
+
+namespace {
+
+// sceneVu0ScaleVectorXYZ: the first three lanes of src times a scalar, the fourth lane copied (the VU0 multiplies only
+// x, y and z of the register it loaded from src and stores all four lanes).
+void scaleVectorXYZ(uint32_t dst, uint32_t src, ee_float scale)
+{
+    const __m128 v = _mm_loadu_ps(&at<float>(src & ~0xFu));
+    const __m128 product = PS2_VMUL(v, _mm_set1_ps(scale.v));
+    const __m128 xyzFromProduct = _mm_castsi128_ps(_mm_set_epi32(0, -1, -1, -1));
+    _mm_storeu_ps(&at<float>(dst & ~0xFu), _mm_or_ps(_mm_and_ps(xyzFromProduct, product), _mm_andnot_ps(xyzFromProduct, v)));
+}
+
+} // namespace
+
+// The skull wave: a ring of 0x30-byte points around a centre (the three shorts at +0x654), drawn as a band of quads
+// between neighbouring points: first a quad from the point (and its neighbour) out to a scaled-up copy, faded from the
+// life-dependent colour at the inside to black at the outside, then two more quads the same width stepped 220 units
+// up and 460 units down, which make the wave's sides. The texture scrolls along the band by the effect's life.
+// The neighbour is the next point modulo the ring's mask (a division, as in the original: a mask of zero traps there).
+void Vfx2Renderer_SkullWave(ptr32<_sVfx_Object> mem)
+{
+    GuestFrame frame(0xe0);
+    const uint32_t m = mem.address;
+    const uint32_t centre = frame.local<float>(0).address; // vuCentre; its fourth lane is a word of the stack nobody wrote
+    at<float>(centre) = ee_itof(at<int16_t>(m + 0x654));
+    at<float>(centre + 4) = ee_itof(at<int16_t>(m + 0x656));
+    at<float>(centre + 8) = ee_itof(at<int16_t>(m + 0x658));
+    const uint32_t life = at<uint16_t>(m + kLifeSpan);
+    const uint32_t colour = life * 4 + (life * 4 << 16);
+    ee_float u = ee_itof(static_cast<int32_t>(life)) * ee_float(at<float>(0x3278acu));
+    RdrPolyTexture(0, ptr32<_sGfxTexture>(vfx::vfxTexture(0x10)), 0x12);
+    uint32_t index = at<uint8_t>(m + kRing + 2);
+    if (index != at<uint8_t>(m + kRing + 3))
+    {
+        const ee_float outer = at<float>(0x3278b0u), inner = at<float>(0x3278b4u), step = at<float>(0x3278b8u);
+        do
+        {
+            const uint32_t quad = G(visFxVarG).pGT4.address;
+            const uint32_t here = m + 0x50 + index * 0x30;
+            const uint32_t mask = at<uint8_t>(m + kRing);
+            ++index;
+            vfx::vu0Add(G(visFxVarG).pGT4.address, centre, here);
+            if (mask == 0)
+                __builtin_trap(); // the original's divide traps
+            const uint32_t next = m + 0x50 + (index % mask) * 0x30;
+            vfx::vu0Add(quad + 0x10, centre, next);
+            scaleVectorXYZ(quad + 0x20, here, outer);
+            vfx::vu0Add(quad + 0x20, centre, quad + 0x20);
+            scaleVectorXYZ(quad + 0x30, next, outer);
+            vfx::vu0Add(quad + 0x30, centre, quad + 0x30);
+            const ee_float uEnd = u + step;
+            VfxPutUV0(u, 0.0f);
+            VfxPutUV1(uEnd, 0.0f);
+            VfxPutUV2(u, 1.0f);
+            VfxPutUV3(uEnd, 1.0f);
+            u = uEnd;
+            VfxPutGT4rgba0(colour);
+            VfxPutGT4rgba1(colour);
+            VfxPutGT4rgba2(0);
+            VfxPutGT4rgba3(0);
+            RdrPoly(0, G(visFxVarG).pGT4);
+            scaleVectorXYZ(quad + 0x20, here, inner);
+            vfx::vu0Add(quad + 0x20, centre, quad + 0x20);
+            scaleVectorXYZ(quad + 0x30, next, inner);
+            vfx::vu0Add(quad + 0x30, centre, quad + 0x30);
+            at<float>(quad + 0x24) = ee_float(at<float>(quad + 0x24)) + ee_float(220.0f);
+            at<float>(quad + 0x34) = ee_float(at<float>(quad + 0x34)) + ee_float(220.0f);
+            RdrPoly(0, G(visFxVarG).pGT4);
+            at<float>(quad + 0x24) = ee_float(at<float>(quad + 0x24)) - ee_float(460.0f);
+            at<float>(quad + 0x34) = ee_float(at<float>(quad + 0x34)) - ee_float(460.0f);
+            RdrPoly(0, G(visFxVarG).pGT4);
+            index &= at<uint8_t>(m + kRing);
+        } while (index != at<uint8_t>(m + kRing + 3));
+    }
+    VfxPutUV0(1.0f, 0.0f);
+    VfxPutUV1(0.0f, 0.0f);
+    VfxPutUV2(1.0f, 1.0f);
+    VfxPutUV3(0.0f, 1.0f);
+}
+
 } // namespace rc
 
 namespace rc::fuzz {
@@ -464,6 +610,8 @@ void vfxScifiRocketRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch
 void vfxScifiRocketOldRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxCartoonTrainHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxCartoonTrainRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxFinishPosition(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxSkullWave(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 }
 
 RC_DECOMP_FN_SETUP(Vfx2Renderer_MonkeySmoke, 0x176278, rc::fuzz::vfxMonkeySmokeRenderer)
@@ -480,3 +628,5 @@ RC_DECOMP_FN_SETUP(Vfx2Renderer_ScifiRocket, 0x1733c0, rc::fuzz::vfxScifiRocketR
 RC_DECOMP_FN_SETUP(Vfx2Renderer_ScifiRocketOld, 0x173618, rc::fuzz::vfxScifiRocketOldRenderer)
 RC_DECOMP_FN_SETUP(Vfx2Handler_CartoonTrainSmoke, 0x16dd30, rc::fuzz::vfxCartoonTrainHandler)
 RC_DECOMP_FN_SETUP(Vfx2Renderer_CartoonTrainSmoke, 0x16df28, rc::fuzz::vfxCartoonTrainRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Handler_FinishPosition, 0x173c20, rc::fuzz::vfxFinishPosition)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_SkullWave, 0x170640, rc::fuzz::vfxSkullWave)

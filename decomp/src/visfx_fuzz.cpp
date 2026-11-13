@@ -1144,15 +1144,23 @@ void vfxCarFireRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
         mem<uint16_t>(effect + 0x44 + i * 0x18 + 0x14) = static_cast<uint16_t>(rnd(state, 8) ? rnd(state, 0x20) : nextFuzz(state));
 }
 
-// The arm cannon's renderer: the particle ring of vfxArmCannon, and a cannon-ball shape in scratch whose version is not
-// the 2.0 or 3.0 that draws it (the shape renderers are not run on made-up shapes).
+// The arm cannon's renderer: the particle ring of vfxArmCannon, and the level's own cannon-ball shape if it has one (the
+// renderer rewrites its matrix and position: the harness puts them back), else a made-up one whose version is not the
+// 2.0 or 3.0 that draws it (the shape renderers are not run on made-up shapes).
 void vfxArmCannonRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 {
     vfxArmCannon(ctx, state, scratch);
+    const uint32_t realRes = G(visFxVarG).pVfxRes.address;
+    const uint32_t realShape = realRes ? mem<uint32_t>(realRes + 0x84) : 0;
     const uint32_t effect = scratch + kEffect;
     renderState(state, scratch);
     for (uint32_t i = 0; i < 16; ++i)
         mem<uint16_t>(effect + 0x44 + i * 0x14 + 0x10) = static_cast<uint16_t>(rnd(state, 8) ? rnd(state, 0x40) : nextFuzz(state));
+    if (realShape)
+    {
+        mem<uint32_t>(scratch + kRes + 0x84) = realShape;
+        return;
+    }
     mem<uint32_t>(scratch + kRes + 0x84) = scratch + kAuxA;
     mem<float>(scratch + kAuxA) = rnd(state, 2) ? 0.0f : frnd(state, 5.0f);
     if (mem<float>(scratch + kAuxA) == 2.0f || mem<float>(scratch + kAuxA) == 3.0f)
@@ -1409,6 +1417,41 @@ void vfxCartoonTrainRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratc
     const uint32_t tob = scratch + kTobInst;
     for (uint32_t offset = 0x18; offset < 0x2a; offset += 2)
         mem<int16_t>(tob + offset) = static_cast<int16_t>(static_cast<int32_t>(rnd(state, 8193)) - 4096);
+    setArg(ctx, 0, effect);
+}
+
+
+// The finish position puffs: the car (a copy) at +0x44, a ring of 16 particles of 0x14 bytes from +0x48 (mask 15), and a
+// life that is the first frame (0x43f) a third of the time, and else around 0x418 where the speed changes over.
+void vfxFinishPosition(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    if (!buildCar(ctx, state, scratch))
+        return;
+    const uint32_t effect = scratch + kEffect;
+    buildRing(state, effect, 15, effect + 0x48, 0x14, 0x10, 2);
+    mem<uint32_t>(effect + 0x44) = scratch;
+    mem<uint16_t>(effect + 0x10) = static_cast<uint16_t>(rnd(state, 3) == 0 ? 0x43f : rnd(state, 2) ? 0x410 + rnd(state, 0x20) : nextFuzz(state));
+    for (uint32_t offset : {0x188u, 0x18au, 0x18cu, 0x198u, 0x19au, 0x19cu, 0x1a0u})
+        mem<int16_t>(effect + offset) = static_cast<int16_t>(rnd(state, 2) ? static_cast<int32_t>(rnd(state, 600)) - 300 : static_cast<int32_t>(nextFuzz(state)));
+    mem<uint16_t>(effect + 0x1a2) = static_cast<uint16_t>(rnd(state, 3) ? rnd(state, 0x300) : nextFuzz(state));
+    setArg(ctx, 0, effect);
+}
+
+
+// The skull wave: a ring of 16 points of 0x30 bytes (floats at +0) from +0x50, the centre (shorts at +0x654), and the
+// life. The ring's mask is never zero (the original's divide would trap).
+void vfxSkullWave(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    restoreGlobals();
+    const uint32_t effect = scratch + kEffect;
+    renderState(state, scratch);
+    buildRing(state, effect, 15, effect + 0x50, 0x30, 0x10, 2);
+    mem<uint16_t>(effect + 0x10) = static_cast<uint16_t>(rnd(state, 4) ? rnd(state, 0x40) : nextFuzz(state));
+    for (uint32_t i = 0; i < 16; ++i)
+        for (uint32_t lane = 0; lane < 4; ++lane)
+            mem<float>(effect + 0x50 + i * 0x30 + 4 * lane) = frnd(state, 200.0f);
+    for (uint32_t axis = 0; axis < 3; ++axis)
+        mem<int16_t>(effect + 0x654 + 2 * axis) = static_cast<int16_t>(static_cast<int32_t>(rnd(state, 8001)) - 4000);
     setArg(ctx, 0, effect);
 }
 
