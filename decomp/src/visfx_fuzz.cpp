@@ -84,14 +84,18 @@ bool levelHasCars()
 
 // A car at scratch+0 (aiCar copies one of the race's cars there with its physics, as the next lines check). When no race is
 // loaded (or the AI nodes are gone: the demo race has ended) aiCar builds nothing and the scratch area holds random words,
-// whose pointers lead outside the 32 MB of RAM, where the original wraps the address and a native function does not. The
-// setups then get a car of zeroes with sane pointers instead: type 0, zero physics and integer state.
+// whose pointers lead outside the 32 MB of RAM, where the original wraps the address and a native function does not (the
+// race's object list also holds things that are not cars, which aiCar copies as if they were: a definition pointer that is
+// null or not in RAM marks them). The setups then get a car of zeroes with sane pointers instead: type 0, zero physics and integer state (RC_FUZZ_FAKECAR=1
+// makes them always do, to test that path while a race is running).
 bool buildCar(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 {
     restoreGlobals();
     aiCar(ctx, state, scratch);
     _sObject &car = *static_cast<_sObject *>(guest_host(scratch));
-    if (levelHasCars() && car.pPhysics.address == scratch + 0x1000u)
+    static const bool forceFake = std::getenv("RC_FUZZ_FAKECAR") != nullptr; // test the zero car while a race is running
+    const bool realCar = levelHasCars() && car.pPhysics.address == scratch + 0x1000u && car.pDef.address >= 0x100000u && car.pDef.address < 0x1ffff00u;
+    if (!forceFake && realCar)
         return true;
     std::memset(guest_host(scratch), 0, 0x2300);
     std::memset(guest_host(scratch + kDef), 0, 0x200);

@@ -22,7 +22,9 @@ struct Rng
     uint64_t &state;
 
     uint32_t next() { return nextFuzz(state); }
-    int below(int count) { return static_cast<int>(next() % static_cast<uint32_t>(count)); }
+    // A range of nothing (a node whose bounds are one short of empty, or none left once the race is over) gives 0; a
+    // modulo by zero was a crash (SIGFPE) in the random test.
+    int below(int count) { return count > 0 ? static_cast<int>(next() % static_cast<uint32_t>(count)) : 0; }
     bool chance(int percent) { return below(100) < percent; }
     int between(int low, int high) { return low + below(high - low + 1); }
 };

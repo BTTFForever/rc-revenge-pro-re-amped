@@ -379,9 +379,9 @@ bool fuzzStep(uint8_t *rdram, const R5900Context &live, PS2Runtime *runtime, int
                     std::fprintf(stderr, "[decomp] FUZZ DETAIL %s: global 0x%x original=%08x decompiled=%08x\n", entry.name, kDataStart + at, original, native);
                 }
                 if (++progress.mismatches <= 4u)
-                    std::fprintf(stderr, "[decomp] FUZZ MISMATCH %s iteration %d: return %s scratch %s globals %s | a0=%x a1=%x a2=%x f12=%g f13=%g | v0 %llx vs %llx\n",
+                    std::fprintf(stderr, "[decomp] FUZZ MISMATCH %s iteration %d: return %s scratch %s globals %s | a0=%x a1=%x a2=%x f12=%g f13=%g sp=%x | v0 %llx vs %llx\n",
                                  entry.name, progress.iteration, regsSame ? "same" : "DIFF", scratchSame ? "same" : "DIFF", globalsSame ? "same" : "DIFF",
-                                 getRegU32(&inputs, 4), getRegU32(&inputs, 5), getRegU32(&inputs, 6), inputs.f[12], inputs.f[13],
+                                 getRegU32(&inputs, 4), getRegU32(&inputs, 5), getRegU32(&inputs, 6), inputs.f[12], inputs.f[13], getRegU32(&inputs, 29),
                                  (unsigned long long)GPR_U64((&originalCtx), 2), (unsigned long long)GPR_U64((&nativeCtx), 2));
             }
         }
