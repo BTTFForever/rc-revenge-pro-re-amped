@@ -288,6 +288,9 @@ Comparing every call (`RC_SHADOW_ALWAYS`) copies and compares the 32 MB of RAM s
 2. Live, sampled: `RC_SHADOW_ONLY=<new> RC_SHADOW_RATE=20 RC_SHADOW_FIRST=5 tools/shadow.sh LEVEL 120 0`. Put a name in `RC_SHADOW_ALWAYS` only if it is called rarely (level init/term, once-a-race effects), never VfxRender, VfxSortFunc or per-frame handlers.
 3. While fixing one function, run just that function. No all-unit regression run per batch; one sampled run over the whole unit when the unit is finished.
 4. Game runs of 120 s or less; check `pgrep -fa rc_revenge_pro` is empty first (shadow.sh keeps the game until its timeout and overlapping runs share a sandbox).
+5. Check by risk (from the error rate, 2026-11-13: of 516 native functions about 89% matched on their first test, about 10% were fixed after one, about 1% slipped past the tests). Short leaf functions with no `asm_facts.py` warnings, no stale stack reads, no float maths and no guest calls: build plus one random-input pass on one level. Everything else (stale stack, float-heavy, guest_call, recursive, flagged by asm_facts): random inputs on two levels plus a sampled live run.
+6. Test a whole batch at once and re-run only what failed.
+7. Give agents whole families at once (functions that are near-copies, such as SpeedUp/BoostSpeedUp or a scenery effect's handler and renderer) so they share one helper.
 
 ## Where to resume (2026-11-12)
 
