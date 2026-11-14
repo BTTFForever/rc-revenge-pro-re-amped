@@ -68,6 +68,10 @@ void runComparedNative(Entry &entry, uint8_t *rdram, R5900Context *ctx, PS2Runti
     R5900Context &running = runtime->eeScheduler().runningContext();
     const bool copy = ctx != &running;
     const R5900Context saved = copy ? running : R5900Context{};
+    // The native reads registers through the running context (GuestFrame's $sp, a caller's $s2 or $ra), so it starts
+    // from the same registers as the original did.
+    if (copy)
+        running = *ctx;
     // Interrupts wait, as for the original, so none runs inside the native's guest calls.
     runtime->eeScheduler().holdCheckpoints(true);
     g_inComparedNative = true;
