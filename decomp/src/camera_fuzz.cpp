@@ -4,6 +4,7 @@
 
 #include "camera_fuzz.h"
 
+#include <cmath>
 #include <cstring>
 
 namespace rc {
@@ -563,6 +564,96 @@ void cameraRay(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     setArg(ctx, 1, scratch + kVecs + 0x10);
     setArg(ctx, 2, scratch + kCellOut);
     setArg(ctx, 3, scratch + kCellOut + 0x10);
+}
+
+// The follow camera: the scratch camera somewhere around its copied car (on the level, so the wall test, the side
+// rays and the ground cast find real polys), last frame's position near the desired one, far off or close to the
+// car; the car spinning, reversing or hit by the shaking weapon now and then; the camera's counters; both flags.
+void cameraFollow(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    Rng rng{state};
+    const uint32_t camera = buildCamera(rng, scratch);
+    _sCamera &c = at<_sCamera>(camera);
+    _sObject &car = at<_sObject>(scratch + kCar);
+    _sFPhysLibCar &physics = at<_sFPhysLibCar>(scratch + kPhysics);
+    const int32_t carX = static_cast<int32_t>(physics.pos.x.v), carY = static_cast<int32_t>(physics.pos.y.v),
+                  carZ = static_cast<int32_t>(physics.pos.z.v);
+    const int kind = rng.below(10);
+    const int32_t reach = kind < 6 ? 0x30000 : kind < 8 ? 0x4000 : kind < 9 ? 0x100000 : 0x800;
+    c.oldPos.x = carX + rng.between(-reach, reach);
+    c.oldPos.y = carY + rng.between(-0x4000, 0x20000);
+    c.oldPos.z = carZ + rng.between(-reach, reach);
+    if (rng.chance(5))
+        c.oldPos.y = static_cast<int32>(rng.next());
+    if (rng.chance(3)) // anywhere, often off the level
+    {
+        c.oldPos.x = static_cast<int32>(rng.next());
+        c.oldPos.z = static_cast<int32>(rng.next());
+    }
+    const ptr32<_sColGridPSX> gridPtr = G(acolG).pGrid;
+    if (gridPtr && rng.chance(50))
+    {
+        // Near a wall: last frame's position just off one of the level's polys, the car a camera's distance away
+        // (or against the same poly), so the wall test, the side rays and the look-back rays hit.
+        const _sColGridPSX &grid = *gridPtr;
+        for (int tries = 0; tries < 8; ++tries)
+        {
+            const uint32_t cellIndex = static_cast<uint32_t>(rng.below(grid.numCellsX * grid.numCellsZ));
+            const _sColGridCellPSX &cell = at<_sColGridCellPSX>(grid.pCell.address + 16u * cellIndex);
+            const uint32_t count = cell.list.num[0] + cell.list.num[1];
+            if (count == 0 || count > 4096)
+                continue;
+            const uint32_t id = at<uint32_t>(grid.pIds.address + 4u * (cell.list.offset + static_cast<uint32_t>(rng.below(static_cast<int>(count)))));
+            const _sColPolyPSX &poly = at<_sColPolyPSX>(grid.pPoly.address + 0x60u * id);
+            const _sColCellVertPSX &a = poly.v[0], &b = poly.v[1 + rng.below(2)];
+            const float blend = rng.range(0.0f, 1.0f), push = rng.range(-160.0f, 160.0f);
+            const float px = a.x.v + (b.x.v - a.x.v) * blend + poly.n.x.v * push;
+            const float py = a.y.v + (b.y.v - a.y.v) * blend + poly.n.y.v * push + rng.range(-40.0f, 40.0f);
+            const float pz = a.z.v + (b.z.v - a.z.v) * blend + poly.n.z.v * push;
+            c.oldPos.x = static_cast<int32>(px * 256.0f);
+            c.oldPos.y = static_cast<int32>(py * 256.0f);
+            c.oldPos.z = static_cast<int32>(pz * 256.0f);
+            if (rng.chance(30))
+            {
+                const float off = rng.range(10.0f, 140.0f);
+                physics.pos.x = (px + poly.n.x.v * off) * 256.0f;
+                physics.pos.y = (py + rng.range(-60.0f, 20.0f)) * 256.0f;
+                physics.pos.z = (pz + poly.n.z.v * off) * 256.0f;
+            }
+            else
+            {
+                const float turn = rng.range(-3.1416f, 3.1416f), dist = rng.range(80.0f, 700.0f);
+                physics.pos.x = (px + std::cos(turn) * dist) * 256.0f;
+                physics.pos.y = (py + rng.range(-200.0f, 40.0f)) * 256.0f;
+                physics.pos.z = (pz + std::sin(turn) * dist) * 256.0f;
+            }
+            break;
+        }
+    }
+    c.timeCounter = rng.chance(40) ? 0 : rng.chance(90) ? rng.between(0, 70) : rng.between(-5, 0x200);
+    c.collided = rng.chance(85) ? rng.between(0, 16) : rng.between(-40, 60);
+    c.rayCollided = rng.chance(90) ? rng.below(2) : static_cast<int32>(rng.next());
+    c.backwardsCount = rng.chance(85) ? rng.between(0, 12) : rng.between(-3, 30);
+    c.spinCounter = rng.chance(85) ? rng.between(0, 70) : rng.between(-5, 200);
+    c.lookBackwards = rng.chance(70) ? 0 : rng.chance(90) ? 1 : static_cast<bool_>(rng.next());
+    if (rng.chance(40))
+        physics.angVel.y = rng.range(-6000.0f, 6000.0f);
+    if (rng.chance(10))
+        physics.angVel.y = rng.chance(50) ? 3000.0f : -3000.0f;
+    if (rng.chance(40))
+    {
+        physics.vel.x = rng.range(-30000.0f, 30000.0f);
+        physics.vel.z = rng.range(-30000.0f, 30000.0f);
+        physics.speed = rng.range(0.0f, 16000.0f);
+    }
+    if (rng.chance(10))
+        physics.speed = 8000.0f;
+    physics.inputBrake = static_cast<int16>(rng.chance(70) ? 0 : rng.chance(80) ? 1 : rng.between(-3, 3));
+    car.weaponAffect = static_cast<int16>(rng.chance(30) ? 9 : rng.below(12));
+    car.shakeCameraStrength = rng.chance(80) ? rng.range(0.0f, 4.0f) : rng.range(-100.0f, 100.0f);
+    setArg(ctx, 0, camera);
+    setArg(ctx, 1, rng.chance(70) ? 0u : rng.chance(85) ? 1u : rng.next());
+    setArg(ctx, 2, rng.chance(25) ? 0u : rng.chance(85) ? 1u : rng.next());
 }
 
 } // namespace rc::fuzz

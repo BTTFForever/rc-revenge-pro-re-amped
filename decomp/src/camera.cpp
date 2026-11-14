@@ -22,7 +22,12 @@ void AColCellXZFromPos(ptr32<_sColGridPSX> pGrid, ee_float x, ee_float z, ptr32<
 int32 AColGetCellIdFromXZ(ptr32<_sColGridPSX> pGrid, int32 x, int32 z);
 bool_ AColRay_Poly_1Way(ptr32<_sColCellVecPSX> pS, ptr32<_sColCellVecPSX> pE, ptr32<_sColPolyPSX> pP, ptr32<_sColCellVecPSX> pPoi);
 
-void CameraFollowPlayer(ptr32<_sCamera> pCamera, bool_ goStraightThere, bool_ doCollision); // below: still the original
+void CameraFollowPlayer(ptr32<_sCamera> pCamera, bool_ goStraightThere, bool_ doCollision);
+void CameraHandleTunnels(ptr32<_sCamera> pCamera);
+bool_ CameraGeneralRayCast(ptr32<_sColCellVecPSX> pS, ptr32<_sColCellVecPSX> pE, ptr32<_sColCellVecPSX> pPoi, ptr32<_sColNormalPSX> pNormal);
+ptr32<_sColGridCellPSX> AColGetCell(ptr32<_sColGridPSX> pGrid, ee_float x, ee_float z);                      // collision.cpp
+bool_ AColIsPositionOutsideWorldExtentsXZ(ptr32<_sColCellVecPSX> pPos);                                       // collision.cpp
+bool_ AColDownCast(ptr32<_sColCellVecPSX> pPos, ptr32<_sColCellVecPSX> pPoi, ptr32<_sColNormalPSX> pNormal, ptr32<uint8> pMatId); // collision.cpp
 void CameraSetModeDefaults(ptr32<_sCamera> pCamera);
 void CameraSetMode(ptr32<_sCamera> pCamera, int32 mode);
 void CameraSetMatrixFromLookAt(ptr32<_sCamera> pCamera, ptr32<vec32_> pLookAt);
@@ -1158,11 +1163,528 @@ void CameraProcess(int32 time, int32 split)
     G(lsVarG).fov = (F(60.0) - ee_itof(last.dValue) * kFovScale) + F(5.0);
 }
 
-// The follow camera (7,216 bytes, CAMERA's largest) is not decompiled yet: native callers reach the original through the
-// dispatcher. Not registered.
+// ---- CameraFollowPlayer: the follow camera ----------------------------------------------------------------------
+//
+// Once a frame in CAMERA_MODE_GAME_FOLLOW_PLAYER (and to place a camera at once, goStraightThere). The camera eases
+// from where it was towards a point behind the car (the offset turned by the car's heading), at a speed slowed while
+// the car spins or the camera was just pushed off a wall. Its distance from the car is held to the offset's length,
+// it is pushed sideways off walls (two ray casts across its view), kept above the ground, and then aimed at the
+// look-at point above the car (shaken while the car is hit by weapon 9). Looking backwards puts it in front of the
+// car instead. The locals live where the original's 0x270-byte frame kept them, since many go to guest functions by
+// address (and a stale word of it is read, see wallHit).
+
+namespace {
+
+const uint32_t kPointInPolyTable = 0x1f48e8u; // AColPointInPoly_NCLIP_DWO: one point-in-poly test per poly axis (ma)
+const uint32_t kRand = 0x1b8818u;
+const ee_float kSpinLimit = float_from_bits(0x453b8000u);    // 3000.0 at 0x3275d4: |angular velocity| of a spin
+const ee_float kThirdSplit = float_from_bits(0x3eaa7efau);    // 0.333 at 0x3275d8: look-at scale, split screen, near
+const ee_float kTwoThirdsSplit = float_from_bits(0x3f2a7efau); // 0.666 at 0x3275dc: the same for the far settings
+
+// x / 256 and x / 32, rounding towards zero.
+int32_t div256(int32_t value) { return (value < 0 ? value + 0xff : value) >> 8; }
+int32_t div32(int32_t value) { return (value < 0 ? value + 0x1f : value) >> 5; }
+
+// A whole-unit position (x / 256 on each axis) as the collision code's floats.
+void toCellVec(const vec32_ &pos, _sColCellVecPSX &out)
+{
+    out.x = ee_itof(div256(pos.x));
+    out.y = ee_itof(div256(pos.y));
+    out.z = ee_itof(div256(pos.z));
+}
+
+// The library's double to integer (dptoli): truncates, and saturates out of range.
+int32_t dpToInt(double value)
+{
+    if (value != value)
+        return 0;
+    if (value >= 2147483648.0)
+        return INT32_MAX;
+    if (value <= -2147483648.0)
+        return INT32_MIN;
+    return static_cast<int32_t>(value);
+}
+
+// Five eighths of a push (through the library's doubles, so exact), towards zero.
+int32_t fiveEighths(double value) { return dpToInt(value * 0.625); }
+
+// A push back off a wall: the step limited to +-limit, then five eighths of it.
+int32_t limitedPush(int32_t step, int32_t limit)
+{
+    int32_t value = limit < step ? limit : step;
+    const int32_t low = static_cast<int32_t>(0u - static_cast<uint32_t>(limit));
+    if (value < low)
+        value = low;
+    return fiveEighths(static_cast<double>(value));
+}
+
+// The tunnel blend raised by 500 (to 1800 at most) when a side ray hits a ceiling outside a tunnel.
+void ceilingHit(_sCamera &camera, const _sColNormalPSX &normal)
+{
+    if (normal.y < F(0.0) && camera.inTunnel == 0)
+    {
+        const int64_t delta = static_cast<int64_t>(camera.inTunnelDelta) + 500;
+        camera.inTunnelDelta = static_cast<int32>(delta > 1800 ? 1800 : delta);
+    }
+}
+
+// The original's frame and the values its phases share.
+struct Follow
+{
+    const GuestFrame &frame;
+    ptr32<_sCamera> pCamera;
+    _sCamera &camera;
+    bool straight, collide;
+    uint8_t split;
+    ptr32<_sObject> target;       // the target as the call began
+    ptr32<_sFPhysLibCar> physics; // its physics as the call began
+    bool spinning = false;
+    bool insideWall = false; // the camera's old position was inside a wall (frame +0x194)
+
+    template <typename T>
+    T &local(uint32_t offset) const { return *frame.local<T>(offset); }
+    template <typename T>
+    ptr32<T> at(uint32_t offset) const { return frame.local<T>(offset); }
+    const _sColCellVecPSX &carPos() const { return local<_sColCellVecPSX>(0x40); } // the car / 256 (x, y, z)
+};
+
+// The camera back at last frame's position; the speed of approach, the tunnel blend, the offset (lowered in a tunnel,
+// reversed while the car drives backwards) and the desired position behind the car.
+void followStart(Follow &f)
+{
+    _sCamera &camera = f.camera;
+    copyVec(camera.pos, camera.oldPos);
+    toCellVec(camera.oldPos, f.local<_sColCellVecPSX>(0x70));
+    camera.gotoSpeed = 10;
+    {
+        const _sFPhysLibCar &physics = *f.physics;
+        const ee_float scale = float_from_bits(0x3b800000u); // 1/256
+        _sColCellVecPSX &car = f.local<_sColCellVecPSX>(0x40);
+        car.x = physics.pos.x * scale;
+        car.y = physics.pos.y * scale;
+        car.z = physics.pos.z * scale;
+    }
+    if (f.straight)
+        camera.gotoSpeed = 1;
+    f.spinning = kSpinLimit <= ee_abs(f.physics->angVel.y);
+    if (f.spinning)
+        camera.spinCounter = 60;
+    else
+    {
+        camera.spinCounter = camera.spinCounter - 1;
+        if (camera.spinCounter < 0)
+            camera.spinCounter = 0;
+    }
+    if (!f.straight)
+        camera.gotoSpeed = camera.gotoSpeed + camera.spinCounter;
+    CameraHandleTunnels(f.pCamera);
+    camera.forceInTunnel = 0;
+
+    copyVec(camera.offset, camera.origOffset);
+    const int32_t lowered = camera.offset.y * (0x1000 - camera.inTunnelDelta);
+    const int32_t y = (lowered < 0 ? lowered + 0xfff : lowered) >> 12;
+    camera.offset.y = y;
+    if (f.split != 0)
+        camera.offset.y = 0;
+    else
+        camera.offset.y = y > 0x4fff ? y : 0x5000;
+
+    const _sFPhysLibCar &physics = *f.physics;
+    camera.driveDir = ee_ftoi(physics.vel.x * physics.mat.Xz + physics.vel.z * physics.mat.Zz);
+    if (camera.driveDir < 0 && F(8000.0) < physics.speed && physics.inputBrake == 0)
+        camera.backwardsCount = 10;
+    else if (!f.spinning)
+    {
+        camera.backwardsCount = camera.backwardsCount - 1;
+        if (camera.backwardsCount < 0)
+            camera.backwardsCount = 0;
+    }
+    if (camera.backwardsCount != 0)
+        camera.offset.z = -camera.offset.z;
+
+    _matAngles &angles = f.local<_matAngles>(0x80);
+    {
+        const _sFPhysLibCar &car = *camera.pTarget->pPhysics;
+        const ee_float zx = -car.mat.Zx;
+        angles.head = ArcTan(ee_ftoi(car.mat.Zz), ee_ftoi(zx));
+    }
+    angles.roll = 0;
+    angles.pitch = 0;
+    guest_call(kMat3nBuildXYZ, f.at<_matPsx>(0x10), f.at<_matAngles>(0x80));
+    Vec32MulMatPsx(ptr32<vec32_>(f.pCamera.address + 0x58u), f.at<_matPsx>(0x10), f.at<vec32_>(0x90));
+    const vec32_ &turned = f.local<vec32_>(0x90);
+    const _sFPhysLibCar &car = *camera.pTarget->pPhysics;
+    camera.desiredGoto.z = ee_ftoi(car.pos.z + ee_itof(turned.z));
+    camera.desiredGoto.x = ee_ftoi(car.pos.x + ee_itof(turned.x));
+    camera.desiredGoto.y = ee_ftoi(car.pos.y + ee_itof(turned.y));
+}
+
+// Whether the camera's old position is inside a wall: the polys of its cell (from the old position, then from the
+// current one, which is the same point) that it lies within 0x80 units of, or that the segment from it to the old
+// position crosses (tested at both ends and at a midpoint). Polys facing up (ma 0, normal y >= 0) are skipped.
+// The midpoint goes to the test as three shorts (the original's bug), so its z float is a stale stack word. The camera
+// was just put back at its old position, so both points are the same: the old-point and midpoint tests are kept as
+// the original has them but never decide anything (the midpoint is never reached).
+bool wallHit(Follow &f)
+{
+    _sCamera &camera = f.camera;
+    const ptr32<_sColGridPSX> grid = G(acolG).pGrid;
+    const uint32_t polys = grid->pPoly.address;
+    const ptr32<_sColCellVecPSX> camPos = f.at<_sColCellVecPSX>(0x30), oldPos = f.at<_sColCellVecPSX>(0x70);
+    toCellVec(camera.pos, *camPos);
+    const auto test = [&](uint32_t point, uint32_t poly)
+    {
+        const uint8_t axis = at<_sColPolyPSX>(poly).ma;
+        return guest_call<bool_>(at<uint32_t>(kPointInPolyTable + axis * 4u), point, poly) != 0;
+    };
+    for (int pass = 1; pass >= 0; --pass)
+    {
+        const ptr32<_sColCellVecPSX> from = pass == 0 ? camPos : oldPos;
+        if (AColIsPositionOutsideWorldExtentsXZ(from))
+            return false;
+        const ptr32<_sColGridCellPSX> cell = AColGetCell(grid, from->x, from->z);
+        uint32_t count = cell->list.num[0] + cell->list.num[1];
+        uint32_t ids = grid->pIds.address + cell->list.offset * 4u;
+        for (; count != 0; --count, ids += 4)
+        {
+            const uint32_t poly = polys + at<uint32_t>(ids) * 0x60u;
+            const _sColPolyPSX &p = at<_sColPolyPSX>(poly);
+            const ee_float d = ee_itof(ee_ftoi(p.d));
+            if (p.ma == 0 && !(p.n.y < F(0.0)))
+                continue;
+            const _sColCellVecPSX &c = *camPos, &o = *oldPos;
+            const int32_t camSide = ee_ftoi(p.n.x * c.x + p.n.y * c.y + p.n.z * c.z + d);
+            const ee_float oldDot = p.n.x * o.x + p.n.y * o.y + p.n.z * o.z;
+            if (!(camSide < 0x81))
+                continue;
+            bool hit;
+            if (camSide >= -0x80)
+                hit = test(camPos.address, poly);
+            else
+            {
+                const int32_t oldSide = ee_ftoi(oldDot + d);
+                if (oldSide <= 0)
+                {
+                    if (!(static_cast<int32_t>(0u - static_cast<uint32_t>(oldSide)) < 0x81))
+                        continue;
+                    hit = test(oldPos.address, poly);
+                }
+                else
+                {
+                    hit = test(camPos.address, poly) || test(oldPos.address, poly);
+                    if (!hit)
+                    {
+                        _sVec16 &mid = f.local<_sVec16>(0x90);
+                        std::memset(&mid, 0, 8);
+                        mid.x = static_cast<int16>(ee_ftoi(c.x + (o.x - c.x) * F(0.5)));
+                        mid.y = static_cast<int16>(ee_ftoi(c.y + (o.y - c.y) * F(0.5)));
+                        mid.z = static_cast<int16>(ee_ftoi(c.z + (o.z - c.z) * F(0.5)));
+                        std::memcpy(&f.local<uint64_t>(0x80), &mid, 8);
+                        hit = test(f.at<uint8_t>(0x80).address, poly);
+                    }
+                }
+            }
+            if (hit)
+            {
+                camera.timeCounter = 60;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Towards the desired position (the height always, across only when not inside a wall), then held at the offset's
+// length from the car: put on the circle at once when nearer, eased onto it when further.
+void approach(Follow &f)
+{
+    _sCamera &camera = f.camera;
+    const int32_t offX = div256(camera.offset.x), offZ = div256(camera.offset.z);
+    const int32_t time = camera.timeCounter;
+    if (time > 0)
+        camera.gotoSpeed = camera.gotoSpeed + time / 3;
+    camera.timeCounter = time - 1;
+    if (camera.timeCounter < 0)
+        camera.timeCounter = 0;
+    if (f.straight)
+        camera.gotoSpeed = 1;
+    if (camera.gotoSpeed <= 0)
+        camera.gotoSpeed = 1;
+    const int32_t speed = camera.gotoSpeed;
+    if (!f.insideWall)
+    {
+        camera.pos.x = camera.pos.x + ee_div(camera.desiredGoto.x - camera.pos.x, speed);
+        camera.pos.z = camera.pos.z + ee_div(camera.desiredGoto.z - camera.pos.z, speed);
+    }
+    camera.pos.y = camera.pos.y + ee_div(camera.desiredGoto.y - camera.pos.y, f.straight ? 1 : 10);
+
+    const _sColCellVecPSX &car = f.carPos();
+    const int32_t dx = ee_ftoi(car.x - ee_itof(div256(camera.pos.x)));
+    const int32_t dz = ee_ftoi(car.z - ee_itof(div256(camera.pos.z)));
+    const ee_float wanted = ee_sqrt(ee_itof(offX * offX + offZ * offZ));
+    ee_float distance = ee_sqrt(ee_itof(dx * dx + dz * dz));
+    if (distance == F(0.0))
+        distance = F(1.0);
+    const _sFPhysLibCar &physics = *f.physics;
+    const ee_float ringX = physics.pos.x - ee_itof(dx) * wanted / distance * F(256.0);
+    const ee_float ringZ = physics.pos.z - ee_itof(dz) * wanted / distance * F(256.0);
+    if (wanted < distance)
+    {
+        camera.pos.x = ee_ftoi(ringX);
+        camera.pos.z = ee_ftoi(ringZ);
+    }
+    else if (!f.insideWall && camera.rayCollided == 0)
+    {
+        const int32_t slower = speed - 10;
+        const ee_float rate = ee_itof(slower > 0 ? slower : 1);
+        const ee_float x = ee_itof(camera.pos.x), z = ee_itof(camera.pos.z);
+        camera.pos.x = ee_ftoi(x + (ringX - x) / rate);
+        camera.pos.z = ee_ftoi(z + (ringZ - z) / rate);
+    }
+    camera.rayCollided = 0;
+}
+
+// Pushes the camera off a wall a side ray hit: towards the hit point (moved back by the side step) by five eighths of
+// the way, limited by how long the camera has been colliding.
+void pushOff(Follow &f, int32_t stepX, int32_t stepZ)
+{
+    _sCamera &camera = f.camera;
+    const _sColCellVecPSX &poi = f.local<_sColCellVecPSX>(0x60);
+    const _sColCellVecPSX &cam = f.local<_sColCellVecPSX>(0x50);
+    const int32_t hitY = ee_ftoi(poi.y);
+    const int32_t hitX = ee_ftoi(poi.x + ee_itof(stepX));
+    const int32_t hitZ = ee_ftoi(poi.z + ee_itof(stepZ));
+    const int32_t collided = camera.collided;
+    const int32_t limit = collided / 2 + 2;
+    const int32_t dy = ee_ftoi(ee_itof(hitY) - cam.y), dx = ee_ftoi(ee_itof(hitX) - cam.x),
+                  dz = ee_ftoi(ee_itof(hitZ) - cam.z);
+    const int32_t px = limitedPush(dx, limit), py = limitedPush(dy, limit), pz = limitedPush(dz, limit);
+    const ee_float x = (cam.x + ee_itof(px)) * F(256.0), z = (cam.z + ee_itof(pz)) * F(256.0),
+                   y = (cam.y + ee_itof(py)) * F(256.0);
+    camera.rayCollided = 1;
+    camera.timeCounter = 60;
+    camera.pos.z = ee_ftoi(z);
+    camera.pos.x = ee_ftoi(x);
+    camera.pos.y = ee_ftoi(y);
+}
+
+// Two rays from the camera, one to each side (a 25th of the direction from the car, turned a quarter), push it off
+// walls; a hit on a ceiling raises the tunnel blend.
+void sideRays(Follow &f)
+{
+    _sCamera &camera = f.camera;
+    _sColCellVecPSX &cam = f.local<_sColCellVecPSX>(0x50);
+    toCellVec(camera.pos, cam);
+    vec32_ &dir = f.local<vec32_>(0xb0);
+    const _sColCellVecPSX &car = f.carPos();
+    dir.y = ee_ftoi(cam.y - car.y);
+    dir.x = ee_ftoi(cam.x - car.x);
+    dir.z = ee_ftoi(cam.z - car.z);
+    guest_call(kVec32Normalise, f.at<_sVec16>(0xc0), f.at<vec32_>(0xb0));
+    const _sVec16 &n = f.local<_sVec16>(0xc0);
+    const int32_t nx = n.x / 25, ny = n.y / 25, nz = n.z / 25;
+    dir.x = nx;
+    dir.y = ny;
+    dir.z = nz;
+    _sColCellVecPSX &right = f.local<_sColCellVecPSX>(0x90), &left = f.local<_sColCellVecPSX>(0xa0);
+    right.y = cam.y;
+    left.y = cam.y;
+    right.z = cam.z + ee_itof(nx);
+    left.z = cam.z - ee_itof(nx);
+    right.x = cam.x - ee_itof(nz);
+    left.x = cam.x + ee_itof(nz);
+    const ptr32<_sColCellVecPSX> poi = f.at<_sColCellVecPSX>(0x60);
+    const ptr32<_sColNormalPSX> normal = f.at<_sColNormalPSX>(0x80);
+    if (CameraGeneralRayCast(f.at<_sColCellVecPSX>(0x50), f.at<_sColCellVecPSX>(0xa0), poi, normal))
+    {
+        ceilingHit(camera, *normal);
+        pushOff(f, -nz, nx);
+    }
+    toCellVec(camera.pos, cam);
+    if (CameraGeneralRayCast(f.at<_sColCellVecPSX>(0x50), f.at<_sColCellVecPSX>(0x90), poi, normal))
+    {
+        ceilingHit(camera, *normal);
+        pushOff(f, nz, -nx);
+    }
+}
+
+// Above the ground under it: eased up to 150 units above (at once when placed), and at least 80.
+void aboveGround(Follow &f)
+{
+    _sCamera &camera = f.camera;
+    _sColCellVecPSX &from = f.local<_sColCellVecPSX>(0x80);
+    from.x = ee_itof(div256(camera.pos.x));
+    from.z = ee_itof(div256(camera.pos.z));
+    from.y = ee_itof(div256(camera.pos.y) + 30);
+    if (!AColDownCast(f.at<_sColCellVecPSX>(0x80), f.at<_sColCellVecPSX>(0x90), f.at<_sColNormalPSX>(0xa0), f.at<uint8>(0x100)))
+        return;
+    const ee_float ground = f.local<_sColCellVecPSX>(0x90).y;
+    int32_t y = camera.pos.y;
+    if (ee_itof(div256(y)) - ground < F(150.0) && camera.inTunnelDelta == 0)
+    {
+        if (f.straight)
+            y = ee_ftoi((ground + F(150.0)) * F(256.0));
+        else
+        {
+            const ee_float step = ((ground + F(150.0)) * F(256.0) - ee_itof(y)) * F(0.25);
+            y = dpToInt(static_cast<double>(y) + static_cast<double>(step.v) * 0.625);
+        }
+        camera.pos.y = y;
+    }
+    if (ee_itof(div256(y)) - ground < F(80.0))
+        camera.pos.y = ee_ftoi((ground + F(80.0)) * F(256.0));
+}
+
+// The look-at point: the look-at offset (lowered in a tunnel, scaled in split screen) turned by the car's heading,
+// above the car; shaken while the car is hit by weapon 9 (the camera-shake weapon effect).
+void lookAtCar(Follow &f)
+{
+    _sCamera &camera = f.camera;
+    const int32_t lowered = camera.origLookAtOffset.y * (0x1000 - camera.inTunnelDelta);
+    camera.lookAtOffset.y = (lowered < 0 ? lowered + 0xfff : lowered) >> 12;
+    Vec32MulMatPsx(ptr32<vec32_>(f.pCamera.address + 0x70u), f.at<_matPsx>(0x10), f.at<vec32_>(0));
+    vec32_ &v = f.local<vec32_>(0);
+    if (f.split != 0)
+    {
+        const ee_float scale = camera.near == 0 ? kThirdSplit : kTwoThirdsSplit;
+        const ee_float x = ee_itof(v.x) * scale, y = ee_itof(v.y), z = ee_itof(v.z) * scale;
+        v.x = ee_ftoi(x);
+        v.y = ee_ftoi(y);
+        v.z = ee_ftoi(z);
+    }
+    const _sFPhysLibCar &physics = *f.physics;
+    camera.targetPos.x = ee_ftoi(physics.pos.x + ee_itof(v.x));
+    camera.targetPos.y = ee_ftoi(physics.pos.y + ee_itof(v.y));
+    camera.targetPos.z = ee_ftoi(physics.pos.z + ee_itof(v.z));
+    copyVec(f.local<vec32_>(0x80), camera.targetPos);
+    _sObject &target = *f.target;
+    if (target.weaponAffect == 9)
+        for (int32 *axis : {&camera.targetPos.x, &camera.targetPos.y, &camera.targetPos.z})
+        {
+            const int32_t shake = guest_call<int32_t>(kRand) % 0xff;
+            *axis = ee_ftoi(ee_itof(*axis) + ee_itof(shake) * target.shakeCameraStrength);
+        }
+    CameraSetMatrixFromLookAt(f.pCamera, ptr32<vec32_>(f.pCamera.address + 0x58cu));
+}
+
+// One of the look-back rays: on a hit the camera moves five eighths of the way to it (moved back by the side step).
+void lookBehindRay(Follow &f, uint32_t end, int32_t stepX, int32_t stepZ)
+{
+    _sCamera &camera = f.camera;
+    const _sColCellVecPSX &poi = f.local<_sColCellVecPSX>(0x60);
+    if (!CameraGeneralRayCast(f.at<_sColCellVecPSX>(0x50), f.at<_sColCellVecPSX>(end), f.at<_sColCellVecPSX>(0x60), f.at<_sColNormalPSX>(0xd0)))
+        return;
+    const _sColCellVecPSX &cam = f.local<_sColCellVecPSX>(0x50);
+    const int32_t hitX = ee_ftoi(poi.x + ee_itof(stepX));
+    const int32_t hitY = ee_ftoi(poi.y);
+    const int32_t hitZ = ee_ftoi(poi.z + ee_itof(stepZ));
+    const int32_t px = fiveEighths((ee_itof(hitX) - cam.x).v);
+    const int32_t py = fiveEighths((ee_itof(hitY) - cam.y).v);
+    const int32_t pz = fiveEighths((ee_itof(hitZ) - cam.z).v);
+    const ee_float x = (cam.x + ee_itof(px)) * F(256.0), z = (cam.z + ee_itof(pz)) * F(256.0),
+                   y = (cam.y + ee_itof(py)) * F(256.0);
+    camera.pos.x = ee_ftoi(x);
+    camera.pos.z = ee_ftoi(z);
+    camera.pos.y = ee_ftoi(y);
+}
+
+// Looking backwards (once, the flag is cleared): the camera in front of the car (0x80 above, 8 units ahead), looking
+// back past it at the look-at offset turned round and stretched 16 times, then pushed off walls to either side.
+void lookBehind(Follow &f)
+{
+    _sCamera &camera = f.camera;
+    const ptr32<_sFPhysLibCar> physicsPtr = camera.pTarget->pPhysics;
+    const _sFPhysLibCar &physics = *physicsPtr;
+    _matAngles &angles = f.local<_matAngles>(0xb0);
+    {
+        const ee_float zx = -physics.mat.Zx;
+        const angle head = ArcTan(ee_ftoi(physics.mat.Zz), ee_ftoi(zx));
+        camera.lookBackwards = 0;
+        angles.head = static_cast<angle>(head - 0x8000);
+    }
+    angles.roll = 0;
+    angles.pitch = 0;
+    guest_call(kMat3nBuildXYZ, f.at<_matPsx>(0x90), f.at<_matAngles>(0xb0));
+    Vec32MulMatPsx(ptr32<vec32_>(f.pCamera.address + 0x70u), f.at<_matPsx>(0x90), f.at<vec32_>(0x80));
+    {
+        const vec32_ &v = f.local<vec32_>(0x80);
+        const ee_float x = physics.pos.x + ee_itof(v.x << 4), y = physics.pos.y + ee_itof(v.y),
+                       z = physics.pos.z + ee_itof(v.z << 4);
+        vec32_ &ahead = f.local<vec32_>(0xc0);
+        ahead.y = 0x8000;
+        ahead.z = -0x8000;
+        ahead.x = 0;
+        camera.targetPos.x = ee_ftoi(x);
+        camera.targetPos.y = ee_ftoi(y);
+        camera.targetPos.z = ee_ftoi(z);
+    }
+    Vec32MulMatPsx(f.at<vec32_>(0xc0), f.at<_matPsx>(0x90), f.at<vec32_>(0x80));
+    {
+        const vec32_ &v = f.local<vec32_>(0x80);
+        const ee_float x = physics.pos.x + ee_itof(v.x), z = physics.pos.z + ee_itof(v.z),
+                       y = physics.pos.y + float_from_bits(0x47160000u); // 38400 (150 units)
+        camera.pos.x = ee_ftoi(x);
+        camera.pos.z = ee_ftoi(z);
+        camera.pos.y = ee_ftoi(y);
+    }
+    CameraSetMatrixFromLookAt(f.pCamera, ptr32<vec32_>(f.pCamera.address + 0x58cu));
+
+    _sColCellVecPSX &cam = f.local<_sColCellVecPSX>(0x50);
+    toCellVec(camera.pos, cam);
+    vec32_ &dir = f.local<vec32_>(0x130);
+    const _sColCellVecPSX &car = f.carPos();
+    dir.x = ee_ftoi(cam.x - car.x);
+    dir.y = ee_ftoi(cam.y - car.y);
+    dir.z = ee_ftoi(cam.z - car.z);
+    guest_call(kVec32Normalise, f.at<_sVec16>(0x140), f.at<vec32_>(0x130));
+    const _sVec16 &n = f.local<_sVec16>(0x140);
+    const int32_t a = div32(n.x), c = div32(n.z);
+    dir.y = div32(n.y);
+    _sColCellVecPSX &first = f.local<_sColCellVecPSX>(0x120), &second = f.local<_sColCellVecPSX>(0x110);
+    first.x = cam.x + ee_itof(c);
+    first.z = cam.z - ee_itof(a);
+    second.x = cam.x - ee_itof(c);
+    second.y = cam.y;
+    second.z = cam.z + ee_itof(a);
+    dir.x = a;
+    dir.z = c;
+    first.y = cam.y;
+    lookBehindRay(f, 0x120, -c, a);
+    toCellVec(camera.pos, cam);
+    lookBehindRay(f, 0x110, c, -a);
+}
+
+} // namespace
+
 void CameraFollowPlayer(ptr32<_sCamera> pCamera, bool_ goStraightThere, bool_ doCollision)
 {
-    guest_call(0x113818, pCamera, goStraightThere, doCollision);
+    GuestFrame frame(0x270);
+    _sCamera &camera = *pCamera;
+    Follow f{frame, pCamera, camera, goStraightThere != 0, doCollision != 0, G(mainVarG).splitScreen, camera.pTarget,
+             camera.pTarget->pPhysics};
+    followStart(f);
+    if (!f.straight && f.collide)
+        f.insideWall = wallHit(f);
+    approach(f);
+    if (f.collide)
+        sideRays(f);
+    if (camera.rayCollided != 0)
+    {
+        camera.collided = camera.collided + 1;
+        if (camera.collided > 16)
+            camera.collided = 16;
+    }
+    else
+    {
+        camera.collided = camera.collided - 1;
+        if (camera.collided < 0)
+            camera.collided = 0;
+    }
+    aboveGround(f);
+    lookAtCar(f);
+    copyVec(camera.oldPos, camera.pos);
+    if (camera.lookBackwards != 0)
+        lookBehind(f);
 }
 
 // The camera's own ray cast (a copy of the collision code's, which also ignores the material 0x1a polys of the
@@ -1311,3 +1833,4 @@ RC_DECOMP_FN_SETUP(CameraOrbit, 0x115940, rc::fuzz::cameraPad)
 RC_DECOMP_FN_SETUP_HEAP(CameraProcess, 0x115b60, rc::fuzz::cameraProcess)
 RC_DECOMP_FN_SETUP(CameraCellCastCell, 0x113560, rc::fuzz::cameraCell)
 RC_DECOMP_FN_SETUP(CameraGeneralRayCast, 0x113218, rc::fuzz::cameraRay)
+RC_DECOMP_FN_SETUP(CameraFollowPlayer, 0x113818, rc::fuzz::cameraFollow)

@@ -26,5 +26,6 @@ void cameraPad(R5900Context *ctx, uint64_t &state, uint32_t scratch);        // 
 void cameraProcess(R5900Context *ctx, uint64_t &state, uint32_t scratch);    // a0 time, a1 split; both cameras varied
 void cameraCell(R5900Context *ctx, uint64_t &state, uint32_t scratch);       // a0 a level cell, a1/a2 segment, a3/t0 out
 void cameraRay(R5900Context *ctx, uint64_t &state, uint32_t scratch);        // a0/a1 segment, a2/a3 out
+void cameraFollow(R5900Context *ctx, uint64_t &state, uint32_t scratch);     // a0 camera, a1 goStraightThere, a2 doCollision
 
 } // namespace rc::fuzz
