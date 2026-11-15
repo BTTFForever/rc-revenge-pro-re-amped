@@ -253,7 +253,10 @@ namespace
     void bootSkipIntro(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         if (bootLevel() <= 0)
-            BackdropDoInitialScreens_0x111138(rdram, ctx, runtime);
+        {
+            static const auto initialScreens = rc::decompOr(0x111138u, &BackdropDoInitialScreens_0x111138);
+            initialScreens(rdram, ctx, runtime);
+        }
         else
             ctx->pc = getRegU32(ctx, 31);
     }

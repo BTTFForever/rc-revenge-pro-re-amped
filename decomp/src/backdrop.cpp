@@ -1,0 +1,257 @@
+// Decompiled from BACKDROP.c: the boot sequence's still screens and their sound. BackdropDoInitialScreens shows the
+// legal screen, loads the two halves of a stereo VAG into SPU2 memory and starts them, plays the Acclaim movie, then
+// shows three logo screens for up to 300 frames each (cross or circle moves on, start or select skips the rest), and
+// starts the loading movie. The screens are 640x240 24-bit BMPs from \SPLASH\, converted to 32-bit and uploaded to
+// both frame buffers in two 128-line halves.
+//
+// The other five functions are empty; BackdropInit and BackdropTerm are called by MainInit and MainTerm, and
+// BackdropThrowUpBuffer, BackdropFadeUpBuffer and BackdropFadeDown never.
+
+#include "rc_decomp.h"
+
+namespace rc {
+
+bool_ MemBlockAllocLo(ptr32<memHandle> pHandle, uint32 size); // mem.cpp
+void MemBlockFree(ptr32<memHandle> pHandle);
+
+namespace {
+
+constexpr uint32_t kFMPrepare = 0x1a0b70u, kFMUnPrepare = 0x1a0540u, kFMFileOpen = 0x1a0550u, kFMFileRead = 0x1a0838u,
+                   kFMFileClose = 0x1a0bf0u, kFMFileSeek = 0x1a0c10u, kFMFileLength = 0x1a0ca0u;
+constexpr uint32_t kSprintf = 0x1b8910u, kStrcat = 0x1b8af0u, kFlushCache = 0x1be9a0u;
+constexpr uint32_t kSetDefLoadImage = 0x1c4140u, kExecLoadImage = 0x1c4328u, kSyncPath = 0x1c3e28u, kSyncV = 0x1c3d90u;
+constexpr uint32_t kSifAllocIopHeap = 0x1c18c8u, kSifFreeIopHeap = 0x1c1938u, kSdTransToIOP = 0x1ca4d0u, kSdRemote = 0x1ca550u;
+constexpr uint32_t kDisplayInitHiRes = 0x182368u, kSwapBuffers = 0x18e988u, kInputSnapshot = 0x191810u, kInputHit = 0x191598u;
+constexpr uint32_t kMpegLoad = 0x1956a0u, kMpegPlay = 0x194b50u, kMpegTerm = 0x194ce0u, kMpegFinished = 0x195718u;
+constexpr uint32_t kSplashFolder = 0x322848u; // "\splash\"
+constexpr uint32_t kLegal = 0x3227c8u, kLeftVag = 0x3227d8u, kRightVag = 0x3227e8u, kAcclaimMovie = 0x3227f8u,
+                   kCarMovie = 0x322808u, kAscScreen = 0x322818u, kDbyScreen = 0x322828u, kLogoScreen = 0x322838u;
+constexpr uint32_t kGsLoadImage = 0x1e9ee0u, kErrorFn = 0x31e440u; // gs_limage, resVarG.pfLoadErrorFunction
+constexpr uint32_t kWidth = 640u, kHalfHeight = 0x80u;
+// Pad keys InputHit takes: start and select end the sequence, cross and circle move to the next screen.
+constexpr uint32_t kKeyStart = 0x03u, kKeySelect = 0x13u, kKeyCross = 0x0eu, kKeyCircle = 0x1eu;
+
+template <typename T>
+T load(uint32_t address)
+{
+    T value;
+    std::memcpy(&value, guest_host(address), sizeof(T));
+    return value;
+}
+
+template <typename T>
+void store(uint32_t address, T value)
+{
+    std::memcpy(guest_host(address), &value, sizeof(T));
+}
+
+// Reads a whole file from \splash\ into a new block at handle (a word in the caller's frame); the frame's first 0x50
+// bytes hold the name. Retries as the loader does: seek back after each failure, the error function (with the file
+// and 0) after six. Returns the file and its length.
+std::pair<int32_t, uint32_t> readSplashFile(const GuestFrame &frame, uint32_t handle, ptr32<char> name)
+{
+    const ptr32<char> path = frame.local<char>(0);
+    guest_call(kSprintf, path, kSplashFolder);
+    guest_call(kStrcat, path, name);
+    const int32_t fd = guest_call<int32_t>(kFMFileOpen, path);
+    const uint32_t length = guest_call<uint32_t>(kFMFileLength, fd);
+    MemBlockAllocLo(ptr32<memHandle>(handle), length);
+    int32_t retries = 0;
+    for (;;)
+    {
+        const uint32_t read = guest_call<uint32_t>(kFMFileRead, load<uint32_t>(handle), length, fd);
+        ++retries;
+        if (read == length)
+            break;
+        if (retries >= 6)
+        {
+            const uint32_t errorFn = load<uint32_t>(kErrorFn);
+            if (errorFn != 0u)
+            {
+                retries = 0;
+                guest_call(errorFn, fd, 0);
+            }
+        }
+        guest_call(kFMFileSeek, fd, 0, 0);
+    }
+    return {fd, length};
+}
+
+bool hit(uint32_t key) { return guest_call<int32_t>(kInputHit, key) != 0; }
+
+} // namespace
+
+ptr32<void> BackdropLoadBMP24(ptr32<char> name)
+{
+    GuestFrame frame(0xb0);
+    const uint32_t handle = frame.local<uint32_t>(0x50).address;
+    store<uint32_t>(handle, 0);
+    guest_call(kFMPrepare, 0x32000);
+    const int32_t fd = readSplashFile(frame, handle, name).first;
+    guest_call(kFMFileClose, fd);
+    guest_call(kFMUnPrepare);
+    return ptr32<void>(load<uint32_t>(handle));
+}
+
+// Converts the BMP's 640x240 BGR pixels (after its 0x36-byte header, rows as stored) to RGBX in a 640x256 block and
+// uploads it as two 128-line halves to the frame buffer that is not shown when buffer is the shown one's parity
+// (0xa00 when frameNumber & 1 == buffer, else 0).
+void BackdropDisplayBMP24(ptr32<void> pBmp, uint32 buffer)
+{
+    GuestFrame frame(0xf0);
+    const uint32_t handle = frame.local<uint32_t>(0x50).address;
+    store<uint32_t>(handle, 0);
+    MemBlockAllocLo(ptr32<memHandle>(handle), 0xa0000);
+    uint32_t source = pBmp.address + 0x36u;
+    for (uint32_t pixel = 0; pixel < 0x25800u; ++pixel, source += 3u)
+    {
+        const uint32_t out = pixel * 4u;
+        store<uint8_t>(load<uint32_t>(handle) + out, load<uint8_t>(source + 2u));
+        store<uint8_t>(load<uint32_t>(handle) + out + 1u, load<uint8_t>(source + 1u));
+        store<uint8_t>(load<uint32_t>(handle) + out + 2u, load<uint8_t>(source));
+        store<uint8_t>(load<uint32_t>(handle) + out + 3u, 0);
+    }
+    const auto base = [buffer] { return (G(gRdr).frameNumber & 1u) == buffer ? 0xa00u : 0u; };
+    guest_call(kSetDefLoadImage, kGsLoadImage, base(), kWidth >> 6, 0, 0, 0, kWidth, kHalfHeight);
+    guest_call(kFlushCache, 0);
+    guest_call(kExecLoadImage, kGsLoadImage, load<uint32_t>(handle));
+    guest_call(kSyncPath, 0, 0);
+    guest_call(kSetDefLoadImage, kGsLoadImage, base(), kWidth >> 6, 0, 0, kHalfHeight, kWidth, kHalfHeight);
+    guest_call(kFlushCache, 0);
+    guest_call(kExecLoadImage, kGsLoadImage, load<uint32_t>(handle) + kHalfHeight * kWidth * 4u);
+    guest_call(kSyncPath, 0, 0);
+    MemBlockFree(ptr32<memHandle>(handle));
+}
+
+// Loads a VAG (after its 0x30-byte header) into SPU2 memory at dwAddr through an IOP buffer and sets it as voice 0 or
+// 1's start (the left half when dwAddr is still 0x5000, its first value). dwAddr moves on past it.
+void BackdropLoadVAG(ptr32<char> name)
+{
+    GuestFrame frame(0xc0);
+    const uint32_t handle = frame.local<uint32_t>(0x50).address;
+    store<uint32_t>(handle, 0);
+    guest_call(kFMPrepare, 0x4b000);
+    const int32_t address = G(dwAddr);
+    if (address != 0x5000)
+        G(rightVAGAddr) = static_cast<uint32_t>(address);
+    else
+        G(leftVAGAddr) = static_cast<uint32_t>(address);
+    const auto [fd, length] = readSplashFile(frame, handle, name);
+    guest_call(kFlushCache, 0);
+    const uint32_t iop = guest_call<uint32_t>(kSifAllocIopHeap, length);
+    guest_call(kSdTransToIOP, load<uint32_t>(handle) + 0x30u, iop, length, 1);
+    guest_call(kSdRemote, 1, 0x80d0, 1, 0, iop, G(dwAddr), length);
+    guest_call(kSdRemote, 1, 0x80f0, 1, 1);
+    guest_call(kSifFreeIopHeap, iop);
+    G(dwAddr) = static_cast<int32_t>(static_cast<uint32_t>(G(dwAddr)) - 0x30u + length);
+    guest_call(kFMFileClose, fd);
+    guest_call(kFMUnPrepare);
+    MemBlockFree(ptr32<memHandle>(handle));
+}
+
+// Voices 0 and 1 (left and right): start addresses, pitch 0xe63, envelope, and key on for both.
+void BackdropPlayVAG()
+{
+    {
+        GuestFrame frame(0x10);
+        guest_call(kSdRemote, 1, 0x8050, 0x2040, G(leftVAGAddr));
+        guest_call(kSdRemote, 1, 0x8010, 0x200, 0xe63);
+        guest_call(kSdRemote, 1, 0x8050, 0x2042, G(rightVAGAddr));
+        guest_call(kSdRemote, 1, 0x8010, 0x202, 0xe63);
+        guest_call(kSdRemote, 1, 0x8010, 0, 0x3000);
+        guest_call(kSdRemote, 1, 0x8010, 0x102, 0x3000);
+        guest_call(kSdRemote, 1, 0x8030, 0x1500, 1);
+    }
+    guest_call(kSdRemote, 1, 0x8030, 0x1500, 2);
+}
+
+namespace {
+
+// Loads a screen and shows it in both frame buffers, swapping between.
+void showScreen(uint32_t pBuffer, uint32_t name)
+{
+    const uint32_t bmp = BackdropLoadBMP24(ptr32<char>(name)).address;
+    store<uint32_t>(pBuffer, bmp);
+    BackdropDisplayBMP24(ptr32<void>(bmp), 0);
+    G(gRdr).frameNumber += 1;
+    BackdropDisplayBMP24(ptr32<void>(load<uint32_t>(pBuffer)), 0);
+    guest_call(kSwapBuffers);
+    G(gRdr).frameNumber += 1;
+    MemBlockFree(ptr32<memHandle>(pBuffer));
+}
+
+enum class Wait { Timeout, Next, Skip };
+
+// Up to 300 frames; with anyKeyEnds every key ends the sequence.
+Wait waitScreen(bool anyKeyEnds)
+{
+    for (int32_t frame = 0; frame < 300; ++frame)
+    {
+        guest_call(kInputSnapshot);
+        guest_call(kSyncV, 0);
+        if (hit(kKeyStart) || hit(kKeySelect))
+            return Wait::Skip;
+        if (hit(kKeyCross) || hit(kKeyCircle))
+            return anyKeyEnds ? Wait::Skip : Wait::Next;
+    }
+    return Wait::Timeout;
+}
+
+} // namespace
+
+void BackdropDoInitialScreens()
+{
+    GuestFrame frame(0x50);
+    const uint32_t pBuffer = frame.local<uint32_t>(0).address;
+    guest_call(kDisplayInitHiRes);
+    showScreen(pBuffer, kLegal);
+    BackdropLoadVAG(ptr32<char>(kLeftVag));
+    BackdropLoadVAG(ptr32<char>(kRightVag));
+    guest_call(kMpegLoad, kAcclaimMovie, 0, 1, 0);
+    BackdropPlayVAG();
+    guest_call(kMpegPlay, 0, 0);
+    guest_call(kMpegLoad, kCarMovie, 1, 0, 1);
+    store<uint32_t>(pBuffer, BackdropLoadBMP24(ptr32<char>(kAscScreen)).address);
+    // Polls until the movie thread ends the movie: each poll is a call, so a scheduling point.
+    do
+        guest_checkpoint();
+    while (guest_call<int32_t>(kMpegFinished) == 0);
+    guest_call(kMpegTerm, 0);
+    BackdropDisplayBMP24(ptr32<void>(load<uint32_t>(pBuffer)), 0);
+    G(gRdr).frameNumber += 1;
+    BackdropDisplayBMP24(ptr32<void>(load<uint32_t>(pBuffer)), 0);
+    guest_call(kSwapBuffers);
+    G(gRdr).frameNumber += 1;
+    MemBlockFree(ptr32<memHandle>(pBuffer));
+    if (waitScreen(false) != Wait::Skip)
+    {
+        showScreen(pBuffer, kDbyScreen);
+        if (waitScreen(false) != Wait::Skip)
+        {
+            showScreen(pBuffer, kLogoScreen);
+            waitScreen(true);
+        }
+    }
+    guest_call(kMpegPlay, 1, 1);
+}
+
+void BackdropInit() {}
+void BackdropTerm() {}
+void BackdropThrowUpBuffer(ptr32<uint32>, uint32) {}
+void BackdropFadeUpBuffer(ptr32<uint32>) {}
+void BackdropFadeDown() {}
+
+} // namespace rc
+
+#include "res_fuzz.h"
+
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(BackdropDoInitialScreens, 0x111138, rc::fuzz::backdropScreens)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(BackdropLoadBMP24, 0x111850, rc::fuzz::backdropBmp)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(BackdropDisplayBMP24, 0x111a28, rc::fuzz::backdropDisplay)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(BackdropLoadVAG, 0x111cf0, rc::fuzz::backdropVag)
+RC_DECOMP_FN_BLOCKING_SETUP(BackdropPlayVAG, 0x111f60, rc::fuzz::backdropPlay)
+RC_DECOMP_FN(BackdropInit, 0x112010)
+RC_DECOMP_FN(BackdropTerm, 0x112018)
+RC_DECOMP_FN(BackdropThrowUpBuffer, 0x112020)
+RC_DECOMP_FN(BackdropFadeUpBuffer, 0x112028)
+RC_DECOMP_FN(BackdropFadeDown, 0x112030)

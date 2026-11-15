@@ -16,7 +16,7 @@ PSEUDO = ROOT / 'generated' / 'pseudo_all.c'
 def main():
     done = set()
     for path in (ROOT / 'src').glob('*.cpp'):
-        done |= set(int(a, 16) for a in re.findall(r'RC_DECOMP_FN(?:_BLOCKING|_NOFUZZ|_SETUP|_SETUP_HEAP)?\(\w+,\s*(0x[0-9a-f]+)[,)]', path.read_text()))
+        done |= set(int(a, 16) for a in re.findall(r'RC_DECOMP_FN\w*\(\w+,\s*(0x[0-9a-f]+)[,)]', path.read_text()))
     ready = {}
     for line in (ROOT / 'generated' / 'order.txt').read_text().splitlines():
         if not line.startswith('#'):

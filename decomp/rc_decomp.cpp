@@ -108,11 +108,24 @@ void runOriginal(Entry &entry, uint8_t *rdram, R5900Context *ctx, PS2Runtime *ru
 {
     EeScheduler &scheduler = runtime->eeScheduler();
     const uint32_t returnAddress = getRegU32(ctx, 31);
+    // The original runs on the running context, as the native does (runComparedNative): a blocking native it calls
+    // (registered without a shadow, so reached directly) reads its arguments' frame and makes its guest calls through
+    // the running context, and would otherwise see the caller's registers from before the original's frame.
+    R5900Context &running = scheduler.runningContext();
+    const bool copy = ctx != &running;
+    const R5900Context saved = copy ? running : R5900Context{};
+    if (copy)
+        running = *ctx;
     scheduler.holdCheckpoints(true);
-    entry.original(rdram, ctx, runtime);
-    for (int resumes = 0; ctx->pc != returnAddress && resumes < 1000000; ++resumes)
-        runtime->lookupFunction(ctx->pc)(rdram, ctx, runtime);
+    entry.original(rdram, &running, runtime);
+    for (int resumes = 0; running.pc != returnAddress && resumes < 1000000; ++resumes)
+        runtime->lookupFunction(running.pc)(rdram, &running, runtime);
     scheduler.holdCheckpoints(false);
+    if (copy)
+    {
+        *ctx = running;
+        running = saved;
+    }
 }
 std::unique_ptr<uint8_t[]> g_before;
 std::unique_ptr<uint8_t[]> g_expected;

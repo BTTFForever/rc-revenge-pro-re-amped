@@ -87,6 +87,15 @@ extern PS2Runtime *g_runtime;
 // that falls due at its next call or backward branch.
 inline void charge_ee_cycles(uint32_t cycles) { g_runtime->eeScheduler().accountCycles(cycles); }
 
+// A scheduling point, as each call in recompiled code is one: a native loop that polls memory another thread or an
+// interrupt sets, and whose original calls only leaf functions (which never yield by themselves), calls this once
+// per call the original makes, or the other thread would never run. Offline it does nothing.
+inline void guest_checkpoint()
+{
+    EeScheduler &scheduler = g_runtime->eeScheduler();
+    scheduler.checkpointFromNative(scheduler.runningContext());
+}
+
 // RC_DECOMP_CHARGE=<cycles>: an extra flat charge per native call, for testing timing effects.
 extern uint32_t g_nativeExtraCycles;
 
