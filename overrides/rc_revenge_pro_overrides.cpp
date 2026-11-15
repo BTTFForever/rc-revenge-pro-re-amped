@@ -270,7 +270,19 @@ namespace
         }
         std::cout << std::hex << "[rc_revenge_pro] game heap 0x" << base << " size 0x" << size
                   << ", guest heap end was 0x" << usedEnd << std::dec << std::endl;
-        MemBlockInit_0x194238(rdram, ctx, runtime);
+        static const auto memBlockInit = rc::decompOr(kMemBlockInitAddr, &MemBlockInit_0x194238);
+        memBlockInit(rdram, ctx, runtime);
+    }
+
+    // newlib's sqrt in this game takes and returns a double in one 64-bit register ($a0, $v0: the
+    // EE has no double-precision unit), but the runtime's stub for the name works on floats in
+    // $f12/$f0, so it returned its argument unchanged. Only the unused MATHS table builders call it.
+    // For the arguments they pass (positive) the wrapper is __ieee754_sqrt itself.
+    void sqrtSoftDouble(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        const uint32_t returnAddress = getRegU32(ctx, 31);
+        ps2___ieee754_sqrt_0x1c88f8(rdram, ctx, runtime);
+        ctx->pc = returnAddress;
     }
 
     // The runtime sets sp to the bottom of the 1 MB region SetupThread reserves. That
@@ -639,6 +651,7 @@ namespace
         runtime.replaceFunction(0x001CE9A0u, &mpegAddBsInChunks);
         runtime.replaceFunction(0x001C3D90u, &gsSyncV);
         runtime.replaceFunction(0x001C44A8u, &gsSetHalfOffsetProgressive);
+        runtime.replaceFunction(0x001C86C0u, &sqrtSoftDouble);
         runtime.replaceFunction(0x18e988u, &countGameFrame);
         ps2_host_input::setInputFrameCounter(&g_inputClock);
         runtime.replaceFunction(0x12fc58u, &mainGameLevelInit);

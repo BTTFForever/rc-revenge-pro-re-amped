@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include "ee_math.h"
+#include "matrix_fuzz.h"
 
 namespace rc {
 
@@ -17,7 +18,7 @@ bool fits16(uint32_t value)
 }
 
 // The original prints a debug warning here; these show up only on values that have already overflowed.
-void IssueWarning(const char *) {}
+void warnOverflow(const char *) {}
 
 int32_t matrixRow(int16_t x, int16_t y, int16_t z, int16_t a, int16_t b, int16_t c)
 {
@@ -35,7 +36,7 @@ void gteMatrixMul(int16_t x, int16_t y, int16_t z)
 void writeWarned(sVec16 &out, uint32_t x, uint32_t y, uint32_t z, const char *warning)
 {
     if (!fits16(x) || !fits16(y) || !fits16(z))
-        IssueWarning(warning);
+        warnOverflow(warning);
     out.x = static_cast<int16>(x);
     out.y = static_cast<int16>(y);
     out.z = static_cast<int16>(z);
@@ -66,7 +67,7 @@ void divScaler(sVec16 &out, const sVec16 &vec, int16_t scale)
     {
         const uint32_t inverse = static_cast<uint32_t>(ee_div(0x1000000, s));
         if (!fits16(inverse))
-            IssueWarning("Bollox in Vec16DivScaler");
+            warnOverflow("Bollox in Vec16DivScaler");
         z = static_cast<int32_t>(vec.z * inverse) >> 12;
         x = static_cast<int32_t>(vec.x * inverse) >> 12;
         y = static_cast<int32_t>(vec.y * inverse) >> 12;
@@ -119,7 +120,7 @@ void PS2C_GteMatrixMulMatrix(ptr32<_sMat> pMatOut, ptr32<_sMat> pMat1, ptr32<_sM
         gteMatrixMul(right[column], right[column + 3], right[column + 6]);
         const sVec32 result = G(gteOut);
         if (!fits16(static_cast<uint32_t>(result.x)) || !fits16(static_cast<uint32_t>(result.y)) || !fits16(static_cast<uint32_t>(result.z)))
-            IssueWarning("Overflow in GteVec16GteResult");
+            warnOverflow("Overflow in GteVec16GteResult");
         // Stored in this order: the output can overlap the second input.
         out[column + 3] = static_cast<int16_t>(result.y);
         out[column] = static_cast<int16_t>(result.x);
@@ -177,12 +178,38 @@ uint32 PS2C_Vec16Length(ptr32<_sVec16> pVec)
     return Sqr32(lengthSquared(*pVec));
 }
 
-uint32 PS2C_Vec16Normalise(ptr32<_sVec16> pOut, ptr32<_sVec16> pVec)
+namespace {
+
+uint32_t normalise16(sVec16 &out, const sVec16 &vec)
 {
-    const int16_t scale = static_cast<int16_t>(Sqr32(lengthSquared(*pVec)));
-    divScaler(*pOut, *pVec, scale);
+    const int16_t scale = static_cast<int16_t>(Sqr32(lengthSquared(vec)));
+    divScaler(out, vec, scale);
     // The original returns Sqr32's result as is, zero-extended, not the sign-extended scale.
     return static_cast<uint16_t>(scale);
+}
+
+// The shift that brings a 32-bit vector's largest component to 13 significant bits (none for smaller vectors).
+uint32_t narrowShift(const sVec32 &v)
+{
+    const int32_t bits = std::min({leadingSignBits(v.x), leadingSignBits(v.y), leadingSignBits(v.z)});
+    const int32_t shift = 18 - bits;
+    return shift < 0 ? 0u : static_cast<uint32_t>(shift);
+}
+
+sVec16 narrow(const sVec32 &v, uint32_t shift)
+{
+    sVec16 out{};
+    out.x = static_cast<int16>(v.x >> (shift & 31u));
+    out.y = static_cast<int16>(v.y >> (shift & 31u));
+    out.z = static_cast<int16>(v.z >> (shift & 31u));
+    return out;
+}
+
+} // namespace
+
+uint32 PS2C_Vec16Normalise(ptr32<_sVec16> pOut, ptr32<_sVec16> pVec)
+{
+    return normalise16(*pOut, *pVec);
 }
 
 void PS2C_GetVec16GteResult(ptr32<_sVec16> pOut)
@@ -308,6 +335,63 @@ void PS2C_GetVec32GteResult(ptr32<_sVec32> pOut)
     *pOut = G(gteOut);
 }
 
+// The PlayStation-era forms (PSXDEFS.c) that the game still calls.
+
+constexpr uint32_t kPrintf = 0x12e9e8u, kWarningFormat = 0x324b88u; // "\nPMATHS:PSXDEFS WARNING : %s\n"
+
+// Normalises a short vector, first scaling a short one up by 16 at a time (up to 4096) while its length is under
+// 1024, so the division keeps its precision. Returns the length (1 for a zero vector, which leaves pOut alone).
+uint32 ps2__Vec16Normalise(ptr32<_sVec16> pOut, ptr32<_sVec16> pVec)
+{
+    sVec16 vec = *pVec;
+    const uint32_t length = Sqr32(lengthSquared(vec));
+    if (length == 0u)
+        return 1;
+    uint32_t scale = length;
+    for (int step = 0; step < 3 && scale < 0x400u; ++step)
+    {
+        scale = length << (4 * (step + 1));
+        vec.x = static_cast<int16>(static_cast<uint16_t>(vec.x) << 4);
+        vec.y = static_cast<int16>(static_cast<uint16_t>(vec.y) << 4);
+        vec.z = static_cast<int16>(static_cast<uint16_t>(vec.z) << 4);
+    }
+    divScaler(*pOut, vec, static_cast<int16_t>(scale));
+    return length;
+}
+
+void GteMatrixMulMatrix(ptr32<_sMat> pMatOut, ptr32<_sMat> pMat1, ptr32<_sMat> pMat2)
+{
+    PS2C_GteMatrixMulMatrix(pMatOut, pMat1, pMat2);
+}
+
+// The real warning: printf (a tail call). The native forms above skip it.
+void IssueWarning(ptr32<char> warning)
+{
+    guest_call<int32_t>(kPrintf, ptr32<char>(kWarningFormat), warning);
+}
+
+void VSyncCallback(ptr32<void>) {}
+
+uint32 Vec16Length(ptr32<_sVec16> pVec)
+{
+    return Sqr32(lengthSquared(*pVec));
+}
+
+// The length of a long vector, narrowed to shorts for the square root and scaled back.
+uint32 ps2__Vec32Length(ptr32<_sVec32> pVec32)
+{
+    const sVec32 v = *pVec32;
+    const uint32_t shift = narrowShift(v);
+    return static_cast<uint32_t>(Sqr32(lengthSquared(narrow(v, shift)))) << shift;
+}
+
+uint32 ps2__Vec32Normalise(ptr32<_sVec16> pOut, ptr32<_sVec32> pVec32)
+{
+    const sVec32 v = *pVec32;
+    const uint32_t shift = narrowShift(v);
+    return normalise16(*pOut, narrow(v, shift)) << shift;
+}
+
 // 3DMATH.c
 
 uint32 VecLength(ptr32<_sVec16> pVec)
@@ -354,3 +438,10 @@ RC_DECOMP_FN(PS2C_NulGteMatrix, 0x19fd78)
 RC_DECOMP_FN(PS2C_SetTransMatrix, 0x19fda8)
 RC_DECOMP_FN(PS2C_GetVec32GteResult, 0x19fdd0)
 RC_DECOMP_FN(VecLength, 0x1a0478)
+RC_DECOMP_FN_SETUP(ps2__Vec16Normalise, 0x19eb68, rc::fuzz::vec16Pair)
+RC_DECOMP_FN(GteMatrixMulMatrix, 0x19ec88)
+RC_DECOMP_FN_SETUP(IssueWarning, 0x19ec90, rc::fuzz::warningText)
+RC_DECOMP_FN(VSyncCallback, 0x19f260)
+RC_DECOMP_FN_SETUP(Vec16Length, 0x19fc00, rc::fuzz::vec16Pair)
+RC_DECOMP_FN_SETUP(ps2__Vec32Length, 0x19fae8, rc::fuzz::vec32Pair)
+RC_DECOMP_FN_SETUP(ps2__Vec32Normalise, 0x19fb78, rc::fuzz::vec32Pair)
