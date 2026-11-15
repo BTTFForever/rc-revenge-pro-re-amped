@@ -39,6 +39,7 @@ struct Entry
     ReturnKind returns;
     void (*randomiseArgs)(R5900Context *, uint64_t &, uint32_t); // Null if random inputs would be meaningless.
     bool fuzzWholeRam = false; // The random test compares all of guest RAM, for a function that uses the game's heap.
+    bool offlineOnly = false;  // The random test runs only in the offline oracle, whose setup replaces the waits.
     std::atomic<uint64_t> calls{0};
     std::atomic<uint64_t> compared{0};
     std::atomic<uint64_t> mismatches{0};
@@ -91,6 +92,9 @@ extern uint32_t g_nativeExtraCycles;
 
 // Reads a hardware register, such as a timer, as the recompiled code does.
 uint32_t hw_read32(uint32_t address);
+
+// Writes a hardware register (DMA channel, VIF), as the recompiled code does.
+void hw_write32(uint32_t address, uint32_t value);
 
 // Calls guest code that has not been decompiled yet. It may block: this frame survives on the thread's fiber.
 template <typename R = void, typename... A>
@@ -267,6 +271,17 @@ T stale_stack(uint32_t frameSize, uint32_t offset)
     return value;
 }
 
+// An argument past the eighth: the caller stores it at $sp + 8 * index (index 0 for the ninth). Read from the running
+// context's $sp, which a native caller sets up with GuestFrame and stores, as the original does.
+template <typename T>
+T stack_arg(uint32_t index)
+{
+    const uint32_t sp = getRegU32(&g_runtime->eeScheduler().runningContext(), 29);
+    T value;
+    std::memcpy(&value, guest_host(sp + 8u * index), sizeof(T));
+    return value;
+}
+
 // A local variable the original keeps in its stack frame and passes to another function by address. Placing it at
 // the same guest address leaves guest RAM as the original would. Only for native code that does not call guest code
 // while the variable is live, since a guest callee's frame would overlap it.
@@ -332,6 +347,17 @@ inline uint32_t ee_divu(uint32_t a, uint32_t b)
                                        &::name##_##address, ::rc::Thunk<&::rc::name>::returns,       \
                                        nullptr};                                                     \
     static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &::rc::Thunk<&::rc::name>::run);
+
+// For a function that can block, or that writes hardware registers (a live comparison would run them twice), but whose
+// waits and hardware the setup can replace offline: not compared in the game, as RC_DECOMP_FN_BLOCKING, and given
+// random inputs by setup in the offline oracle only. The _HEAP form compares all of RAM.
+#define RC_DECOMP_FN_BLOCKING_SETUP_IMPL(name, address, setup, wholeRam)                              \
+    static ::rc::Entry rc_entry_##name{#name, address, &::rc::Thunk<&::rc::name>::run,               \
+                                       &::name##_##address, ::rc::Thunk<&::rc::name>::returns,       \
+                                       &setup, wholeRam, true};                                      \
+    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &::rc::Thunk<&::rc::name>::run);
+#define RC_DECOMP_FN_BLOCKING_SETUP(name, address, setup) RC_DECOMP_FN_BLOCKING_SETUP_IMPL(name, address, setup, false)
+#define RC_DECOMP_FN_BLOCKING_SETUP_HEAP(name, address, setup) RC_DECOMP_FN_BLOCKING_SETUP_IMPL(name, address, setup, true)
 
 // Compared on the game's own calls but not on random inputs, for functions whose real inputs are limited.
 #define RC_DECOMP_FN_NOFUZZ(name, address)                                                           \

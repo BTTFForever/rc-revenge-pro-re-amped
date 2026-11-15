@@ -5,6 +5,8 @@
 // such as a block of graphics chip register writes or a microprogram upload. gRdr.pDmaTag holds two chains of 1000
 // tags, one per frame, swapped each frame.
 
+#include "display_fuzz.h"
+#include "ee_math.h"
 #include "vifpk.h"
 
 #include <initializer_list>
@@ -77,6 +79,270 @@ void Rdr_Term()
 {
     MemBlockFree(ptr32<memHandle>(guest_addr(&G(gRdr).pDmaTag)));
 }
+
+void RdrState_Init();
+void GfxP2_EndScene();
+void GfxTex_Update(); // gfxtex.cpp
+
+namespace {
+
+constexpr uint32_t kAngleToRadians = 0x327bd0u, kCameraMinZ = 0x327bd4u, kCameraMaxZ = 0x327bd8u, kAspect = 0x327bdcu;
+constexpr uint32_t kScreenLimit = 0x327be0u, kLineDepth1 = 0x327be4u, kLineDepth2 = 0x327be8u;
+constexpr uint32_t kGfxP2_SwapBuffers = 0x18e988u, kSceGsSyncPath = 0x1c3e28u, kFlushCache = 0x1be9a0u;
+// Hardware registers: VIF1's error mask, DMA channel 1 (VIF1) and the DMA controller's status.
+constexpr uint32_t kVif1Err = 0x10003c20u, kD1Chcr = 0x10009000u, kD1Qwc = 0x10009020u, kD1Tadr = 0x10009030u,
+                   kDStat = 0x1000e010u;
+
+ee_float &fat(uint32_t address) { return *static_cast<ee_float *>(guest_host(address)); }
+uint64_t &qat(uint32_t address) { return *static_cast<uint64_t *>(guest_host(address)); }
+
+// Starts VIF1's DMA on a chain of tags (its error mask set, the channel's interrupt cleared), with the cache flushed.
+void startVif1Chain(uint32_t tags)
+{
+    hw_write32(kVif1Err, 2);
+    hw_write32(kD1Qwc, 0);
+    hw_write32(kD1Tadr, tags & 0x0fffffffu);
+    hw_write32(kDStat, 2);
+    guest_call(kFlushCache, 0);
+    hw_write32(kD1Chcr, 0x145);
+}
+
+} // namespace
+
+// The camera for a field of view (a 16-bit angle): the projection scales, the near and far planes, the normals of the
+// four side planes (each made by rotating an axis through the half angle) and an identity orientation.
+void Rdr_SetupCamera(ptr32<_sRdrCamera> pCamera, tAngle viewAngle)
+{
+    _sRdrCamera &cam = *pCamera;
+    const ee_float one(1.0f), half(0.5f), zero(0.0f);
+    const ee_float x = ee_itof(static_cast<int32_t>(static_cast<uint32_t>(viewAngle) >> 1)) * fat(kAngleToRadians);
+    cam.viewAngle = viewAngle;
+    ee_float d = ee_sinf(x);
+    d = d / ee_cosf(x);
+    cam.minZ = fat(kCameraMinZ);
+    const ee_float width = ee_itof(G(gGfxP2).wd);
+    cam.maxZ = fat(kCameraMaxZ);
+    d = one / d;
+    const ee_float aspect = width * fat(kAspect);
+    const ee_float halfD = d * half;
+    cam.normDVal = d;
+    const ee_float scaledD = d * width;
+    cam.dValY = halfD * aspect;
+    cam.dValX = scaledD * half;
+    cam.dVal = scaledD * half;
+
+    // Right and left: the X axis turned about Y (only two terms of the middle row are used).
+    {
+        const ee_float s = ee_sinf(x), c = ee_cosf(x);
+        const ee_float m[9] = {c, zero, -s, zero, one, zero, s, zero, c};
+        ee_float v[3] = {one, zero, zero};
+        cam.normRight.x = v[0] * m[0] + v[1] * m[3] + v[2] * s;
+        cam.normRight.y = v[0] * m[1] + v[1] * m[4];
+        cam.normRight.z = v[0] * m[2] + v[1] * m[5] + v[2] * m[8];
+        v[0] = -one;
+        v[1] = v[2] = zero;
+        cam.normLeft.x = -m[0];
+        cam.normLeft.y = -m[3];
+        cam.normLeft.z = v[0] * m[6] + v[1] * m[7] + v[2] * m[8];
+    }
+    // Bottom and top: the Y axis turned about X.
+    {
+        const ee_float s = ee_sinf(x), c = ee_cosf(x);
+        const ee_float m[9] = {one, zero, zero, zero, c, s, zero, -s, c};
+        ee_float v[3] = {zero, -one, zero};
+        cam.normBottom.x = v[0];
+        cam.normBottom.y = v[1] * c + v[2] * -s;
+        cam.normBottom.z = v[0] * m[2] + v[1] * m[5] + v[2] * m[8];
+        v[0] = zero;
+        v[1] = one;
+        v[2] = zero;
+        cam.normTop.x = m[1];
+        cam.normTop.y = m[4];
+        cam.normTop.z = v[0] * m[6] + v[1] * m[7] + v[2] * m[8];
+    }
+    sMat33 &mat = cam.mat;
+    mat.Xx = one;
+    mat.Xy = zero;
+    mat.Xz = zero;
+    mat.Yx = zero;
+    mat.Yy = one;
+    mat.Yz = zero;
+    mat.Zx = zero;
+    mat.Zy = zero;
+    mat.Zz = one;
+    // The orientation as a quaternion (the usual conversion; the matrix is the identity, so only the first case runs).
+    const uint32_t m = guest_addr(&mat), q = guest_addr(&cam.qtn);
+    const ee_float xx = mat.Xx;
+    const ee_float trace = xx + one + one;
+    if (zero < trace)
+    {
+        const ee_float r = ee_sqrt(trace + one);
+        const ee_float k = half / r;
+        cam.qtn.w = r * half;
+        cam.qtn.x = (mat.Yz - mat.Zy) * k;
+        cam.qtn.y = (mat.Zx - mat.Xz) * k;
+        cam.qtn.z = (mat.Xy - mat.Yx) * k;
+    }
+    else
+    {
+        uint32_t i = xx < one ? 1u : 0u;
+        if (fat(m + i * 16u) < one)
+            i = 2;
+        const ee_float diagonal = fat(m + i * 16u);
+        const uint32_t j = static_cast<uint32_t>(G(gaQtnNxt)[i]), k = static_cast<uint32_t>(G(gaQtnNxt)[j]);
+        const auto at = [m](uint32_t row, uint32_t column) { return m + row * 12u + column * 4u; };
+        const ee_float r = ee_sqrt(diagonal - (fat(m + j * 16u) + fat(m + k * 16u)) + one);
+        fat(q + 4u + i * 4u) = r * half;
+        const ee_float inv = half / r;
+        fat(q) = (fat(at(j, k)) - fat(at(k, j))) * inv;
+        fat(q + 4u + j * 4u) = (fat(at(i, j)) + fat(at(j, i))) * inv;
+        fat(q + 4u + k * 4u) = (fat(at(i, k)) + fat(at(k, i))) * inv;
+    }
+    cam.pos.x = zero;
+    cam.pos.z = zero;
+    cam.pos.y = zero;
+}
+
+void Rdr_Init()
+{
+    sRdr &rdr = G(gRdr);
+    const ptr32<_sRdrCamera> camera(guest_addr(&G(gRdrCamera)));
+    Rdr_SetupCamera(camera, 0x2aaa);
+    rdr.pCamera = camera;
+    rdr.frameNumber = 0;
+    rdr.pDmaTag = nullptr;
+    MemBlockAllocLo(ptr32<memHandle>(guest_addr(&rdr.pDmaTag)), 32000);
+    std::memset(guest_host(rdr.pDmaTag.address), 0, 32000);
+    rdr.currDmaTag = 0;
+    RdrState_Init();
+}
+
+// Ends the frame: closes the GS packet, swaps the buffers (waiting for the vertical blank), ends this frame's tag chain
+// and starts VIF1 on it (the chains of even and odd frames are 1000 tags apart).
+void Rdr_EndFrame()
+{
+    sRdr &rdr = G(gRdr);
+    GfxP2_EndScene();
+    guest_call(kGfxP2_SwapBuffers); // can block
+    const int32_t n = rdr.currDmaTag;
+    const uint32_t tags = rdr.pDmaTag.address;
+    rdr.currDmaTag = n + 1;
+    sDmaTag &end = *ptr32<sDmaTag>(tags + static_cast<uint32_t>(n) * 16u);
+    end.id = 0x70; // end
+    end.qwc = 0;
+    end.mark = 0;
+    end.next = nullptr;
+    GfxTex_Update();
+    guest_call(kSceGsSyncPath, 0, 0);
+    startVif1Chain((rdr.frameNumber & 1u) == 0 ? rdr.pDmaTag.address : rdr.pDmaTag.address + 1000u * 16u);
+    rdr.frameNumber = rdr.frameNumber + 1u;
+}
+
+// A debug line in screen space, clipped at the near plane and dropped if either end is off screen: two vertices of a
+// RGBAQ/XYZ2 GIF tag in the GS packet (a new tag when there is none open or the open one is nearly full).
+void Rdr_DrawLine(ptr32<_sVec3> p1, ptr32<_sVec3> p2, u32 colour)
+{
+    const uint32_t cam = G(gRdr).pCamera.address;
+    const auto toView = [cam](ptr32<_sVec3> p, ee_float &x, ee_float &y, ee_float &z)
+    {
+        _sVec3 v;
+        std::memcpy(&v, p.get(), sizeof(v));
+        const ee_float dx = v.x - fat(cam + 0xbcu), dy = v.y - fat(cam + 0xc0u), dz = v.z - fat(cam + 0xc4u);
+        x = dx * fat(cam + 0x98u) + dy * fat(cam + 0x9cu) + dz * fat(cam + 0xa0u);
+        y = dx * fat(cam + 0xa4u) + dy * fat(cam + 0xa8u) + dz * fat(cam + 0xacu);
+        z = dx * fat(cam + 0xb0u) + dy * fat(cam + 0xb4u) + dz * fat(cam + 0xb8u);
+    };
+    ee_float x1, y1, z1, x2, y2, z2;
+    toView(p1, x1, y1, z1);
+    toView(p2, x2, y2, z2);
+    const ee_float minZ = fat(cam + 0x14u);
+    if (z1 < minZ)
+    {
+        if (z2 < minZ)
+            return;
+        const ee_float t = (z2 - minZ) / (z2 - z1);
+        x1 = x2 + t * (x1 - x2);
+        y1 = y2 + t * (y1 - y2);
+        z1 = fat(cam + 0x14u);
+    }
+    else if (z2 < minZ)
+    {
+        const ee_float t = (z1 - minZ) / (z1 - z2);
+        y2 = y1 + t * (y2 - y1);
+        x2 = x1 + t * (x2 - x1);
+        z2 = fat(cam + 0x14u);
+    }
+    const ee_float one(1.0f), centre(2048.0f), zero(0.0f), sixteen(16.0f);
+    const ee_float inv1 = one / z1;
+    const ee_float dValX = fat(cam + 0xcu), dValY = fat(cam + 0x10u), limit = fat(kScreenLimit);
+    const ee_float sx1 = x1 * inv1 * dValX + centre, sy1 = centre - y1 * inv1 * dValY;
+    const ee_float depth1 = one - inv1;
+    const ee_float inv2 = one / z2;
+    const ee_float sy2 = centre - y2 * inv2 * dValY, sx2 = x2 * inv2 * dValX + centre;
+    const ee_float depth2 = one - inv2;
+    if (limit < sx1 || sx1 < zero || limit < sy1 || sy1 < zero || limit < sx2 || sx2 < zero || limit < sy2 || sy2 < zero)
+        return;
+
+    sGfxP2 &gfx = G(gGfxP2);
+    const uint64_t rgba = ((colour >> 16) & 0xffu) | (static_cast<uint64_t>((colour >> 8) & 0xffu) << 32);
+    const uint64_t blue = colour & 0xffu;
+    const uint64_t kNewTag = 0x2000000000000000ull, kRegs = 0x51; // NREG 2: RGBAQ, XYZ2
+    // The open tag, or a new one at the vertex's place (which then moves past it).
+    const auto open = [&gfx, kNewTag, kRegs](int32_t &index, uint32_t base, int32_t tagIndex, uint32_t &at) -> uint32_t
+    {
+        at = base + static_cast<uint32_t>(index) * 16u;
+        if (tagIndex != -1)
+        {
+            const uint32_t tag = base + static_cast<uint32_t>(tagIndex) * 16u;
+            if ((qat(tag) & 0x7fffu) < 0x7ffdu)
+                return tag;
+        }
+        const uint32_t tag = at;
+        qat(at) = kNewTag;
+        qat(at + 8u) = kRegs;
+        gfx.gifTagIdx = index;
+        gfx.buffIdx = index + 1;
+        ++index;
+        at += 16u;
+        return tag;
+    };
+    const auto count = [](uint64_t tag) { return (tag & 0xffffffffffff0000ull) | ((tag & 0x7fffu) + 1u); };
+    const auto xy = [](int32_t x, int32_t y)
+    { return static_cast<uint64_t>(static_cast<uint32_t>(x) & 0xffffu) | (static_cast<uint64_t>(static_cast<uint32_t>(y) & 0xffffu) << 32); };
+
+    // The globals are read where the original reads them, between the packet's stores.
+    int32_t index = gfx.buffIdx;
+    uint32_t base = gfx.pDmaBuff.address;
+    int32_t tagIndex = gfx.gifTagIdx;
+    uint32_t at = 0;
+    uint32_t tag = open(index, base, tagIndex, at);
+    qat(at) = rgba;
+    qat(at + 8u) = blue;
+    const int32_t y1i = ee_ftoi(sy1 * sixteen), x1i = ee_ftoi(sx1 * sixteen);
+    const int32_t z1i = ee_ftoi((one - depth1) * fat(kLineDepth1));
+    uint64_t value = qat(tag);
+    gfx.buffIdx = index + 2;
+    index = gfx.buffIdx;
+    qat(tag) = count(value);
+    base = gfx.pDmaBuff.address;
+    qat(at + 0x18u) = static_cast<uint64_t>(static_cast<int64_t>(z1i));
+    qat(at + 0x10u) = xy(x1i, y1i);
+    tagIndex = gfx.gifTagIdx;
+
+    tag = open(index, base, tagIndex, at);
+    qat(at) = rgba;
+    qat(at + 8u) = blue;
+    const int32_t y2i = ee_ftoi(sy2 * sixteen), x2i = ee_ftoi(sx2 * sixteen);
+    const int32_t z2i = ee_ftoi((one - depth2) * fat(kLineDepth2));
+    value = qat(tag);
+    qat(tag) = count(value);
+    qat(at + 0x18u) = static_cast<uint64_t>(static_cast<int64_t>(z2i));
+    gfx.buffIdx = index + 2;
+    qat(at + 0x10u) = xy(x2i, y2i);
+}
+
+// Starts VIF1 on a DMA chain. Never called by the game.
+void Rdr_Vif1Send(ptr32<u32> pData) { startVif1Chain(pData.address); }
 
 // GFX_P2.c
 
@@ -420,9 +686,8 @@ void RenderAllocateBuffers(uint32 size)
 // Sets aside the renderer's buffers and sets up the renderer.
 void RenderInit(uint32 size)
 {
-    GuestFrame frame(0x10);
     RenderAllocateBuffers(size);
-    guest_call(0x1a35b0u); // Rdr_Init
+    Rdr_Init();
 }
 
 void RenderFreeBuffers() {}
@@ -809,6 +1074,11 @@ RC_DECOMP_FN(Rdr_DrawPoint, 0x1a4410)
 RC_DECOMP_FN(Rdr_DrawTri, 0x1a4418)
 RC_DECOMP_FN(Rdr_DrawQuad, 0x1a4420)
 RC_DECOMP_FN_NOFUZZ(Rdr_Term, 0x1a3628)
+RC_DECOMP_FN_SETUP_HEAP(Rdr_Init, 0x1a35b0, rc::fuzz::rdrInit)
+RC_DECOMP_FN_BLOCKING_SETUP(Rdr_EndFrame, 0x1a38b8, rc::fuzz::rdrEndFrame)
+RC_DECOMP_FN_SETUP(Rdr_SetupCamera, 0x1a39f0, rc::fuzz::rdrCamera)
+RC_DECOMP_FN_SETUP(Rdr_DrawLine, 0x1a3ea0, rc::fuzz::rdrLine)
+RC_DECOMP_FN_BLOCKING_SETUP(Rdr_Vif1Send, 0x1a4428, rc::fuzz::hardwareArg)
 RC_DECOMP_FN(GfxP2_BeginScene, 0x18fc88)
 RC_DECOMP_FN(GfxP2_EndScene, 0x18fc90)
 RC_DECOMP_FN(GfxP2_RenderDmaSend, 0x18fcd0)

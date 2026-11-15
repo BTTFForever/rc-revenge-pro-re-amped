@@ -37,6 +37,11 @@ uint32_t hw_read32(uint32_t address)
     return g_runtime->memory().read32(address);
 }
 
+void hw_write32(uint32_t address, uint32_t value)
+{
+    g_runtime->Store32(g_rdram, &g_runtime->eeScheduler().runningContext(), address, value);
+}
+
 namespace {
 
 struct Registered
@@ -460,7 +465,7 @@ bool fuzzStep(uint8_t *rdram, const R5900Context &live, PS2Runtime *runtime, int
     while (!paused && progress.index < registry().size())
     {
         Entry &entry = *registry()[progress.index].entry;
-        if (entry.randomiseArgs == nullptr || (!only.empty() && only.find("," + std::string(entry.name) + ",") == std::string::npos))
+        if (entry.randomiseArgs == nullptr || entry.offlineOnly || (!only.empty() && only.find("," + std::string(entry.name) + ",") == std::string::npos))
         {
             ++progress.index;
             continue;

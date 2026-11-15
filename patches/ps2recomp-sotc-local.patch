@@ -2004,7 +2004,7 @@ index 9fdc3b1..e107198 100644
      void sample();
      void releaseMouse();
 diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
-index 43f67b0..8a33442 100644
+index 43f67b0..89ca077 100644
 --- a/ps2xRuntime/src/lib/ps2_runtime.cpp
 +++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
 @@ -547,6 +547,9 @@ static void UploadFrame(Texture2D &tex, PS2Runtime *rt, uint32_t &outWidth, uint
@@ -2016,6 +2016,21 @@ index 43f67b0..8a33442 100644
 +    ps2x::asyncvif::sync(rt->memory());
      rt->gs().latchHostPresentationFrame();
      if (GSSharedPresent::Active())
+     {
+@@ -2292,8 +2295,14 @@ void PS2Runtime::Store16(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr, uint
+     }
+ }
+ 
++// For the decompilation's offline oracle (rc_oracle): sees each 32-bit store the runtime sends to hardware, and drops
++// it if the hook returns true. Null (the default) costs one test per hardware store.
++bool (*g_ps2HardwareStoreHook)(uint32_t address, uint32_t value) = nullptr;
++
+ void PS2Runtime::Store32(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr, uint32_t value)
+ {
++    if (g_ps2HardwareStoreHook && g_ps2HardwareStoreHook(vaddr, value))
++        return;
+     ps2TraceGuestWrite(rdram, vaddr, 4u, value, 0u, "WRITE32", ctx);
+     try
      {
 diff --git a/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp b/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
 index 0b08639..aee6ae0 100644
