@@ -5,6 +5,7 @@
 // physics timestep. Each wheel is also a collision sphere: the first four spheres are the wheels.
 
 #include "ai_fuzz.h"
+#include "physics_fuzz.h"
 #include "ee_math.h"
 
 #define F(value) ::rc::ee_float(value##f)
@@ -620,7 +621,11 @@ void FCollisionResponseOther(ptr32<_sFPhysLibCar> pCar)
 {
     _sFPhysLibCar &car = *pCar;
     const _sFPhysLibColSphere *const spheres = car.pSphere.get();
-    sFVec normal{};
+    // With no contact at depth 0 or more, normal is the stale stack local (sp+0 of the original's 0x40 frame).
+    sFVec normal;
+    normal.x = stale_stack<ee_float>(0x40, 0);
+    normal.y = stale_stack<ee_float>(0x40, 4);
+    normal.z = stale_stack<ee_float>(0x40, 8);
     int32_t bestSphere = -1;
     ee_float best = -1.0f;
     const ee_float impulseX = car.impulse.x;
@@ -1391,13 +1396,13 @@ RC_DECOMP_FN(FPhysLibTerm, 0x196c00)
 // These follow pointers held inside the car, so random inputs would only produce meaningless addresses.
 RC_DECOMP_FN_NOFUZZ(FPhysLibSphereInitFixup, 0x1962a8)
 RC_DECOMP_FN_NOFUZZ(FInitialiseCar, 0x195fa0)
-RC_DECOMP_FN_NOFUZZ(FPhysLibCollisionReponse, 0x196c10)
+RC_DECOMP_FN_SETUP_HEAP(FPhysLibCollisionReponse, 0x196c10, rc::fuzz::physicsRace)
 RC_DECOMP_FN_NOFUZZ(FPhysLibAddCar, 0x196df0)
 RC_DECOMP_FN_NOFUZZ(FPhysLibDeleteCar, 0x196e38)
 RC_DECOMP_FN_SETUP(FPhysLibSimulation, 0x196a60, rc::fuzz::physicsCars)
-RC_DECOMP_FN_NOFUZZ(FCollisionResponse, 0x196f68)
-RC_DECOMP_FN_NOFUZZ(FCollisionResponseOther, 0x197b50)
-RC_DECOMP_FN_NOFUZZ(FCollisionResponseCarCar, 0x197e40)
+RC_DECOMP_FN_SETUP_HEAP(FCollisionResponse, 0x196f68, rc::fuzz::physicsResponse)
+RC_DECOMP_FN_SETUP_HEAP(FCollisionResponseOther, 0x197b50, rc::fuzz::physicsResponse)
+RC_DECOMP_FN_SETUP_HEAP(FCollisionResponseCarCar, 0x197e40, rc::fuzz::physicsResponse)
 RC_DECOMP_FN_NOFUZZ(FPhysLibUpdateCarSpheres, 0x198268)
 RC_DECOMP_FN_NOFUZZ(FUpdateCarWheels, 0x198740)
 RC_DECOMP_FN_NOFUZZ(FUpdateCarBody, 0x198c68)
