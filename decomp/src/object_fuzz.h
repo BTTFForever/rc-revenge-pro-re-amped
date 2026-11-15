@@ -24,6 +24,7 @@ void objectScrape(R5900Context *ctx, uint64_t &state, uint32_t scratch);      //
 void objectOvertaking(R5900Context *ctx, uint64_t &state, uint32_t scratch);  // a0 a car that may have passed one, a2 a time
 void objectAffect(R5900Context *ctx, uint64_t &state, uint32_t scratch);      // a0 a car under a weapon's effect, a1 a time
 void objectFrontEnd(R5900Context *ctx, uint64_t &state, uint32_t scratch);    // a0 the carousel's choice; cars on it
+void objectRender(R5900Context *ctx, uint64_t &state, uint32_t scratch);       // a0 a real car to draw
 void objectCreateCars(R5900Context *ctx, uint64_t &state, uint32_t scratch);  // a0 a time; the car list and starts
 
 } // namespace rc::fuzz

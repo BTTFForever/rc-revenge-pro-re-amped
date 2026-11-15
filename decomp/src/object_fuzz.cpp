@@ -6,7 +6,9 @@
 #include "object_fuzz.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <cstdio>
 #include <iterator>
 
 namespace rc::fuzz {
@@ -649,6 +651,147 @@ void objectCreateCars(R5900Context *ctx, uint64_t &state, uint32_t)
     if (chance(state, 15) && inRam(G(pLvlG).address))
         mem<uint32_t>(G(pLvlG).address + 0x30u) = 0;
     setArg(ctx, 0, static_cast<uint32_t>(timeNear(state)));
+}
+
+// a0 a real car set up to be drawn: invincibility, lights and their facing, wheel spin and blur levels, the dump tug's
+// sled (a second render object in scratch when the car has none) and rock, the six-wheeler's middle pair (a wheel
+// table with six lists in scratch), the front end's transposed matrix.
+void objectRender(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    soundOff();
+    varyCars(state);
+    const uint32_t car = objectAt(pickCar(state));
+    _sObject &o = mem<_sObject>(car);
+    const uint32_t physics = o.pPhysics.address;
+    if (chance(state, 50))
+        o.invincible = static_cast<int8>(nextFuzz(state));
+    if (chance(state, 30))
+        o.playerType = static_cast<uint8>(rnd(state, 4));
+    if (chance(state, 30))
+        o.lockOnMe = static_cast<int8>(rnd(state, 2));
+    if (chance(state, 60))
+    {
+        o.lightsOn = static_cast<int8>(rnd(state, 4));
+        o.lightsPresent = static_cast<int8>(chance(state, 70) ? 3 : rnd(state, 4));
+        o.bodgeRearLightOn = static_cast<int8>(rnd(state, 3));
+        o.bodgeHeadLightOn = static_cast<int8>(rnd(state, 3));
+    }
+    if (chance(state, 30))
+    {
+        const int lamp = static_cast<int>(rnd(state, 4));
+        if (chance(state, 50))
+            o.rearLight[lamp][0].z = 0.0f;
+        else
+            o.headLight[lamp][0].z = 0.0f;
+    }
+    if (chance(state, 30))
+        for (int i = 0; i < 4; ++i)
+        {
+            o.rearLightFlareSize[i] = frnd(state, 4000.0f);
+            o.headLightFlareSize[i] = frnd(state, 4000.0f);
+        }
+    mem<int8_t>(physics + 0x1ceu) = static_cast<int8_t>(chance(state, 75) ? 1 : rnd(state, 3)); // mode
+    if (chance(state, 30))
+        mem<uint8_t>(physics + 0x1cdu) = static_cast<uint8_t>(nextFuzz(state));
+    if (chance(state, 30))
+    {
+        mem<int32_t>(kMainVars + 8u) = 1; // currentDo: the front end
+        mem<int32_t>(0x1f3730u) = static_cast<int32_t>(rnd(state, 2)); // visFxVarG.iResultTrigger
+    }
+    if (chance(state, 30))
+        mem<int32_t>(kMainVars + 0x378u) = static_cast<int32_t>(rnd(state, 2)); // iWhichSplitScreen
+    if (chance(state, 30))
+        o.zShortestDrawnDist = static_cast<uint16>(nextFuzz(state));
+    if (chance(state, 30))
+        o.zDrawnDist = static_cast<uint16>(chance(state, 50) ? rnd(state, 2000) : nextFuzz(state));
+    if (chance(state, 20))
+        mem<int32_t>(0x1e9fb0u + 0x5b8u * rnd(state, 2)) = static_cast<int32_t>(rnd(state, 3)); // camera mode
+    if (chance(state, 50))
+        for (uint32_t i = 0; i < 4; ++i)
+        {
+            mem<float>(physics + 0xe0u + i * 0x48u) = frnd(state, chance(state, 50) ? 100.0f : 100000.0f);
+            mem<float>(physics + 0xe4u + i * 0x48u) = frnd(state, chance(state, 50) ? 100.0f : 100000.0f);
+        }
+    if (chance(state, 40))
+    {
+        mem<uint32_t>(0x327f28u) = rnd(state, 60); // ObjectBlurMaxVel
+        mem<uint32_t>(0x327f24u) = rnd(state, 30); // ObjectBlurMedVel
+    }
+    if (chance(state, 30)) // spins on the blur thresholds
+        for (uint32_t i = 0; i < 4; ++i)
+        {
+            const uint32_t edge = mem<uint32_t>(chance(state, 50) ? 0x327f28u : 0x327f24u) + rnd(state, 3) - 1;
+            mem<float>(physics + 0xe0u + i * 0x48u) = static_cast<float>(static_cast<int32_t>(edge)) * (chance(state, 50) ? 1.0f : -1.0f);
+        }
+    if (chance(state, 40))
+    {
+        // The camera straight ahead of or behind the car (its z column), so the lights face it squarely.
+        const float *m = &mem<float>(physics + 0x4cu);
+        const float cx = m[2], cy = m[5], cz = m[8];
+        const float n = std::sqrt(cx * cx + cy * cy + cz * cz);
+        if (n > 0.0f)
+        {
+            const float side = chance(state, 50) ? 1.0f : -1.0f, dist = 5.0f + static_cast<float>(rnd(state, 60));
+            const float spread = chance(state, 50) ? 0.02f : 0.3f;
+            float *cam = &mem<float>(0x1f40b8u + 0xbcu);
+            for (int k = 0; k < 3; ++k)
+            {
+                const float c = k == 0 ? cx : k == 1 ? cy : cz;
+                cam[k] = mem<float>(physics + 8u + 4u * static_cast<uint32_t>(k)) / 256.0f + (side * c / n + frnd(state, spread)) * dist;
+            }
+        }
+    }
+    if (chance(state, 30))
+        for (int b = 0x50; b < 0x54; ++b)
+            mem<uint8_t>(o.pDef.address + static_cast<uint32_t>(b)) = static_cast<uint8_t>(chance(state, 20) ? 0xff : nextFuzz(state));
+    // The wheel lists: a copy with six, the last two the rear pair's.
+    const uint32_t res = scratch + 0x3000u;
+    if (inRam(o.pWheels.address) && inRam(o.pWheels->pWheelRes.address))
+    {
+        std::memcpy(guest_host(res), guest_host(o.pWheels->pWheelRes.address), 16);
+        mem<uint32_t>(res + 16) = mem<uint32_t>(res + 8);
+        mem<uint32_t>(res + 20) = mem<uint32_t>(res + 12);
+        // The dumped cars have one blur level per wheel: lists of up to five (copies of the wheel's part) in scratch.
+        if (chance(state, 70))
+            for (uint32_t i = 0; i < 6; ++i)
+            {
+                const uint32_t real = mem<uint32_t>(res + 4 * i);
+                if (!inRam(real) || !inRam(mem<uint32_t>(real + 4)))
+                    continue;
+                const uint32_t list = scratch + 0x3200u + i * 0x20u, count = 1 + rnd(state, 5);
+                mem<uint32_t>(list) = count;
+                for (uint32_t j = 0; j < count; ++j)
+                {
+                    const uint32_t head = scratch + 0x3400u + (i * 5 + j) * 0x80u;
+                    std::memcpy(guest_host(head), guest_host(mem<uint32_t>(real + 4)), 0x74);
+                    mem<uint32_t>(list + 4 + 4 * j) = head;
+                }
+                mem<uint32_t>(res + 4 * i) = list;
+            }
+        o.pWheels->pWheelRes = ptr32<_sWheelRes>(res);
+    }
+    const uint32_t r = rnd(state, 100);
+    if (r < 20)
+        o.pDef->type = static_cast<eObjectType>(0x12);
+    else if (r < 30)
+        o.pDef->type = static_cast<eObjectType>(0x11);
+    else if (r < 35)
+        o.pDef->type = static_cast<eObjectType>(0xf);
+    else if (r < 40)
+        o.pDef->type = static_cast<eObjectType>(0x14 + rnd(state, 19));
+    if (!o.pRendObj2 && chance(state, 60))
+    {
+        const uint32_t sled = scratch + 0x3100u;
+        std::memcpy(guest_host(sled), guest_host(o.pRendObj.address), 0x38);
+        o.pRendObj2 = ptr32<_sRendObj>(sled);
+    }
+    if (chance(state, 50))
+        o.weaponType = 0xf;
+    if (chance(state, 60))
+        o.tipAngle = static_cast<int32>(nextFuzz(state));
+    if (!inRam(mem<uint32_t>(kObjectList + 0x17cu)))
+        mem<uint32_t>(kObjectList + 0x17cu) = o.pRendObj->pRendObjHead.address;
+    setArg(ctx, 0, car);
 }
 
 } // namespace rc::fuzz

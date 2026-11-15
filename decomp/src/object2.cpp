@@ -9,12 +9,6 @@ namespace rc {
 
 using namespace object;
 
-// Not ported yet (unregistered; native callers reach the originals through these): ObjectRender (0x1357e0, the car
-// body, tint/env-map flags, wheels through the GTE and the wheel blur levels, shadow), ObjectRenderLights (0x1343f0,
-// 3,736 bytes of light quads and flares) and ObjectDumptugSled (0x1387a8, the dump tug's sled and rock).
-void ObjectRenderLights(ptr32<_sObject> pObject) { guest_call(0x1343f0u, pObject); }
-void ObjectRender(ptr32<_sObject> pObject) { guest_call(0x1357e0u, pObject); }
-void ObjectDumptugSled(ptr32<_sObject> pObject) { guest_call(0x1387a8u, pObject); }
 
 
 // ---------------------------------------------------------------------------------------------------------------------
