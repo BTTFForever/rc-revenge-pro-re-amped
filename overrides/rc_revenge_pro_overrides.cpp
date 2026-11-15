@@ -232,7 +232,8 @@ namespace
     {
         if (bootLevel() <= 0)
         {
-            MainFrontProcess_0x12f500(rdram, ctx, runtime);
+            static const auto frontProcess = rc::decompOr(0x12f500u, &MainFrontProcess_0x12f500);
+            frontProcess(rdram, ctx, runtime);
             return;
         }
         constexpr uint32_t kMain = 0x001ED900u;
@@ -355,7 +356,8 @@ namespace
 
     void mainGameLevelInit(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
-        MainGameLevelInit_0x12fc58(rdram, ctx, runtime);
+        static const auto levelInit = rc::decompOr(0x12fc58u, &MainGameLevelInit_0x12fc58);
+        levelInit(rdram, ctx, runtime);
         g_levelFrames.store(0u);
         g_inputClock.store(((g_inputClock.load() >> 32) + 1u) << 32);
     }
