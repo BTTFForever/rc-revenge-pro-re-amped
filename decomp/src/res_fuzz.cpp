@@ -651,6 +651,9 @@ void readResource(const Resource &resource, uint32_t at)
 
 } // namespace
 
+bool resLoadEnvironment(uint64_t &state, uint32_t scratch) { return loadEnvironment(state, scratch); }
+uint32_t resPickId(uint64_t &state) { return pickId(state); }
+
 // --- RES ---
 
 void resInit(R5900Context *ctx, uint64_t &state, uint32_t scratch)

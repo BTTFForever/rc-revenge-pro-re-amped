@@ -50,4 +50,9 @@ void backdropVag(R5900Context *ctx, uint64_t &state, uint32_t scratch);         
 void backdropDisplay(R5900Context *ctx, uint64_t &state, uint32_t scratch);     // a0 a BMP anywhere in RAM, a1 a buffer
 void backdropPlay(R5900Context *ctx, uint64_t &state, uint32_t scratch);        // no arguments; the voice addresses
 
+// For other units' setups: the loader ready to load (see loadEnvironment in the .cpp; false without a disc) and the id
+// of a small resource from the disc (now and then marked loaded already).
+bool resLoadEnvironment(uint64_t &state, uint32_t scratch);
+uint32_t resPickId(uint64_t &state);
+
 } // namespace rc::fuzz

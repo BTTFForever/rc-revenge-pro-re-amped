@@ -349,13 +349,22 @@ inline uint32_t ee_divu(uint32_t a, uint32_t b)
 
 } // namespace rc
 
+// A function that is never compared live still counts its calls (the "calls" column of RC_SHADOW_LOG).
+#define RC_DECOMP_COUNTED(name)                                                                      \
+    static void rc_counted_##name(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)            \
+    {                                                                                                \
+        rc_entry_##name.calls.fetch_add(1u, std::memory_order_relaxed);                              \
+        ::rc::Thunk<&::rc::name>::run(rdram, ctx, runtime);                                          \
+    }                                                                                                \
+    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_counted_##name);
+
 // For a function that can block: it runs natively and cannot be compared call by call, because the
 // comparison needs to run it twice from one state.
 #define RC_DECOMP_FN_BLOCKING(name, address)                                                         \
     static ::rc::Entry rc_entry_##name{#name, address, &::rc::Thunk<&::rc::name>::run,               \
                                        &::name##_##address, ::rc::Thunk<&::rc::name>::returns,       \
                                        nullptr};                                                     \
-    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &::rc::Thunk<&::rc::name>::run);
+    RC_DECOMP_COUNTED(name)
 
 // For a function that can block, or that writes hardware registers (a live comparison would run them twice), but whose
 // waits and hardware the setup can replace offline: not compared in the game, as RC_DECOMP_FN_BLOCKING, and given
@@ -364,7 +373,7 @@ inline uint32_t ee_divu(uint32_t a, uint32_t b)
     static ::rc::Entry rc_entry_##name{#name, address, &::rc::Thunk<&::rc::name>::run,               \
                                        &::name##_##address, ::rc::Thunk<&::rc::name>::returns,       \
                                        &setup, wholeRam, true};                                      \
-    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &::rc::Thunk<&::rc::name>::run);
+    RC_DECOMP_COUNTED(name)
 #define RC_DECOMP_FN_BLOCKING_SETUP(name, address, setup) RC_DECOMP_FN_BLOCKING_SETUP_IMPL(name, address, setup, false)
 #define RC_DECOMP_FN_BLOCKING_SETUP_HEAP(name, address, setup) RC_DECOMP_FN_BLOCKING_SETUP_IMPL(name, address, setup, true)
 
