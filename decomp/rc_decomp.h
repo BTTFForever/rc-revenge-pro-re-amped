@@ -240,9 +240,9 @@ struct Thunk<Fn>
 
 struct Registrar
 {
-    Registrar(Entry &entry, RecompFn shadow, bool sameAsReference)
+    Registrar(Entry &entry, RecompFn shadow, bool registered)
     {
-        if (sameAsReference)
+        if (registered)
             registerEntry(entry, shadow);
         else
             notRegistered(entry.name);
@@ -364,13 +364,34 @@ inline uint32_t ee_divu(uint32_t a, uint32_t b)
 
 } // namespace rc
 
+// A native written for every version of the game: where its function differs (tools/version_diff.py), the body
+// follows each version's own instructions (#if RC_VERSION_EU around the differing parts). Declaring it, before the
+// function's RC_DECOMP_FN* line, registers the native in every build, the versions where the function changed
+// included. A native without it is registered only where its function is the same as the USA one. Write it near the
+// top of the file, before anything that asks whether the function is registered (RC_DIVERT_IF_CHANGED, which such a
+// native does not need, and the registration line).
+//   RC_VERSION_VARIANT(ScreenAdjust)
+//   RC_DECOMP_FN_SETUP(ScreenAdjust, rc::fuzz::frontScreenAdjust)
+namespace rc {
+template <const FnInfo &F>
+inline constexpr bool versionVariant = false;
+// Registered in this build: the same as the USA function, or written for every version.
+template <const FnInfo &F>
+inline constexpr bool registeredHere = F.sameAsReference || versionVariant<F>;
+} // namespace rc
+#define RC_VERSION_VARIANT(name)                                                                     \
+    namespace rc {                                                                                   \
+    template <>                                                                                      \
+    inline constexpr bool versionVariant<fns::name> = true;                                          \
+    }
+
 // The first statement of a native whose function differs in some version of the game (a changed function, listed by
 // tools/version_diff.py), when other native code calls it directly: in a version where it differs, the call goes to
 // that version's recompiled function instead, as guest code's calls do (the native is not registered there).
 //   int32_t SysTimerGet() { RC_DIVERT_IF_CHANGED(SysTimerGet); ... }
 //   void HudSprite(ptr32<_sSprite> s, ee_float x, ...) { RC_DIVERT_IF_CHANGED(HudSprite, s, x, ...); ... }
 #define RC_DIVERT_IF_CHANGED(name, ...)                                                              \
-    if constexpr (!::rc::fns::name.sameAsReference)                                                  \
+    if constexpr (!::rc::registeredHere<::rc::fns::name>)                                            \
         return ::rc::guest_call<decltype(::rc::name(__VA_ARGS__))>(::rc::fns::name.address __VA_OPT__(, ) __VA_ARGS__)
 
 // A function that is never compared live still counts its calls (the "calls" column of RC_SHADOW_LOG).
@@ -380,7 +401,7 @@ inline uint32_t ee_divu(uint32_t a, uint32_t b)
         rc_entry_##name.calls.fetch_add(1u, std::memory_order_relaxed);                              \
         ::rc::Thunk<&::rc::name>::run(rdram, ctx, runtime);                                          \
     }                                                                                                \
-    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_counted_##name, ::rc::fns::name.sameAsReference);
+    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_counted_##name, ::rc::registeredHere<::rc::fns::name>);
 
 // For a function that can block: it runs natively and cannot be compared call by call, because the
 // comparison needs to run it twice from one state.
@@ -410,7 +431,7 @@ inline uint32_t ee_divu(uint32_t a, uint32_t b)
     {                                                                                                \
         ::rc::shadowCall(rdram, ctx, runtime, rc_entry_##name);                                      \
     }                                                                                                \
-    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_shadow_##name, ::rc::fns::name.sameAsReference);
+    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_shadow_##name, ::rc::registeredHere<::rc::fns::name>);
 
 // For a function that follows pointers stored in its data, where random bytes would be meaningless. The random test
 // calls setup(ctx, state, scratch) instead of randomising the arguments: it builds valid inputs in the scratch area
@@ -423,7 +444,7 @@ inline uint32_t ee_divu(uint32_t a, uint32_t b)
     {                                                                                                \
         ::rc::shadowCall(rdram, ctx, runtime, rc_entry_##name);                                      \
     }                                                                                                \
-    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_shadow_##name, ::rc::fns::name.sameAsReference);
+    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_shadow_##name, ::rc::registeredHere<::rc::fns::name>);
 
 // As RC_DECOMP_FN_SETUP, for a function that allocates from the game's heap: the random test compares all of guest
 // RAM instead of the scratch area and the globals, on fewer inputs because that is slow.
@@ -435,7 +456,7 @@ inline uint32_t ee_divu(uint32_t a, uint32_t b)
     {                                                                                                \
         ::rc::shadowCall(rdram, ctx, runtime, rc_entry_##name);                                      \
     }                                                                                                \
-    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_shadow_##name, ::rc::fns::name.sameAsReference);
+    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_shadow_##name, ::rc::registeredHere<::rc::fns::name>);
 
 #define RC_DECOMP_FN(name)                                                                  \
     static ::rc::Entry rc_entry_##name{#name, ::rc::fns::name.address, &::rc::Thunk<&::rc::name>::run,               \
@@ -445,4 +466,4 @@ inline uint32_t ee_divu(uint32_t a, uint32_t b)
     {                                                                                                \
         ::rc::shadowCall(rdram, ctx, runtime, rc_entry_##name);                                      \
     }                                                                                                \
-    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_shadow_##name, ::rc::fns::name.sameAsReference);
+    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_shadow_##name, ::rc::registeredHere<::rc::fns::name>);

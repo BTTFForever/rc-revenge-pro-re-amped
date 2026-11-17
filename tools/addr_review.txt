@@ -521,3 +521,4 @@ keep	overrides/rc_revenge_pro_overrides.cpp	0x100000	constexpr uint32_t kChunkBy
 addr	overrides/rc_revenge_pro_overrides.cpp	0x100000	constexpr uint32_t kTextStart = 0x00100000u;	# start of .text
 keep	overrides/rc_revenge_pro_overrides.cpp	0x1d5444	constexpr uint32_t kTextEnd = 0x001D5444u;	# end of .text: written as rc::sym::sec_text_end by hand
 addr-changed	decomp/src/rdr.cpp	0x327bf8	put(0x114, player == 1 ? 0x44f90000u : player == 2 ? *static_cast<uint32_t *>(guest_host(0x327bf8u)) : 0x45000000u);	# a .lit4 float read only by RdrPolyInitCamera, which is resized in Europe (that entry is not in its .lit4)
+keep	decomp/src/front_fuzz.cpp	0x100000	bool inRam(uint32_t address) { return address >= 0x100000u && address < 0x2000000u; }	# a size, RAM bound or random range, not the start of .text

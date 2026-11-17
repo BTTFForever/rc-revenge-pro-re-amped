@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prints a fact sheet read from the MIPS instructions of functions, to check Ghidra's pseudo-C against.
 
-Usage (run from fork/):
+Usage (run from fork/; RC_VERSION=eu reads the Europe executable's instructions from output_eu/ and its symbols):
   tools/asm_facts.py NAME [NAME...]        facts for these functions
   tools/asm_facts.py --unit RDR_SHAPE      facts for every function of a source unit (the 'cu' of symbols.json)
   tools/asm_facts.py --unit ALL --warnings-only    only the warnings, for the whole program
@@ -24,12 +24,15 @@ Warnings:
 """
 import bisect
 import json
+import os
 import pathlib
 import re
 import sys
 from collections import defaultdict
 
-GP = 0x32f570
+VERSION = os.environ.get('RC_VERSION', 'usa')
+GP = {'usa': 0x32f570, 'eu': 0x32f7f0}[VERSION]
+OUTPUT = {'usa': 'output', 'eu': 'output_eu'}[VERSION]
 REGS = ['zero', 'at', 'v0', 'v1', 'a0', 'a1', 'a2', 'a3', 't0', 't1', 't2', 't3', 't4', 't5', 't6', 't7',
         's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 't8', 't9', 'k0', 'k1', 'gp', 'sp', 'fp', 'ra']
 REG = {n: i for i, n in enumerate(REGS)}
@@ -51,19 +54,19 @@ class Program:
     """Symbols, globals and Ghidra text of the whole game."""
 
     def __init__(self):
-        self.symbols = json.load(open('decomp/generated/symbols.json'))
+        self.symbols = json.load(open(f'decomp/generated/{VERSION}/symbols.json'))
         self.by_name = {s['name']: s for s in self.symbols}
         sizeof = {m.group(1): num(m.group(2)) for m in re.finditer(
-            r'sizeof\(rc::(\w+)\) == (0x[0-9a-f]+)', open('decomp/generated/rc_layout_check.cpp').read())}
+            r'sizeof\(rc::(\w+)\) == (0x[0-9a-f]+)', open(f'decomp/generated/{VERSION}/rc_layout_check.cpp').read())}
         self.globals = {}  # address -> (name, size or None)
         for m in re.finditer(r'inline (.+?) &(\w+)\(\) \{ return \*reinterpret_cast<(.+?)>\(guest_host\((0x[0-9a-f]+)u\)\); \}',
-                             open('decomp/generated/rc_globals.h').read()):
+                             open(f'decomp/generated/{VERSION}/rc_globals.h').read()):
             self.globals[num(m.group(4))] = (m.group(2), self.type_size(m.group(3), sizeof))
         self.global_names = {n for n, _ in self.globals.values()}
         self.global_addrs = sorted(self.globals)
         self.functions = {}  # address -> (name, size); the output/ files cover SDK code too
         self.files = {}  # name -> (address, path)
-        for path in sorted(pathlib.Path('output').glob('*_0x*.cpp')):
+        for path in sorted(pathlib.Path(OUTPUT).glob('*_0x*.cpp')):
             m = re.match(r'(.+)_0x([0-9a-f]+)\.cpp$', path.name)
             address = int(m.group(2), 16)
             self.files[m.group(1)] = (address, path)
@@ -77,7 +80,8 @@ class Program:
                     self.functions[address][1] = num(m.group(2)) - num(m.group(1))
         self.function_addrs = sorted(self.functions)
         self.pseudo = {}  # address -> Ghidra text
-        text = open('decomp/generated/pseudo_all.c', errors='replace').read()
+        # Ghidra's text exists for the USA executable only.
+        text = open('decomp/generated/pseudo_all.c', errors='replace').read() if VERSION == 'usa' else ''
         for part in re.split(r'(?=^/\* ==== )', text, flags=re.M):
             m = re.match(r'/\* ==== (\S+) @ ([0-9a-f]+) \*/', part)
             if m:
@@ -351,7 +355,7 @@ def main():
         names = args
         for n in names:
             if n not in prog.files:
-                sys.exit(f'{n}: no output/{n}_0x*.cpp')
+                sys.exit(f'{n}: no {OUTPUT}/{n}_0x*.cpp')
     facts = {n: analyse(prog, n) for n in names}
     warnings = defaultdict(list)
     # labels: name -> {function -> [addresses]}

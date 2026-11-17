@@ -14,9 +14,12 @@ PSEUDO = ROOT / 'generated' / 'pseudo_all.c'
 
 
 def main():
+    # Registrations name the function (RC_DECOMP_FN*(Name, ...)); its USA address comes from rc_fns.h.
+    address = {m.group(1): int(m.group(2), 16) for m in re.finditer(
+        r'inline constexpr FnInfo (\w+)\{(0x[0-9a-f]+)u', (ROOT / 'generated' / 'usa' / 'rc_fns.h').read_text())}
     done = set()
     for path in (ROOT / 'src').glob('*.cpp'):
-        done |= set(int(a, 16) for a in re.findall(r'RC_DECOMP_FN\w*\(\w+,\s*(0x[0-9a-f]+)[,)]', path.read_text()))
+        done |= set(address[n] for n in re.findall(r'^RC_DECOMP_FN\w*\((\w+)[,)]', path.read_text(), re.M))
     ready = {}
     for line in (ROOT / 'generated' / 'order.txt').read_text().splitlines():
         if not line.startswith('#'):
