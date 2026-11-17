@@ -8,8 +8,8 @@ namespace rc::fuzz {
 
 namespace {
 
-constexpr uint32_t kMain = 0x1ed900u, kFrontEnd = 0x1eca58u, kAi = 0x1e9400u, kObjectList = 0x1ee390u, kInput = 0x1f4c80u;
-constexpr uint32_t kCarousel = 0x1ebaf0u + 0x20u, kSfxInitOk = 0x31e488u;
+constexpr uint32_t kMain = sym::mainVarG, kFrontEnd = sym::frontEndVarG, kAi = sym::aiVarG, kObjectList = sym::objectVarG, kInput = sym::inputVarG;
+constexpr uint32_t kCarousel = sym::carouselVarG + 0x20u, kSfxInitOk = sym::sfxVarG;
 
 template <typename T>
 T &mem(uint32_t address) { return *static_cast<T *>(guest_host(address)); }
@@ -89,7 +89,7 @@ void varyRace(uint64_t &state)
     if (chance(state, 30))
         mem<int32_t>(kFrontEnd + 0x25cu) = static_cast<int32_t>(rnd(state, 8)) - 1;
     if (chance(state, 30))
-        mem<uint32_t>(0x1eb7a0u) = 1 + rnd(state, 0x26); // carListVarG.car[0].type: player 1's
+        mem<uint32_t>(sym::carListVarG) = 1 + rnd(state, 0x26); // carListVarG.car[0].type: player 1's
     if (chance(state, 30))
     {
         static const uint32_t kConfigs[] = {0x100001fcu, 0x100001feu, 0x10000200u, 0x10000201u};
@@ -112,7 +112,7 @@ void mainScan(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 {
     mainNone(ctx, state, scratch);
     // The pause menu's links (11, ending with key 0): now and then a key repeated, or the list cut short.
-    const uint32_t links = 0x1ed468u;
+    const uint32_t links = sym::links_600;
     if (chance(state, 40))
     {
         const uint32_t a = rnd(state, 10), b = rnd(state, 10);
@@ -142,7 +142,7 @@ void mainPause(R5900Context *ctx, uint64_t &state, uint32_t)
     if (chance(state, 60))
         mem<uint16_t>(kMain + 0x364u) = static_cast<uint16_t>(rnd(state, 3)); // who paused
     if (chance(state, 50))
-        mem<uint16_t>(0x327ee8u) = static_cast<uint16_t>(rnd(state, 3)); // pause delay
+        mem<uint16_t>(sym::rePauseCountG) = static_cast<uint16_t>(rnd(state, 3)); // pause delay
     for (uint32_t key : {3u, 0x13u, 0xeu, 0x1eu})
         if (chance(state, 30))
             mem<uint8_t>(kInput + 0x5cu + key) |= 0x20; // a hit
@@ -152,7 +152,7 @@ void mainPause(R5900Context *ctx, uint64_t &state, uint32_t)
     if (chance(state, 40))
     {
         // The pause menu's current item and choice.
-        const uint32_t menu = mem<uint32_t>(0x327c20u);
+        const uint32_t menu = mem<uint32_t>(sym::pMenuSystemG);
         if (inRam(menu))
         {
             static const uint32_t kChoices[] = {0x10000223u, 0x10000217u, 0x10000224u, 0, 0x10000222u};
@@ -161,10 +161,10 @@ void mainPause(R5900Context *ctx, uint64_t &state, uint32_t)
     }
     if (chance(state, 30))
     {
-        mem<uint32_t>(0x1ee8c0u + 0x20u) = rnd(state, 0x100); // music volume and its last value
-        mem<uint32_t>(0x1ef3b0u + 0x1144u) = rnd(state, 0x100);
-        mem<uint32_t>(0x1ee8c0u + 0x150u) = rnd(state, 2);
-        mem<uint8_t>(0x1ee8c0u + 0x2bu) = static_cast<uint8_t>(rnd(state, 2));
+        mem<uint32_t>(sym::rcmusicVarG + 0x20u) = rnd(state, 0x100); // music volume and its last value
+        mem<uint32_t>(sym::revSfxVarG + 0x1144u) = rnd(state, 0x100);
+        mem<uint32_t>(sym::rcmusicVarG + 0x150u) = rnd(state, 2);
+        mem<uint8_t>(sym::rcmusicVarG + 0x2bu) = static_cast<uint8_t>(rnd(state, 2));
     }
     setArg(ctx, 0, kMain);
 }
@@ -178,7 +178,7 @@ void mainPads(R5900Context *ctx, uint64_t &state, uint32_t)
     if (chance(state, 50))
         mem<uint32_t>(kMain + 0x10u) ^= 1u;
     if (chance(state, 50))
-        mem<uint32_t>(0x327d68u) = rnd(state, 4);
+        mem<uint32_t>(sym::pauseReasonG) = rnd(state, 4);
     if (chance(state, 50))
         mem<uint16_t>(kMain + 0x366u) = static_cast<uint16_t>(rnd(state, 2));
     if (chance(state, 30))

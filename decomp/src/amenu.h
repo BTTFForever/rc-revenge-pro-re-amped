@@ -142,13 +142,13 @@ int32_t CheckRaceTick(ptr32<_sFrontGameStateData> pGameStateData, int32_t level,
 namespace amenu {
 
 // Guest code not decompiled yet.
-constexpr uint32_t kRCMusicModifyVolume = 0x1413f0u, kRevSfxModifyVolume = 0x144098u;
-constexpr uint32_t kSprintf = 0x1b8910u, kSetRewards = 0x121580u, kGetTimeTrialTime = 0x122b28u, kHideEmptyMenu = 0x11e270u;
+constexpr uint32_t kRCMusicModifyVolume = sym::RCMusicModifyVolume, kRevSfxModifyVolume = sym::RevSfxModifyVolume;
+constexpr uint32_t kSprintf = sym::sprintf, kSetRewards = sym::SetRewards, kGetTimeTrialTime = sym::GetTimeTrialTime, kHideEmptyMenu = sym::HideEmptyMenu;
 // Globals without a typed accessor (offsets into mainVarG, frontEndVarG, tEditVarG, cameraVarG, the sound classes).
-constexpr uint32_t kMainVars = 0x1ed900u, kFrontEnd = 0x1eca58u, kLevelPtr = 0x327e80u, kFontPtr = 0x328190u;
-constexpr uint32_t kTEditGeneralText = 0x1f0fecu, kTEditCarNames = 0x1f0ff0u, kCameraPtr = 0x1eab20u;
-constexpr uint32_t kMusicUserVol = 0x1ee8e0u, kSfxUserVol = 0x1f04f4u, kMusicVolG = 0x327dc4u, kSfxVolG = 0x327dc0u;
-constexpr uint32_t kKeyPos = 0x1e96e8u, kMenuInputs = 0x1e96c0u, kStickInputs = 0x1e96d0u;
+constexpr uint32_t kMainVars = sym::mainVarG, kFrontEnd = sym::frontEndVarG, kLevelPtr = sym::pLvlG, kFontPtr = sym::fontVarG;
+constexpr uint32_t kTEditGeneralText = (sym::tEditVarG + 0x6ecu), kTEditCarNames = (sym::tEditVarG + 0x6f0u), kCameraPtr = (sym::cameraVarG + 0xb70u);
+constexpr uint32_t kMusicUserVol = (sym::rcmusicVarG + 0x20u), kSfxUserVol = (sym::revSfxVarG + 0x1144u), kMusicVolG = sym::musicVolG, kSfxVolG = sym::sfxVolG;
+constexpr uint32_t kKeyPos = sym::keyPos_623, kMenuInputs = sym::menuInputs_573, kStickInputs = sym::menuInputs_580;
 
 template <typename T>
 T &at(uint32_t address) { return *static_cast<T *>(guest_host(address)); }
@@ -260,7 +260,7 @@ void guestSprintf(ptr32<char> dest, ptr32<char> format, A argument) { guest_call
 
 // The menu sounds: move (0x44), select (0x45) and back (0x43). Through the guest's table: the game gets the native
 // SfxPlay from it, and the offline test a logging stand-in.
-inline void playSfx(int32_t sample, int32_t pitch) { guest_call<int32_t>(0x1ad0a0u, sample, 0x80, 0xf, 0xf, pitch, 0, 0); }
+inline void playSfx(int32_t sample, int32_t pitch) { guest_call<int32_t>(sym::SfxPlay, sample, 0x80, 0xf, 0xf, pitch, 0, 0); }
 inline void sfxMove() { playSfx(0x44, 0xf6); }
 inline void sfxSelect() { playSfx(0x45, 0x100); }
 inline void sfxBack() { playSfx(0x43, 0x100); }
@@ -332,8 +332,8 @@ inline int32_t selectItem(ptr32<sAMenuHeader> pHeader, ptr32<sMenuItemStd> pMenu
     return itemSelected;
 }
 
-constexpr uint32_t kCharString = 0x327c28u; // charStringG: a one-character string
-constexpr uint32_t kFormatD = 0x327c58u, kTextP1 = 0x327c48u, kTextP2 = 0x327c50u;
+constexpr uint32_t kCharString = sym::charStringG; // charStringG: a one-character string
+constexpr uint32_t kFormatD = (sym::sec_sdata + 0x58u), kTextP1 = (sym::sec_sdata + 0x48u), kTextP2 = (sym::sec_sdata + 0x50u);
 
 } // namespace amenu
 

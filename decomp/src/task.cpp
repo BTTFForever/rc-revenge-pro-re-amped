@@ -8,7 +8,7 @@ namespace rc {
 
 namespace {
 
-constexpr uint32_t kTaskVars = 0x31ff58u;
+constexpr uint32_t kTaskVars = sym::taskVarG;
 
 ptr32<_sTask> taskAt(uint32_t offset) { return ptr32<_sTask>(kTaskVars + offset); }
 ptr32<_sTask> header() { return taskAt(0xcu); }
@@ -187,11 +187,11 @@ void TaskDelete(ptr32<_sTask> pTask)
 
 } // namespace rc
 
-RC_DECOMP_FN(TaskInit, 0x1af880)
-RC_DECOMP_FN(TaskTerm, 0x1af8e0)
-RC_DECOMP_FN_SETUP_HEAP(TaskProcess, 0x1af8f8, rc::fuzz::taskProcess)
-RC_DECOMP_FN_SETUP(TaskSet, 0x1afad8, rc::fuzz::taskSet)
-RC_DECOMP_FN_SETUP_HEAP(TaskInsert, 0x1afaf0, rc::fuzz::taskInsert)
-RC_DECOMP_FN_SETUP_HEAP(TaskCachedInsert, 0x1afb68, rc::fuzz::taskInsert)
-RC_DECOMP_FN_SETUP_HEAP(TaskDelete, 0x1afc48, rc::fuzz::taskDelete)
-RC_DECOMP_FN_SETUP_HEAP(TaskPop, 0x1afc98, rc::fuzz::taskList)
+RC_DECOMP_FN(TaskInit)
+RC_DECOMP_FN(TaskTerm)
+RC_DECOMP_FN_SETUP_HEAP(TaskProcess, rc::fuzz::taskProcess)
+RC_DECOMP_FN_SETUP(TaskSet, rc::fuzz::taskSet)
+RC_DECOMP_FN_SETUP_HEAP(TaskInsert, rc::fuzz::taskInsert)
+RC_DECOMP_FN_SETUP_HEAP(TaskCachedInsert, rc::fuzz::taskInsert)
+RC_DECOMP_FN_SETUP_HEAP(TaskDelete, rc::fuzz::taskDelete)
+RC_DECOMP_FN_SETUP_HEAP(TaskPop, rc::fuzz::taskList)

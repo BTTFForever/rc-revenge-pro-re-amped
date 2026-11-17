@@ -141,7 +141,7 @@ void SortRanking()
     GuestFrame frame(0x90);
     const uint32_t sp = frame.local<uint8_t>(0).address; // swapOrder
     const int32_t n = carCount();
-    const uint32_t p1 = guest_call<uint32_t>(kTagToCar, at<uint32_t>(0x1eccd8u));
+    const uint32_t p1 = guest_call<uint32_t>(kTagToCar, at<uint32_t>((sym::frontEndVarG + 0x280u)));
     bool change;
     do
     {
@@ -281,12 +281,12 @@ uint32_t pauseMenuStep(uint32_t pm)
     {
         const uint32_t car0 = at<uint32_t>(kObjectList);
         if (car0 && (at<uint32_t>(car0) & 0x8000000u) == 0)
-            guest_call(kInputSetVibrationFlags, 0, at<uint32_t>(0x1ecbacu) == 0 ? 1 : 0);
+            guest_call(kInputSetVibrationFlags, 0, at<uint32_t>((sym::frontEndVarG + 0x154u)) == 0 ? 1 : 0);
         if (guest_call<uint32_t>(kInputPadPresent, 5) != 0 && at<uint32_t>(kMain + 0x34cu) == 0x10000200u)
         {
             const uint32_t car1 = at<uint32_t>(kObjectList + 4u);
             if (car1 && (at<uint32_t>(car1) & 0x8000000u) == 0)
-                guest_call(kInputSetVibrationFlags, 4, at<uint32_t>(0x1ecbccu) == 0 ? 1 : 0);
+                guest_call(kInputSetVibrationFlags, 4, at<uint32_t>((sym::frontEndVarG + 0x174u)) == 0 ? 1 : 0);
         }
     }
     int32_t showOptions = 0;
@@ -564,7 +564,7 @@ void MainSetCars(eCarSet carSet)
                     }
             }
             for (int32_t i = 0; i < noAI(); ++i)
-                guest_call(kPrintf, 0x323670u, at<uint32_t>(kCarList + 12u * static_cast<uint32_t>(i)));
+                guest_call(kPrintf, (sym::sec_rodata + 0x1070u), at<uint32_t>(kCarList + 12u * static_cast<uint32_t>(i)));
             return;
         }
     }
@@ -675,6 +675,7 @@ void SaveChampionshipPoints()
 // A missing pad pauses the game with a "connect the controller" box; returns which player's (1, 2) or 0.
 int32_t CheckPads(int32_t numHumans)
 {
+    RC_DIVERT_IF_CHANGED(CheckPads, numHumans);
     GuestFrame frame(0x40);
     int32_t missing = guest_call<uint32_t>(kInputPadPresent, 0) == 0 ? 1 : 0;
     if (missing == 0 && numHumans == 2)
@@ -762,18 +763,18 @@ void SetChampionshipPoints()
 
 } // namespace rc
 
-RC_DECOMP_FN_SETUP_HEAP(BuildResults, 0x130c58, rc::fuzz::mainResults)
-RC_DECOMP_FN_SETUP_HEAP(ClearRanking, 0x131240, rc::fuzz::mainResults)
-RC_DECOMP_FN_SETUP_HEAP(SortRanking, 0x131470, rc::fuzz::mainResults)
-RC_DECOMP_FN_SETUP_HEAP(BuildRanking, 0x1315f8, rc::fuzz::mainResults)
-RC_DECOMP_FN_SETUP_HEAP(PauseMenuProcess, 0x131920, rc::fuzz::mainPause)
-RC_DECOMP_FN_SETUP_HEAP(MainSetCarsRemoveDuplicates, 0x132060, rc::fuzz::mainCars)
-RC_DECOMP_FN_SETUP_HEAP(MainSetCars, 0x132438, rc::fuzz::mainCars)
-RC_DECOMP_FN_SETUP_HEAP(MainDemoEndTask, 0x132810, rc::fuzz::mainNone)
-RC_DECOMP_FN_SETUP_HEAP(MainRaceOver, 0x132858, rc::fuzz::mainResults)
-RC_DECOMP_FN_SETUP_HEAP(SaveChampionshipPoints, 0x132c10, rc::fuzz::mainResults)
-RC_DECOMP_FN_SETUP_HEAP(CheckPads, 0x132cf8, rc::fuzz::mainPads)
-RC_DECOMP_FN_SETUP_HEAP(PauseMenuScan, 0x132e20, rc::fuzz::mainScan)
-RC_DECOMP_FN_SETUP_HEAP(ClearRankingDisplay, 0x132ec8, rc::fuzz::mainResults)
-RC_DECOMP_FN_SETUP_HEAP(ClearChampionshipPoints, 0x133068, rc::fuzz::mainResults)
-RC_DECOMP_FN_SETUP_HEAP(SetChampionshipPoints, 0x133110, rc::fuzz::mainResults)
+RC_DECOMP_FN_SETUP_HEAP(BuildResults, rc::fuzz::mainResults)
+RC_DECOMP_FN_SETUP_HEAP(ClearRanking, rc::fuzz::mainResults)
+RC_DECOMP_FN_SETUP_HEAP(SortRanking, rc::fuzz::mainResults)
+RC_DECOMP_FN_SETUP_HEAP(BuildRanking, rc::fuzz::mainResults)
+RC_DECOMP_FN_SETUP_HEAP(PauseMenuProcess, rc::fuzz::mainPause)
+RC_DECOMP_FN_SETUP_HEAP(MainSetCarsRemoveDuplicates, rc::fuzz::mainCars)
+RC_DECOMP_FN_SETUP_HEAP(MainSetCars, rc::fuzz::mainCars)
+RC_DECOMP_FN_SETUP_HEAP(MainDemoEndTask, rc::fuzz::mainNone)
+RC_DECOMP_FN_SETUP_HEAP(MainRaceOver, rc::fuzz::mainResults)
+RC_DECOMP_FN_SETUP_HEAP(SaveChampionshipPoints, rc::fuzz::mainResults)
+RC_DECOMP_FN_SETUP_HEAP(CheckPads, rc::fuzz::mainPads)
+RC_DECOMP_FN_SETUP_HEAP(PauseMenuScan, rc::fuzz::mainScan)
+RC_DECOMP_FN_SETUP_HEAP(ClearRankingDisplay, rc::fuzz::mainResults)
+RC_DECOMP_FN_SETUP_HEAP(ClearChampionshipPoints, rc::fuzz::mainResults)
+RC_DECOMP_FN_SETUP_HEAP(SetChampionshipPoints, rc::fuzz::mainResults)

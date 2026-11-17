@@ -8,7 +8,7 @@ namespace rc::fuzz {
 
 namespace {
 
-constexpr uint32_t kTile = 0x1f46f0u, kView3d = 0x1f4808u, kLightVecs = 0x1f45a0u;
+constexpr uint32_t kTile = sym::tileVarG, kView3d = sym::view3dVarG, kLightVecs = sym::lightVecsG;
 // Scratch layout: the tile list, a track unit, a handle, the shapes.
 constexpr uint32_t kList = 0x0u, kUnit = 0x200u, kHandle = 0x300u, kShapes = 0x400u, kShapeSize = 0x60u;
 constexpr uint32_t kMaxTiles = 12;

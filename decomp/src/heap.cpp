@@ -64,9 +64,9 @@ void HeapReset()
 
 } // namespace rc
 
-RC_DECOMP_FN_SETUP_HEAP(HeapInit, 0x1907d0, rc::fuzz::heapInit)
-RC_DECOMP_FN_SETUP_HEAP(HeapTerm, 0x190848, rc::fuzz::heapTerm)
-RC_DECOMP_FN_SETUP(HeapAlloc, 0x190880, rc::fuzz::heapVars)
-RC_DECOMP_FN_SETUP(HeapFree, 0x1908c8, rc::fuzz::heapVars)
-RC_DECOMP_FN_SETUP(HeapGetFree, 0x1908d8, rc::fuzz::heapVars)
-RC_DECOMP_FN_SETUP(HeapReset, 0x1908f0, rc::fuzz::heapVars)
+RC_DECOMP_FN_SETUP_HEAP(HeapInit, rc::fuzz::heapInit)
+RC_DECOMP_FN_SETUP_HEAP(HeapTerm, rc::fuzz::heapTerm)
+RC_DECOMP_FN_SETUP(HeapAlloc, rc::fuzz::heapVars)
+RC_DECOMP_FN_SETUP(HeapFree, rc::fuzz::heapVars)
+RC_DECOMP_FN_SETUP(HeapGetFree, rc::fuzz::heapVars)
+RC_DECOMP_FN_SETUP(HeapReset, rc::fuzz::heapVars)

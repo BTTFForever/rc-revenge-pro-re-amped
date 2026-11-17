@@ -23,9 +23,9 @@ using vfx::sortAtScenery;
 
 constexpr uint32_t kRing = 0x40;      // the ring header: mask, count, head, tail
 constexpr uint32_t kParticles = 0x44; // the first particle
-constexpr uint32_t kVisFx = 0x1f1000; // visFxVarG
+constexpr uint32_t kVisFx = sym::visFxVarG; // visFxVarG
 
-constexpr uint32_t kAtan2f = 0x1c87d0, kUnitMatrix = 0x1c7ac8, kRotMatrix = 0x1c7d60;
+constexpr uint32_t kAtan2f = sym::atan2f, kUnitMatrix = sym::sceVu0UnitMatrix, kRotMatrix = sym::sceVu0RotMatrix;
 
 // The ring's bytes as these handlers read them: all with lbu, so the indexes are unsigned.
 inline uint8_t &ringMask(uint32_t m) { return at<uint8_t>(m + kRing); }
@@ -213,7 +213,7 @@ void Vfx2Handler_LavaSpit(ptr32<_sVfx_TSFX> mem)
             at<uint16_t>(c + 0x14) = static_cast<uint16_t>(at<uint16_t>(p + 0x14) + 0x20);
             at<uint16_t>(p + 0xc) = vz;
             at<uint16_t>(c + 0x10) = static_cast<uint16_t>(vfx::random15());
-            const uint8_t size = static_cast<uint8_t>(ee_ftoi(ee_itof(at<uint8_t>(p + 0x16)) * ee_float(at<float>(0x3278f0u))));
+            const uint8_t size = static_cast<uint8_t>(ee_ftoi(ee_itof(at<uint8_t>(p + 0x16)) * ee_float(at<float>(sym::lit4_3278f0))));
             at<uint8_t>(p + 0x16) = size;
             at<uint8_t>(c + 0x16) = size;
             at<uint16_t>(c + 0x12) = rnd16(0x3ff, -0x200);
@@ -370,7 +370,7 @@ void Vfx2Renderer_LightGlow(ptr32<_sVfx_TSFX> mem)
     const uint8_t phase = at<uint8_t>(m + 0x4b);
     const ee_float turn = ee_itof(static_cast<int32_t>((phase << 7) & 0xf80));
     at<uint8_t>(m + 0x4b) = static_cast<uint8_t>(phase + 1);
-    const ee_float sine = ee_sinf((turn + turn) * ee_float(at<float>(0x32789cu)));
+    const ee_float sine = ee_sinf((turn + turn) * ee_float(at<float>(sym::lit4_32789c)));
     const int32_t pulse = ee_ftoi(sine * ee_float(4096.0f)) >> 9;
     const uint32_t rgb = lightColour(m, distance, pulse);
     const uint32_t s = vfx::sprite();
@@ -378,7 +378,7 @@ void Vfx2Renderer_LightGlow(ptr32<_sVfx_TSFX> mem)
     at<uint32_t>(s + vfx::spr::kTexture) = vfx::vfxTexture(1);
     at<uint8_t>(s + vfx::spr::kFlipX) = 0;
     at<uint32_t>(s + vfx::spr::kRgb) = rgb;
-    at<float>(s + vfx::spr::kScale) = (unsignedToFloat(at<uint32_t>(m + 0x4c)) * ee_itof(distance)) * ee_float(at<float>(0x3278a0u));
+    at<float>(s + vfx::spr::kScale) = (unsignedToFloat(at<uint32_t>(m + 0x4c)) * ee_itof(distance)) * ee_float(at<float>(sym::lit4_3278a0));
     VfxPS2SpriteRotated3D(ee_float(-100.0f));
 }
 
@@ -401,7 +401,7 @@ void Vfx2Renderer_LightFlicker(ptr32<_sVfx_TSFX> mem)
     at<uint8_t>(s + vfx::spr::kFlipX) = 0;
     at<uint16_t>(vfx::sprite() + vfx::spr::kAngle) = static_cast<uint16_t>(vfx::random15());
     at<uint32_t>(s + vfx::spr::kRgb) = rgb;
-    at<float>(s + vfx::spr::kScale) = (unsignedToFloat(at<uint32_t>(m + 0x4c)) * ee_itof(distance)) * ee_float(at<float>(0x3278a4u));
+    at<float>(s + vfx::spr::kScale) = (unsignedToFloat(at<uint32_t>(m + 0x4c)) * ee_itof(distance)) * ee_float(at<float>(sym::lit4_3278a4));
     VfxPS2SpriteRotated3D(ee_float(-100.0f));
 }
 
@@ -463,7 +463,7 @@ uint32 VecNormalise(ptr32<SVECTOR> pOut, ptr32<SVECTOR> pVec); // ai.cpp
 bool_ AColDownCast(ptr32<_sColCellVecPSX> pPos, ptr32<_sColCellVecPSX> pPoi, ptr32<_sColNormalPSX> pNormal, ptr32<uint8> pMatId); // collision.cpp
 
 namespace {
-constexpr uint32_t kObjectCarChangeOver = 0x137188;
+constexpr uint32_t kObjectCarChangeOver = sym::ObjectCarChangeOver;
 
 // A spark flying out in a random direction: a random vector normalised and cut to a sixteenth (as its position and its
 // velocity), with a life of 40.
@@ -592,7 +592,7 @@ void VfxHandler_CarWaterBall(ptr32<_sVfx_Object> mem)
     GuestFrame frame(0x120);
     const int32_t centre[3] = {static_cast<int16_t>(aerial), static_cast<int16_t>(aerial >> 16), static_cast<int16_t>(aerial >> 32)};
     at<uint32_t>(m + 0x654) = at<uint32_t>(m + 0x654) + 0x37;
-    const ee_float spread(at<float>(0x3277e0u));
+    const ee_float spread(at<float>(sym::lit4_3277e0));
     for (int32_t i = 0; i < 3; ++i)
     {
         if (!(ringCount(m) < ringMask(m)))
@@ -621,20 +621,20 @@ void VfxHandler_CarWaterCovered(ptr32<_sVfx_Object> mem)
     const int32_t centre[3] = {static_cast<int16_t>(at<int32_t>(integer + 4) >> 8), static_cast<int16_t>(at<int32_t>(integer + 8) >> 8),
                                static_cast<int16_t>(at<int32_t>(integer + 0xc) >> 8)};
     for (uint32_t axis = 0; axis < 3; ++axis)
-        at<int16_t>(0x3280f8u + 2 * axis) = static_cast<int16_t>(centre[axis]); // svVelTemp
+        at<int16_t>(sym::svVelTemp + 2 * axis) = static_cast<int16_t>(centre[axis]); // svVelTemp
     vfx::sortPosFromCar(m, ptr32<_sObject>(car), 0xf0, 0x40);
     GuestFrame frame(0xf0);
     at<uint32_t>(m + 0x654) = at<uint32_t>(m + 0x654) + 0x37;
     if (ringCount(m) < ringMask(m) && at<uint16_t>(m + 0x10) >= 0x10)
     {
         const uint32_t p = startDrop(m, frame, centre, float_from_bits(0x33700000u), ee_float(60.0f));
-        const ee_float spread(at<float>(0x327814u));
+        const ee_float spread(at<float>(sym::lit4_327814));
         at<float>(p + 0x10) = ee_itof((vfx::random15() & 0x3f) - 0x1f) * spread;
-        at<float>(p + 0x14) = ee_itof(vfx::random15() & 0x3f) * ee_float(at<float>(0x327818u));
+        at<float>(p + 0x14) = ee_itof(vfx::random15() & 0x3f) * ee_float(at<float>(sym::lit4_327818));
         at<float>(p + 0x18) = ee_itof((vfx::random15() & 0x3f) - 0x1f) * spread;
         pushTail(m);
     }
-    moveDrops(m, ee_float(at<float>(0x32781cu)));
+    moveDrops(m, ee_float(at<float>(sym::lit4_32781c)));
     const uint16_t life = static_cast<uint16_t>(at<uint16_t>(m + 0x10) - 1);
     at<uint16_t>(m + 0x10) = life;
     if (life >= 0x10)
@@ -645,8 +645,8 @@ void VfxHandler_CarWaterCovered(ptr32<_sVfx_Object> mem)
 // The start lights
 
 namespace {
-constexpr uint32_t kSfxPlay = 0x1ad0a0, kRevSfxReadyGoFade = 0x144178, kRCMusicSetVol = 0x1414e0;
-constexpr uint32_t kMainVar = 0x1ed900; // mainVarG
+constexpr uint32_t kSfxPlay = sym::SfxPlay, kRevSfxReadyGoFade = sym::RevSfxReadyGoFade, kRCMusicSetVol = sym::RCMusicSetVol;
+constexpr uint32_t kMainVar = sym::mainVarG; // mainVarG
 }
 
 // The "ready, steady, go" lights: on the first frame (life 63) they are placed 250 units above and a quarter of the view
@@ -759,7 +759,7 @@ void Vfx3Handler_RocketCar(ptr32<_sVfx_Object> mem)
             at<float>(p + 8) = inCar ? -75.0f : -44.0f;
             at<float>(p + 4) = inCar ? 11.0f : -15.0f;
             at<uint32_t>(p) = 0;
-            const ee_float spread(at<float>(0x32790cu)), drag(at<float>(0x327910u));
+            const ee_float spread(at<float>(sym::lit4_32790c)), drag(at<float>(sym::lit4_327910));
             sceVu0ApplyMatrix(ptr32<ee_float>(p), vuMatrix, ptr32<ee_float>(p));
             const uint32_t physics = at<uint32_t>(car.address + 0x20);
             for (uint32_t axis = 0; axis < 3; ++axis)
@@ -809,15 +809,15 @@ void vfxReadySteadyGoHandler(R5900Context *ctx, uint64_t &state, uint32_t scratc
 void vfxRocketCarHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 }
 
-RC_DECOMP_FN_SETUP(Vfx2Handler_PirateLava, 0x178128, rc::fuzz::vfxPirateLavaHandler)
-RC_DECOMP_FN_SETUP(Vfx2Handler_LavaSpit, 0x175218, rc::fuzz::vfxLavaSpitHandler)
-RC_DECOMP_FN_SETUP(Vfx2Handler_Gulls, 0x16f508, rc::fuzz::vfxGullsHandler)
-RC_DECOMP_FN_SETUP(Vfx2Handler_Butterflies, 0x171d28, rc::fuzz::vfxButterfliesHandler)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_LightGlow, 0x16e130, rc::fuzz::vfxLight)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_LightFlicker, 0x16e428, rc::fuzz::vfxLight)
-RC_DECOMP_FN_SETUP(VfxHandler_OilSlick, 0x15a9c8, rc::fuzz::vfxOilSlickHandler)
-RC_DECOMP_FN_SETUP(VfxHandler_CarChangeOver, 0x163cf8, rc::fuzz::vfxCarChangeOver)
-RC_DECOMP_FN_SETUP(VfxHandler_CarWaterBall, 0x15c548, rc::fuzz::vfxCarWaterBallHandler)
-RC_DECOMP_FN_SETUP(VfxHandler_CarWaterCovered, 0x161bc8, rc::fuzz::vfxCarWaterCovered)
-RC_DECOMP_FN_SETUP(VfxHandler_ReadySteadyGo, 0x1654a8, rc::fuzz::vfxReadySteadyGoHandler)
-RC_DECOMP_FN_SETUP(Vfx3Handler_RocketCar, 0x179d60, rc::fuzz::vfxRocketCarHandler)
+RC_DECOMP_FN_SETUP(Vfx2Handler_PirateLava, rc::fuzz::vfxPirateLavaHandler)
+RC_DECOMP_FN_SETUP(Vfx2Handler_LavaSpit, rc::fuzz::vfxLavaSpitHandler)
+RC_DECOMP_FN_SETUP(Vfx2Handler_Gulls, rc::fuzz::vfxGullsHandler)
+RC_DECOMP_FN_SETUP(Vfx2Handler_Butterflies, rc::fuzz::vfxButterfliesHandler)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_LightGlow, rc::fuzz::vfxLight)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_LightFlicker, rc::fuzz::vfxLight)
+RC_DECOMP_FN_SETUP(VfxHandler_OilSlick, rc::fuzz::vfxOilSlickHandler)
+RC_DECOMP_FN_SETUP(VfxHandler_CarChangeOver, rc::fuzz::vfxCarChangeOver)
+RC_DECOMP_FN_SETUP(VfxHandler_CarWaterBall, rc::fuzz::vfxCarWaterBallHandler)
+RC_DECOMP_FN_SETUP(VfxHandler_CarWaterCovered, rc::fuzz::vfxCarWaterCovered)
+RC_DECOMP_FN_SETUP(VfxHandler_ReadySteadyGo, rc::fuzz::vfxReadySteadyGoHandler)
+RC_DECOMP_FN_SETUP(Vfx3Handler_RocketCar, rc::fuzz::vfxRocketCarHandler)

@@ -17,57 +17,57 @@ using namespace mainunit;
 namespace {
 
 // Other guest functions these call (native ones too: the frame loops reach them through the dispatcher).
-constexpr uint32_t kMemBlockInit = 0x194238u, kMemBlockAllocHi = 0x1942d0u, kMemBlockFree = 0x193a00u, kMemBlockTerm = 0x1942a0u;
-constexpr uint32_t kDisplayInit = 0x182088u, kDisplaySetBackground = 0x1820d8u, kDisplayDisable = 0x1820a0u, kDisplayEnable = 0x182098u;
-constexpr uint32_t kDisplayTerm = 0x182090u, kDisplayRenderFrameProfile = 0x1820f0u, kSysTimerInit = 0x1aeef8u, kSysTimerTerm = 0x1aef80u;
-constexpr uint32_t kInputInit = 0x190908u, kInputTerm = 0x190a88u, kCardConstruct = 0x192420u, kCardInit = 0x192430u, kCardUnInit = 0x1924f8u;
-constexpr uint32_t kFMInit = 0x1a0b18u, kFMPrepareHi = 0x1a0bb0u, kFMUnPrepare = 0x1a0540u, kBackdropInit = 0x112010u;
-constexpr uint32_t kBackdropDoInitialScreens = 0x111138u, kBackdropTerm = 0x112018u, kSfxInitFirst = 0x1ac408u, kExit = 0x1b4a18u;
-constexpr uint32_t kLoadErrorInit = 0x129428u, kLoadErrorTerm = 0x129438u, kResInit = 0x1aa708u, kResTerm = 0x1aadb8u;
-constexpr uint32_t kTEditInitPermTrackStructures = 0x1541e0u, kTEditAllocPermTrackStructures = 0x146870u;
-constexpr uint32_t kTEditFreePermTrackStructures = 0x1468a8u, kPhysicsInit = 0x13e368u, kPhysicsTerm = 0x13e3a0u, kSfxInit = 0x1ac1b8u;
-constexpr uint32_t kRevSfxInit = 0x142300u, kSfxOn = 0x1ae520u, kRCMusicInit = 0x1416a8u, kSfxInitReverb = 0x1ac4c0u;
-constexpr uint32_t kTSOSetSFXCallBack = 0x18ccb0u, kRevSfxTSO = 0x143ba8u, kInit3d = 0x1826c8u, kInit3dClean = 0x182900u;
-constexpr uint32_t kView3dDefine3dDeviceWindow = 0x184d80u, kInit3dWindows = 0x182698u, kUserInterfaceInit = 0x10a470u;
-constexpr uint32_t kUserInterfaceTerm = 0x10a508u, kCarListInit = 0x11a070u, kCarListTerm = 0x119cd0u, kClearAllSecrets = 0x1214b8u;
-constexpr uint32_t kLoadingInit = 0x129448u, kMtlInit = 0x1331d8u, kAColInit = 0x18ccd0u, kOColInit = 0x13b890u, kTColInit = 0x144ed0u;
-constexpr uint32_t kCarColInit = 0x119c08u, kGameTaskInit = 0x124028u, kCameraInit = 0x117b88u, kAnimInit = 0x110908u;
-constexpr uint32_t kFrontEndInit = 0x11c188u, kFrontEndProcess = 0x11c740u, kFrontEndTerm = 0x11d1f0u, kRdrPolyInit = 0x1a7518u;
-constexpr uint32_t kRdrAlphaInit = 0x1a15a0u, kVfxLvlInit = 0x156cc0u, kVfx2TSFXLvlInit = 0x16d080u, kMeshSetQuality = 0x182948u;
-constexpr uint32_t kMirrorSet = 0x182950u, kMpegOnInterruptTERM = 0x194ce0u, kAnimTerm = 0x10f130u, kCameraTerm = 0x117b90u;
-constexpr uint32_t kAColTerm = 0x18cce8u, kOColTerm = 0x13b898u, kTColTerm = 0x144ef0u, kCarColTerm = 0x119c10u, kGameTaskTerm = 0x124030u;
-constexpr uint32_t kVfxLvlTerm = 0x16a030u, kVfx2TSFXLvlTerm = 0x179160u, kRdrPolyTerm = 0x1a90e0u, kRdrAlphaTerm = 0x1a16d8u;
-constexpr uint32_t kLevelInit = 0x128b70u, kLevelLoad = 0x128cf8u, kLevelTerm = 0x128c58u, kTEditInit = 0x146758u, kTEditTerm = 0x1468d8u;
-constexpr uint32_t kCameraLvlInit = 0x117b98u, kCameraSetMode = 0x117518u, kCameraProcess = 0x115b60u, kRdrStartFrame = 0x1a3638u;
-constexpr uint32_t kApplyDefaultState = 0x1a1040u, kGfxP2ZWriteEnable = 0x190058u, kTEditControl = 0x1469a8u, kInit3dFrame = 0x1827f8u;
-constexpr uint32_t kInit3dFrame2 = 0x1828a8u, kTileFrameInit = 0x183f20u, kTEditDisplay = 0x146a50u, kFontPrint = 0x189808u;
-constexpr uint32_t kRdrAlphaAddToDmaChain = 0x1a1f50u, kRdrEndFrame = 0x1a38b8u, kSkinAnimInit = 0x1a49c0u, kObjectInit = 0x139338u;
-constexpr uint32_t kPlayerInit = 0x13f628u, kAIInit = 0x1014b0u, kAINodeInit = 0x103b78u, kWheelInit = 0x181d50u, kVfxInit = 0x156bb8u;
-constexpr uint32_t kHudInit = 0x124438u, kPhysicsLevelInit = 0x13e3c8u, kTSOInit = 0x18ca30u, kTBoxInit = 0x144c00u, kPickupInit = 0x13e840u;
-constexpr uint32_t kPathInit = 0x13c5f8u, kRdrShapeInit = 0x1a4ad0u, kRdrSkinInit = 0x1a33f0u, kRdrWaterInit = 0x1a9310u;
-constexpr uint32_t kVSyncCallback = 0x19f260u, kTaskInit = 0x1af880u, kAColLvlInit = 0x18e1c8u, kOColLvlInit = 0x13b8a0u;
-constexpr uint32_t kTColLvlInit = 0x146318u, kCarColLvlInit = 0x119c18u, kRdrParticleInit = 0x1aa358u, kDepthCueInit = 0x181f70u;
-constexpr uint32_t kObjectCreateCars = 0x1368a0u, kAISetupCars = 0x1004a0u, kGameTaskLvlInit = 0x123708u, kWeaponInit = 0x1811f8u;
-constexpr uint32_t kDepthCueSet = 0x181f90u, kAnimReinit = 0x10f4f8u, kRandomSetSeed = 0x1a0f28u, kPickupAllSpawn = 0x13e8a0u;
-constexpr uint32_t kHudCreate = 0x128aa8u, kMenuInitScan = 0x122948u, kFontSet = 0x18a3c0u, kTEditGetSoundTrackNdxForTrack = 0x154568u;
-constexpr uint32_t kVertAnimFrameUpdate = 0x18b008u, kTaskProcess = 0x1af8f8u, kTBoxProcess = 0x1443d0u, kRdrParticleProcess = 0x1aa5d8u;
-constexpr uint32_t kMeshInitFrame = 0x182940u, kInit3dChangeViewcone = 0x1826a0u, kLsFrameInit = 0x182578u, kGfxP2Tex = 0x18ea98u;
-constexpr uint32_t kGfxP2RenderDmaSend = 0x18fcd0u, kAIDoRaceOrder = 0x1005d8u, kMemset = 0x1b7d10u, kLsRenderWorld = 0x182500u;
-constexpr uint32_t kTEditRenderGameTrack = 0x1537c0u, kVfxRenderShadows = 0x1697e8u, kObjectRenderAll = 0x1394f8u;
-constexpr uint32_t kVertAnimRender = 0x18b010u, kTSORender = 0x18b598u, kPickupRenderAll = 0x13eb88u, kHudPanel = 0x125550u;
-constexpr uint32_t kWeaponRenderAll = 0x17c098u, kVfxRender = 0x157be0u, kObjectResetAllTint = 0x139620u, kObjectSfxDoAll = 0x139708u;
-constexpr uint32_t kPlayerSetVibrate = 0x140588u, kRdrStateSetScissor = 0x1a14a8u, kAnimLvlTerm = 0x10f128u, kHudDelete = 0x124480u;
-constexpr uint32_t kWeaponTerm = 0x17b6d0u, kObjectDeleteAll = 0x1356a0u, kPickupDeleteAll = 0x13f0f8u, kRdrParticleTerm = 0x1aa380u;
-constexpr uint32_t kGameTaskLvlTerm = 0x123748u, kTaskTerm = 0x1af8e0u, kCameraLvlTerm = 0x117cc0u, kAColLvlTerm = 0x18e1d0u;
-constexpr uint32_t kOColLvlTerm = 0x13b8b0u, kTColLvlTerm = 0x146320u, kCarColLvlTerm = 0x119c48u, kRdrShapeTerm = 0x1a4bf8u;
-constexpr uint32_t kRdrSkinTerm = 0x1a2910u, kRdrWaterTerm = 0x1a9470u, kAINodeTerm = 0x1016b8u, kWheelTerm = 0x181d90u;
-constexpr uint32_t kPlayerTerm = 0x13f918u, kObjectTerm = 0x133aa0u, kVfxTerm = 0x156db0u, kHudTerm = 0x124470u;
-constexpr uint32_t kPhysicsLevelTerm = 0x13e3d8u, kTBoxTerm = 0x144c90u, kPickupTerm = 0x13f0f0u, kTSOTerm = 0x18b018u;
-constexpr uint32_t kTEditFreeTrackAINodes = 0x152928u, kTEditFreeTrackALF = 0x1542d8u, kTEditLevelTerm = 0x1465a8u, kPathTerm = 0x13c610u;
-constexpr uint32_t kSkinAnimTerm = 0x1a44d0u, kTexFreeIntermediateResData = 0x183ee8u;
+constexpr uint32_t kMemBlockInit = sym::MemBlockInit, kMemBlockAllocHi = sym::MemBlockAllocHi, kMemBlockFree = sym::MemBlockFree, kMemBlockTerm = sym::MemBlockTerm;
+constexpr uint32_t kDisplayInit = sym::DisplayInit, kDisplaySetBackground = sym::DisplaySetBackground, kDisplayDisable = sym::DisplayDisable, kDisplayEnable = sym::DisplayEnable;
+constexpr uint32_t kDisplayTerm = sym::DisplayTerm, kDisplayRenderFrameProfile = sym::DisplayRenderFrameProfile, kSysTimerInit = sym::SysTimerInit, kSysTimerTerm = sym::SysTimerTerm;
+constexpr uint32_t kInputInit = sym::InputInit, kInputTerm = sym::InputTerm, kCardConstruct = sym::CardConstruct, kCardInit = sym::CardInit, kCardUnInit = sym::CardUnInit;
+constexpr uint32_t kFMInit = sym::FMInit, kFMPrepareHi = sym::FMPrepareHi, kFMUnPrepare = sym::FMUnPrepare, kBackdropInit = sym::BackdropInit;
+constexpr uint32_t kBackdropDoInitialScreens = sym::BackdropDoInitialScreens, kBackdropTerm = sym::BackdropTerm, kSfxInitFirst = sym::SfxInitFirst, kExit = sym::exit;
+constexpr uint32_t kLoadErrorInit = sym::LoadErrorInit, kLoadErrorTerm = sym::LoadErrorTerm, kResInit = sym::ResInit, kResTerm = sym::ResTerm;
+constexpr uint32_t kTEditInitPermTrackStructures = sym::TEditInitPermTrackStructures, kTEditAllocPermTrackStructures = sym::TEditAllocPermTrackStructures;
+constexpr uint32_t kTEditFreePermTrackStructures = sym::TEditFreePermTrackStructures, kPhysicsInit = sym::PhysicsInit, kPhysicsTerm = sym::PhysicsTerm, kSfxInit = sym::SfxInit;
+constexpr uint32_t kRevSfxInit = sym::RevSfxInit, kSfxOn = sym::SfxOn, kRCMusicInit = sym::RCMusicInit, kSfxInitReverb = sym::SfxInitReverb;
+constexpr uint32_t kTSOSetSFXCallBack = sym::TSOSetSFXCallBack, kRevSfxTSO = sym::RevSfxTSO, kInit3d = sym::Init3d, kInit3dClean = sym::Init3dClean;
+constexpr uint32_t kView3dDefine3dDeviceWindow = sym::View3dDefine3dDeviceWindow, kInit3dWindows = sym::Init3dWindows, kUserInterfaceInit = sym::UserInterfaceInit;
+constexpr uint32_t kUserInterfaceTerm = sym::UserInterfaceTerm, kCarListInit = sym::CarListInit, kCarListTerm = sym::CarListTerm, kClearAllSecrets = sym::ClearAllSecrets;
+constexpr uint32_t kLoadingInit = sym::LoadingInit, kMtlInit = sym::MtlInit, kAColInit = sym::AColInit, kOColInit = sym::OColInit, kTColInit = sym::TColInit;
+constexpr uint32_t kCarColInit = sym::CarColInit, kGameTaskInit = sym::GameTaskInit, kCameraInit = sym::CameraInit, kAnimInit = sym::AnimInit;
+constexpr uint32_t kFrontEndInit = sym::FrontEndInit, kFrontEndProcess = sym::FrontEndProcess, kFrontEndTerm = sym::FrontEndTerm, kRdrPolyInit = sym::RdrPolyInit;
+constexpr uint32_t kRdrAlphaInit = sym::RdrAlphaInit, kVfxLvlInit = sym::VfxLvlInit, kVfx2TSFXLvlInit = sym::Vfx2TSFXLvlInit, kMeshSetQuality = sym::MeshSetQuality;
+constexpr uint32_t kMirrorSet = sym::MirrorSet, kMpegOnInterruptTERM = sym::mpegOnInterruptTERM, kAnimTerm = sym::AnimTerm, kCameraTerm = sym::CameraTerm;
+constexpr uint32_t kAColTerm = sym::AColTerm, kOColTerm = sym::OColTerm, kTColTerm = sym::TColTerm, kCarColTerm = sym::CarColTerm, kGameTaskTerm = sym::GameTaskTerm;
+constexpr uint32_t kVfxLvlTerm = sym::VfxLvlTerm, kVfx2TSFXLvlTerm = sym::Vfx2TSFXLvlTerm, kRdrPolyTerm = sym::RdrPolyTerm, kRdrAlphaTerm = sym::RdrAlphaTerm;
+constexpr uint32_t kLevelInit = sym::LevelInit, kLevelLoad = sym::LevelLoad, kLevelTerm = sym::LevelTerm, kTEditInit = sym::TEditInit, kTEditTerm = sym::TEditTerm;
+constexpr uint32_t kCameraLvlInit = sym::CameraLvlInit, kCameraSetMode = sym::CameraSetMode, kCameraProcess = sym::CameraProcess, kRdrStartFrame = sym::Rdr_StartFrame;
+constexpr uint32_t kApplyDefaultState = sym::RdrState_ApplyDefaultStateBlock, kGfxP2ZWriteEnable = sym::GfxP2_ZWriteEnable, kTEditControl = sym::TEditControl, kInit3dFrame = sym::Init3dFrame;
+constexpr uint32_t kInit3dFrame2 = sym::Init3dFrame2, kTileFrameInit = sym::TileFrameInit, kTEditDisplay = sym::TEditDisplay, kFontPrint = sym::FontPrint;
+constexpr uint32_t kRdrAlphaAddToDmaChain = sym::RdrAlphaAddToDmaChain, kRdrEndFrame = sym::Rdr_EndFrame, kSkinAnimInit = sym::SkinAnimInit, kObjectInit = sym::ObjectInit;
+constexpr uint32_t kPlayerInit = sym::PlayerInit, kAIInit = sym::AIInit, kAINodeInit = sym::AINodeInit, kWheelInit = sym::WheelInit, kVfxInit = sym::VfxInit;
+constexpr uint32_t kHudInit = sym::HudInit, kPhysicsLevelInit = sym::PhysicsLevelInit, kTSOInit = sym::TSOInit, kTBoxInit = sym::TBoxInit, kPickupInit = sym::PickupInit;
+constexpr uint32_t kPathInit = sym::PathInit, kRdrShapeInit = sym::Rdr_ShapeInit, kRdrSkinInit = sym::Rdr_SkinInit, kRdrWaterInit = sym::Rdr_WaterInit;
+constexpr uint32_t kVSyncCallback = sym::VSyncCallback, kTaskInit = sym::TaskInit, kAColLvlInit = sym::AColLvlInit, kOColLvlInit = sym::OColLvlInit;
+constexpr uint32_t kTColLvlInit = sym::TColLvlInit, kCarColLvlInit = sym::CarColLvlInit, kRdrParticleInit = sym::RdrParticleInit, kDepthCueInit = sym::DepthCueInit;
+constexpr uint32_t kObjectCreateCars = sym::ObjectCreateCars, kAISetupCars = sym::AISetupCars, kGameTaskLvlInit = sym::GameTaskLvlInit, kWeaponInit = sym::WeaponInit;
+constexpr uint32_t kDepthCueSet = sym::DepthCueSet, kAnimReinit = sym::AnimReinit, kRandomSetSeed = sym::RandomSetSeed, kPickupAllSpawn = sym::PickupAllSpawn;
+constexpr uint32_t kHudCreate = sym::HudCreate, kMenuInitScan = sym::MenuInitScan, kFontSet = sym::FontSet, kTEditGetSoundTrackNdxForTrack = sym::TEditGetSoundTrackNdxForTrack;
+constexpr uint32_t kVertAnimFrameUpdate = sym::VertAnimFrameUpdate, kTaskProcess = sym::TaskProcess, kTBoxProcess = sym::TBoxProcess, kRdrParticleProcess = sym::RdrParticleProcess;
+constexpr uint32_t kMeshInitFrame = sym::MeshInitFrame, kInit3dChangeViewcone = sym::Init3dChangeViewcone, kLsFrameInit = sym::LsFrameInit, kGfxP2Tex = sym::GfxP2_Tex;
+constexpr uint32_t kGfxP2RenderDmaSend = sym::GfxP2_RenderDmaSend, kAIDoRaceOrder = sym::AIDoRaceOrder, kMemset = sym::memset, kLsRenderWorld = sym::LsRenderWorld;
+constexpr uint32_t kTEditRenderGameTrack = sym::TEditRenderGameTrack, kVfxRenderShadows = sym::VfxRenderShadows, kObjectRenderAll = sym::ObjectRenderAll;
+constexpr uint32_t kVertAnimRender = sym::VertAnimRender, kTSORender = sym::TSORender, kPickupRenderAll = sym::PickupRenderAll, kHudPanel = sym::HudPanel;
+constexpr uint32_t kWeaponRenderAll = sym::WeaponRenderAll, kVfxRender = sym::VfxRender, kObjectResetAllTint = sym::ObjectResetAllTint, kObjectSfxDoAll = sym::ObjectSfxDoAll;
+constexpr uint32_t kPlayerSetVibrate = sym::PlayerSetVibrate, kRdrStateSetScissor = sym::RdrState_SetScissor, kAnimLvlTerm = sym::AnimLvlTerm, kHudDelete = sym::HudDelete;
+constexpr uint32_t kWeaponTerm = sym::WeaponTerm, kObjectDeleteAll = sym::ObjectDeleteAll, kPickupDeleteAll = sym::PickupDeleteAll, kRdrParticleTerm = sym::RdrParticleTerm;
+constexpr uint32_t kGameTaskLvlTerm = sym::GameTaskLvlTerm, kTaskTerm = sym::TaskTerm, kCameraLvlTerm = sym::CameraLvlTerm, kAColLvlTerm = sym::AColLvlTerm;
+constexpr uint32_t kOColLvlTerm = sym::OColLvlTerm, kTColLvlTerm = sym::TColLvlTerm, kCarColLvlTerm = sym::CarColLvlTerm, kRdrShapeTerm = sym::Rdr_ShapeTerm;
+constexpr uint32_t kRdrSkinTerm = sym::Rdr_SkinTerm, kRdrWaterTerm = sym::Rdr_WaterTerm, kAINodeTerm = sym::AINodeTerm, kWheelTerm = sym::WheelTerm;
+constexpr uint32_t kPlayerTerm = sym::PlayerTerm, kObjectTerm = sym::ObjectTerm, kVfxTerm = sym::VfxTerm, kHudTerm = sym::HudTerm;
+constexpr uint32_t kPhysicsLevelTerm = sym::PhysicsLevelTerm, kTBoxTerm = sym::TBoxTerm, kPickupTerm = sym::PickupTerm, kTSOTerm = sym::TSOTerm;
+constexpr uint32_t kTEditFreeTrackAINodes = sym::TEditFreeTrackAINodes, kTEditFreeTrackALF = sym::TEditFreeTrackALF, kTEditLevelTerm = sym::TEditLevelTerm, kPathTerm = sym::PathTerm;
+constexpr uint32_t kSkinAnimTerm = sym::SkinAnimTerm, kTexFreeIntermediateResData = sym::TexFreeIntermediateResData;
 
 constexpr uint32_t kTimer = kMain + 0x10u, kWindow0 = kMain + 0x20u, kWindow1 = kMain + 0x8cu, kWindow2 = kMain + 0xf8u;
-constexpr uint32_t kResHandle = kMain + 0x164u, kCurrentCamera = kCamera + 0xb70u, kFrameMode = 0x328390u, kFrameSplit = 0x328394u;
+constexpr uint32_t kResHandle = kMain + 0x164u, kCurrentCamera = kCamera + 0xb70u, kFrameMode = sym::gRdrPolyOffset, kFrameSplit = sym::gRdrPolyPlayer;
 
 void call(uint32_t address) { guest_call(address); }
 
@@ -110,7 +110,7 @@ void countFrames(uint32_t time, bool print)
     frameTime() = time;
     at<uint32_t>(kMain + 0x35cu) = count;
     if (print)
-        guest_call(kPrintf, 0x323628u, count);
+        guest_call(kPrintf, (sym::sec_rodata + 0x1028u), count);
     frames() = 0;
 }
 
@@ -118,8 +118,9 @@ void countFrames(uint32_t time, bool print)
 
 void MainInit()
 {
+    RC_DIVERT_IF_CHANGED(MainInit);
     GuestFrame frame(0x80);
-    guest_call(kPrintf, 0x3233a0u);
+    guest_call(kPrintf, (sym::sec_rodata + 0xda0u));
     guest_call(kMemBlockInit, 0x500000, 0x1af0000);
     call(kDisplayInit);
     guest_call(kDisplaySetBackground, 0, 0, 0);
@@ -140,7 +141,7 @@ void MainInit()
         guest_call(kExit, 1);
     guest_call(kFMPrepareHi, 0x9c40);
     call(kLoadErrorInit);
-    guest_call(kResInit, 0x327ef0u, at<uint32_t>(kResHandle), 0x1194000);
+    guest_call(kResInit, (sym::sec_sdata + 0x2f0u), at<uint32_t>(kResHandle), 0x1194000);
     call(kFMUnPrepare);
     guest_call(kMemBlockFree, kResHandle);
     call(kTEditInitPermTrackStructures);
@@ -217,7 +218,7 @@ void MainFrontInit()
             guest_call(kRCMusicPlayLevel, tune);
             guest_call(kRCMusicSetVol, at<uint32_t>(kMain + 0x3acu));
         }
-        else if (at<uint32_t>(0x327d54u) != 0 && at<uint32_t>(0x327d64u) == 1) // firstEntryG, memoryCardDontCareG
+        else if (at<uint32_t>(sym::firstEntryG) != 0 && at<uint32_t>(sym::memoryCardDontCareG) == 1) // firstEntryG, memoryCardDontCareG
         {
             guest_call(kRCMusicPlayLevel, 0x69);
             guest_call(kRCMusicSetVol, at<uint32_t>(kMain + 0x3acu));
@@ -285,7 +286,7 @@ void MainTrackEdProcess()
         call(kTileFrameInit);
         guest_call(kTEditDisplay, time, ++frameCount);
         countFrames(time, false);
-        guest_call(kFontPrint, 0x294, 0x2e, 0x327ef8u);
+        guest_call(kFontPrint, 0x294, 0x2e, (sym::sec_sdata + 0x2f8u));
         guest_call(kDisplayRenderFrameProfile, 0);
         call(kRdrAlphaAddToDmaChain);
         call(kRdrEndFrame);
@@ -312,37 +313,37 @@ void MainGameInit()
         GuestFrame frame(0x20);
         for (const uint32_t f : {kMtlInit, kAColInit, kOColInit, kTColInit, kCarColInit, kGameTaskInit, kCameraInit, kAnimInit, kRCMusicStop})
             call(f);
-        guest_call(kPrintf, 0x3233b8u);
+        guest_call(kPrintf, (sym::sec_rodata + 0xdb8u));
         call(kSkinAnimInit);
-        guest_call(kPrintf, 0x3233d8u);
+        guest_call(kPrintf, (sym::sec_rodata + 0xdd8u));
         call(kObjectInit);
-        guest_call(kPrintf, 0x3233f0u);
+        guest_call(kPrintf, (sym::sec_rodata + 0xdf0u));
         guest_call(kPlayerInit, noHuman());
-        guest_call(kPrintf, 0x323408u);
+        guest_call(kPrintf, (sym::sec_rodata + 0xe08u));
         guest_call(kAIInit, noAI());
-        guest_call(kPrintf, 0x323420u);
+        guest_call(kPrintf, (sym::sec_rodata + 0xe20u));
         call(kAINodeInit);
-        guest_call(kPrintf, 0x323438u);
+        guest_call(kPrintf, (sym::sec_rodata + 0xe38u));
         call(kWheelInit);
-        guest_call(kPrintf, 0x323450u);
+        guest_call(kPrintf, (sym::sec_rodata + 0xe50u));
         call(kVfxInit);
-        guest_call(kPrintf, 0x323468u);
+        guest_call(kPrintf, (sym::sec_rodata + 0xe68u));
         call(kHudInit);
-        guest_call(kPrintf, 0x323480u);
+        guest_call(kPrintf, (sym::sec_rodata + 0xe80u));
         call(kPhysicsLevelInit);
-        guest_call(kPrintf, 0x323498u);
+        guest_call(kPrintf, (sym::sec_rodata + 0xe98u));
         call(kLevelInit);
-        guest_call(kPrintf, 0x3234b8u);
+        guest_call(kPrintf, (sym::sec_rodata + 0xeb8u));
         call(kTSOInit);
-        guest_call(kPrintf, 0x3234e0u);
+        guest_call(kPrintf, (sym::sec_rodata + 0xee0u));
         call(kTBoxInit);
-        guest_call(kPrintf, 0x323500u);
+        guest_call(kPrintf, (sym::sec_rodata + 0xf00u));
         call(kPickupInit);
         guest_call(kMirrorSet, at<uint32_t>(kMain + 0x398u));
-        guest_call(kPrintf, 0x323518u);
+        guest_call(kPrintf, (sym::sec_rodata + 0xf18u));
         guest_call(kRevSfxInitAmbient, 1);
         call(kPathInit);
-        guest_call(kPrintf, 0x323530u);
+        guest_call(kPrintf, (sym::sec_rodata + 0xf30u));
         guest_call(kLevelLoad, level());
         call(kRdrShapeInit);
         if (level() != 0x61) // not a track editor track
@@ -368,9 +369,9 @@ void MainGameLevelInit()
         GuestFrame frame(0x40);
         at<uint32_t>(kTimerResumed) = 0;
         guest_call(kMpegOnInterruptTERM, 1);
-        guest_call(kVSyncCallback, 0x182680u);
+        guest_call(kVSyncCallback, sym::VSyncCallbackFunction);
         call(kTaskInit);
-        guest_call(kPrintf, 0x323548u);
+        guest_call(kPrintf, (sym::sec_rodata + 0xf48u));
         guest_call(kTimerSetup, kTimer, 0, 1);
         gameTime() = 0;
         at<uint32_t>(kMain + 0x39cu) = 1;
@@ -379,22 +380,22 @@ void MainGameLevelInit()
                                  kVfxLvlInit, kDepthCueInit})
             call(f);
         guest_call(kObjectCreateCars, gameTime());
-        guest_call(kPrintf, 0x323560u);
+        guest_call(kPrintf, (sym::sec_rodata + 0xf60u));
         call(kAISetupCars);
-        guest_call(kPrintf, 0x323578u);
+        guest_call(kPrintf, (sym::sec_rodata + 0xf78u));
         guest_call(kCameraLvlInit, splitScreen());
-        guest_call(kPrintf, 0x323598u);
+        guest_call(kPrintf, (sym::sec_rodata + 0xf98u));
         call(kGameTaskLvlInit);
-        guest_call(kPrintf, 0x3235b8u);
+        guest_call(kPrintf, (sym::sec_rodata + 0xfb8u));
         call(kWeaponInit);
-        guest_call(kPrintf, 0x3235d0u);
+        guest_call(kPrintf, (sym::sec_rodata + 0xfd0u));
         guest_call(kDepthCueSet, 0x61a8, splitScreen());
         guest_call(kMeshSetQuality, splitScreen() == 0 ? 2 : 0);
         call(kAnimReinit);
-        guest_call(kRandomSetSeed, at<uint32_t>(0x31ff40u));
+        guest_call(kRandomSetSeed, at<uint32_t>((sym::sysTimerVarG + 0x8u)));
         if (at<uint32_t>(kMain + 0x3a8u) != 0)
         {
-            guest_call(kPrintf, 0x3235f0u);
+            guest_call(kPrintf, (sym::sec_rodata + 0xff0u));
             guest_call(kPickupAllSpawn, 0);
         }
         call(kHudCreate);
@@ -412,7 +413,7 @@ void MainGameLevelInit()
         }
         SetChampionshipPoints();
         ClearRankingDisplay();
-        guest_call(kPrintf, 0x323608u);
+        guest_call(kPrintf, (sym::sec_rodata + 0x1008u));
         guest_call(kInputSetVibrationFlags, 0, 0);
     }
     guest_call(kInputSetVibrationFlags, 4, 0);
@@ -420,6 +421,7 @@ void MainGameLevelInit()
 
 void MainGameProcess()
 {
+    RC_DIVERT_IF_CHANGED(MainGameProcess);
     GuestFrame frame(0xf0);
     const uint32_t temp = frame.local<uint8_t>(0x40).address;
     frames() = 0;
@@ -459,7 +461,7 @@ void MainGameProcess()
         call(kMeshInitFrame);
         guest_call(kInit3dChangeViewcone, at<uint16_t>(kCamera + 0x574u));
         guest_call(kLsFrameInit, gameTime(), splitScreen(), 0);
-        guest_call(kGfxP2Tex, at<uint32_t>(at<uint32_t>(0x1f106cu) + 0x60u));
+        guest_call(kGfxP2Tex, at<uint32_t>(at<uint32_t>((sym::visFxVarG + 0x6cu)) + 0x60u));
         call(kGfxP2RenderDmaSend);
         call(kAIDoRaceOrder);
         guest_call(kMemset, temp, 0, 0xc);
@@ -537,7 +539,7 @@ void MainGameProcess()
                 guest_call(kTimerResume, kTimer);
         }
         call(kGfxP2RenderDmaSend);
-        if (at<uint32_t>(0x1ee7e0u + 0xcu) & 0x800u)
+        if (at<uint32_t>(sym::playerVarG + 0xcu) & 0x800u)
             status() = 8;
         call(kRdrEndFrame);
         frames() = frames() + 1;
@@ -551,7 +553,7 @@ void MainGameProcess()
     fadeMusicOut();
     guest_call(kRevSfxStopAll, status() == 2 ? 0 : 1);
     // Up to 30 frames for both pads to report in.
-    for (int32_t count = 0; (at<uint32_t>(0x1f4c80u + 0x100u) == 0 || at<uint32_t>(0x1f4c80u + 0x104u) == 0) && count < 0x1e; ++count)
+    for (int32_t count = 0; (at<uint32_t>(sym::inputVarG + 0x100u) == 0 || at<uint32_t>(sym::inputVarG + 0x104u) == 0) && count < 0x1e; ++count)
     {
         guest_call(kSceGsSyncV, 0);
         call(kInputSnapshot);
@@ -608,13 +610,14 @@ void MainTerm()
                                  kMemBlockTerm})
             call(f);
     }
-    guest_call(kPrintf, 0x323638u);
+    guest_call(kPrintf, (sym::sec_rodata + 0x1038u));
 }
 
 // The three windows: player 1's (full screen, or the top half when split), player 2's (the bottom half) and the
 // overlay's.
 void MainScreenGameInit(int32_t i)
 {
+    RC_DIVERT_IF_CHANGED(MainScreenGameInit, i);
     {
         GuestFrame frame(0xa0);
         if (i == 0)
@@ -634,6 +637,7 @@ void MainScreenGameInit(int32_t i)
 // Makes a window current: its camera, the 3D frame, the scissor for its half of the screen and the 2D offset.
 void SetFrameWindow(int32_t windowId, tTime time)
 {
+    RC_DIVERT_IF_CHANGED(SetFrameWindow, windowId, time);
     {
         GuestFrame frame(0x20);
         if (windowId != 2)
@@ -684,16 +688,16 @@ void SetFrameWindow(int32_t windowId, tTime time)
 
 } // namespace rc
 
-RC_DECOMP_FN_BLOCKING(MainInit, 0x12f080)           // Once, at start-up.
-RC_DECOMP_FN_BLOCKING(MainFrontInit, 0x12f3a8)      // Front end set-up: loads and plays music.
-RC_DECOMP_FN_BLOCKING(MainFrontProcess, 0x12f500)   // The front end's frame (FrontEndProcess).
-RC_DECOMP_FN_BLOCKING(MainFrontTerm, 0x12f508)
-RC_DECOMP_FN_BLOCKING(MainGameInit, 0x12fa38)       // Loads the level.
-RC_DECOMP_FN_BLOCKING(MainGameLevelInit, 0x12fc58)
-RC_DECOMP_FN_BLOCKING(MainGameProcess, 0x12fe78)    // The race's frame loop.
-RC_DECOMP_FN_BLOCKING(MainGameLevelTerm, 0x130708)
-RC_DECOMP_FN_BLOCKING(MainGameTerm, 0x1307a8)
+RC_DECOMP_FN_BLOCKING(MainInit)           // Once, at start-up.
+RC_DECOMP_FN_BLOCKING(MainFrontInit)      // Front end set-up: loads and plays music.
+RC_DECOMP_FN_BLOCKING(MainFrontProcess)   // The front end's frame (FrontEndProcess).
+RC_DECOMP_FN_BLOCKING(MainFrontTerm)
+RC_DECOMP_FN_BLOCKING(MainGameInit)       // Loads the level.
+RC_DECOMP_FN_BLOCKING(MainGameLevelInit)
+RC_DECOMP_FN_BLOCKING(MainGameProcess)    // The race's frame loop.
+RC_DECOMP_FN_BLOCKING(MainGameLevelTerm)
+RC_DECOMP_FN_BLOCKING(MainGameTerm)
 // Not registered: MainTrackEdInit, MainTrackEdProcess and MainTrackEdTerm (the track editor, reached only through the
 // menus, so no run checks them) and MainTerm (shut-down; MainLoop never ends). Their code above is unchecked.
-RC_DECOMP_FN_SETUP_HEAP(MainScreenGameInit, 0x130960, rc::fuzz::mainScreen)
-RC_DECOMP_FN_SETUP_HEAP(SetFrameWindow, 0x130b10, rc::fuzz::mainFrameWindow)
+RC_DECOMP_FN_SETUP_HEAP(MainScreenGameInit, rc::fuzz::mainScreen)
+RC_DECOMP_FN_SETUP_HEAP(SetFrameWindow, rc::fuzz::mainFrameWindow)

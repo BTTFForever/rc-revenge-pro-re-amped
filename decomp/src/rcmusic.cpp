@@ -41,20 +41,20 @@ int32 MusicRPC(int32 command, int32 data);
 
 namespace {
 
-constexpr uint32_t kRc = 0x1ee8c0u; // rcmusicVarG
-constexpr uint32_t kCd = 0x4bf5c0u, kSbuf = 0x4bf580u, kFrontFade = 0x327f68u;
-constexpr uint32_t kSifCallRpc = 0x1c0968u, kSifInitRpc = 0x1c0180u, kSifBindRpc = 0x1c07b8u, kPrintf = 0x12e9e8u,
-                   kCdDiskReady = 0x1cd708u, kCdSearchFile = 0x1cc110u;
+constexpr uint32_t kRc = sym::rcmusicVarG; // rcmusicVarG
+constexpr uint32_t kCd = sym::cd__0, kSbuf = sym::sbuf, kFrontFade = sym::frontFade_492;
+constexpr uint32_t kSifCallRpc = sym::sceSifCallRpc, kSifInitRpc = sym::sceSifInitRpc, kSifBindRpc = sym::sceSifBindRpc, kPrintf = sym::printf,
+                   kCdDiskReady = sym::sceCdDiskReady, kCdSearchFile = sym::sceCdSearchFile;
 // "SETVOL request for %d\n", "MODIFY VOLUME \n", "RCMUSIC SET VOL %d", "Error locating %s \n",
 // "error: sceSifBindRpc \n".
-constexpr uint32_t kSetVolFormat = 0x3241f8u, kModifyFormat = 0x324228u, kRcSetVolFormat = 0x324238u,
-                   kLocateFormat = 0x323ea0u, kBindError = 0x325178u;
+constexpr uint32_t kSetVolFormat = (sym::sec_rodata + 0x1bf8u), kModifyFormat = (sym::sec_rodata + 0x1c28u), kRcSetVolFormat = (sym::sec_rodata + 0x1c38u),
+                   kLocateFormat = (sym::sec_rodata + 0x18a0u), kBindError = (sym::sec_rodata + 0x2b78u);
 // The track names, "\\MUS1\\FRONTEND.XA2;1" to "\\MUS2\\PWBFL.XA2;1".
 constexpr uint32_t kTrackNames[36] = {
-    0x323eb8u, 0x323ed0u, 0x323ee8u, 0x323f00u, 0x323f18u, 0x323f30u, 0x323f48u, 0x323f60u, 0x323f78u,
-    0x323f88u, 0x323fa0u, 0x323fb0u, 0x323fc8u, 0x323fd8u, 0x323ff0u, 0x324000u, 0x324018u, 0x324028u,
-    0x324040u, 0x324050u, 0x324068u, 0x324080u, 0x324098u, 0x3240a8u, 0x3240c0u, 0x3240d0u, 0x3240e8u,
-    0x3240f8u, 0x324110u, 0x324120u, 0x324138u, 0x324150u, 0x324168u, 0x324178u, 0x324190u, 0x3241a0u,
+    (sym::sec_rodata + 0x18b8u), (sym::sec_rodata + 0x18d0u), (sym::sec_rodata + 0x18e8u), (sym::sec_rodata + 0x1900u), (sym::sec_rodata + 0x1918u), (sym::sec_rodata + 0x1930u), (sym::sec_rodata + 0x1948u), (sym::sec_rodata + 0x1960u), (sym::sec_rodata + 0x1978u),
+    (sym::sec_rodata + 0x1988u), (sym::sec_rodata + 0x19a0u), (sym::sec_rodata + 0x19b0u), (sym::sec_rodata + 0x19c8u), (sym::sec_rodata + 0x19d8u), (sym::sec_rodata + 0x19f0u), (sym::sec_rodata + 0x1a00u), (sym::sec_rodata + 0x1a18u), (sym::sec_rodata + 0x1a28u),
+    (sym::sec_rodata + 0x1a40u), (sym::sec_rodata + 0x1a50u), (sym::sec_rodata + 0x1a68u), (sym::sec_rodata + 0x1a80u), (sym::sec_rodata + 0x1a98u), (sym::sec_rodata + 0x1aa8u), (sym::sec_rodata + 0x1ac0u), (sym::sec_rodata + 0x1ad0u), (sym::sec_rodata + 0x1ae8u),
+    (sym::sec_rodata + 0x1af8u), (sym::sec_rodata + 0x1b10u), (sym::sec_rodata + 0x1b20u), (sym::sec_rodata + 0x1b38u), (sym::sec_rodata + 0x1b50u), (sym::sec_rodata + 0x1b68u), (sym::sec_rodata + 0x1b78u), (sym::sec_rodata + 0x1b90u), (sym::sec_rodata + 0x1ba0u),
 };
 
 template <typename T>
@@ -238,6 +238,7 @@ void RCMusicChain(int32 secondXA, int8 fadeRate)
 
 void RCMusicFadeControl()
 {
+    RC_DIVERT_IF_CHANGED(RCMusicFadeControl);
     GuestFrame frame(0x30);
     rcmusicClass &r = music();
     const int32_t fade = r.fade;
@@ -606,33 +607,33 @@ int32 MusicRPC(int32 command, int32 data)
 
 } // namespace rc
 
-RC_DECOMP_FN_SETUP(RCMusicInitLists, 0x1409b8, rc::fuzz::rcLists)
-RC_DECOMP_FN_BLOCKING_SETUP(RCMusicPlayTrackEdit, 0x140cf8, rc::fuzz::rcMusic)
-RC_DECOMP_FN_BLOCKING_SETUP(RCMusicResume, 0x140e20, rc::fuzz::rcMusic)
-RC_DECOMP_FN_BLOCKING_SETUP(RCMusicChain, 0x140f08, rc::fuzz::rcChain)
-RC_DECOMP_FN_BLOCKING_SETUP(RCMusicFadeControl, 0x141080, rc::fuzz::rcMusic)
-RC_DECOMP_FN_BLOCKING_SETUP(RCMusicSwitchAlternate, 0x1411e8, rc::fuzz::rcMusic)
-RC_DECOMP_FN_SETUP(RCMusicSetLevel, 0x1412c0, rc::fuzz::rcLevel)
-RC_DECOMP_FN_BLOCKING_SETUP(RCMusicModifyVolume, 0x1413f0, rc::fuzz::rcVolume)
-RC_DECOMP_FN_BLOCKING_SETUP(RCMusicSetVol, 0x1414e0, rc::fuzz::rcMusic)
-RC_DECOMP_FN_BLOCKING_SETUP(RCMusicStop, 0x1415b8, rc::fuzz::rcMusic)
-RC_DECOMP_FN_BLOCKING_SETUP(RCMusicInitStream, 0x1415c0, rc::fuzz::rcMusic)
-RC_DECOMP_FN_BLOCKING_SETUP(RCMusicLvlTerm, 0x1415c8, rc::fuzz::rcMusic)
-RC_DECOMP_FN_BLOCKING_SETUP(RCMusicPlayLevel, 0x1415d0, rc::fuzz::rcMusic)
-RC_DECOMP_FN(RCMusicTest, 0x1416a0)
-RC_DECOMP_FN_BLOCKING_SETUP(RCMusicInit, 0x1416a8, rc::fuzz::rcInit)
-RC_DECOMP_FN_BLOCKING_SETUP(RCMusicPause, 0x141790, rc::fuzz::rcMusic)
-RC_DECOMP_FN_BLOCKING_SETUP(RCMusicSwitchLastLap, 0x141828, rc::fuzz::rcMusic)
-RC_DECOMP_FN_BLOCKING_SETUP(MusicStart, 0x1af430, rc::fuzz::musicArgs)
-RC_DECOMP_FN_BLOCKING_SETUP(MusicStop, 0x1af440, rc::fuzz::musicArgs)
-RC_DECOMP_FN_BLOCKING_SETUP(MusicTerm, 0x1af450, rc::fuzz::musicArgs)
-RC_DECOMP_FN_BLOCKING_SETUP(MusicPlay, 0x1af460, rc::fuzz::musicArgs)
-RC_DECOMP_FN_BLOCKING_SETUP(MusicSwitch, 0x1af4b8, rc::fuzz::musicArgs)
-RC_DECOMP_FN_BLOCKING_SETUP(MusicSwitchFront, 0x1af578, rc::fuzz::musicArgs)
-RC_DECOMP_FN_BLOCKING_SETUP(MusicInitStream, 0x1af5d8, rc::fuzz::musicArgs)
-RC_DECOMP_FN_BLOCKING_SETUP(MusicSwitchSpecial, 0x1af5e8, rc::fuzz::musicArgs)
-RC_DECOMP_FN_BLOCKING_SETUP(MusicSwitchChannel, 0x1af5f8, rc::fuzz::musicArgs)
-RC_DECOMP_FN_BLOCKING_SETUP(MusicPause, 0x1af608, rc::fuzz::musicArgs)
-RC_DECOMP_FN_BLOCKING_SETUP(MusicInit, 0x1af618, rc::fuzz::musicArgs)
-RC_DECOMP_FN_BLOCKING_SETUP(MusicRPCinit, 0x1af658, rc::fuzz::musicArgs)
-RC_DECOMP_FN_BLOCKING_SETUP(MusicRPC, 0x1af7e0, rc::fuzz::musicRpc)
+RC_DECOMP_FN_SETUP(RCMusicInitLists, rc::fuzz::rcLists)
+RC_DECOMP_FN_BLOCKING_SETUP(RCMusicPlayTrackEdit, rc::fuzz::rcMusic)
+RC_DECOMP_FN_BLOCKING_SETUP(RCMusicResume, rc::fuzz::rcMusic)
+RC_DECOMP_FN_BLOCKING_SETUP(RCMusicChain, rc::fuzz::rcChain)
+RC_DECOMP_FN_BLOCKING_SETUP(RCMusicFadeControl, rc::fuzz::rcMusic)
+RC_DECOMP_FN_BLOCKING_SETUP(RCMusicSwitchAlternate, rc::fuzz::rcMusic)
+RC_DECOMP_FN_SETUP(RCMusicSetLevel, rc::fuzz::rcLevel)
+RC_DECOMP_FN_BLOCKING_SETUP(RCMusicModifyVolume, rc::fuzz::rcVolume)
+RC_DECOMP_FN_BLOCKING_SETUP(RCMusicSetVol, rc::fuzz::rcMusic)
+RC_DECOMP_FN_BLOCKING_SETUP(RCMusicStop, rc::fuzz::rcMusic)
+RC_DECOMP_FN_BLOCKING_SETUP(RCMusicInitStream, rc::fuzz::rcMusic)
+RC_DECOMP_FN_BLOCKING_SETUP(RCMusicLvlTerm, rc::fuzz::rcMusic)
+RC_DECOMP_FN_BLOCKING_SETUP(RCMusicPlayLevel, rc::fuzz::rcMusic)
+RC_DECOMP_FN(RCMusicTest)
+RC_DECOMP_FN_BLOCKING_SETUP(RCMusicInit, rc::fuzz::rcInit)
+RC_DECOMP_FN_BLOCKING_SETUP(RCMusicPause, rc::fuzz::rcMusic)
+RC_DECOMP_FN_BLOCKING_SETUP(RCMusicSwitchLastLap, rc::fuzz::rcMusic)
+RC_DECOMP_FN_BLOCKING_SETUP(MusicStart, rc::fuzz::musicArgs)
+RC_DECOMP_FN_BLOCKING_SETUP(MusicStop, rc::fuzz::musicArgs)
+RC_DECOMP_FN_BLOCKING_SETUP(MusicTerm, rc::fuzz::musicArgs)
+RC_DECOMP_FN_BLOCKING_SETUP(MusicPlay, rc::fuzz::musicArgs)
+RC_DECOMP_FN_BLOCKING_SETUP(MusicSwitch, rc::fuzz::musicArgs)
+RC_DECOMP_FN_BLOCKING_SETUP(MusicSwitchFront, rc::fuzz::musicArgs)
+RC_DECOMP_FN_BLOCKING_SETUP(MusicInitStream, rc::fuzz::musicArgs)
+RC_DECOMP_FN_BLOCKING_SETUP(MusicSwitchSpecial, rc::fuzz::musicArgs)
+RC_DECOMP_FN_BLOCKING_SETUP(MusicSwitchChannel, rc::fuzz::musicArgs)
+RC_DECOMP_FN_BLOCKING_SETUP(MusicPause, rc::fuzz::musicArgs)
+RC_DECOMP_FN_BLOCKING_SETUP(MusicInit, rc::fuzz::musicArgs)
+RC_DECOMP_FN_BLOCKING_SETUP(MusicRPCinit, rc::fuzz::musicArgs)
+RC_DECOMP_FN_BLOCKING_SETUP(MusicRPC, rc::fuzz::musicRpc)

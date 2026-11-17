@@ -526,6 +526,7 @@ void AMenuDisplay(ptr32<sAMenuHeader> pHeader)
 // A scrolling list: every line is drawn, moved up by the scroll position and clipped to the menu's box.
 void AMenuDisplayNewScroll(ptr32<sAMenuHeader> pHeader)
 {
+    RC_DIVERT_IF_CHANGED(AMenuDisplayNewScroll, pHeader);
     sAMenuHeader &h = *pHeader;
     {
         GuestFrame frame(0xa0);
@@ -658,6 +659,7 @@ int32_t AMenuAreaMenuCheckValidSelection(ptr32<sAMenuHeader> pHeader)
 // OK and cancel. On the first, measuring pass (amenuFirstDrawFlag) nothing is printed.
 void AMenuDisplayAreaMenu(ptr32<sAMenuHeader> pHeader)
 {
+    RC_DIVERT_IF_CHANGED(AMenuDisplayAreaMenu, pHeader);
     GuestFrame frame(0xc0);
     sAMenuHeader &h = *pHeader;
     int8_t &firstDraw = at<int8_t>(kFrontEnd + 0x2d5u);
@@ -752,6 +754,7 @@ void AMenuDisplayAreaMenu(ptr32<sAMenuHeader> pHeader)
 // as a small menu of its own. A menu without one gets the whole-screen box and the screen-adjust mode instead.
 void AMenuDisplayOptions(ptr32<sAMenuHeader> pHeader)
 {
+    RC_DIVERT_IF_CHANGED(AMenuDisplayOptions, pHeader);
     Locals f(0xb0);
     const ptr32<sAMenuHeader> pInstHeader = f.ptr<sAMenuHeader>(0);
     sAMenuHeader &inst = *pInstHeader;
@@ -874,18 +877,18 @@ int32_t DisplayTEHelpEntry(ptr32<sAMenuHeader> pHeader, ptr32<sTrackEditorHelpDa
 
 } // namespace rc
 
-RC_DECOMP_FN_SETUP_HEAP(AMenuDisplayAll, 0x103f08, rc::fuzz::amenuDraw)
-RC_DECOMP_FN_SETUP_HEAP(AMenuDisplayTitle, 0x103fa8, rc::fuzz::amenuDrawTitle)
-RC_DECOMP_FN_SETUP_HEAP(AMenuDisplayMIT, 0x1040b0, rc::fuzz::amenuDrawItem)
-RC_DECOMP_FN_SETUP_HEAP(AMenuDisplay, 0x104f80, rc::fuzz::amenuDrawOrdinary)
-RC_DECOMP_FN_SETUP_HEAP(AMenuDisplayNewScroll, 0x1051f0, rc::fuzz::amenuDrawScroll)
-RC_DECOMP_FN_SETUP_HEAP(AMenuDisplayAreaMenu, 0x105480, rc::fuzz::amenuAreaHeader)
-RC_DECOMP_FN_SETUP(AMenuAreaMenuSetup, 0x108350, rc::fuzz::amenuAreaHeader)
-RC_DECOMP_FN_SETUP_HEAP(AMenuDisplayOptions, 0x108cd8, rc::fuzz::amenuDrawOrdinary)
-RC_DECOMP_FN_SETUP(AmenuCalcSizeMIT, 0x109a20, rc::fuzz::amenuSizeItem)
-RC_DECOMP_FN_SETUP(AMenuCalcSize, 0x109f28, rc::fuzz::amenuSize)
-RC_DECOMP_FN_SETUP_HEAP(AMenuDisplayDialogText, 0x10e7f8, rc::fuzz::amenuDrawDialog)
-RC_DECOMP_FN_SETUP_HEAP(AMenuTabPrint, 0x10e8a0, rc::fuzz::amenuDrawTabs)
-RC_DECOMP_FN_SETUP_HEAP(DisplayProgTTMenuTitle, 0x10e690, rc::fuzz::amenuPageSub)
-RC_DECOMP_FN_SETUP_HEAP(DisplayTEHelpEntry, 0x10dab8, rc::fuzz::amenuHelpEntry)
-RC_DECOMP_FN_SETUP(AMenuAreaMenuCheckValidSelection, 0x10ee48, rc::fuzz::amenuAreaHeader)
+RC_DECOMP_FN_SETUP_HEAP(AMenuDisplayAll, rc::fuzz::amenuDraw)
+RC_DECOMP_FN_SETUP_HEAP(AMenuDisplayTitle, rc::fuzz::amenuDrawTitle)
+RC_DECOMP_FN_SETUP_HEAP(AMenuDisplayMIT, rc::fuzz::amenuDrawItem)
+RC_DECOMP_FN_SETUP_HEAP(AMenuDisplay, rc::fuzz::amenuDrawOrdinary)
+RC_DECOMP_FN_SETUP_HEAP(AMenuDisplayNewScroll, rc::fuzz::amenuDrawScroll)
+RC_DECOMP_FN_SETUP_HEAP(AMenuDisplayAreaMenu, rc::fuzz::amenuAreaHeader)
+RC_DECOMP_FN_SETUP(AMenuAreaMenuSetup, rc::fuzz::amenuAreaHeader)
+RC_DECOMP_FN_SETUP_HEAP(AMenuDisplayOptions, rc::fuzz::amenuDrawOrdinary)
+RC_DECOMP_FN_SETUP(AmenuCalcSizeMIT, rc::fuzz::amenuSizeItem)
+RC_DECOMP_FN_SETUP(AMenuCalcSize, rc::fuzz::amenuSize)
+RC_DECOMP_FN_SETUP_HEAP(AMenuDisplayDialogText, rc::fuzz::amenuDrawDialog)
+RC_DECOMP_FN_SETUP_HEAP(AMenuTabPrint, rc::fuzz::amenuDrawTabs)
+RC_DECOMP_FN_SETUP_HEAP(DisplayProgTTMenuTitle, rc::fuzz::amenuPageSub)
+RC_DECOMP_FN_SETUP_HEAP(DisplayTEHelpEntry, rc::fuzz::amenuHelpEntry)
+RC_DECOMP_FN_SETUP(AMenuAreaMenuCheckValidSelection, rc::fuzz::amenuAreaHeader)

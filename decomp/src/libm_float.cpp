@@ -10,7 +10,7 @@ namespace rc {
 
 namespace {
 
-constexpr uint32_t kNpio2Hw = 0x326a58u; // Table of the top bits of n * pi / 2.
+constexpr uint32_t kNpio2Hw = sym::npio2_hw; // Table of the top bits of n * pi / 2.
 
 ee_float kernelSin(ee_float x, ee_float y, int iy)
 {
@@ -138,7 +138,7 @@ ee_float ee_sinf(ee_float x)
 {
     const uint32_t ix = float_bits(x) & 0x7FFFFFFFu;
     if (ix > kNeedsLongReduction && ix < 0x7F800000u)
-        return callOriginalFloat(0x1c85d0, x);
+        return callOriginalFloat(sym::sinf, x);
     if (ix < 0x3F490FD9u)
         return kernelSin(x, 0.0f, 0);
     if (ix >= 0x7F800000u)
@@ -161,7 +161,7 @@ ee_float ee_cosf(ee_float x)
 {
     const uint32_t ix = float_bits(x) & 0x7FFFFFFFu;
     if (ix > kNeedsLongReduction && ix < 0x7F800000u)
-        return callOriginalFloat(0x1c84e8, x);
+        return callOriginalFloat(sym::cosf, x);
     if (ix < 0x3F490FD9u)
         return kernelCos(x, 0.0f);
     if (ix >= 0x7F800000u)
@@ -186,5 +186,5 @@ float cosf(ee_float x) { return ee_cosf(x); }
 
 } // namespace rc
 
-RC_DECOMP_FN(sinf, 0x1c85d0)
-RC_DECOMP_FN(cosf, 0x1c84e8)
+RC_DECOMP_FN(sinf)
+RC_DECOMP_FN(cosf)

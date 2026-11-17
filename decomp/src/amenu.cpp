@@ -184,6 +184,7 @@ void AMenuAddTextToTGRP(ptr32<sTextGroup> pTextGroup, ptr32<char> pText)
 // The text offset for the working language in a scrolling menu.
 int32_t GetNewMenuFiddleFactor(ptr32<sAMenuHeader> pHeader)
 {
+    RC_DIVERT_IF_CHANGED(GetNewMenuFiddleFactor, pHeader);
     switch (language())
     {
     case 0: return pHeader->tofsnEnglish;
@@ -475,7 +476,7 @@ void AMenuEntrySettingsMVAR(ptr32<sAMenuHeader> pHeader)
             set(at<int32_t>(kSfxUserVol));
             at<int32_t>(kSfxVolG) = at<int32_t>(kSfxUserVol);
             break;
-        case 0x10000289u: set(at<int32_t>(0x31e490u)); break; // sfxVarG + 8
+        case 0x10000289u: set(at<int32_t>((sym::sfxVarG + 0x8u))); break; // sfxVarG + 8
         case 0x1000028du: set(at<int32_t>(kFrontEnd + 0x190u)); break;
         case 0x1000028eu: set(at<int32_t>(kFrontEnd + 0x194u)); break;
         default: break;
@@ -487,6 +488,7 @@ void AMenuEntrySettingsMVAR(ptr32<sAMenuHeader> pHeader)
 // 0x1000 down), or at one of the fixed columns of moreFlags.
 void AMenuSnapsize(ptr32<sAMenuHeader> pHeader)
 {
+    RC_DIVERT_IF_CHANGED(AMenuSnapsize, pHeader);
     sAMenuHeader &h = *pHeader;
     h.width = static_cast<uint16>((h.width + 0x1d) / 0x1e * 0x1e);
     h.height = static_cast<uint16>((h.height + 9) / 0xf * 0xf);
@@ -509,20 +511,21 @@ void AMenuSnapsize(ptr32<sAMenuHeader> pHeader)
 }
 
 // The menu's background: a translucent rectangle a little larger than the menu, with four thin strips around it.
-void AMenuDrawRect(ptr32<sAMenuHeader> pHeader, int32_t)
+void AMenuDrawRect(ptr32<sAMenuHeader> pHeader, int32_t arg1)
 {
+    RC_DIVERT_IF_CHANGED(AMenuDrawRect, pHeader, arg1);
     Locals f(0x80);
     GfxP2_ZWriteEnable();
-    const ee_float otz = constant(0x32758cu);
+    const ee_float otz = constant(sym::lit4_32758c);
     const ptr32<sUIcolourSet> pColourSet = AMenuGetColourSet(pHeader);
     const ptr32<sBorderSet> pBorderSet = AMenuGetBorderSet(pHeader);
     const uint32_t yCurve = pBorderSet->yCurve, xCurve = pBorderSet->xCurve;
     const sAMenuHeader &h = *pHeader;
     const uint32_t top = static_cast<uint32_t>(h.y) - yCurve + 10u;
     const uint32_t left = static_cast<uint32_t>(h.x) - xCurve;
-    const uint32_t bottom = at<uint16_t>(0x327c80u) + top + (h.height + yCurve * 2u) - 0xfu;
-    const uint32_t right = at<uint16_t>(0x327c78u) + left + (h.width + xCurve * 2u);
-    const uint32_t x0 = left - at<uint16_t>(0x327c74u), y0 = top - at<uint16_t>(0x327c7cu);
+    const uint32_t bottom = at<uint16_t>(sym::ffRectBottomG) + top + (h.height + yCurve * 2u) - 0xfu;
+    const uint32_t right = at<uint16_t>(sym::ffRectRightG) + left + (h.width + xCurve * 2u);
+    const uint32_t x0 = left - at<uint16_t>(sym::ffRectLeftG), y0 = top - at<uint16_t>(sym::ffRectTopG);
     f.sh(0xc, right);
     f.sh(0xa, y0);
     f.sh(0x10, x0);
@@ -566,8 +569,9 @@ void AMenuDrawRect(ptr32<sAMenuHeader> pHeader, int32_t)
 }
 
 // The menu's border: corner, edge and side tiles (30 by 15) around the menu.
-void AMenuDrawBorder(ptr32<sAMenuHeader> pHeader, int32_t)
+void AMenuDrawBorder(ptr32<sAMenuHeader> pHeader, int32_t arg1)
 {
+    RC_DIVERT_IF_CHANGED(AMenuDrawBorder, pHeader, arg1);
     GuestFrame frame(0xc0);
     GfxP2_ZWriteEnable();
     const ptr32<sBorderSet> pBorderSet = AMenuGetBorderSet(pHeader);
@@ -585,7 +589,7 @@ void AMenuDrawBorder(ptr32<sAMenuHeader> pHeader, int32_t)
     const int32_t lowest = h.y + h.height - 0x19;
     for (; !(lowest < y); y = i16(y + 0xf))
     {
-        part(4, i16(leftEdge - at<uint16_t>(0x327c84u)), y);
+        part(4, i16(leftEdge - at<uint16_t>(sym::ffBordLeftG)), y);
         part(7, rightEdge, y);
     }
     part(5, leftEdge, y);
@@ -604,8 +608,9 @@ void AMenuDrawBox(ptr32<sAMenuHeader> pHeader, int32_t flags)
 }
 
 // A box around the whole screen.
-void AMenuDrawScreenBox(ptr32<sAMenuHeader> pHeader, int32_t)
+void AMenuDrawScreenBox(ptr32<sAMenuHeader> pHeader, int32_t arg1)
 {
+    RC_DIVERT_IF_CHANGED(AMenuDrawScreenBox, pHeader, arg1);
     Locals f(0xd0);
     GfxP2_ZWriteEnable();
     const ptr32<sUIcolourSet> pColourSet = AMenuGetColourSet(pHeader);
@@ -622,7 +627,7 @@ void AMenuDrawScreenBox(ptr32<sAMenuHeader> pHeader, int32_t)
     f.sb(0x14, pColourSet->bRed);
     f.sb(0x15, pColourSet->bGreen);
     f.sb(0x16, pColourSet->bBlue);
-    RectRender(f.ptr<_sRect>(0), constant(0x327590u));
+    RectRender(f.ptr<_sRect>(0), constant(sym::lit4_327590));
     const ptr32<sBorderSet> pBorderSet = AMenuGetBorderSet(pHeader);
     const auto part = [&](int index, int32_t x, int32_t y) { HudMenuBorder(pBorderSet->pBorderPart[index], x, y, static_cast<int32>(shine())); };
     for (int32_t x = 0x1e; x < 0x245; x += 0x1e)
@@ -651,7 +656,7 @@ void DisplayUIbar(ptr32<sBarDetails> pBar)
     Locals f(0x100);
     const sBarDetails &bar = *pBar;
     int32_t pos = bar.x + ee_div(bar.value * (static_cast<int32_t>(bar.width) - 8), bar.maxValue);
-    const ee_float otz = constant(0x327594u);
+    const ee_float otz = constant(sym::lit4_327594);
     const uint32_t height = bar.height;
     int32_t y = bar.y;
     const ptr32<_sSprite> pSprite = menuSystem().pSliderSprite;
@@ -667,7 +672,7 @@ void DisplayUIbar(ptr32<sBarDetails> pBar)
     f.sb(0x11, 0x7f);
     f.sh(0x14, 1);
     f.sh(0xc, 0xf);
-    SpriteRender(pSprite, f.ptr<_sSpriteParams>(0), constant(0x327598u));
+    SpriteRender(pSprite, f.ptr<_sSpriteParams>(0), constant(sym::lit4_327598));
     y += 3;
     int32_t bottom = y + static_cast<int32_t>((height >> 1) + 2u);
     const ptr32<_sGRect> shaded = f.ptr<_sGRect>(0x40);
@@ -718,7 +723,7 @@ void UserInterfaceInit()
 {
     GuestFrame frame(0x20);
     std::memset(&G(menuSystemG), 0, 0xf8);
-    G(pMenuSystemG) = ptr32<sMenuSystem>(0x1e9708u);
+    G(pMenuSystemG) = ptr32<sMenuSystem>(sym::menuSystemG);
     G(menuSystemG).status = 1;
     at<uint32_t>(kMainVars + 0x16cu) = 0xffffffffu;
     at<uint32_t>(kMainVars + 0x170u) = 0;
@@ -729,7 +734,7 @@ void UserInterfaceInit()
     AMenuTGrpInit();
     AMenuTLstInit();
     AMenuMenuInit();
-    FontSetGraphicFn(ptr32<void>(0x10eea0u)); // AMenuDisplayPsxKey
+    FontSetGraphicFn(ptr32<void>(sym::AMenuDisplayPsxKey)); // AMenuDisplayPsxKey
 }
 
 void UserInterfaceTerm()
@@ -755,8 +760,9 @@ void AMenuRectClipStart(ptr32<sAMenuHeader> pHeader, int32_t yOffset, int32_t cl
                   h.y + h.height - yOffset - (scrollLines + 8) + clipExtraHeight);
 }
 
-void AMenuRectClipEnd(ptr32<sAMenuHeader>, int32_t)
+void AMenuRectClipEnd(ptr32<sAMenuHeader> arg0, int32_t arg1)
 {
+    RC_DIVERT_IF_CHANGED(AMenuRectClipEnd, arg0, arg1);
     if (firstDrawPTT() != 0)
         return;
     GfxP2_Scissor(0, 0, 0x280, 0xf0);
@@ -768,11 +774,11 @@ void DisplayTickBox(int32_t x, int32_t y, int32_t value)
     Locals f(0x30);
     const ptr32<_sSprite> pSprite = menuSystem().pTickGfx;
     if (value == 0)
-        keySprite(f, pSprite, x, y, 0x18, constant(0x32759cu));
+        keySprite(f, pSprite, x, y, 0x18, constant(sym::lit4_32759c));
     else if (value == 1)
-        keySprite(f, pSprite, x, y, 0x1a, constant(0x3275a0u));
+        keySprite(f, pSprite, x, y, 0x1a, constant(sym::lit4_3275a0));
     else if (value == 2)
-        keySprite(f, pSprite, x, y, 0x10, constant(0x3275a4u));
+        keySprite(f, pSprite, x, y, 0x10, constant(sym::lit4_3275a4));
 }
 
 // A tick box with its text: box then text from x (1), text then box against the menu's right edge (2), or the same
@@ -822,14 +828,14 @@ void AMenuDisplayPsxKey(int32_t x, int32_t y, int32_t key)
 {
     Locals f(0x30);
     const ptr32<_sSprite> pSprite = key < 8 ? menuSystem().pPsxKeys : menuSystem().pTickGfx;
-    keySprite(f, pSprite, x, y, static_cast<uint32_t>(key) * 2u, constant(0x3275c4u));
+    keySprite(f, pSprite, x, y, static_cast<uint32_t>(key) * 2u, constant(sym::lit4_3275c4));
 }
 
 // A horizontal rule across the menu at y, shading from blue at the top to cyan. Returns the y below it.
 int32_t DisplayLine(ptr32<sAMenuHeader> pHeader, int32_t y)
 {
     Locals f(0x50);
-    rule(f, 0, *pHeader, y, constant(0x3275c8u));
+    rule(f, 0, *pHeader, y, constant(sym::lit4_3275c8));
     return y + 9;
 }
 
@@ -852,7 +858,7 @@ void DisplayTrackGraphicBorder(int32_t gap, ptr32<_sSpriteParams> pSpriteParams)
     f.sb(0x14, 0);
     f.sb(0x15, 0);
     f.sb(0x16, 0);
-    RectRender(f.ptr<_sRect>(0), constant(0x3275ccu));
+    RectRender(f.ptr<_sRect>(0), constant(sym::lit4_3275cc));
 }
 
 // Whether a level's race of a type has been won: 0 no, 1 yes in a cup already finished, 2 yes in the current cup.
@@ -869,65 +875,65 @@ int32_t CheckRaceTick(ptr32<_sFrontGameStateData> pGameStateData, int32_t level,
 
 } // namespace rc
 
-RC_DECOMP_FN_SETUP(AMenuInitHeader, 0x10dc18, rc::fuzz::amenuHeader)
-RC_DECOMP_FN_SETUP(AmenuSetflags, 0x10dc58, rc::fuzz::amenuHeader)
-RC_DECOMP_FN_SETUP(AmenuClearflags, 0x10dc68, rc::fuzz::amenuHeader)
-RC_DECOMP_FN_SETUP(AMenuGetMIT, 0x10dc80, rc::fuzz::amenuItemIndex)
-RC_DECOMP_FN_SETUP(AMenuAddMIT, 0x10dd38, rc::fuzz::amenuAddItem)
-RC_DECOMP_FN_SETUP(AMenuGetText, 0x10ddf0, rc::fuzz::amenuTextGroup)
-RC_DECOMP_FN(MoveUIbox, 0x10de18)
-RC_DECOMP_FN(UIborderInit, 0x10de20)
-RC_DECOMP_FN(UIborderTerm, 0x10de28)
-RC_DECOMP_FN(UImenuItemInit, 0x10de30)
-RC_DECOMP_FN(UImenuItemTerm, 0x10de38)
-RC_DECOMP_FN(UImenuVarInit, 0x10de40)
-RC_DECOMP_FN(UImenuVarTerm, 0x10de48)
-RC_DECOMP_FN(UIgroupInit, 0x10de50)
-RC_DECOMP_FN(UIgroupTerm, 0x10de58)
-RC_DECOMP_FN(AMenuMenuInit, 0x10de60)
-RC_DECOMP_FN(AMenuMenuTerm, 0x10de68)
-RC_DECOMP_FN_SETUP(AMenuLinkItems, 0x10de70, rc::fuzz::amenuLink)
-RC_DECOMP_FN(AMenuTGrpInit, 0x10df10)
-RC_DECOMP_FN(AMenuTGrpTerm, 0x10df18)
-RC_DECOMP_FN(AMenuTLstInit, 0x10df20)
-RC_DECOMP_FN(AMenuTLstTerm, 0x10df28)
-RC_DECOMP_FN_SETUP(GetCarText, 0x10df30, rc::fuzz::amenuMessage)
-RC_DECOMP_FN_SETUP(AMenuProcessGetMinSel, 0x10df80, rc::fuzz::amenuMinSel)
-RC_DECOMP_FN_SETUP(AMenuSetAreaMenuMaxStringLength, 0x10e118, rc::fuzz::amenuMessage)
-RC_DECOMP_FN_SETUP(AmenuRemovePercentS, 0x10e128, rc::fuzz::amenuStrings)
-RC_DECOMP_FN_SETUP(AMenuStringCentre, 0x10e1d0, rc::fuzz::amenuCentre)
-RC_DECOMP_FN_SETUP(GetGeneralString, 0x10e200, rc::fuzz::amenuMessage)
-RC_DECOMP_FN_SETUP(AMenuAddTextToTGRP, 0x10e258, rc::fuzz::amenuTextGroup)
-RC_DECOMP_FN_SETUP(GetNewMenuFiddleFactor, 0x10e270, rc::fuzz::amenuHeader)
-RC_DECOMP_FN_SETUP(SetTextOffsetFiddleFactor, 0x10e2d0, rc::fuzz::amenuHeader)
-RC_DECOMP_FN_SETUP(AMenuGetColourSet, 0x10e358, rc::fuzz::amenuHeader)
-RC_DECOMP_FN_SETUP(AMenuGetBorderSet, 0x10e378, rc::fuzz::amenuHeader)
-RC_DECOMP_FN_SETUP(DualShockAnalogModeTest, 0x10e398, rc::fuzz::amenuPadTest)
-RC_DECOMP_FN_SETUP(SpecialCaseMusicVolFixupBackout, 0x10e400, rc::fuzz::amenuHeader)
-RC_DECOMP_FN_SETUP(CheckBottomOfScroll, 0x10e790, rc::fuzz::amenuHeader)
-RC_DECOMP_FN_SETUP(AMenuGetTitleString, 0x10e7a8, rc::fuzz::amenuHeader)
-RC_DECOMP_FN_SETUP(AMenuGetDialogString, 0x10e7d0, rc::fuzz::amenuHeader)
-RC_DECOMP_FN_SETUP(InputPadReset, 0x10e9e0, rc::fuzz::amenuInput)
-RC_DECOMP_FN_SETUP(AMenuSelectMenuItem, 0x10eae8, rc::fuzz::amenuItem)
-RC_DECOMP_FN_SETUP(GetNthVisibleItem, 0x10ebf0, rc::fuzz::amenuItemIndex)
-RC_DECOMP_FN_SETUP(UpdateSingleVisibleMenu, 0x10ed58, rc::fuzz::amenuNone)
-RC_DECOMP_FN_SETUP(AMenuTestDisableMVAR, 0x104a88, rc::fuzz::amenuItem)
-RC_DECOMP_FN_SETUP(AMenuSetMITColour, 0x104da8, rc::fuzz::amenuItem)
-RC_DECOMP_FN_SETUP(AMenuChangeMVAR, 0x105fe8, rc::fuzz::amenuChange)
-RC_DECOMP_FN_SETUP(AMenuEntrySettingsMVAR, 0x10d170, rc::fuzz::amenuHeader)
-RC_DECOMP_FN_SETUP(AMenuSnapsize, 0x109920, rc::fuzz::amenuHeader)
-RC_DECOMP_FN_SETUP_HEAP(AMenuDrawRect, 0x108ff0, rc::fuzz::amenuDrawOrdinary)
-RC_DECOMP_FN_SETUP_HEAP(AMenuDrawBorder, 0x109200, rc::fuzz::amenuDrawOrdinary)
-RC_DECOMP_FN_SETUP_HEAP(AMenuDrawBox, 0x109570, rc::fuzz::amenuDrawOrdinary)
-RC_DECOMP_FN_SETUP_HEAP(AMenuDrawScreenBox, 0x1095a8, rc::fuzz::amenuDrawOrdinary)
-RC_DECOMP_FN_SETUP_HEAP(DisplayUIbar, 0x10a250, rc::fuzz::amenuBar)
-RC_DECOMP_FN_SETUP(UserInterfaceInit, 0x10a470, rc::fuzz::amenuInit)
-RC_DECOMP_FN_SETUP(UserInterfaceTerm, 0x10a508, rc::fuzz::amenuInit)
-RC_DECOMP_FN_SETUP_HEAP(AMenuRectClipStart, 0x10a550, rc::fuzz::amenuClip)
-RC_DECOMP_FN_SETUP_HEAP(AMenuRectClipEnd, 0x10a5b0, rc::fuzz::amenuClip)
-RC_DECOMP_FN_SETUP_HEAP(DisplayTickBox, 0x10a5d8, rc::fuzz::amenuTick)
-RC_DECOMP_FN_SETUP_HEAP(DisplayTickBoxText, 0x10a770, rc::fuzz::amenuTickText)
-RC_DECOMP_FN_SETUP_HEAP(AMenuDisplayPsxKey, 0x10eea0, rc::fuzz::amenuTick)
-RC_DECOMP_FN_SETUP_HEAP(DisplayLine, 0x10ef58, rc::fuzz::amenuLine)
-RC_DECOMP_FN_SETUP_HEAP(DisplayTrackGraphicBorder, 0x10eff8, rc::fuzz::amenuSpriteBorder)
-RC_DECOMP_FN_SETUP(CheckRaceTick, 0x10f078, rc::fuzz::amenuRaceTick)
+RC_DECOMP_FN_SETUP(AMenuInitHeader, rc::fuzz::amenuHeader)
+RC_DECOMP_FN_SETUP(AmenuSetflags, rc::fuzz::amenuHeader)
+RC_DECOMP_FN_SETUP(AmenuClearflags, rc::fuzz::amenuHeader)
+RC_DECOMP_FN_SETUP(AMenuGetMIT, rc::fuzz::amenuItemIndex)
+RC_DECOMP_FN_SETUP(AMenuAddMIT, rc::fuzz::amenuAddItem)
+RC_DECOMP_FN_SETUP(AMenuGetText, rc::fuzz::amenuTextGroup)
+RC_DECOMP_FN(MoveUIbox)
+RC_DECOMP_FN(UIborderInit)
+RC_DECOMP_FN(UIborderTerm)
+RC_DECOMP_FN(UImenuItemInit)
+RC_DECOMP_FN(UImenuItemTerm)
+RC_DECOMP_FN(UImenuVarInit)
+RC_DECOMP_FN(UImenuVarTerm)
+RC_DECOMP_FN(UIgroupInit)
+RC_DECOMP_FN(UIgroupTerm)
+RC_DECOMP_FN(AMenuMenuInit)
+RC_DECOMP_FN(AMenuMenuTerm)
+RC_DECOMP_FN_SETUP(AMenuLinkItems, rc::fuzz::amenuLink)
+RC_DECOMP_FN(AMenuTGrpInit)
+RC_DECOMP_FN(AMenuTGrpTerm)
+RC_DECOMP_FN(AMenuTLstInit)
+RC_DECOMP_FN(AMenuTLstTerm)
+RC_DECOMP_FN_SETUP(GetCarText, rc::fuzz::amenuMessage)
+RC_DECOMP_FN_SETUP(AMenuProcessGetMinSel, rc::fuzz::amenuMinSel)
+RC_DECOMP_FN_SETUP(AMenuSetAreaMenuMaxStringLength, rc::fuzz::amenuMessage)
+RC_DECOMP_FN_SETUP(AmenuRemovePercentS, rc::fuzz::amenuStrings)
+RC_DECOMP_FN_SETUP(AMenuStringCentre, rc::fuzz::amenuCentre)
+RC_DECOMP_FN_SETUP(GetGeneralString, rc::fuzz::amenuMessage)
+RC_DECOMP_FN_SETUP(AMenuAddTextToTGRP, rc::fuzz::amenuTextGroup)
+RC_DECOMP_FN_SETUP(GetNewMenuFiddleFactor, rc::fuzz::amenuHeader)
+RC_DECOMP_FN_SETUP(SetTextOffsetFiddleFactor, rc::fuzz::amenuHeader)
+RC_DECOMP_FN_SETUP(AMenuGetColourSet, rc::fuzz::amenuHeader)
+RC_DECOMP_FN_SETUP(AMenuGetBorderSet, rc::fuzz::amenuHeader)
+RC_DECOMP_FN_SETUP(DualShockAnalogModeTest, rc::fuzz::amenuPadTest)
+RC_DECOMP_FN_SETUP(SpecialCaseMusicVolFixupBackout, rc::fuzz::amenuHeader)
+RC_DECOMP_FN_SETUP(CheckBottomOfScroll, rc::fuzz::amenuHeader)
+RC_DECOMP_FN_SETUP(AMenuGetTitleString, rc::fuzz::amenuHeader)
+RC_DECOMP_FN_SETUP(AMenuGetDialogString, rc::fuzz::amenuHeader)
+RC_DECOMP_FN_SETUP(InputPadReset, rc::fuzz::amenuInput)
+RC_DECOMP_FN_SETUP(AMenuSelectMenuItem, rc::fuzz::amenuItem)
+RC_DECOMP_FN_SETUP(GetNthVisibleItem, rc::fuzz::amenuItemIndex)
+RC_DECOMP_FN_SETUP(UpdateSingleVisibleMenu, rc::fuzz::amenuNone)
+RC_DECOMP_FN_SETUP(AMenuTestDisableMVAR, rc::fuzz::amenuItem)
+RC_DECOMP_FN_SETUP(AMenuSetMITColour, rc::fuzz::amenuItem)
+RC_DECOMP_FN_SETUP(AMenuChangeMVAR, rc::fuzz::amenuChange)
+RC_DECOMP_FN_SETUP(AMenuEntrySettingsMVAR, rc::fuzz::amenuHeader)
+RC_DECOMP_FN_SETUP(AMenuSnapsize, rc::fuzz::amenuHeader)
+RC_DECOMP_FN_SETUP_HEAP(AMenuDrawRect, rc::fuzz::amenuDrawOrdinary)
+RC_DECOMP_FN_SETUP_HEAP(AMenuDrawBorder, rc::fuzz::amenuDrawOrdinary)
+RC_DECOMP_FN_SETUP_HEAP(AMenuDrawBox, rc::fuzz::amenuDrawOrdinary)
+RC_DECOMP_FN_SETUP_HEAP(AMenuDrawScreenBox, rc::fuzz::amenuDrawOrdinary)
+RC_DECOMP_FN_SETUP_HEAP(DisplayUIbar, rc::fuzz::amenuBar)
+RC_DECOMP_FN_SETUP(UserInterfaceInit, rc::fuzz::amenuInit)
+RC_DECOMP_FN_SETUP(UserInterfaceTerm, rc::fuzz::amenuInit)
+RC_DECOMP_FN_SETUP_HEAP(AMenuRectClipStart, rc::fuzz::amenuClip)
+RC_DECOMP_FN_SETUP_HEAP(AMenuRectClipEnd, rc::fuzz::amenuClip)
+RC_DECOMP_FN_SETUP_HEAP(DisplayTickBox, rc::fuzz::amenuTick)
+RC_DECOMP_FN_SETUP_HEAP(DisplayTickBoxText, rc::fuzz::amenuTickText)
+RC_DECOMP_FN_SETUP_HEAP(AMenuDisplayPsxKey, rc::fuzz::amenuTick)
+RC_DECOMP_FN_SETUP_HEAP(DisplayLine, rc::fuzz::amenuLine)
+RC_DECOMP_FN_SETUP_HEAP(DisplayTrackGraphicBorder, rc::fuzz::amenuSpriteBorder)
+RC_DECOMP_FN_SETUP(CheckRaceTick, rc::fuzz::amenuRaceTick)

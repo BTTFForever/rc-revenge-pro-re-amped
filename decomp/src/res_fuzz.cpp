@@ -22,16 +22,16 @@ namespace fuzz {
 
 namespace {
 
-constexpr uint32_t kRes = 0x31e070u, kFmFiles = 0x29d8c8u, kSysTimer = 0x31ff38u;
-constexpr uint32_t kFMFileOpen = 0x1a0550u, kFMFileRead = 0x1a0838u;
-constexpr uint32_t kLoadErrorCallback = 0x129440u, kResReAlloc = 0x1ab850u;
-constexpr uint32_t kDisplayInitHiRes = 0x182368u, kSwapBuffers = 0x18e988u, kSyncV = 0x1c3d90u, kFlushCache = 0x1be9a0u,
-                   kSyncPath = 0x1c3e28u, kExecLoadImage = 0x1c4328u;
-constexpr uint32_t kSifAllocIopHeap = 0x1c18c8u, kSifFreeIopHeap = 0x1c1938u, kSdTransToIOP = 0x1ca4d0u, kSifCallRpc = 0x1c0968u;
-constexpr uint32_t kMpegLoad = 0x1956a0u, kMpegPlay = 0x194b50u, kMpegTerm = 0x194ce0u, kMpegFinished = 0x195718u,
-                   kRCMusicStop = 0x1415b8u, kInputSnapshot = 0x191810u;
-constexpr uint32_t kAddIntcHandler2 = 0x1be410u, kRemoveIntcHandler = 0x1be420u;
-constexpr uint32_t kInputKeys = 0x1f4c80u + 0x5cu; // inputVarG's hit flags (bit 0x20), by key
+constexpr uint32_t kRes = sym::resVarG, kFmFiles = sym::fmVarG, kSysTimer = sym::sysTimerVarG;
+constexpr uint32_t kFMFileOpen = sym::FMFileOpen, kFMFileRead = sym::FMFileRead;
+constexpr uint32_t kLoadErrorCallback = sym::LoadErrorCallback, kResReAlloc = sym::ResReAlloc;
+constexpr uint32_t kDisplayInitHiRes = sym::DisplayInitHiRes, kSwapBuffers = sym::GfxP2_SwapBuffers, kSyncV = sym::sceGsSyncV, kFlushCache = sym::FlushCache,
+                   kSyncPath = sym::sceGsSyncPath, kExecLoadImage = sym::sceGsExecLoadImage;
+constexpr uint32_t kSifAllocIopHeap = sym::sceSifAllocIopHeap, kSifFreeIopHeap = sym::sceSifFreeIopHeap, kSdTransToIOP = sym::sceSdTransToIOP, kSifCallRpc = sym::sceSifCallRpc;
+constexpr uint32_t kMpegLoad = sym::mpegOnInterruptLOAD, kMpegPlay = sym::mpegOnInterruptPLAY, kMpegTerm = sym::mpegOnInterruptTERM, kMpegFinished = sym::mpegOnInterruptFINISHED,
+                   kRCMusicStop = sym::RCMusicStop, kInputSnapshot = sym::InputSnapshot;
+constexpr uint32_t kAddIntcHandler2 = sym::AddIntcHandler2, kRemoveIntcHandler = sym::RemoveIntcHandler;
+constexpr uint32_t kInputKeys = sym::inputVarG + 0x5cu; // inputVarG's hit flags (bit 0x20), by key
 constexpr uint32_t kLoadArea = 0x200000u; // a load area, more than any setup's loads need
 
 // Control words of the fakes (all in scratch, so each run starts from the same values and they are compared).
@@ -872,7 +872,7 @@ void resNames(R5900Context *, uint64_t &state, uint32_t scratch)
     putString(scratch, name);
     G(resVarG).pName = ptr32<char>(scratch);
     // Set every time: a setup's changes to the globals outlive the input (the test reverts only the function's).
-    static const uint32_t kExtensions[] = {0x3283b8u, 0x3283b0u, 0x3283a8u}; // ".luf", ".tlf", ".cfg"
+    static const uint32_t kExtensions[] = {(sym::sec_sdata + 0x7b8u), (sym::sec_sdata + 0x7b0u), (sym::sec_sdata + 0x7a8u)}; // ".luf", ".tlf", ".cfg"
     for (uint32_t i = 0; i < 3u; ++i)
         G(resExtG)[i] = ptr32<char>(kExtensions[i]);
     if (chance(state, 30))
@@ -968,10 +968,10 @@ void loadingInit(R5900Context *ctx, uint64_t &state, uint32_t)
 {
     quietLoader();
     G(bLoadingG) = chance(state, 70) ? 0 : chance(state, 50) ? 1 : static_cast<int32_t>(nextFuzz(state));
-    store<uint32_t>(0x3282a4u, chance(state, 70) ? 0u : nextFuzz(state));
-    putString(0x1ece48u, chance(state, 40) ? "" : chance(state, 50) ? "sbot1.m2v" : "abc");
-    store<uint8_t>(0x1edc4au, static_cast<uint8_t>(nextFuzz(state)));
-    store<uint8_t>(0x1edc69u, chance(state, 80) ? static_cast<uint8_t>(rnd(state, 3)) : static_cast<uint8_t>(nextFuzz(state)));
+    store<uint32_t>((sym::mpegBuffer + 0x4u), chance(state, 70) ? 0u : nextFuzz(state));
+    putString(sym::fileUsed, chance(state, 40) ? "" : chance(state, 50) ? "sbot1.m2v" : "abc");
+    store<uint8_t>((sym::mainVarG + 0x34au), static_cast<uint8_t>(nextFuzz(state)));
+    store<uint8_t>((sym::mainVarG + 0x369u), chance(state, 80) ? static_cast<uint8_t>(rnd(state, 3)) : static_cast<uint8_t>(nextFuzz(state)));
     static const int32_t kTypes[] = {-1, 0, 1, 2, 3, 4, 5, 6};
     setArg(ctx, 0, chance(state, 90) ? static_cast<uint32_t>(kTypes[rnd(state, 8)]) : nextFuzz(state));
 }
@@ -981,7 +981,7 @@ void loadingFlags(R5900Context *, uint64_t &state, uint32_t)
     quietLoader();
     G(bLoadingG) = static_cast<int32_t>(chance(state, 50) ? rnd(state, 2) : nextFuzz(state));
     static const uint32_t kFrames[] = {0u, 1u, 0xffffffffu, 0x7fffffffu, 0x80000000u};
-    store<uint32_t>(0x1eccfcu, chance(state, 60) ? kFrames[rnd(state, 5)] : nextFuzz(state));
+    store<uint32_t>((sym::frontEndVarG + 0x2a4u), chance(state, 60) ? kFrames[rnd(state, 5)] : nextFuzz(state));
 }
 
 // --- SYSTIMER and TIMER ---

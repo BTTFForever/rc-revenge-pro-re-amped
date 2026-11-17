@@ -32,11 +32,11 @@ namespace {
 
 using weapon::at;
 
-constexpr uint32_t kTask = 0x1ecd48u, kTimeStep = 0x327de0u, kGameTaskProcess = 0x123c10u, kAnimUpdateAnims = 0x10fd10u;
-constexpr uint32_t kObjectList = 0x1ee390u, kNoObjects = kObjectList + 0x170u, kMainVars = 0x1ed900u;
-constexpr uint32_t kReadySteadyGo = 0x1ece10u, kResultTrigger = 0x1f3730u, kDoApplyAIBoost = 0x328490u;
-constexpr uint32_t kCameraMode = 0x1e9fb0u;
-constexpr uint32_t kMorphScaleProcess = 0x32762cu, kShadowDefault = 0x327630u, kMorphScale = 0x327634u;
+constexpr uint32_t kTask = sym::GameTaskGlobals, kTimeStep = sym::gameTaskTimeStep, kGameTaskProcess = sym::GameTaskProcess, kAnimUpdateAnims = sym::AnimUpdateAnims;
+constexpr uint32_t kObjectList = sym::objectVarG, kNoObjects = kObjectList + 0x170u, kMainVars = sym::mainVarG;
+constexpr uint32_t kReadySteadyGo = (sym::hudVarG + 0x70u), kResultTrigger = (sym::visFxVarG + 0x2730u), kDoApplyAIBoost = sym::doApplyAIBoost_534;
+constexpr uint32_t kCameraMode = sym::cameraVarG;
+constexpr uint32_t kMorphScaleProcess = sym::lit4_32762c, kShadowDefault = sym::lit4_327630, kMorphScale = sym::lit4_327634;
 const ee_float kToCell = ee_float(0.00390625f); // 1 / 256
 
 ee_float fat(uint32_t address) { return at<ee_float>(address); }
@@ -117,6 +117,7 @@ void GameTaskUpdateCarOcols()
 // cars get a boost, shorter the further back they start. Then the hold flags are cleared again.
 void GameTaskSpecialPhysicsCases()
 {
+    RC_DIVERT_IF_CHANGED(GameTaskSpecialPhysicsCases);
     const int32_t rsg = at<int32_t>(kReadySteadyGo);
     if (rsg != 0 || at<int32_t>(kResultTrigger) != 0)
     {
@@ -253,15 +254,15 @@ void GameTaskGetShadowMaterialInfo(bool_ fastMethod)
     }
 }
 
-RC_DECOMP_FN_SETUP_HEAP(GameTaskLvlInit, 0x123708, rc::fuzz::physicsRace)
-RC_DECOMP_FN_SETUP_HEAP(GameTaskLvlTerm, 0x123748, rc::fuzz::physicsRace)
-RC_DECOMP_FN_SETUP_HEAP(GameTaskUpdateCarOcols, 0x123758, rc::fuzz::physicsRace)
-RC_DECOMP_FN_SETUP_HEAP(GameTaskSpecialPhysicsCases, 0x123890, rc::fuzz::physicsRace)
-RC_DECOMP_FN_SETUP_HEAP(GameTaskProcess, 0x123c10, rc::fuzz::physicsTask)
-RC_DECOMP_FN_SETUP_HEAP(GameTaskShadowCalc, 0x123d98, rc::fuzz::physicsObject)
-RC_DECOMP_FN(GameTaskInit, 0x124028)
-RC_DECOMP_FN(GameTaskTerm, 0x124030)
-RC_DECOMP_FN_SETUP_HEAP(GameTaskGetShadowMaterialInfo, 0x124038, rc::fuzz::physicsRace)
-RC_DECOMP_FN_SETUP_HEAP(MetaMorphiseCarSpheres, 0x1241f0, rc::fuzz::physicsTask)
+RC_DECOMP_FN_SETUP_HEAP(GameTaskLvlInit, rc::fuzz::physicsRace)
+RC_DECOMP_FN_SETUP_HEAP(GameTaskLvlTerm, rc::fuzz::physicsRace)
+RC_DECOMP_FN_SETUP_HEAP(GameTaskUpdateCarOcols, rc::fuzz::physicsRace)
+RC_DECOMP_FN_SETUP_HEAP(GameTaskSpecialPhysicsCases, rc::fuzz::physicsRace)
+RC_DECOMP_FN_SETUP_HEAP(GameTaskProcess, rc::fuzz::physicsTask)
+RC_DECOMP_FN_SETUP_HEAP(GameTaskShadowCalc, rc::fuzz::physicsObject)
+RC_DECOMP_FN(GameTaskInit)
+RC_DECOMP_FN(GameTaskTerm)
+RC_DECOMP_FN_SETUP_HEAP(GameTaskGetShadowMaterialInfo, rc::fuzz::physicsRace)
+RC_DECOMP_FN_SETUP_HEAP(MetaMorphiseCarSpheres, rc::fuzz::physicsTask)
 
 } // namespace rc

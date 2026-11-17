@@ -31,16 +31,16 @@ int32_t FMFileFetchSectors(uint32 sectorNum, ptr32<uint8> pBuffer, uint32 count)
 
 namespace {
 
-constexpr uint32_t kFm = 0x29d8c8u; // fmVarG
+constexpr uint32_t kFm = sym::fmVarG; // fmVarG
 constexpr uint32_t kDirCache = kFm + 0x60u, kCache = kFm + 0x178u;
-constexpr uint32_t kStrcat = 0x1b8af0u, kStrcmp = 0x1b8c1cu, kStrcpy = 0x1b8d60u, kMemcpy = 0x1b7c60u;
-constexpr uint32_t kCdDiskReady = 0x1cd708u, kCdSearchFile = 0x1cc110u, kCdSeek = 0x1ccea8u, kCdRead = 0x1cc920u,
-                   kCdSync = 0x1cd1d8u, kGsSyncV = 0x1c3d90u;
-constexpr uint32_t kSceOpen = 0x1c1170u, kSceClose = 0x1c12c8u, kSceLseek = 0x1c1380u, kSceRead = 0x1c14f0u,
-                   kSceWrite = 0x1c1620u;
+constexpr uint32_t kStrcat = sym::strcat, kStrcmp = sym::strcmp, kStrcpy = sym::strcpy, kMemcpy = sym::memcpy;
+constexpr uint32_t kCdDiskReady = sym::sceCdDiskReady, kCdSearchFile = sym::sceCdSearchFile, kCdSeek = sym::sceCdSeek, kCdRead = sym::sceCdRead,
+                   kCdSync = sym::sceCdSync, kGsSyncV = sym::sceGsSyncV;
+constexpr uint32_t kSceOpen = sym::sceOpen, kSceClose = sym::sceClose, kSceLseek = sym::sceLseek, kSceRead = sym::sceRead,
+                   kSceWrite = sym::sceWrite;
 // "\\", "" and ";1" (FM), "host:" and the two 16-byte buffers (PCFILE).
-constexpr uint32_t kBackslash = 0x328300u, kEmpty = 0x328308u, kVersion = 0x328310u;
-constexpr uint32_t kHost = 0x327f50u, kReadBuffer = 0x3285c0u, kWriteBuffer = 0x3285d0u;
+constexpr uint32_t kBackslash = (sym::sec_sdata + 0x700u), kEmpty = (sym::sec_sdata + 0x708u), kVersion = (sym::sec_sdata + 0x710u);
+constexpr uint32_t kHost = (sym::sec_sdata + 0x350u), kReadBuffer = sym::readBuffer_9, kWriteBuffer = sym::writeBuffer_13;
 
 template <typename T>
 T load(uint32_t address)
@@ -409,22 +409,22 @@ int32_t PCclose(int32_t fd)
 
 } // namespace rc
 
-RC_DECOMP_FN_SETUP(FMPrepareEx, 0x1a04a0, rc::fuzz::fmPrepareEx)
-RC_DECOMP_FN_SETUP(FMSetCacheMode, 0x1a0500, rc::fuzz::fmCacheMode)
-RC_DECOMP_FN_SETUP_HEAP(FMUnPrepare, 0x1a0540, rc::fuzz::fmUnPrepare)
-RC_DECOMP_FN_BLOCKING_SETUP(FMFileOpen, 0x1a0550, rc::fuzz::fmFileOpen)
-RC_DECOMP_FN_BLOCKING_SETUP(FMFileRead, 0x1a0838, rc::fuzz::fmFileRead)
-RC_DECOMP_FN_SETUP(FMInit, 0x1a0b18, rc::fuzz::fmState)
-RC_DECOMP_FN_SETUP_HEAP(FMPrepare, 0x1a0b70, rc::fuzz::fmPrepare)
-RC_DECOMP_FN_SETUP_HEAP(FMPrepareHi, 0x1a0bb0, rc::fuzz::fmPrepare)
-RC_DECOMP_FN_SETUP(FMFileClose, 0x1a0bf0, rc::fuzz::fmFileArgs)
-RC_DECOMP_FN_SETUP(FMFileSeek, 0x1a0c10, rc::fuzz::fmFileArgs)
-RC_DECOMP_FN_SETUP(FMFileLength, 0x1a0ca0, rc::fuzz::fmFileArgs)
-RC_DECOMP_FN_SETUP(FMInvalidateCache, 0x1a0cb8, rc::fuzz::fmState)
-RC_DECOMP_FN_BLOCKING_SETUP(FMFileFetchSectors, 0x1a0ce0, rc::fuzz::fmFetch)
-RC_DECOMP_FN(FMUnPrepareEx, 0x1a0f20)
-RC_DECOMP_FN_BLOCKING_SETUP(PCcreat, 0x13cf10, rc::fuzz::pcCreat)
-RC_DECOMP_FN_BLOCKING_SETUP(PClseek, 0x13cf58, rc::fuzz::pcLseek)
-RC_DECOMP_FN_BLOCKING_SETUP(PCread, 0x13cf90, rc::fuzz::pcReadWrite)
-RC_DECOMP_FN_BLOCKING_SETUP(PCwrite, 0x13d0a8, rc::fuzz::pcReadWrite)
-RC_DECOMP_FN_BLOCKING_SETUP(PCclose, 0x13d1c0, rc::fuzz::pcClose)
+RC_DECOMP_FN_SETUP(FMPrepareEx, rc::fuzz::fmPrepareEx)
+RC_DECOMP_FN_SETUP(FMSetCacheMode, rc::fuzz::fmCacheMode)
+RC_DECOMP_FN_SETUP_HEAP(FMUnPrepare, rc::fuzz::fmUnPrepare)
+RC_DECOMP_FN_BLOCKING_SETUP(FMFileOpen, rc::fuzz::fmFileOpen)
+RC_DECOMP_FN_BLOCKING_SETUP(FMFileRead, rc::fuzz::fmFileRead)
+RC_DECOMP_FN_SETUP(FMInit, rc::fuzz::fmState)
+RC_DECOMP_FN_SETUP_HEAP(FMPrepare, rc::fuzz::fmPrepare)
+RC_DECOMP_FN_SETUP_HEAP(FMPrepareHi, rc::fuzz::fmPrepare)
+RC_DECOMP_FN_SETUP(FMFileClose, rc::fuzz::fmFileArgs)
+RC_DECOMP_FN_SETUP(FMFileSeek, rc::fuzz::fmFileArgs)
+RC_DECOMP_FN_SETUP(FMFileLength, rc::fuzz::fmFileArgs)
+RC_DECOMP_FN_SETUP(FMInvalidateCache, rc::fuzz::fmState)
+RC_DECOMP_FN_BLOCKING_SETUP(FMFileFetchSectors, rc::fuzz::fmFetch)
+RC_DECOMP_FN(FMUnPrepareEx)
+RC_DECOMP_FN_BLOCKING_SETUP(PCcreat, rc::fuzz::pcCreat)
+RC_DECOMP_FN_BLOCKING_SETUP(PClseek, rc::fuzz::pcLseek)
+RC_DECOMP_FN_BLOCKING_SETUP(PCread, rc::fuzz::pcReadWrite)
+RC_DECOMP_FN_BLOCKING_SETUP(PCwrite, rc::fuzz::pcReadWrite)
+RC_DECOMP_FN_BLOCKING_SETUP(PCclose, rc::fuzz::pcClose)

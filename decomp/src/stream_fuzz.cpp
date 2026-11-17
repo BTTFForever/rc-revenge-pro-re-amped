@@ -19,25 +19,25 @@ namespace fuzz {
 
 namespace {
 
-constexpr uint32_t kFm = 0x29d8c8u, kRc = 0x1ee8c0u, kCd = 0x4bf5c0u;
-constexpr uint32_t kMpegG = 0x1fa978u, kSplashG = 0x1fa9e8u, kDisp = 0x1fa9c0u;
-constexpr uint32_t kDrawid = 0x328290u, kVblankHandle = 0x328294u, kMpegSwitch = 0x328298u, kMpegLooping = 0x32829cu,
-                   kMpegBuffer = 0x3282a0u, kMpegSize = 0x3282a8u, kSplashBuffer = 0x3282b0u, kSplashSize = 0x3282b4u,
-                   kRet = 0x3282b8u, kIsCountVblank = 0x3282bcu, kVblankCount = 0x3282c0u, kGetit = 0x3282c4u;
-constexpr uint32_t kFrontFade = 0x327f68u;
+constexpr uint32_t kFm = sym::fmVarG, kRc = sym::rcmusicVarG, kCd = sym::cd__0;
+constexpr uint32_t kMpegG = sym::mpegG, kSplashG = sym::mpegSplashG, kDisp = sym::disp;
+constexpr uint32_t kDrawid = sym::drawid, kVblankHandle = sym::vblankHandle, kMpegSwitch = sym::mpegSwitch, kMpegLooping = sym::mpegLooping,
+                   kMpegBuffer = sym::mpegBuffer, kMpegSize = sym::mpegSize, kSplashBuffer = sym::mpegSplashBuffer, kSplashSize = sym::mpegSplashSize,
+                   kRet = sym::ret, kIsCountVblank = sym::isCountVblank, kVblankCount = sym::vblankCount, kGetit = sym::getit;
+constexpr uint32_t kFrontFade = sym::frontFade_492;
 
 // The functions replaced offline.
-constexpr uint32_t kSifCallRpc = 0x1c0968u, kSifBindRpc = 0x1c07b8u, kSifInitRpc = 0x1c0180u, kPrintf = 0x12e9e8u,
-                   kFree = 0x1b7280u;
-constexpr uint32_t kCdSearchFile = 0x1cc110u, kCdDiskReady = 0x1cd708u, kCdSeek = 0x1ccea8u, kCdRead = 0x1cc920u,
-                   kCdSync = 0x1cd1d8u;
-constexpr uint32_t kSceOpen = 0x1c1170u, kSceClose = 0x1c12c8u, kSceLseek = 0x1c1380u, kSceRead = 0x1c14f0u,
-                   kSceWrite = 0x1c1620u;
-constexpr uint32_t kMpegInit = 0x1ce708u, kMpegCreate = 0x1ce758u, kMpegDelete = 0x1ce998u, kMpegAddBs = 0x1ce9a0u,
-                   kMpegGetPicture = 0x1ce9d8u, kMpegIsEnd = 0x1ceaf0u, kMpegReset = 0x1ceb10u;
-constexpr uint32_t kGsSyncV = 0x1c3d90u, kGsSyncPath = 0x1c3e28u, kGsPutDispEnv = 0x1c38b8u, kAddIntcHandler = 0x1be400u,
-                   kRemoveIntcHandler = 0x1be420u;
-constexpr uint32_t kFMFileRead = 0x1a0838u;
+constexpr uint32_t kSifCallRpc = sym::sceSifCallRpc, kSifBindRpc = sym::sceSifBindRpc, kSifInitRpc = sym::sceSifInitRpc, kPrintf = sym::printf,
+                   kFree = sym::free;
+constexpr uint32_t kCdSearchFile = sym::sceCdSearchFile, kCdDiskReady = sym::sceCdDiskReady, kCdSeek = sym::sceCdSeek, kCdRead = sym::sceCdRead,
+                   kCdSync = sym::sceCdSync;
+constexpr uint32_t kSceOpen = sym::sceOpen, kSceClose = sym::sceClose, kSceLseek = sym::sceLseek, kSceRead = sym::sceRead,
+                   kSceWrite = sym::sceWrite;
+constexpr uint32_t kMpegInit = sym::sceMpegInit, kMpegCreate = sym::sceMpegCreate, kMpegDelete = sym::sceMpegDelete, kMpegAddBs = sym::sceMpegAddBs,
+                   kMpegGetPicture = sym::sceMpegGetPicture, kMpegIsEnd = sym::sceMpegIsEnd, kMpegReset = sym::sceMpegReset;
+constexpr uint32_t kGsSyncV = sym::sceGsSyncV, kGsSyncPath = sym::sceGsSyncPath, kGsPutDispEnv = sym::sceGsPutDispEnv, kAddIntcHandler = sym::AddIntcHandler,
+                   kRemoveIntcHandler = sym::RemoveIntcHandler;
+constexpr uint32_t kFMFileRead = sym::FMFileRead;
 constexpr uint32_t kHardwareStore = 1u;
 
 // Control words of the fakes (in scratch, so each run starts from the same values and they are compared).

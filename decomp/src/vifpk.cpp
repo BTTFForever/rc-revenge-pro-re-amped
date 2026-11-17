@@ -155,16 +155,16 @@ void sceVu0ApplyMatrix(ptr32<ee_float> dst, ptr32<ee_float> m, ptr32<ee_float> v
 
 } // namespace rc
 
-RC_DECOMP_FN(sceVif1PkInit, 0x1c74f8)
-RC_DECOMP_FN(sceVif1PkReset, 0x1c7508)
-RC_DECOMP_FN(sceVif1PkTerminate, 0x1c7518)
-RC_DECOMP_FN(sceVif1PkRet, 0x1c7580)
-RC_DECOMP_FN(sceVif1PkAddCode, 0x1c76c0)
-RC_DECOMP_FN(sceVif1PkAddUpkData32, 0x1c76d8)
-RC_DECOMP_FN(sceVif1PkAddUpkData32N, 0x1c76f0)
-RC_DECOMP_FN(sceVif1PkAddUpkData64, 0x1c7730)
-RC_DECOMP_FN(sceVif1PkOpenUpkCode, 0x1c75d8)
-RC_DECOMP_FN_NOFUZZ(sceVif1PkCloseUpkCode, 0x1c7668) // Divides by numlen: a zero unit traps.
-RC_DECOMP_FN(sceVu0CopyVector, 0x1c7a50)
-RC_DECOMP_FN(sceVu0ScaleVector, 0x1c7a08)
-RC_DECOMP_FN(sceVu0ApplyMatrix, 0x1c77a8)
+RC_DECOMP_FN(sceVif1PkInit)
+RC_DECOMP_FN(sceVif1PkReset)
+RC_DECOMP_FN(sceVif1PkTerminate)
+RC_DECOMP_FN(sceVif1PkRet)
+RC_DECOMP_FN(sceVif1PkAddCode)
+RC_DECOMP_FN(sceVif1PkAddUpkData32)
+RC_DECOMP_FN(sceVif1PkAddUpkData32N)
+RC_DECOMP_FN(sceVif1PkAddUpkData64)
+RC_DECOMP_FN(sceVif1PkOpenUpkCode)
+RC_DECOMP_FN_NOFUZZ(sceVif1PkCloseUpkCode) // Divides by numlen: a zero unit traps.
+RC_DECOMP_FN(sceVu0CopyVector)
+RC_DECOMP_FN(sceVu0ScaleVector)
+RC_DECOMP_FN(sceVu0ApplyMatrix)

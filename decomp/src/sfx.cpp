@@ -39,12 +39,12 @@ void SetDolbyVolume(int16 wPlayId);
 
 namespace {
 
-constexpr uint32_t kSfx = 0x31e488u; // sfxVarG
-constexpr uint32_t kSdRemote = 0x1ca550u, kSdRemoteInit = 0x1ca408u, kSdTransToIOP = 0x1ca4d0u, kSifAllocIopHeap = 0x1c18c8u,
-                   kSifFreeIopHeap = 0x1c1938u, kSifInitIopHeap = 0x1c1838u, kFlushCache = 0x1be9a0u, kPrintf = 0x12e9e8u;
-constexpr uint32_t kVagType = 0x3283d8u, kVAGConstructDaemon = 0x1adc70u; // "VAG"
-constexpr uint32_t kAllocatedFormat = 0x325130u, kSendingFormat = 0x325150u;
-constexpr uint32_t kStereoLookup = 0x31e448u, kRearLookup = 0x31e468u;
+constexpr uint32_t kSfx = sym::sfxVarG; // sfxVarG
+constexpr uint32_t kSdRemote = sym::sceSdRemote, kSdRemoteInit = sym::sceSdRemoteInit, kSdTransToIOP = sym::sceSdTransToIOP, kSifAllocIopHeap = sym::sceSifAllocIopHeap,
+                   kSifFreeIopHeap = sym::sceSifFreeIopHeap, kSifInitIopHeap = sym::sceSifInitIopHeap, kFlushCache = sym::FlushCache, kPrintf = sym::printf;
+constexpr uint32_t kVagType = (sym::sec_sdata + 0x7d8u), kVAGConstructDaemon = sym::VAGConstructDaemon; // "VAG"
+constexpr uint32_t kAllocatedFormat = (sym::sec_rodata + 0x2b30u), kSendingFormat = (sym::sec_rodata + 0x2b50u);
+constexpr uint32_t kStereoLookup = sym::pbStereoLookup, kRearLookup = sym::pbRearLookup;
 // sdrdrv commands.
 constexpr uint32_t kSetParam = 0x8010u, kSetSwitch = 0x8030u, kGetSwitch = 0x8040u, kSetAddr = 0x8050u, kGetAddr = 0x8060u,
                    kSetCoreAttr = 0x8070u, kProcBatch = 0x80b0u, kVoiceTrans = 0x80d0u, kVoiceTransStatus = 0x80f0u,
@@ -267,6 +267,7 @@ int32 SfxTransEffect(ptr32<void> pVagPtr, ptr32<void> pImgPtr, uint32 resId)
 
 void SfxDoSfx()
 {
+    RC_DIVERT_IF_CHANGED(SfxDoSfx);
     sfxClass &s = sfx();
     if (s.bInitOk == 0)
         return;
@@ -660,7 +661,7 @@ void SetDolbyVolume(int16 wPlayId)
 void VAGConstructDaemon(ptr32<memHandle> pHandle)
 {
     const ptr32<void> p = ResReadAlloc();
-    const int32_t id = SfxTransEffect(ptr32<void>(at<uint32_t>(pHandle.address)), nullptr, at<uint32_t>(0x31e120u));
+    const int32_t id = SfxTransEffect(ptr32<void>(at<uint32_t>(pHandle.address)), nullptr, at<uint32_t>((sym::resVarG + 0xb0u)));
     at<uint32_t>(pHandle.address) = static_cast<uint32_t>(id) << 2;
     ResReAlloc(p);
 }
@@ -1038,49 +1039,49 @@ void SfxGetLoopAddress(int32 wSampleId, ptr32<char> pMem)
 
 // The IOP calls (sceSdRemote, the IOP heap, the transfers) are logged by the oracle's setups; a live comparison would
 // send each command twice, so those functions are compared offline only.
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(SfxInit, 0x1ac1b8, rc::fuzz::sfxInit)
-RC_DECOMP_FN_BLOCKING_SETUP(SfxInitFirst, 0x1ac408, rc::fuzz::sfxIop)
-RC_DECOMP_FN_BLOCKING_SETUP(SfxInitReverb, 0x1ac4c0, rc::fuzz::sfxReverb)
-RC_DECOMP_FN_BLOCKING_SETUP(SfxSetReverbDepth, 0x1ac6a8, rc::fuzz::sfxReverbDepth)
-RC_DECOMP_FN_BLOCKING_SETUP(SfxTransEffect, 0x1ac788, rc::fuzz::sfxTransEffect)
-RC_DECOMP_FN_BLOCKING_SETUP(SfxDoSfx, 0x1ac9e0, rc::fuzz::sfxVoices)
-RC_DECOMP_FN_BLOCKING_SETUP(SfxPlay, 0x1ad0a0, rc::fuzz::sfxPlay)
-RC_DECOMP_FN_SETUP(SfxStop, 0x1ad448, rc::fuzz::sfxPlayId)
-RC_DECOMP_FN_BLOCKING_SETUP(SetEffectVolume, 0x1ad590, rc::fuzz::sfxPlayId)
-RC_DECOMP_FN_BLOCKING_SETUP(SetDolbyVolume, 0x1ad5f0, rc::fuzz::sfxPlayId)
-RC_DECOMP_FN_BLOCKING_SETUP(VAGConstructDaemon, 0x1adc70, rc::fuzz::sfxVagDaemon)
-RC_DECOMP_FN_SETUP(SfxDetermineLoop, 0x1adcc0, rc::fuzz::sfxVagTail)
-RC_DECOMP_FN_BLOCKING_SETUP(SfxStopNow, 0x1adff0, rc::fuzz::sfxPlayId)
-RC_DECOMP_FN_BLOCKING_SETUP(SfxKillAllChannels, 0x1ae188, rc::fuzz::sfxVoices)
-RC_DECOMP_FN_BLOCKING_SETUP(SfxReInitReverb, 0x1ae2b0, rc::fuzz::sfxIop)
-RC_DECOMP_FN(SfxUnInitReverb, 0x1ae430)
-RC_DECOMP_FN(SfxReverbOn, 0x1ae438)
-RC_DECOMP_FN(SfxReverbOff, 0x1ae440)
-RC_DECOMP_FN_SETUP(SfxSetVolume, 0x1ae448, rc::fuzz::sfxByte)
-RC_DECOMP_FN_SETUP(SfxEffectGetVol, 0x1ae470, rc::fuzz::sfxPlayId)
-RC_DECOMP_FN_SETUP(SfxSetMode, 0x1ae4d0, rc::fuzz::sfxByte)
-RC_DECOMP_FN_SETUP(SfxSetCallBack, 0x1ae4f0, rc::fuzz::sfxByte)
-RC_DECOMP_FN(SfxUnInit, 0x1ae518)
-RC_DECOMP_FN_SETUP(SfxOn, 0x1ae520, rc::fuzz::sfxByte)
-RC_DECOMP_FN_BLOCKING_SETUP(SfxOff, 0x1ae540, rc::fuzz::sfxVoices)
-RC_DECOMP_FN_BLOCKING_SETUP(SfxPause, 0x1ae680, rc::fuzz::sfxPause)
-RC_DECOMP_FN(SfxContinue, 0x1ae7e8)
-RC_DECOMP_FN(SfxFreeEffect, 0x1ae7f0)
-RC_DECOMP_FN_BLOCKING_SETUP(SfxEffectLRPan, 0x1ae7f8, rc::fuzz::sfxPlayIdByte)
-RC_DECOMP_FN_BLOCKING_SETUP(SfxEffectFBPan, 0x1ae870, rc::fuzz::sfxPlayIdByte)
-RC_DECOMP_FN_BLOCKING_SETUP(SfxEffectVol, 0x1ae8e8, rc::fuzz::sfxPlayIdByte)
-RC_DECOMP_FN_SETUP(SfxEffectPitch, 0x1ae960, rc::fuzz::sfxPlayIdByte)
-RC_DECOMP_FN_SETUP(SfxStoreAddress, 0x1aea30, rc::fuzz::sfxStoreAddress)
-RC_DECOMP_FN_SETUP(SfxClearSram, 0x1aeab0, rc::fuzz::sfxClearSram)
-RC_DECOMP_FN(SfxDumpSram, 0x1aeb30)
-RC_DECOMP_FN(SfxCdInit, 0x1aeb38)
-RC_DECOMP_FN(SfxSetCdVol, 0x1aeb40)
-RC_DECOMP_FN(SfxCdSetReverb, 0x1aeb48)
-RC_DECOMP_FN(SFX_TVAG, 0x1aeb50)
-RC_DECOMP_FN_SETUP(SetMonoVolume, 0x1aeb58, rc::fuzz::sfxPlayId)
-RC_DECOMP_FN_SETUP(SetStereoVolume, 0x1aebb0, rc::fuzz::sfxPlayId)
-RC_DECOMP_FN(Big2Little, 0x1aec38)
-RC_DECOMP_FN_SETUP(GetFreePlayId, 0x1aec60, rc::fuzz::sfxVoices)
-RC_DECOMP_FN_SETUP(GetFreeVoice, 0x1aed18, rc::fuzz::sfxVoices)
-RC_DECOMP_FN_BLOCKING_SETUP(SfxStopVoice, 0x1aed90, rc::fuzz::sfxVoiceId)
-RC_DECOMP_FN_SETUP(SfxGetLoopAddress, 0x1aee38, rc::fuzz::sfxLoopAddress)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(SfxInit, rc::fuzz::sfxInit)
+RC_DECOMP_FN_BLOCKING_SETUP(SfxInitFirst, rc::fuzz::sfxIop)
+RC_DECOMP_FN_BLOCKING_SETUP(SfxInitReverb, rc::fuzz::sfxReverb)
+RC_DECOMP_FN_BLOCKING_SETUP(SfxSetReverbDepth, rc::fuzz::sfxReverbDepth)
+RC_DECOMP_FN_BLOCKING_SETUP(SfxTransEffect, rc::fuzz::sfxTransEffect)
+RC_DECOMP_FN_BLOCKING_SETUP(SfxDoSfx, rc::fuzz::sfxVoices)
+RC_DECOMP_FN_BLOCKING_SETUP(SfxPlay, rc::fuzz::sfxPlay)
+RC_DECOMP_FN_SETUP(SfxStop, rc::fuzz::sfxPlayId)
+RC_DECOMP_FN_BLOCKING_SETUP(SetEffectVolume, rc::fuzz::sfxPlayId)
+RC_DECOMP_FN_BLOCKING_SETUP(SetDolbyVolume, rc::fuzz::sfxPlayId)
+RC_DECOMP_FN_BLOCKING_SETUP(VAGConstructDaemon, rc::fuzz::sfxVagDaemon)
+RC_DECOMP_FN_SETUP(SfxDetermineLoop, rc::fuzz::sfxVagTail)
+RC_DECOMP_FN_BLOCKING_SETUP(SfxStopNow, rc::fuzz::sfxPlayId)
+RC_DECOMP_FN_BLOCKING_SETUP(SfxKillAllChannels, rc::fuzz::sfxVoices)
+RC_DECOMP_FN_BLOCKING_SETUP(SfxReInitReverb, rc::fuzz::sfxIop)
+RC_DECOMP_FN(SfxUnInitReverb)
+RC_DECOMP_FN(SfxReverbOn)
+RC_DECOMP_FN(SfxReverbOff)
+RC_DECOMP_FN_SETUP(SfxSetVolume, rc::fuzz::sfxByte)
+RC_DECOMP_FN_SETUP(SfxEffectGetVol, rc::fuzz::sfxPlayId)
+RC_DECOMP_FN_SETUP(SfxSetMode, rc::fuzz::sfxByte)
+RC_DECOMP_FN_SETUP(SfxSetCallBack, rc::fuzz::sfxByte)
+RC_DECOMP_FN(SfxUnInit)
+RC_DECOMP_FN_SETUP(SfxOn, rc::fuzz::sfxByte)
+RC_DECOMP_FN_BLOCKING_SETUP(SfxOff, rc::fuzz::sfxVoices)
+RC_DECOMP_FN_BLOCKING_SETUP(SfxPause, rc::fuzz::sfxPause)
+RC_DECOMP_FN(SfxContinue)
+RC_DECOMP_FN(SfxFreeEffect)
+RC_DECOMP_FN_BLOCKING_SETUP(SfxEffectLRPan, rc::fuzz::sfxPlayIdByte)
+RC_DECOMP_FN_BLOCKING_SETUP(SfxEffectFBPan, rc::fuzz::sfxPlayIdByte)
+RC_DECOMP_FN_BLOCKING_SETUP(SfxEffectVol, rc::fuzz::sfxPlayIdByte)
+RC_DECOMP_FN_SETUP(SfxEffectPitch, rc::fuzz::sfxPlayIdByte)
+RC_DECOMP_FN_SETUP(SfxStoreAddress, rc::fuzz::sfxStoreAddress)
+RC_DECOMP_FN_SETUP(SfxClearSram, rc::fuzz::sfxClearSram)
+RC_DECOMP_FN(SfxDumpSram)
+RC_DECOMP_FN(SfxCdInit)
+RC_DECOMP_FN(SfxSetCdVol)
+RC_DECOMP_FN(SfxCdSetReverb)
+RC_DECOMP_FN(SFX_TVAG)
+RC_DECOMP_FN_SETUP(SetMonoVolume, rc::fuzz::sfxPlayId)
+RC_DECOMP_FN_SETUP(SetStereoVolume, rc::fuzz::sfxPlayId)
+RC_DECOMP_FN(Big2Little)
+RC_DECOMP_FN_SETUP(GetFreePlayId, rc::fuzz::sfxVoices)
+RC_DECOMP_FN_SETUP(GetFreeVoice, rc::fuzz::sfxVoices)
+RC_DECOMP_FN_BLOCKING_SETUP(SfxStopVoice, rc::fuzz::sfxVoiceId)
+RC_DECOMP_FN_SETUP(SfxGetLoopAddress, rc::fuzz::sfxLoopAddress)

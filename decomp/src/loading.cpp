@@ -10,11 +10,11 @@ namespace rc {
 
 namespace {
 
-constexpr uint32_t kRCMusicStop = 0x1415b8u, kMpegLoad = 0x1956a0u, kMpegPlay = 0x194b50u, kSprintf = 0x1b8910u;
-constexpr uint32_t kDisplaySetBackground = 0x1820d8u, kVSyncCallback = 0x19f260u, kVSyncCallbackFunction = 0x182680u;
+constexpr uint32_t kRCMusicStop = sym::RCMusicStop, kMpegLoad = sym::mpegOnInterruptLOAD, kMpegPlay = sym::mpegOnInterruptPLAY, kSprintf = sym::sprintf;
+constexpr uint32_t kDisplaySetBackground = sym::DisplaySetBackground, kVSyncCallback = sym::VSyncCallback, kVSyncCallbackFunction = sym::VSyncCallbackFunction;
 // Movie names: "scar1.m2v", "sbot2.m2v", "sbot1.m2v", "scar2.m2v"; fileUsed holds the one chosen.
-constexpr uint32_t kScar1 = 0x3230a0u, kSbot2 = 0x3230b0u, kSbot1 = 0x3230c0u, kScar2 = 0x3230d0u, kFileUsed = 0x1ece48u;
-constexpr uint32_t kMpegBuffer1 = 0x3282a4u, kMainLevel = 0x1edc4au, kMainNoHuman = 0x1edc69u, kFlyingLogo = 0x1eccfcu;
+constexpr uint32_t kScar1 = (sym::sec_rodata + 0xaa0u), kSbot2 = (sym::sec_rodata + 0xab0u), kSbot1 = (sym::sec_rodata + 0xac0u), kScar2 = (sym::sec_rodata + 0xad0u), kFileUsed = sym::fileUsed;
+constexpr uint32_t kMpegBuffer1 = (sym::mpegBuffer + 0x4u), kMainLevel = (sym::mainVarG + 0x34au), kMainNoHuman = (sym::mainVarG + 0x369u), kFlyingLogo = (sym::frontEndVarG + 0x2a4u);
 
 template <typename T>
 T load(uint32_t address)
@@ -115,11 +115,11 @@ void LoadingShowFlyingLogo() {}
 
 #include "res_fuzz.h"
 
-RC_DECOMP_FN_BLOCKING_SETUP(LoadingInit, 0x129448, rc::fuzz::loadingInit)
-RC_DECOMP_FN_SETUP(LoadingCallbackTerm, 0x129600, rc::fuzz::loadingFlags)
-RC_DECOMP_FN_SETUP(LoadingTerm, 0x129630, rc::fuzz::loadingFlags)
-RC_DECOMP_FN(LoadingCallBackJumping, 0x129638)
-RC_DECOMP_FN(LoadingDrawBorder, 0x129640)
-RC_DECOMP_FN(LoadingFlagBackround, 0x129648)
-RC_DECOMP_FN_SETUP(LoadingPlayFlyingLogo, 0x129650, rc::fuzz::loadingFlags)
-RC_DECOMP_FN(LoadingShowFlyingLogo, 0x129670)
+RC_DECOMP_FN_BLOCKING_SETUP(LoadingInit, rc::fuzz::loadingInit)
+RC_DECOMP_FN_SETUP(LoadingCallbackTerm, rc::fuzz::loadingFlags)
+RC_DECOMP_FN_SETUP(LoadingTerm, rc::fuzz::loadingFlags)
+RC_DECOMP_FN(LoadingCallBackJumping)
+RC_DECOMP_FN(LoadingDrawBorder)
+RC_DECOMP_FN(LoadingFlagBackround)
+RC_DECOMP_FN_SETUP(LoadingPlayFlyingLogo, rc::fuzz::loadingFlags)
+RC_DECOMP_FN(LoadingShowFlyingLogo)

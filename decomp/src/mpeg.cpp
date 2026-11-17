@@ -34,25 +34,25 @@ void syncDisplay(int32_t frame);
 
 namespace {
 
-constexpr uint32_t kMpegG = 0x1fa978u, kSplashG = 0x1fa9e8u, kDisp = 0x1fa9c0u, kDispFb = kDisp + 0x10u;
-constexpr uint32_t kMpegStore = 0x404e00u, kRgb32 = 0x346800u, kPath3tag = 0x328600u, kBackTile = 0x404a00u,
-                   kBackTileTags = 0x3e6800u;
-constexpr uint32_t kDrawid = 0x328290u, kVblankHandle = 0x328294u, kMpegSwitch = 0x328298u, kMpegLooping = 0x32829cu,
-                   kMpegBuffer = 0x3282a0u, kMpegSize = 0x3282a8u, kSplashBuffer = 0x3282b0u, kSplashSize = 0x3282b4u,
-                   kRet = 0x3282b8u, kIsCountVblank = 0x3282bcu, kVblankCount = 0x3282c0u, kGetit = 0x3282c4u;
-constexpr uint32_t kMpegInit = 0x1ce708u, kMpegCreate = 0x1ce758u, kMpegDelete = 0x1ce998u, kMpegAddBs = 0x1ce9a0u,
-                   kMpegGetPicture = 0x1ce9d8u, kMpegIsEnd = 0x1ceaf0u, kMpegReset = 0x1ceb10u;
-constexpr uint32_t kGsSetDefDispEnv = 0x1c3658u, kGsPutDispEnv = 0x1c38b8u, kGsSyncPath = 0x1c3e28u, kGsSyncV = 0x1c3d90u;
-constexpr uint32_t kAddIntcHandler = 0x1be400u, kRemoveIntcHandler = 0x1be420u, kEnableIntc = 0x1bef78u,
-                   kDisableIntc = 0x1bef10u;
-constexpr uint32_t kPrintf = 0x12e9e8u, kSprintf = 0x1b8910u, kStrcat = 0x1b8af0u, kFree = 0x1b7280u;
-constexpr uint32_t kFMPrepare = 0x1a0b70u, kFMUnPrepare = 0x1a0540u, kFMFileOpen = 0x1a0550u, kFMFileRead = 0x1a0838u,
-                   kFMFileClose = 0x1a0bf0u, kFMFileSeek = 0x1a0c10u;
-constexpr uint32_t kVblankPlayer = 0x195728u, kVblankHandler = 0x1959e8u;
+constexpr uint32_t kMpegG = sym::mpegG, kSplashG = sym::mpegSplashG, kDisp = sym::disp, kDispFb = kDisp + 0x10u;
+constexpr uint32_t kMpegStore = sym::mpegStore, kRgb32 = sym::rgb32, kPath3tag = sym::path3tag, kBackTile = sym::backTile,
+                   kBackTileTags = sym::backTileTags;
+constexpr uint32_t kDrawid = sym::drawid, kVblankHandle = sym::vblankHandle, kMpegSwitch = sym::mpegSwitch, kMpegLooping = sym::mpegLooping,
+                   kMpegBuffer = sym::mpegBuffer, kMpegSize = sym::mpegSize, kSplashBuffer = sym::mpegSplashBuffer, kSplashSize = sym::mpegSplashSize,
+                   kRet = sym::ret, kIsCountVblank = sym::isCountVblank, kVblankCount = sym::vblankCount, kGetit = sym::getit;
+constexpr uint32_t kMpegInit = sym::sceMpegInit, kMpegCreate = sym::sceMpegCreate, kMpegDelete = sym::sceMpegDelete, kMpegAddBs = sym::sceMpegAddBs,
+                   kMpegGetPicture = sym::sceMpegGetPicture, kMpegIsEnd = sym::sceMpegIsEnd, kMpegReset = sym::sceMpegReset;
+constexpr uint32_t kGsSetDefDispEnv = sym::sceGsSetDefDispEnv, kGsPutDispEnv = sym::sceGsPutDispEnv, kGsSyncPath = sym::sceGsSyncPath, kGsSyncV = sym::sceGsSyncV;
+constexpr uint32_t kAddIntcHandler = sym::AddIntcHandler, kRemoveIntcHandler = sym::RemoveIntcHandler, kEnableIntc = sym::EnableIntc,
+                   kDisableIntc = sym::DisableIntc;
+constexpr uint32_t kPrintf = sym::printf, kSprintf = sym::sprintf, kStrcat = sym::strcat, kFree = sym::free;
+constexpr uint32_t kFMPrepare = sym::FMPrepare, kFMUnPrepare = sym::FMUnPrepare, kFMFileOpen = sym::FMFileOpen, kFMFileRead = sym::FMFileRead,
+                   kFMFileClose = sym::FMFileClose, kFMFileSeek = sym::FMFileSeek;
+constexpr uint32_t kVblankPlayer = sym::vblankPlayer, kVblankHandler = sym::vblankHandler;
 // "\\splash\\", "Cannot open %s\n", "sceLseek() fails (%s)\n", "memalign(%d) fails\n", "Cannot read %s\n",
 // "%s(%dbyte)\n", "sceMpegGetPicture Failed\n", "[frame drop] frame %d\n".
-constexpr uint32_t kSplashDir = 0x324a80u, kCannotOpen = 0x324a90u, kSeekFails = 0x324aa0u, kAllocFails = 0x324ab8u,
-                   kCannotRead = 0x324ad0u, kPlaying = 0x324a50u, kPictureFailed = 0x324a60u, kFrameDrop = 0x324ae0u;
+constexpr uint32_t kSplashDir = (sym::sec_rodata + 0x2480u), kCannotOpen = (sym::sec_rodata + 0x2490u), kSeekFails = (sym::sec_rodata + 0x24a0u), kAllocFails = (sym::sec_rodata + 0x24b8u),
+                   kCannotRead = (sym::sec_rodata + 0x24d0u), kPlaying = (sym::sec_rodata + 0x2450u), kPictureFailed = (sym::sec_rodata + 0x2460u), kFrameDrop = (sym::sec_rodata + 0x24e0u);
 constexpr uint32_t kTagBytes = 0xf100u; // one of the two upload chains in path3tag
 
 template <typename T>
@@ -137,6 +137,7 @@ void playMpegFile(ptr32<char> filename)
 // chains for its size, then vblankPlayer on INTC 2.
 void mpegOnInterruptPLAY(int32 swatch, int32 looping)
 {
+    RC_DIVERT_IF_CHANGED(mpegOnInterruptPLAY, swatch, looping);
     {
         GuestFrame frame(0x50);
         store<int32_t>(kMpegLooping, looping);
@@ -185,6 +186,7 @@ void mpegOnInterruptTERM(int32 swatch)
 // sceMpegIsEnd's answer (non-zero), left in $v0 by the tail call to endDisplay.
 int32_t playMpeg(ptr32<sceMpeg> mp, ptr32<ee_uint128> bs, int32_t size)
 {
+    RC_DIVERT_IF_CHANGED(playMpeg, mp, bs, size);
     int32_t end;
     {
         GuestFrame frame(0xa0);
@@ -281,6 +283,7 @@ void clearBackground(u_int val)
 
 void MpegLoadFile(ptr32<char> filename)
 {
+    RC_DIVERT_IF_CHANGED(MpegLoadFile, filename);
     int32_t width, height;
     {
         GuestFrame frame(0x60);
@@ -332,6 +335,7 @@ void MpegDoAFrame(int32 vblankCount)
 
 void MpegInitSplash(ptr32<char> filename)
 {
+    RC_DIVERT_IF_CHANGED(MpegInitSplash, filename);
     {
         GuestFrame frame(0x30);
         const int32_t read = readFile(filename, ptr32<ptr32<uint8_t>>(kSplashBuffer), ptr32<int32_t>(kSplashSize), 0);
@@ -352,6 +356,7 @@ void MpegInitSplash(ptr32<char> filename)
 // One frame of the splash movie, waited for with sceGsSyncV. Returns the vertical blank counter, advanced by one.
 int32 MpegSplashFrame()
 {
+    RC_DIVERT_IF_CHANGED(MpegSplashFrame);
     GuestFrame frame(0x40);
     if (guest_call<int32_t>(kMpegIsEnd, kSplashG) == 0)
     {
@@ -404,6 +409,7 @@ void MpegSplashTERM()
 // Reads a movie into buffer swatch (clearing the screen first if asked); the buffer is 0 if that failed.
 void mpegOnInterruptLOAD(ptr32<char> filename, int32 swatch, int32 hi, int32 clear)
 {
+    RC_DIVERT_IF_CHANGED(mpegOnInterruptLOAD, filename, swatch, hi, clear);
     GuestFrame frame(0x40);
     if (clear != 0)
         clearBackground(0x80000000u);
@@ -554,22 +560,22 @@ void syncDisplay(int32_t frame)
 
 } // namespace rc
 
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(playMpegFile, 0x194a40, rc::fuzz::mpegFile)
-RC_DECOMP_FN_BLOCKING_SETUP(mpegOnInterruptPLAY, 0x194b50, rc::fuzz::mpegPlay)
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(mpegOnInterruptTERM, 0x194ce0, rc::fuzz::mpegTerm)
-RC_DECOMP_FN_BLOCKING_SETUP(playMpeg, 0x194d70, rc::fuzz::mpegPlayMpeg)
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(readFile, 0x194f40, rc::fuzz::mpegReadFile)
-RC_DECOMP_FN_BLOCKING_SETUP(clearBackground, 0x1950e0, rc::fuzz::mpegClear)
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(MpegLoadFile, 0x1951a0, rc::fuzz::mpegFile)
-RC_DECOMP_FN_BLOCKING_SETUP(MpegDoAFrame, 0x195338, rc::fuzz::mpegFrame)
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(MpegInitSplash, 0x195418, rc::fuzz::mpegFile)
-RC_DECOMP_FN_BLOCKING_SETUP(MpegSplashFrame, 0x1954f8, rc::fuzz::mpegState)
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(MpegSplashTERM, 0x195648, rc::fuzz::mpegSplashTerm)
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(mpegOnInterruptLOAD, 0x1956a0, rc::fuzz::mpegLoad)
-RC_DECOMP_FN_SETUP(mpegOnInterruptFINISHED, 0x195718, rc::fuzz::mpegState)
-RC_DECOMP_FN_BLOCKING_SETUP(vblankPlayer, 0x195728, rc::fuzz::mpegState)
-RC_DECOMP_FN_BLOCKING_SETUP(vblankSplashPlayer, 0x1958b0, rc::fuzz::mpegState)
-RC_DECOMP_FN_SETUP(vblankHandler, 0x1959e8, rc::fuzz::mpegState)
-RC_DECOMP_FN_BLOCKING_SETUP(startDisplay, 0x195a10, rc::fuzz::mpegDisplay)
-RC_DECOMP_FN_SETUP(endDisplay, 0x195ab8, rc::fuzz::mpegState)
-RC_DECOMP_FN_SETUP(syncDisplay, 0x195ac8, rc::fuzz::mpegSync)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(playMpegFile, rc::fuzz::mpegFile)
+RC_DECOMP_FN_BLOCKING_SETUP(mpegOnInterruptPLAY, rc::fuzz::mpegPlay)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(mpegOnInterruptTERM, rc::fuzz::mpegTerm)
+RC_DECOMP_FN_BLOCKING_SETUP(playMpeg, rc::fuzz::mpegPlayMpeg)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(readFile, rc::fuzz::mpegReadFile)
+RC_DECOMP_FN_BLOCKING_SETUP(clearBackground, rc::fuzz::mpegClear)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(MpegLoadFile, rc::fuzz::mpegFile)
+RC_DECOMP_FN_BLOCKING_SETUP(MpegDoAFrame, rc::fuzz::mpegFrame)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(MpegInitSplash, rc::fuzz::mpegFile)
+RC_DECOMP_FN_BLOCKING_SETUP(MpegSplashFrame, rc::fuzz::mpegState)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(MpegSplashTERM, rc::fuzz::mpegSplashTerm)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(mpegOnInterruptLOAD, rc::fuzz::mpegLoad)
+RC_DECOMP_FN_SETUP(mpegOnInterruptFINISHED, rc::fuzz::mpegState)
+RC_DECOMP_FN_BLOCKING_SETUP(vblankPlayer, rc::fuzz::mpegState)
+RC_DECOMP_FN_BLOCKING_SETUP(vblankSplashPlayer, rc::fuzz::mpegState)
+RC_DECOMP_FN_SETUP(vblankHandler, rc::fuzz::mpegState)
+RC_DECOMP_FN_BLOCKING_SETUP(startDisplay, rc::fuzz::mpegDisplay)
+RC_DECOMP_FN_SETUP(endDisplay, rc::fuzz::mpegState)
+RC_DECOMP_FN_SETUP(syncDisplay, rc::fuzz::mpegSync)

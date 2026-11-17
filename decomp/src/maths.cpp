@@ -398,11 +398,11 @@ void ArcTanDistance(int32 x, int32 y, ptr32<angle> anglePtr, ptr32<uint32> dista
     const ee_float turns = ee_itof((static_cast<int32_t>(static_cast<int16_t>(theta)) >> 4) & 0xfff);
     if (absY < absX)
     {
-        ratio = ee_cosf((turns + turns) * *static_cast<ee_float *>(guest_host(0x327bbcu)));
+        ratio = ee_cosf((turns + turns) * *static_cast<ee_float *>(guest_host(sym::lit4_327bbc)));
         absY = absX;
     }
     else
-        ratio = ee_sinf((turns + turns) * *static_cast<ee_float *>(guest_host(0x327bc0u)));
+        ratio = ee_sinf((turns + turns) * *static_cast<ee_float *>(guest_host(sym::lit4_327bc0)));
     const int32_t scaled = static_cast<int16_t>(ee_ftoi(ratio * ee_float(4096.0f)));
     uint64_t divisor = static_cast<uint64_t>(static_cast<int64_t>(scaled));
     if (static_cast<int64_t>(divisor) < 0)
@@ -418,26 +418,26 @@ void Trig_Term() {}
 
 } // namespace rc
 
-RC_DECOMP_FN(FMatMulFMat, 0x199390)
-RC_DECOMP_FN(FMatNormalise, 0x199570)
-RC_DECOMP_FN(Math_Init, 0x19aa38)
-RC_DECOMP_FN(Math_Term, 0x19aa40)
-RC_DECOMP_FN(SqrQ32, 0x19b3e0)
-RC_DECOMP_FN(Math_InitInvTable, 0x19b468)
-RC_DECOMP_FN(Mat3nHeadingRotation, 0x19b8f8)
-RC_DECOMP_FN(Mat3nPitchRotation, 0x19c420)
-RC_DECOMP_FN(Mat3nRollRotation, 0x19cf38)
-RC_DECOMP_FN(Rotate2dPrimitive, 0x19da70)
-RC_DECOMP_FN(AngleAxisToMatrix, 0x19e3e8)
-RC_DECOMP_FN(MatPsxInit, 0x19e5a8)
-RC_DECOMP_FN(Mat3nXxyz, 0x19e5d0)
-RC_DECOMP_FN(Mat3nYxyz, 0x19e5f0)
-RC_DECOMP_FN(Mat3nZxyz, 0x19e610)
-RC_DECOMP_FN(Mat3nReOrthogonalise, 0x19e630)
+RC_DECOMP_FN(FMatMulFMat)
+RC_DECOMP_FN(FMatNormalise)
+RC_DECOMP_FN(Math_Init)
+RC_DECOMP_FN(Math_Term)
+RC_DECOMP_FN(SqrQ32)
+RC_DECOMP_FN(Math_InitInvTable)
+RC_DECOMP_FN(Mat3nHeadingRotation)
+RC_DECOMP_FN(Mat3nPitchRotation)
+RC_DECOMP_FN(Mat3nRollRotation)
+RC_DECOMP_FN(Rotate2dPrimitive)
+RC_DECOMP_FN(AngleAxisToMatrix)
+RC_DECOMP_FN(MatPsxInit)
+RC_DECOMP_FN(Mat3nXxyz)
+RC_DECOMP_FN(Mat3nYxyz)
+RC_DECOMP_FN(Mat3nZxyz)
+RC_DECOMP_FN(Mat3nReOrthogonalise)
 // The originals sum with a trapping add, so random inputs that overflow have no meaningful result.
-RC_DECOMP_FN_NOFUZZ(Vec32MulMatPsx, 0x19e8d8)
-RC_DECOMP_FN_NOFUZZ(Vec32MulMatPsxT, 0x19ea20)
-RC_DECOMP_FN(ArcTan, 0x19fdf8)
-RC_DECOMP_FN(ArcTanDistance, 0x19ff60)
-RC_DECOMP_FN(Trig_Init, 0x1a7508)
-RC_DECOMP_FN(Trig_Term, 0x1a7510)
+RC_DECOMP_FN_NOFUZZ(Vec32MulMatPsx)
+RC_DECOMP_FN_NOFUZZ(Vec32MulMatPsxT)
+RC_DECOMP_FN(ArcTan)
+RC_DECOMP_FN(ArcTanDistance)
+RC_DECOMP_FN(Trig_Init)
+RC_DECOMP_FN(Trig_Term)

@@ -18,9 +18,9 @@ namespace {
 
 // EE timer 0's registers.
 constexpr uint32_t kT0Count = 0x10000000u, kT0Mode = 0x10000010u, kT0Comp = 0x10000020u;
-constexpr uint32_t kAddIntcHandler2 = 0x1be410u, kRemoveIntcHandler = 0x1be420u, kDisableIntc = 0x1bef10u,
-                   kEnableIntc = 0x1bef78u;
-constexpr uint32_t kSysTimerHandler = 0x1af270u, kSysTimer = 0x31ff38u, kProgramCounter = 0x31ff50u, kListHead = 0x31ff4cu;
+constexpr uint32_t kAddIntcHandler2 = sym::AddIntcHandler2, kRemoveIntcHandler = sym::RemoveIntcHandler, kDisableIntc = sym::DisableIntc,
+                   kEnableIntc = sym::EnableIntc;
+constexpr uint32_t kSysTimerHandler = sym::SysTimerHandler, kSysTimer = sym::sysTimerVarG, kProgramCounter = (sym::sysTimerVarG + 0x18u), kListHead = (sym::sysTimerVarG + 0x14u);
 constexpr int32_t kIntcTimer0 = 9;
 constexpr uint32_t kTicksPerPeriod = 0x3d86u;
 
@@ -69,6 +69,7 @@ int32_t runTimers(uint32_t timer, int32_t limit)
 
 void SysTimerInit()
 {
+    RC_DIVERT_IF_CHANGED(SysTimerInit);
     {
         GuestFrame frame(0x30);
         sysTimerClass &t = sys();
@@ -96,6 +97,7 @@ void SysTimerTerm()
 // Adds a timer called every 0x3d86 / frequency ticks, catches the clock up and runs the list as the handler does.
 void SysTimerAdd(ptr32<_sSysTimer> pNewTimer, ee_fnptr pFnCallback, uint32 frequency)
 {
+    RC_DIVERT_IF_CHANGED(SysTimerAdd, pNewTimer, pFnCallback, frequency);
     {
         GuestFrame frame(0x50);
         sysTimerClass &t = sys();
@@ -141,6 +143,7 @@ void SysTimerRemove(ptr32<_sSysTimer> pSysTimer)
 
 tTime SysTimerGet()
 {
+    RC_DIVERT_IF_CHANGED(SysTimerGet);
     const sysTimerClass &t = sys();
     const uint32_t carry = t.tickTimeCarry;
     const int32_t count = static_cast<int32_t>(hw_read32(kT0Count));
@@ -161,8 +164,9 @@ int64 SysTimerGetTicks()
 }
 
 // Timer 0's compare interrupt (INTC 9). Saves the EPC where pStore points, as the handler protocol expects.
-int32_t SysTimerHandler(int32_t, ptr32<void> pStore, ptr32<void> pEPC)
+int32_t SysTimerHandler(int32_t arg0, ptr32<void> pStore, ptr32<void> pEPC)
 {
+    RC_DIVERT_IF_CHANGED(SysTimerHandler, arg0, pStore, pEPC);
     GuestFrame frame(0x50);
     sysTimerClass &t = sys();
     store<uint32_t>(pStore.address, pEPC.address);
@@ -249,16 +253,16 @@ tTime TimerGet(ptr32<_sTimer> pTimer)
 // All read the free-running counter (T0_COUNT) or write the timer's registers, so a live comparison, which runs the
 // original and then the native function, would see two different counts: they are compared offline only, where the
 // counter is stopped at a value the setup chooses and the register writes and kernel calls are logged.
-RC_DECOMP_FN_BLOCKING_SETUP(SysTimerInit, 0x1aeef8, rc::fuzz::sysTimer)
-RC_DECOMP_FN_BLOCKING_SETUP(SysTimerTerm, 0x1aef80, rc::fuzz::sysTimer)
-RC_DECOMP_FN_BLOCKING_SETUP(SysTimerAdd, 0x1aefa8, rc::fuzz::sysTimerAdd)
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(SysTimerRemove, 0x1af160, rc::fuzz::sysTimerRemove)
-RC_DECOMP_FN_BLOCKING_SETUP(SysTimerGet, 0x1af1d8, rc::fuzz::sysTimer)
-RC_DECOMP_FN_BLOCKING_SETUP(SysTimerGetTicks, 0x1af240, rc::fuzz::sysTimer)
-RC_DECOMP_FN_BLOCKING_SETUP(SysTimerHandler, 0x1af270, rc::fuzz::sysTimerHandler)
-RC_DECOMP_FN_BLOCKING_SETUP(TimerSetup, 0x1b4038, rc::fuzz::timerArgs)
-RC_DECOMP_FN_BLOCKING_SETUP(TimerPause, 0x1b4068, rc::fuzz::timerArgs)
-RC_DECOMP_FN_BLOCKING_SETUP(TimerResume, 0x1b40e8, rc::fuzz::timerArgs)
-RC_DECOMP_FN_BLOCKING_SETUP(TimerSet, 0x1b4128, rc::fuzz::timerArgs)
-RC_DECOMP_FN_BLOCKING_SETUP(TimerReset, 0x1b4158, rc::fuzz::timerArgs)
-RC_DECOMP_FN_BLOCKING_SETUP(TimerGet, 0x1b4188, rc::fuzz::timerArgs)
+RC_DECOMP_FN_BLOCKING_SETUP(SysTimerInit, rc::fuzz::sysTimer)
+RC_DECOMP_FN_BLOCKING_SETUP(SysTimerTerm, rc::fuzz::sysTimer)
+RC_DECOMP_FN_BLOCKING_SETUP(SysTimerAdd, rc::fuzz::sysTimerAdd)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(SysTimerRemove, rc::fuzz::sysTimerRemove)
+RC_DECOMP_FN_BLOCKING_SETUP(SysTimerGet, rc::fuzz::sysTimer)
+RC_DECOMP_FN_BLOCKING_SETUP(SysTimerGetTicks, rc::fuzz::sysTimer)
+RC_DECOMP_FN_BLOCKING_SETUP(SysTimerHandler, rc::fuzz::sysTimerHandler)
+RC_DECOMP_FN_BLOCKING_SETUP(TimerSetup, rc::fuzz::timerArgs)
+RC_DECOMP_FN_BLOCKING_SETUP(TimerPause, rc::fuzz::timerArgs)
+RC_DECOMP_FN_BLOCKING_SETUP(TimerResume, rc::fuzz::timerArgs)
+RC_DECOMP_FN_BLOCKING_SETUP(TimerSet, rc::fuzz::timerArgs)
+RC_DECOMP_FN_BLOCKING_SETUP(TimerReset, rc::fuzz::timerArgs)
+RC_DECOMP_FN_BLOCKING_SETUP(TimerGet, rc::fuzz::timerArgs)

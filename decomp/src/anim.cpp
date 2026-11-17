@@ -22,9 +22,9 @@ void AnimTerm();
 
 namespace {
 
-constexpr uint32_t kAnimVars = 0x1e99d0u, kLevelPtr = 0x327e80u;
-constexpr uint32_t kBoneYOffset = 0x327c9cu; // 200.0: a type 0 entry's collision sits that far above its first bone
-constexpr uint32_t kBoneIds = 0x327ca0u;     // the bones of the tags 0x10000365, 364, 368, 367, 366
+constexpr uint32_t kAnimVars = sym::animVarG, kLevelPtr = sym::pLvlG;
+constexpr uint32_t kBoneYOffset = sym::dolphinOffsetYG; // 200.0: a type 0 entry's collision sits that far above its first bone
+constexpr uint32_t kBoneIds = sym::boneId1G;     // the bones of the tags 0x10000365, 364, 368, 367, 366
 constexpr uint32_t kStride[4] = {0x64u, 0x50u, 0x5cu, 0x50u};
 
 template <typename T>
@@ -299,13 +299,13 @@ using rc::fuzz::animLevel;
 using rc::fuzz::animTag;
 
 // The level's animation entries and their collision objects (on the heap): whole-RAM inputs.
-RC_DECOMP_FN_SETUP_HEAP(AnimLvlTerm, 0x10f128, animLevel)
-RC_DECOMP_FN_SETUP_HEAP(AnimTerm, 0x10f130, animLevel)
-RC_DECOMP_FN_SETUP_HEAP(AnimReinit, 0x10f4f8, animLevel)
-RC_DECOMP_FN_SETUP(AnimFindByTSOTag, 0x10f960, animTag)
-RC_DECOMP_FN_SETUP_HEAP(AnimSetOcolPosition, 0x1106f8, animEntry)
-RC_DECOMP_FN(AnimInit, 0x110908)
-RC_DECOMP_FN_SETUP_HEAP(AnimCreateOcolObj, 0x110910, animEntry)
-RC_DECOMP_FN_SETUP_HEAP(AnimUpdateOcolPos16, 0x1109a8, animEntry)
-RC_DECOMP_FN_SETUP_HEAP(AnimDeleteOcolObj, 0x110a08, animEntry)
-RC_DECOMP_FN_SETUP(AnimSetupClass, 0x110a48, animLevel)
+RC_DECOMP_FN_SETUP_HEAP(AnimLvlTerm, animLevel)
+RC_DECOMP_FN_SETUP_HEAP(AnimTerm, animLevel)
+RC_DECOMP_FN_SETUP_HEAP(AnimReinit, animLevel)
+RC_DECOMP_FN_SETUP(AnimFindByTSOTag, animTag)
+RC_DECOMP_FN_SETUP_HEAP(AnimSetOcolPosition, animEntry)
+RC_DECOMP_FN(AnimInit)
+RC_DECOMP_FN_SETUP_HEAP(AnimCreateOcolObj, animEntry)
+RC_DECOMP_FN_SETUP_HEAP(AnimUpdateOcolPos16, animEntry)
+RC_DECOMP_FN_SETUP_HEAP(AnimDeleteOcolObj, animEntry)
+RC_DECOMP_FN_SETUP(AnimSetupClass, animLevel)

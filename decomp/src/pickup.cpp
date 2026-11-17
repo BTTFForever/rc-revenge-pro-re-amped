@@ -24,16 +24,16 @@ namespace {
 
 using weapon::at;
 
-constexpr uint32_t kPickupVars = 0x1ee738u;
+constexpr uint32_t kPickupVars = sym::pickupVarG;
 constexpr uint32_t kPickups = kPickupVars + 0x40u, kPickupPos = kPickupVars + 0x44u, kNumPickups = kPickupVars + 0x48u;
 constexpr uint32_t kLastUpdated = kPickupVars + 0x4cu, kUltimatesGiven = kPickupVars + 0x50u, kRadius = kPickupVars + 0x54u;
 constexpr uint32_t kRendObj = kPickupVars + 0x58u, kAngles = kPickupVars + 0x68u, kMatrix = kPickupVars + 0x70u;
-constexpr uint32_t kMainVars = 0x1ed900u, kMainTime = kMainVars + 0x1cu, kMainLevel = kMainVars + 0x34au;
+constexpr uint32_t kMainVars = sym::mainVarG, kMainTime = kMainVars + 0x1cu, kMainLevel = kMainVars + 0x34au;
 constexpr uint32_t kMainPauseMenu = kMainVars + 0x366u, kMainPickupsOnOff = kMainVars + 0x3a8u;
-constexpr uint32_t kVisMask0 = 0x1f48d8u, kVisMask1 = 0x1f48dcu;
-constexpr uint32_t kCameraPtr = 0x1eab20u, kObjectList = 0x1ee390u, kNoObjects = 0x1ee500u, kRaceOrder = 0x1e9404u;
-constexpr uint32_t kLevelPtr = 0x327e80u;
-constexpr uint32_t kPickupProcess = 0x13ead0u, kPrintf = 0x12e9e8u, kNotOverGround = 0x323bd0u;
+constexpr uint32_t kVisMask0 = (sym::visVarG + 0x8u), kVisMask1 = (sym::visVarG + 0xcu);
+constexpr uint32_t kCameraPtr = (sym::cameraVarG + 0xb70u), kObjectList = sym::objectVarG, kNoObjects = (sym::objectVarG + 0x170u), kRaceOrder = (sym::aiVarG + 0x4u);
+constexpr uint32_t kLevelPtr = sym::pLvlG;
+constexpr uint32_t kPickupProcess = sym::PickupProcess, kPrintf = sym::printf, kNotOverGround = (sym::sec_rodata + 0x15d0u);
 
 // A car's special weapon (25% of the time), by object type: the jump table at 0x323c00 (0x323ca0, 0x323d40).
 int32_t specialWeapon(uint32_t type)
@@ -376,15 +376,15 @@ void PickupSetupClass()
 
 } // namespace rc
 
-RC_DECOMP_FN_SETUP_HEAP(PickupInit, 0x13e840, rc::fuzz::pickupNone)
-RC_DECOMP_FN(PickupTerm, 0x13f0f0)
-RC_DECOMP_FN(PickupTest, 0x13f300)
-RC_DECOMP_FN_SETUP_HEAP(PickupAllSpawn, 0x13e8a0, rc::fuzz::pickupSpawn)
-RC_DECOMP_FN_SETUP_HEAP(PickupProcess, 0x13ead0, rc::fuzz::pickupOne)
-RC_DECOMP_FN_SETUP_HEAP(PickupRenderAll, 0x13eb88, rc::fuzz::pickupRender)
-RC_DECOMP_FN_SETUP(PickupTestUltimate, 0x13f460, rc::fuzz::pickupUltimate)
-RC_DECOMP_FN_SETUP(PickupGiveWeaponSpecial, 0x13f3c0, rc::fuzz::pickupSpecial)
-RC_DECOMP_FN_SETUP_HEAP(PickupGiveWeapon, 0x13ee00, rc::fuzz::pickupGive)
-RC_DECOMP_FN_SETUP_HEAP(PickupDeleteAll, 0x13f0f8, rc::fuzz::pickupRace)
-RC_DECOMP_FN_SETUP_HEAP(CarHitPickup, 0x13f228, rc::fuzz::pickupHit)
-RC_DECOMP_FN_SETUP_HEAP(PickupSetupClass, 0x13f308, rc::fuzz::pickupLevel)
+RC_DECOMP_FN_SETUP_HEAP(PickupInit, rc::fuzz::pickupNone)
+RC_DECOMP_FN(PickupTerm)
+RC_DECOMP_FN(PickupTest)
+RC_DECOMP_FN_SETUP_HEAP(PickupAllSpawn, rc::fuzz::pickupSpawn)
+RC_DECOMP_FN_SETUP_HEAP(PickupProcess, rc::fuzz::pickupOne)
+RC_DECOMP_FN_SETUP_HEAP(PickupRenderAll, rc::fuzz::pickupRender)
+RC_DECOMP_FN_SETUP(PickupTestUltimate, rc::fuzz::pickupUltimate)
+RC_DECOMP_FN_SETUP(PickupGiveWeaponSpecial, rc::fuzz::pickupSpecial)
+RC_DECOMP_FN_SETUP_HEAP(PickupGiveWeapon, rc::fuzz::pickupGive)
+RC_DECOMP_FN_SETUP_HEAP(PickupDeleteAll, rc::fuzz::pickupRace)
+RC_DECOMP_FN_SETUP_HEAP(CarHitPickup, rc::fuzz::pickupHit)
+RC_DECOMP_FN_SETUP_HEAP(PickupSetupClass, rc::fuzz::pickupLevel)

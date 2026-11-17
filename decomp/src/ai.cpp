@@ -19,10 +19,10 @@ bool_ AColDownCast(ptr32<_sColCellVecPSX> pPos, ptr32<_sColCellVecPSX> pPoi, ptr
 
 namespace {
 
-const uint32_t kAIControl = 0x1000c0;             // AIControl: a car whose task runs it is driven by the computer.
-const uint32_t kAINodeConstructDaemon = 0x1016c8; // Called by the loader for each "AIN" resource.
-const uint32_t kPrintf = 0x12e9e8;
-const ptr32<char> kAINodeType(0x327c00u); // "AIN"
+const uint32_t kAIControl = sym::AIControl;             // AIControl: a car whose task runs it is driven by the computer.
+const uint32_t kAINodeConstructDaemon = sym::AINodeConstructDaemon; // Called by the loader for each "AIN" resource.
+const uint32_t kPrintf = sym::printf;
+const ptr32<char> kAINodeType(sym::sec_sdata); // "AIN"
 
 bool computerDriven(const _sObject &obj)
 {
@@ -43,7 +43,7 @@ uint32_t ee_ftoui(ee_float x)
 // The newlib rand in the game's SDK: its state is a word in the reentrancy struct.
 uint32_t &randState()
 {
-    const uint32_t impure = *static_cast<uint32_t *>(guest_host(0x3213f4u));
+    const uint32_t impure = *static_cast<uint32_t *>(guest_host(sym::_impure_ptr));
     return *static_cast<uint32_t *>(guest_host(impure + 0x58u));
 }
 
@@ -324,6 +324,7 @@ int32 AINodeDistanceAlong(ptr32<_sObject> pObj)
 // nearest node it can drive on, else the first node.
 ptr32<_sAINode> AINodeGetReSpawnNode(ptr32<_sObject> pObj)
 {
+    RC_DIVERT_IF_CHANGED(AINodeGetReSpawnNode, pObj);
     const sAINodeClass &ai = G(aiNodeVarG);
     if (!ai.pNode)
         return nullptr;
@@ -541,7 +542,7 @@ void AINodeConstructDaemon(ptr32<memHandle> pHandle)
         if (AColDownCast(pos, poi, normal, material))
             node.link.onwater = G(mtlG).mtl[*material].iWheelMark == 2 ? -1 : 0;
         else
-            guest_call(kPrintf, 0x322628u, static_cast<int32_t>(i)); // "Warning - AINode Downcast failed (node %d)!"
+            guest_call(kPrintf, (sym::sec_rodata + 0x28u), static_cast<int32_t>(i)); // "Warning - AINode Downcast failed (node %d)!"
     }
 }
 
@@ -853,8 +854,8 @@ void AINodeUpdateAngleToRacingLine(ptr32<_sObject> pObj)
 
 namespace {
 
-const uint32_t kTEditGetBestLapTime = 0x154688, kTEditSetBestLapTime = 0x154698, kRCMusicSwitchLastLap = 0x141828;
-const uint32_t kSfxPlay = 0x1ad0a0, kSprintf = 0x1b8910, kFptodp = 0x1b6e50, kAIControlAddress = 0x1000c0;
+const uint32_t kTEditGetBestLapTime = sym::TEditGetBestLapTimeFromPermSaveBuffer, kTEditSetBestLapTime = sym::TEditSetBestLapTimeToPermSaveBuffer, kRCMusicSwitchLastLap = sym::RCMusicSwitchLastLap;
+const uint32_t kSfxPlay = sym::SfxPlay, kSprintf = sym::sprintf, kFptodp = sym::fptodp, kAIControlAddress = sym::AIControl;
 const uint32_t kTimeTrialRace = 0x100001fe, kTrackEditorWorld = 0x1000006b;
 
 } // namespace
@@ -1025,7 +1026,7 @@ namespace {
 // passes the double fptodp returns).
 void debugPrint(int16 y, uint32_t format, uint64_t value)
 {
-    const uint32_t buffer = 0x1f3980; // buff
+    const uint32_t buffer = sym::buff; // buff
     EeScheduler &scheduler = g_runtime->eeScheduler();
     R5900Context &ctx = scheduler.runningContext();
     SET_GPR_S32((&ctx), 4, static_cast<int32_t>(buffer));
@@ -1138,7 +1139,7 @@ void AINodeRender()
     }
 
     const _sObject &first = *objects.list[0];
-    const uint32_t intFormat = 0x327c08, speedFormat = 0x322658; // "%d", "speed %d"
+    const uint32_t intFormat = (sym::sec_sdata + 0x8u), speedFormat = (sym::sec_rodata + 0x58u); // "%d", "speed %d"
     debugPrint(0x28, intFormat, signExtend(first.carAI.pCurNode->iFinishDist));
     debugPrint(0x32, intFormat, signExtend(G(ppp)));
     debugPrint(0x3c, intFormat, signExtend(first.carAI.pCurNode->priority));
@@ -1555,11 +1556,11 @@ void PlayerInit(int32 noPlayers)
 // The AI driving loop and the systems it calls that are not native yet, through guest_call.
 namespace {
 
-const uint32_t kPhysicsRightCar = 0x13d6a0, kPhysicsResetCar = 0x13e4e8, kVfxAddNew = 0x157c50;
-const uint32_t kObjectWeaponAffect = 0x137368, kTaskCachedInsert = 0x1afb68, kWeaponRelativeAngle = 0x1812b8;
-const uint32_t kWeaponRocketTestLockon = 0x17bf38, kObjectGiveNextWeapon = 0x138660, kWeaponSpawn = 0x17a8d0;
-const uint32_t kRCMusicChain = 0x140f08, kObjectAllRemoveWeapons = 0x138538, kRevSfxPlay3D = 0x1418a8;
-const uint32_t kCameraPlaceAtAINode = 0x117888;
+const uint32_t kPhysicsRightCar = sym::PhysicsRightCar, kPhysicsResetCar = sym::PhysicsResetCar, kVfxAddNew = sym::VfxAddNew;
+const uint32_t kObjectWeaponAffect = sym::ObjectWeaponAffect, kTaskCachedInsert = sym::TaskCachedInsert, kWeaponRelativeAngle = sym::WeaponRelativeAngle;
+const uint32_t kWeaponRocketTestLockon = sym::WeaponRocketTestLockon, kObjectGiveNextWeapon = sym::ObjectGiveNextWeapon, kWeaponSpawn = sym::WeaponSpawn;
+const uint32_t kRCMusicChain = sym::RCMusicChain, kObjectAllRemoveWeapons = sym::ObjectAllRemoveWeapons, kRevSfxPlay3D = sym::RevSfxPlay3D;
+const uint32_t kCameraPlaceAtAINode = sym::CameraPlaceAtAINode;
 
 ee_float rodataFloat(uint32_t address)
 {
@@ -1637,7 +1638,7 @@ int32 AIWeaponDecideToFire(ptr32<_sObject> pObject, tTime time)
         if (!front)
             return 0;
         int32_t gap = front->carAI.iTotalRacedDist - carAI.iTotalRacedDist;
-        gap -= ee_ftoi(obj.pPhysics->speed * ee_itof(gap) * rodataFloat(0x327588));
+        gap -= ee_ftoi(obj.pPhysics->speed * ee_itof(gap) * rodataFloat(sym::lit4_327588));
         if (399 < gap && 0x3e6u < static_cast<uint32_t>(gap) - 0x3e9u)
             return 0;
         const int16_t first = weaponRelativeAngle(pObject, front);
@@ -1696,7 +1697,7 @@ void AITestWeapon(ptr32<_sObject> pObject, tTime time)
 
 namespace {
 
-const uint32_t kObjectTestWaterEscape = 0x1398d8, kCameraNextMode = 0x117480, kInputPressureModePadPresent = 0x1919f0;
+const uint32_t kObjectTestWaterEscape = sym::ObjectTestWaterEscape, kCameraNextMode = sym::CameraNextMode, kInputPressureModePadPresent = sym::InputPressureModePadPresent;
 
 } // namespace
 
@@ -1953,7 +1954,7 @@ void AIControl(ptr32<void> pData, tTime time)
         if (state == 0)
         {
             ee_float speed = physics.speed;
-            if (G(hudVarG).iReadySteadyGo != 0 || !(speed.v < rodataFloat(0x327580).v))
+            if (G(hudVarG).iReadySteadyGo != 0 || !(speed.v < rodataFloat(sym::lit4_327580).v))
                 carAI.iSlowSpeedAccum = 0;
             else
             {
@@ -1994,7 +1995,7 @@ void AIControl(ptr32<void> pData, tTime time)
             if (0x7d < hardness)
                 obj.lightsOn = static_cast<int8>(obj.lightsOn | 1);
             int32_t throttle;
-            if (hardness < 0x6a || !(rodataFloat(0x327584).v < physics.speed.v))
+            if (hardness < 0x6a || !(rodataFloat(sym::lit4_327584).v < physics.speed.v))
             {
                 switch (static_cast<uint8>(node->priority))
                 {
@@ -2184,60 +2185,60 @@ void AIRespawnFurther(ptr32<_sObject> pObj, int32 times)
 
 } // namespace rc
 
-RC_DECOMP_FN_SETUP(VfxAreWeInCar, 0x16a330, rc::fuzz::aiCar)
-RC_DECOMP_FN_SETUP(VfxCarPositionPoi, 0x169ff8, rc::fuzz::aiCar)
-RC_DECOMP_FN_SETUP(VfxCarMatrixPoi, 0x16a198, rc::fuzz::aiCar)
-RC_DECOMP_FN_SETUP(VfxCarVelocityPoi, 0x16a298, rc::fuzz::aiCar)
-RC_DECOMP_FN(InputSetVibrationFlags, 0x191c20)
-RC_DECOMP_FN(InputHeld, 0x1917f0)
-RC_DECOMP_FN(InputPressureHit, 0x1915e8)
-RC_DECOMP_FN_SETUP(AIN_CarPositionPoi, 0x103c20, rc::fuzz::aiCar)
-RC_DECOMP_FN_SETUP(AIN_CarPositionVal, 0x103c58, rc::fuzz::aiCar)
-RC_DECOMP_FN_SETUP(AIN_CarMatrixPoi, 0x103cf8, rc::fuzz::aiCar)
-RC_DECOMP_FN_SETUP(AIN_CarMatrixVal, 0x103d50, rc::fuzz::aiMatrixAndCar)
-RC_DECOMP_FN_SETUP(AINodeNearest, 0x102280, rc::fuzz::aiCar)
-RC_DECOMP_FN_SETUP(AINodeNearestInRange, 0x102428, rc::fuzz::aiCar)
-RC_DECOMP_FN_SETUP(AINodeInAnyNode, 0x102750, rc::fuzz::aiCar)
-RC_DECOMP_FN_SETUP(AINodeDistanceAlong, 0x102e48, rc::fuzz::aiCar)
-RC_DECOMP_FN_SETUP(AINodeGetReSpawnNode, 0x1036c0, rc::fuzz::aiCar)
-RC_DECOMP_FN_SETUP(AINodeGetNearestHeading, 0x1025f8, rc::fuzz::aiPoint)
-RC_DECOMP_FN_SETUP(AINodeUpdateRacingLineAhead, 0x103430, rc::fuzz::aiCar)
-RC_DECOMP_FN_SETUP(AINodeRouteFinder, 0x1038b8, rc::fuzz::aiCar)
-RC_DECOMP_FN(AINodeTerm, 0x1016b8)
-RC_DECOMP_FN(srand, 0x1b8808)
-RC_DECOMP_FN(rand, 0x1b8818)
-RC_DECOMP_FN(VecNormalise, 0x1a0390)
-RC_DECOMP_FN(AINodeInit, 0x103b78)
-RC_DECOMP_FN_NOFUZZ(AINodeConstructDaemon, 0x1016c8)
-RC_DECOMP_FN_NOFUZZ(AINodeCreateLinkInfo, 0x101960)
-RC_DECOMP_FN_NOFUZZ(AINodeSetupClass, 0x103bb8)
-RC_DECOMP_FN_SETUP_HEAP(AINodeUpdateRecursive, 0x102b80, rc::fuzz::aiSearch)
-RC_DECOMP_FN_SETUP_HEAP(AINodeBackTrackRecursive, 0x102a40, rc::fuzz::aiSearch)
-RC_DECOMP_FN_SETUP_HEAP(AINodeForwardTrackRecursive, 0x102ae8, rc::fuzz::aiSearch)
-RC_DECOMP_FN_SETUP(AINodeChooseNodeRoute, 0x103598, rc::fuzz::aiCarAndFork)
-RC_DECOMP_FN_SETUP_HEAP(AINodeUpdateCurrent, 0x1028e0, rc::fuzz::aiCar)
-RC_DECOMP_FN_SETUP(AINodeUpdateAngleToRacingLine, 0x103de8, rc::fuzz::aiCar)
-RC_DECOMP_FN(AIInit, 0x1014b0)
-RC_DECOMP_FN_SETUP(AIAdjustForTooCloseToCarAhead, 0x101380, rc::fuzz::aiCar)
-RC_DECOMP_FN_SETUP(AIPlayCatchup, 0x1015c0, rc::fuzz::aiCar)
-RC_DECOMP_FN_SETUP_HEAP(AIUpdateObjectNode, 0x100a40, rc::fuzz::aiCar)
-RC_DECOMP_FN_NOFUZZ(AISetupCars, 0x1004a0)
-RC_DECOMP_FN_SETUP(AIAdjustForTrackEdges, 0x101198, rc::fuzz::aiCar)
-RC_DECOMP_FN_SETUP(PlayerDetectBraking, 0x13f940, rc::fuzz::aiCar)
-RC_DECOMP_FN_SETUP(PlayerPhysicsVibrations, 0x140348, rc::fuzz::aiCar)
-RC_DECOMP_FN(PlayerSetVibrate, 0x140588)
-RC_DECOMP_FN(ProcessControlInput, 0x140608)
-RC_DECOMP_FN_SETUP(PlayerCatchup, 0x1407f8, rc::fuzz::aiCar)
-RC_DECOMP_FN(PlayerTerm, 0x13f918)
-RC_DECOMP_FN(PlayerInit, 0x13f628)
-RC_DECOMP_FN_SETUP(AIWeaponDecideToFire, 0x100e78, rc::fuzz::aiCar)
-RC_DECOMP_FN_NOFUZZ(AITestWeapon, 0x1014c0) // Spawns real weapons.
-RC_DECOMP_FN_NOFUZZ(AIControl, 0x1000c0) // A copied car's task would join the real task list.
-RC_DECOMP_FN_NOFUZZ(AIDoRaceOrder, 0x1005d8)
-RC_DECOMP_FN_NOFUZZ(AIRespawnFurther, 0x100b68) // Moves the real camera and plays sound.
-RC_DECOMP_FN_SETUP_HEAP(AINodeUpdateFinishDistance, 0x102fc8, rc::fuzz::aiFinishDistance)
-RC_DECOMP_FN_SETUP_HEAP(AINodeRender, 0x101d50, rc::fuzz::aiNodeRender)
-RC_DECOMP_FN_SETUP_HEAP(PlayerSpawnWeapon, 0x1401b8, rc::fuzz::playerCar)
-RC_DECOMP_FN_SETUP_HEAP(PlayerTestWeapon, 0x1406f8, rc::fuzz::playerCar)
-RC_DECOMP_FN_SETUP(PlayerGetInput, 0x13fdd8, rc::fuzz::playerInput)
-RC_DECOMP_FN_SETUP_HEAP(PlayerControl, 0x13fa98, rc::fuzz::playerCar)
+RC_DECOMP_FN_SETUP(VfxAreWeInCar, rc::fuzz::aiCar)
+RC_DECOMP_FN_SETUP(VfxCarPositionPoi, rc::fuzz::aiCar)
+RC_DECOMP_FN_SETUP(VfxCarMatrixPoi, rc::fuzz::aiCar)
+RC_DECOMP_FN_SETUP(VfxCarVelocityPoi, rc::fuzz::aiCar)
+RC_DECOMP_FN(InputSetVibrationFlags)
+RC_DECOMP_FN(InputHeld)
+RC_DECOMP_FN(InputPressureHit)
+RC_DECOMP_FN_SETUP(AIN_CarPositionPoi, rc::fuzz::aiCar)
+RC_DECOMP_FN_SETUP(AIN_CarPositionVal, rc::fuzz::aiCar)
+RC_DECOMP_FN_SETUP(AIN_CarMatrixPoi, rc::fuzz::aiCar)
+RC_DECOMP_FN_SETUP(AIN_CarMatrixVal, rc::fuzz::aiMatrixAndCar)
+RC_DECOMP_FN_SETUP(AINodeNearest, rc::fuzz::aiCar)
+RC_DECOMP_FN_SETUP(AINodeNearestInRange, rc::fuzz::aiCar)
+RC_DECOMP_FN_SETUP(AINodeInAnyNode, rc::fuzz::aiCar)
+RC_DECOMP_FN_SETUP(AINodeDistanceAlong, rc::fuzz::aiCar)
+RC_DECOMP_FN_SETUP(AINodeGetReSpawnNode, rc::fuzz::aiCar)
+RC_DECOMP_FN_SETUP(AINodeGetNearestHeading, rc::fuzz::aiPoint)
+RC_DECOMP_FN_SETUP(AINodeUpdateRacingLineAhead, rc::fuzz::aiCar)
+RC_DECOMP_FN_SETUP(AINodeRouteFinder, rc::fuzz::aiCar)
+RC_DECOMP_FN(AINodeTerm)
+RC_DECOMP_FN(srand)
+RC_DECOMP_FN(rand)
+RC_DECOMP_FN(VecNormalise)
+RC_DECOMP_FN(AINodeInit)
+RC_DECOMP_FN_NOFUZZ(AINodeConstructDaemon)
+RC_DECOMP_FN_NOFUZZ(AINodeCreateLinkInfo)
+RC_DECOMP_FN_NOFUZZ(AINodeSetupClass)
+RC_DECOMP_FN_SETUP_HEAP(AINodeUpdateRecursive, rc::fuzz::aiSearch)
+RC_DECOMP_FN_SETUP_HEAP(AINodeBackTrackRecursive, rc::fuzz::aiSearch)
+RC_DECOMP_FN_SETUP_HEAP(AINodeForwardTrackRecursive, rc::fuzz::aiSearch)
+RC_DECOMP_FN_SETUP(AINodeChooseNodeRoute, rc::fuzz::aiCarAndFork)
+RC_DECOMP_FN_SETUP_HEAP(AINodeUpdateCurrent, rc::fuzz::aiCar)
+RC_DECOMP_FN_SETUP(AINodeUpdateAngleToRacingLine, rc::fuzz::aiCar)
+RC_DECOMP_FN(AIInit)
+RC_DECOMP_FN_SETUP(AIAdjustForTooCloseToCarAhead, rc::fuzz::aiCar)
+RC_DECOMP_FN_SETUP(AIPlayCatchup, rc::fuzz::aiCar)
+RC_DECOMP_FN_SETUP_HEAP(AIUpdateObjectNode, rc::fuzz::aiCar)
+RC_DECOMP_FN_NOFUZZ(AISetupCars)
+RC_DECOMP_FN_SETUP(AIAdjustForTrackEdges, rc::fuzz::aiCar)
+RC_DECOMP_FN_SETUP(PlayerDetectBraking, rc::fuzz::aiCar)
+RC_DECOMP_FN_SETUP(PlayerPhysicsVibrations, rc::fuzz::aiCar)
+RC_DECOMP_FN(PlayerSetVibrate)
+RC_DECOMP_FN(ProcessControlInput)
+RC_DECOMP_FN_SETUP(PlayerCatchup, rc::fuzz::aiCar)
+RC_DECOMP_FN(PlayerTerm)
+RC_DECOMP_FN(PlayerInit)
+RC_DECOMP_FN_SETUP(AIWeaponDecideToFire, rc::fuzz::aiCar)
+RC_DECOMP_FN_NOFUZZ(AITestWeapon) // Spawns real weapons.
+RC_DECOMP_FN_NOFUZZ(AIControl) // A copied car's task would join the real task list.
+RC_DECOMP_FN_NOFUZZ(AIDoRaceOrder)
+RC_DECOMP_FN_NOFUZZ(AIRespawnFurther) // Moves the real camera and plays sound.
+RC_DECOMP_FN_SETUP_HEAP(AINodeUpdateFinishDistance, rc::fuzz::aiFinishDistance)
+RC_DECOMP_FN_SETUP_HEAP(AINodeRender, rc::fuzz::aiNodeRender)
+RC_DECOMP_FN_SETUP_HEAP(PlayerSpawnWeapon, rc::fuzz::playerCar)
+RC_DECOMP_FN_SETUP_HEAP(PlayerTestWeapon, rc::fuzz::playerCar)
+RC_DECOMP_FN_SETUP(PlayerGetInput, rc::fuzz::playerInput)
+RC_DECOMP_FN_SETUP_HEAP(PlayerControl, rc::fuzz::playerCar)

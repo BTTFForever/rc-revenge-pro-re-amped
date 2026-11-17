@@ -13,6 +13,9 @@
 #include "runtime/ee_scheduler.h"
 #include "ps2_stubs.h"
 #include "../decomp/oracle/ram_dump.h"
+// The addresses and recompiled functions of the version being built (tools/gen_addrs.py, decomp/generated/<version>/).
+#include "rc_addrs.h"
+#include "rc_fns.h"
 
 #include <filesystem>
 
@@ -43,12 +46,15 @@ namespace rc
     void installDecomp(PS2Runtime &runtime);
     using RecompFn = void (*)(uint8_t *, R5900Context *, PS2Runtime *);
     RecompFn decompOr(uint32_t address, RecompFn fallback);
+    inline RecompFn decompOr(const FnInfo &fn) { return decompOr(fn.address, fn.original); }
     namespace vu1
     {
         void installChecks();
         void installTrackDraw();
     }
 }
+
+namespace sym = ::rc::sym;
 
 #ifdef RC_PGO_GEN
 extern "C" void __gcov_dump(void);
@@ -59,9 +65,13 @@ namespace
     std::atomic<uint64_t> g_gameFrames{0};
     std::atomic<uint64_t> g_levelFrames{0}; // since the last level start, for RC_RAMDUMP_FRAME
 
-    constexpr uint32_t kSceCdSearchFileAddr = 0x001CC110u;
+    constexpr uint32_t kSceCdSearchFileAddr = sym::sceCdSearchFile;
     constexpr uint32_t kSectorSize = 2048u;
+#if RC_VERSION_EU
+    constexpr const char *kIsoName = "RC Revenge Pro (Europe).iso";
+#else
     constexpr const char *kIsoName = "RC Revenge Pro (USA).iso";
+#endif
 
     struct IsoFile
     {
@@ -203,8 +213,8 @@ namespace
         SET_GPR_S32(ctx, 2, 1);
     }
 
-    constexpr uint32_t kMemBlockInitAddr = 0x00194238u;
-    constexpr uint32_t kMainAddr = 0x0012EA10u;
+    constexpr uint32_t kMemBlockInitAddr = sym::MemBlockInit;
+    constexpr uint32_t kMainAddr = sym::main;
     // Taken from the game's heap, so keep it small: a 2.2 MB level load fails with more.
     // The game's heap keeps its full size: taking even 1 MB from it ran the heaviest demo levels out of
     // memory, and the failed allocations corrupted the effects list into an endless loop.
@@ -212,7 +222,7 @@ namespace
     constexpr uint32_t kGuestHeapLimit = 0x00500000u;
     // 128 KB main stack in the PS2 kernel's low memory, above the runtime's fixed pools (which end at 0x74000).
     constexpr uint32_t kMainStackTop = 0x000FFD60u;
-    constexpr uint32_t kGuestHeapStart = 0x004C7190u; // End of the ELF image.
+    constexpr uint32_t kGuestHeapStart = sym::image_end; // End of the ELF image.
 
     // The game runs its own heap from 0x500000 to 0x1FF0000. The runtime's allocations stay below
     // 0x500000 so they cannot overwrite the game's block headers.
@@ -232,11 +242,11 @@ namespace
     {
         if (bootLevel() <= 0)
         {
-            static const auto frontProcess = rc::decompOr(0x12f500u, &MainFrontProcess_0x12f500);
+            static const auto frontProcess = rc::decompOr(rc::fns::MainFrontProcess);
             frontProcess(rdram, ctx, runtime);
             return;
         }
-        constexpr uint32_t kMain = 0x001ED900u;
+        constexpr uint32_t kMain = sym::mainVarG;
         const auto word = [rdram](uint32_t address, uint32_t value) { std::memcpy(rdram + address, &value, 4u); };
         word(kMain + 0x34Cu, 0x100001FCu);
         word(kMain + 0x4u, 4u);  // toDo: demo
@@ -246,7 +256,7 @@ namespace
         rdram[kMain + 0x368u] = 0u; // not split screen
         rdram[kMain + 0x369u] = 0u;
         rdram[kMain + 0x36Au] = 8u; // cars
-        std::memcpy(rdram + 0x001EDAC0u, "TEST", 5u);
+        std::memcpy(rdram + (sym::mainVarG + 0x1c0u), "TEST", 5u);
         ctx->pc = getRegU32(ctx, 31);
     }
 
@@ -257,7 +267,7 @@ namespace
         static const bool skipIntro = std::getenv("RC_SKIP_INTRO") != nullptr;
         if (bootLevel() <= 0 && !skipIntro)
         {
-            static const auto initialScreens = rc::decompOr(0x111138u, &BackdropDoInitialScreens_0x111138);
+            static const auto initialScreens = rc::decompOr(rc::fns::BackdropDoInitialScreens);
             initialScreens(rdram, ctx, runtime);
         }
         else
@@ -276,7 +286,7 @@ namespace
         }
         std::cout << std::hex << "[rc_revenge_pro] game heap 0x" << base << " size 0x" << size
                   << ", guest heap end was 0x" << usedEnd << std::dec << std::endl;
-        static const auto memBlockInit = rc::decompOr(kMemBlockInitAddr, &MemBlockInit_0x194238);
+        static const auto memBlockInit = rc::decompOr(rc::fns::MemBlockInit);
         memBlockInit(rdram, ctx, runtime);
     }
 
@@ -287,7 +297,7 @@ namespace
     void sqrtSoftDouble(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         const uint32_t returnAddress = getRegU32(ctx, 31);
-        ps2___ieee754_sqrt_0x1c88f8(rdram, ctx, runtime);
+        rc::fns::ps2___ieee754_sqrt.original(rdram, ctx, runtime);
         ctx->pc = returnAddress;
     }
 
@@ -296,7 +306,7 @@ namespace
     void mainOnTopOfRamStack(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         SET_GPR_U32(ctx, 29, kMainStackTop);
-        ps2_main_0x12ea10(rdram, ctx, runtime);
+        rc::fns::ps2_main.original(rdram, ctx, runtime);
     }
 
     // The game passes whole .M2V files to sceMpegAddBs at once. The runtime's stub trims
@@ -374,7 +384,7 @@ namespace
 
     void mainGameLevelInit(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
-        static const auto levelInit = rc::decompOr(0x12fc58u, &MainGameLevelInit_0x12fc58);
+        static const auto levelInit = rc::decompOr(rc::fns::MainGameLevelInit);
         levelInit(rdram, ctx, runtime);
         g_levelFrames.store(0u);
         g_inputClock.store(((g_inputClock.load() >> 32) + 1u) << 32);
@@ -432,7 +442,7 @@ namespace
         if (dumpPath && g_levelFrames.fetch_add(1u, std::memory_order_relaxed) + 1u >= dumpFrame)
             writeRamDump(dumpPath, ctx, runtime);
         g_inputClock.fetch_add(1u, std::memory_order_relaxed);
-        static const auto swapBuffers = rc::decompOr(0x18e988u, &GfxP2_SwapBuffers_0x18e988);
+        static const auto swapBuffers = rc::decompOr(rc::fns::GfxP2_SwapBuffers);
         swapBuffers(rdram, ctx, runtime);
     }
 
@@ -449,15 +459,15 @@ namespace
     void gsSetHalfOffsetProgressive(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         SET_GPR_U32(ctx, 7, 0u);
-        sceGsSetHalfOffset_0x1c44a8(rdram, ctx, runtime);
+        rc::fns::sceGsSetHalfOffset.original(rdram, ctx, runtime);
     }
 
     // Writes what the debug panel's Threads/Kernel/IOP tabs show to the file named
     // by RC_DEBUG_DUMP, so a hang can be inspected without the UI.
     void debugDumpLoop(PS2Runtime *runtime, std::string path)
     {
-        constexpr uint32_t kTextStart = 0x00100000u;
-        constexpr uint32_t kTextEnd = 0x001D5444u;
+        constexpr uint32_t kTextStart = sym::sec_text;
+        constexpr uint32_t kTextEnd = sym::sec_text_end;
         constexpr uint32_t kStackScanBytes = 0x400u;
 
         std::ofstream out(path, std::ios::trunc);
@@ -512,7 +522,7 @@ namespace
                     std::memcpy(&value, rdram + (addr & PS2_RAM_MASK), 4);
                     return value;
                 };
-                constexpr uint32_t kSentinel = 0x001FA960u;
+                constexpr uint32_t kSentinel = sym::memSentinelG;
                 out << "heap free:" << std::hex;
                 uint32_t block = word(kSentinel + 0x14u);
                 uint32_t total = 0;
@@ -651,18 +661,18 @@ namespace
         PS2Runtime::setIoPaths(paths);
         runtime.replaceFunction(kSceCdSearchFileAddr, &searchFileOnIso);
         runtime.replaceFunction(kMemBlockInitAddr, &memBlockInitWithSeparateRuntimeHeap);
-        runtime.replaceFunction(0x12F500u, &bootFrontEnd);
-        runtime.replaceFunction(0x111138u, &bootSkipIntro);
+        runtime.replaceFunction(sym::MainFrontProcess, &bootFrontEnd);
+        runtime.replaceFunction(sym::BackdropDoInitialScreens, &bootSkipIntro);
         runtime.replaceFunction(kMainAddr, &mainOnTopOfRamStack);
-        runtime.replaceFunction(0x001CE9A0u, &mpegAddBsInChunks);
-        runtime.replaceFunction(0x001C3D90u, &gsSyncV);
-        runtime.replaceFunction(0x001C44A8u, &gsSetHalfOffsetProgressive);
-        runtime.replaceFunction(0x001C86C0u, &sqrtSoftDouble);
-        runtime.replaceFunction(0x18e988u, &countGameFrame);
+        runtime.replaceFunction(sym::sceMpegAddBs, &mpegAddBsInChunks);
+        runtime.replaceFunction(sym::sceGsSyncV, &gsSyncV);
+        runtime.replaceFunction(sym::sceGsSetHalfOffset, &gsSetHalfOffsetProgressive);
+        runtime.replaceFunction(sym::sqrt, &sqrtSoftDouble);
+        runtime.replaceFunction(sym::GfxP2_SwapBuffers, &countGameFrame);
         ps2_host_input::setInputFrameCounter(&g_inputClock);
-        runtime.replaceFunction(0x12fc58u, &mainGameLevelInit);
-        runtime.replaceFunction(0x001CEAF0u, &mpegIsEnd);
-        runtime.replaceFunction(0x001CE9D8u, &mpegGetPicture);
+        runtime.replaceFunction(sym::MainGameLevelInit, &mainGameLevelInit);
+        runtime.replaceFunction(sym::sceMpegIsEnd, &mpegIsEnd);
+        runtime.replaceFunction(sym::sceMpegGetPicture, &mpegGetPicture);
 #ifdef RC_PGO_GEN
         // The runtime leaves through std::_Exit, which skips the handler that writes the profile.
         std::thread([]
@@ -681,4 +691,5 @@ namespace
     }
 }
 
-PS2_REGISTER_GAME_OVERRIDE("RC Revenge Pro disc access", "SLUS_201.53", 0x00100008u, 0u, &applyRcRevengePro)
+// The executable this build was made for (CMake RC_VERSION): its name, as the runtime matches it, and its entry point.
+PS2_REGISTER_GAME_OVERRIDE("RC Revenge Pro disc access", RC_ELF_NAME, sym::_start, 0u, &applyRcRevengePro)

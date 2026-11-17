@@ -15,7 +15,7 @@ namespace rc::fuzz {
 
 namespace {
 
-constexpr uint32_t kInput = 0x1f4c80u;
+constexpr uint32_t kInput = sym::inputVarG;
 constexpr uint32_t kLog = kFuzzScratch + 0x7000u, kLogMax = 100u; // count word, then 5 words a call
 
 template <typename T>
@@ -30,8 +30,8 @@ enum PadFn : uint32_t
     kInit, kEnd, kOpen, kClose, kRead, kGetState, kInfoMode, kSetMainMode, kActDirect, kActAlign, kInfoPress, kEnterPress,
     kExitPress, kFnCount
 };
-constexpr uint32_t kPadFnAddress[kFnCount] = {0x1c64f0u, 0x1c6698u, 0x1c6718u, 0x1c6870u, 0x1c6968u, 0x1c69f8u, 0x1c6dd8u,
-                                              0x1c6ee0u, 0x1c6f90u, 0x1c7028u, 0x1c7218u, 0x1c7248u, 0x1c7268u};
+constexpr uint32_t kPadFnAddress[kFnCount] = {sym::scePadInit, sym::scePadEnd, sym::scePadPortOpen, sym::scePadPortClose, sym::scePadRead, sym::scePadGetState, sym::scePadInfoMode,
+                                              sym::scePadSetMainMode, sym::scePadSetActDirect, sym::scePadSetActAlign, sym::scePadInfoPressMode, sym::scePadEnterPressMode, sym::scePadExitPressMode};
 constexpr uint32_t kPadFnArgs[kFnCount] = {1, 0, 3, 2, 3, 2, 4, 4, 3, 3, 2, 2, 2}; // the registers each one reads
 
 struct ScriptedPad

@@ -17,8 +17,8 @@ namespace {
 
 constexpr uint32_t kCar = 0x0000u, kPhysics = 0x1000u, kInteger = 0x2000u, kRendObj = 0x2200u;
 constexpr uint32_t kCam = 0x3000u, kPath = 0x3600u, kVecs = 0x3700u, kMat = 0x3800u, kNode = 0x3900u, kCellOut = 0x3a00u;
-constexpr uint32_t kCameraSize = 0x5b8u, kCameras = 0x1e9fb0u;
-constexpr uint32_t kEndOfPath = 0x117cf8u, kHitFirstNode = 0x112f70u;
+constexpr uint32_t kCameraSize = 0x5b8u, kCameras = sym::cameraVarG;
+constexpr uint32_t kEndOfPath = sym::CameraEndOfStartGridPathCallBack, kHitFirstNode = sym::CameraStartGridHitFirstNodeCallBack;
 static_assert(sizeof(_sObject) <= kPhysics - kCar);
 static_assert(sizeof(_sFPhysLibCar) <= kInteger - kPhysics);
 static_assert(sizeof(_sOPhysLibIntegerCarState) <= kRendObj - kInteger);
@@ -442,7 +442,7 @@ void cameraPad(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     claimPad(rng);
     for (uint32_t k = 0; k < 6; ++k)
         if (rng.chance(30))
-            at<float>(0x327cecu + 4 * k) = rng.range(0.0f, 5.0f);
+            at<float>(sym::lengthHeld1_555 + 4 * k) = rng.range(0.0f, 5.0f);
     setArg(ctx, 0, camera);
 }
 

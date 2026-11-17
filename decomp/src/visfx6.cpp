@@ -31,8 +31,8 @@ using vfx::at;
 
 constexpr uint32_t kRing = 0x40;      // the ring header: mask, count, head, tail
 constexpr uint32_t kParticles = 0x44; // the first particle
-constexpr uint32_t kNodeCalcWorldPos = 0x1339d0;
-constexpr uint32_t kVisFx = 0x1f1000; // visFxVarG
+constexpr uint32_t kNodeCalcWorldPos = sym::NodeCalcWorldPos;
+constexpr uint32_t kVisFx = sym::visFxVarG; // visFxVarG
 
 // sceVu0ITOF0Vector(fx + 0x20, ints) on a local of a frame the function really has: all four integers become the effect's
 // sort position, the fourth being a word of the frame nobody wrote.
@@ -54,7 +54,7 @@ void VfxSetupCameraMatrix()
 {
     GuestFrame frame(0xd0);
     const uint32_t s = kVisFx;
-    const uint32_t view = at<uint32_t>(0x1f4808u); // view3dVarG.pPsxViewMatrix
+    const uint32_t view = at<uint32_t>(sym::view3dVarG); // view3dVarG.pPsxViewMatrix
     const auto h = [&](uint32_t offset) { return at<uint16_t>(view + offset); };
     at<uint16_t>(s + 0xbc) = h(0);
     at<uint16_t>(s + 0xc2) = h(2);
@@ -65,15 +65,15 @@ void VfxSetupCameraMatrix()
     at<uint16_t>(s + 0xc0) = h(0xc);
     at<uint16_t>(s + 0xc6) = h(0xe);
     at<uint16_t>(s + 0xcc) = h(0x10);
-    if (at<uint8_t>(0x1edc68u) != 0 && at<uint32_t>(0x1edc78u) == 0) // mainVarG.splitScreen, iWhichSplitScreen
+    if (at<uint8_t>((sym::mainVarG + 0x368u)) != 0 && at<uint32_t>((sym::mainVarG + 0x378u)) == 0) // mainVarG.splitScreen, iWhichSplitScreen
     {
         // The split copy is 32 bytes copied unaligned, as four doublewords: from +0xbc to +0xdc.
         for (uint32_t offset = 0; offset < 32; offset += 8)
             std::memcpy(&at<uint8_t>(s + 0xdc + offset), &at<uint8_t>(s + 0xbc + offset), 8);
         std::memcpy(&at<uint8_t>(s + 0x110), &at<uint8_t>(s + 0x108), 8);
     }
-    const uint32_t camera = at<uint32_t>(0x1eab20u); // cameraVarG.pCamera
-    const ee_float fov = ee_float(at<float>(0x1f3c3cu)) * ee_float(at<float>(0x3277a4u));
+    const uint32_t camera = at<uint32_t>((sym::cameraVarG + 0xb70u)); // cameraVarG.pCamera
+    const ee_float fov = ee_float(at<float>((sym::lsVarG + 0x4u))) * ee_float(at<float>(sym::lit4_3277a4));
     at<uint32_t>(s + 0xfc) = at<uint32_t>(camera + 0xc);
     at<int16_t>(s + 0x108) = static_cast<int16_t>(at<int32_t>(camera + 0xc) >> 8);
     at<uint32_t>(s + 0x100) = at<uint32_t>(camera + 0x10);
@@ -82,15 +82,15 @@ void VfxSetupCameraMatrix()
     at<int16_t>(s + 0x10a) = static_cast<int16_t>(at<int32_t>(camera + 0x10) >> 8);
     at<uint32_t>(s + 0x104) = at<uint32_t>(camera + 0x14);
     at<int16_t>(s + 0x10c) = static_cast<int16_t>(at<int32_t>(camera + 0x14) >> 8);
-    angle = ee_itof(ee_ftoi(angle) & 0xffff) * ee_float(at<float>(0x3277a8u));
+    angle = ee_itof(ee_ftoi(angle) & 0xffff) * ee_float(at<float>(sym::lit4_3277a8));
     ee_float tangent = ee_sinf(angle);
     tangent = tangent / ee_cosf(angle);
     const uint32_t trans = view + 0x14;
     const ee_float tx = ee_itof(at<int32_t>(trans)), ty = ee_itof(at<int32_t>(trans + 4)), tz = ee_itof(at<int32_t>(trans + 8));
     ee_float depth = ee_float(1.0f) / tangent;
-    depth = depth * ee_itof(at<int32_t>(0x1f4b30u)); // gGfxP2.wd
+    depth = depth * ee_itof(at<int32_t>(sym::gGfxP2)); // gGfxP2.wd
     depth = depth * half;
-    const ee_float depthY = depth * ee_float(at<float>(0x3277acu));
+    const ee_float depthY = depth * ee_float(at<float>(sym::lit4_3277ac));
     at<float>(s + 0x1b0) = depth;
     at<float>(s + 0x1b4) = depthY;
     // ps2CameraMatrix at +0x120 (the PSX matrix's 4.12 shorts as floats, row by row, w lanes zero), the translation at
@@ -126,7 +126,7 @@ void VfxRenderer_CarHeatRayAerial(ptr32<_sVfx_Object> mem)
     GuestFrame frame(0xa0);
     const uint32_t m = mem.address;
     const uint32_t car = at<uint32_t>(m + 0x344);
-    const uint16_t drawn = (at<uint32_t>(0x1ed900u) & 0x30) == 0 ? at<uint16_t>(car + 0x174) : at<int16_t>(car + 0x172) == 0 ? 100 : at<uint16_t>(car + 0x174);
+    const uint16_t drawn = (at<uint32_t>(sym::mainVarG) & 0x30) == 0 ? at<uint16_t>(car + 0x174) : at<int16_t>(car + 0x172) == 0 ? 100 : at<uint16_t>(car + 0x174);
     if (!(drawn < 0x157c))
         return;
     const uint32_t rendObj = at<uint32_t>(car + 0x18);
@@ -195,12 +195,12 @@ void VfxRenderer_Quake2(ptr32<_sVfx_Object> mem)
     at<float>(centre + 4) = ee_itof(at<int16_t>(m + 0x656));
     at<float>(centre + 8) = ee_itof(at<int16_t>(m + 0x658));
     const uint32_t colour = static_cast<uint32_t>((0x5a - (fade >> 1)) + green * 0x100 + blue * 0x10000);
-    ee_float slide = ee_itof(static_cast<int32_t>(life)) * ee_float(at<float>(0x32787cu));
+    ee_float slide = ee_itof(static_cast<int32_t>(life)) * ee_float(at<float>(sym::lit4_32787c));
     const uint8_t head = at<uint8_t>(m + kRing + 2);
     const uint32_t quad = G(visFxVarG).pGT4.address;
     RdrPolyTexture(0, ptr32<_sGfxTexture>(vfx::vfxTexture(0x10)), 0x12);
     const auto scale = [](float factor, uint32_t dst, uint32_t src)
-    { guest_call(0x1c8338u, ee_float(factor), ptr32<ee_float>(dst), ptr32<ee_float>(src)); }; // sceVu0ScaleVectorXYZ
+    { guest_call(sym::sceVu0ScaleVectorXYZ, ee_float(factor), ptr32<ee_float>(dst), ptr32<ee_float>(src)); }; // sceVu0ScaleVectorXYZ
     if (head != at<uint8_t>(m + kRing + 3))
     {
         const ee_float one(1.0f);
@@ -208,7 +208,7 @@ void VfxRenderer_Quake2(ptr32<_sVfx_Object> mem)
         do
         {
             const uint32_t from = m + 0x50 + index * 0x30u;
-            const float outer = at<float>(0x327880u);
+            const float outer = at<float>(sym::lit4_327880);
             vfx::vu0Add(quad, centre, from);
             const uint32_t mask = at<uint8_t>(m + kRing);
             // The original divides by the ring's mask and traps on a zero one; the inputs never have one.
@@ -219,7 +219,7 @@ void VfxRenderer_Quake2(ptr32<_sVfx_Object> mem)
             scale(outer, quad + 0x30, to);
             vfx::vu0Add(quad + 0x30, centre, quad + 0x30);
             const ee_float lowerRight = at<float>(quad + 0x34);
-            const ee_float next = slide + ee_float(at<float>(0x327884u));
+            const ee_float next = slide + ee_float(at<float>(sym::lit4_327884));
             at<float>(quad + 0x24) = ee_float(at<float>(quad + 0x24)) + ee_float(200.0f);
             at<float>(quad + 0x34) = lowerRight + ee_float(200.0f);
             VfxPutGT4rgba3(colour);
@@ -400,7 +400,7 @@ void VfxRenderer_Aerial(ptr32<_sVfx_Object> mem)
     GuestFrame frame(0x220);
     const uint32_t m = mem.address;
     const uint32_t car = at<uint32_t>(m + 0xb0);
-    if (at<int16_t>(car + 0x172) != 0 && at<uint8_t>(0x1edc4au) == 0x62) // mainVarG.level
+    if (at<int16_t>(car + 0x172) != 0 && at<uint8_t>((sym::mainVarG + 0x34au)) == 0x62) // mainVarG.level
         return;
     const uint32_t rendObj = at<uint32_t>(car + 0x18);
     guest_call(kNodeCalcWorldPos, ptr32<uint8>(at<uint32_t>(car + 0x3c)), ptr32<uint8>(rendObj + 0x18), ptr32<uint8>(rendObj + 4),
@@ -411,7 +411,7 @@ void VfxRenderer_Aerial(ptr32<_sVfx_Object> mem)
     const ee_float x = ee_itof(at<int32_t>(position)) * unit, y = ee_itof(at<int32_t>(position + 4)) * unit, z = ee_itof(at<int32_t>(position + 8)) * unit;
     at<float>(where) = x;
     at<float>(where + 4) = y;
-    const uint16_t drawn = (at<uint32_t>(0x1ed900u) & 0x30) == 0 ? at<uint16_t>(car + 0x174) : at<int16_t>(car + 0x172) == 0 ? 100 : at<uint16_t>(car + 0x174);
+    const uint16_t drawn = (at<uint32_t>(sym::mainVarG) & 0x30) == 0 ? at<uint16_t>(car + 0x174) : at<int16_t>(car + 0x172) == 0 ? 100 : at<uint16_t>(car + 0x174);
     at<float>(where + 8) = z;
     if (!(drawn < 0x157c))
         return;
@@ -423,7 +423,7 @@ void VfxRenderer_Aerial(ptr32<_sVfx_Object> mem)
     }
     const auto grey = [] { for (auto put : {VfxPutGT4rgba0, VfxPutGT4rgba1, VfxPutGT4rgba2, VfxPutGT4rgba3}) put(0x80505050u); };
     const auto tip = [&] { for (auto put : {VfxPutGT4rgba0, VfxPutGT4rgba1, VfxPutGT4rgba2, VfxPutGT4rgba3}) put(at<uint32_t>(car + 0x48) | 0x80000000u); };
-    const ee_float width(1.5f), zOffset(at<float>(0x3280e0u));
+    const ee_float width(1.5f), zOffset(at<float>((sym::sec_sdata + 0x4e0u)));
     const uint32_t texture = vfx::vfxTexture(0x18);
     grey();
     VfxPutGT4FacingPolyVU(ptr32<ee_float>(sect), ptr32<ee_float>(sect + 0x10), ptr32<_sGfxTexture>(texture), 0x20, width, zOffset);
@@ -450,16 +450,17 @@ void VfxRenderer_Aerial(ptr32<_sVfx_Object> mem)
 // type 2 means no one) of the screen being drawn, when that car is near enough to be drawn.
 void VfxRenderer_SpinPickup(ptr32<_sVfx_Object> mem)
 {
+    RC_DIVERT_IF_CHANGED(VfxRenderer_SpinPickup, mem);
     GuestFrame frame(0x90);
     const uint32_t m = mem.address;
-    const uint32_t hudRes = at<uint32_t>(at<uint32_t>(0x327e80u) + 0x40); // pLvlG->pHudRes
+    const uint32_t hudRes = at<uint32_t>(at<uint32_t>(sym::pLvlG) + 0x40); // pLvlG->pHudRes
     const uint32_t car = at<uint32_t>(m + 0x44);
     if (at<uint8_t>(car + 0x44) == 2)
         return;
-    const uint32_t screen = at<uint32_t>(0x1edc78u); // mainVarG.iWhichSplitScreen
+    const uint32_t screen = at<uint32_t>((sym::mainVarG + 0x378u)); // mainVarG.iWhichSplitScreen
     if (screen == 0 ? at<uint8_t>(car + 0x45) != 0 : at<uint8_t>(car + 0x45) != 1)
         return;
-    const uint16_t drawn = (at<uint32_t>(0x1ed900u) & 0x30) == 0 ? at<uint16_t>(car + 0x174) : at<int16_t>(car + 0x172) == 0 ? 100 : at<uint16_t>(car + 0x174);
+    const uint16_t drawn = (at<uint32_t>(sym::mainVarG) & 0x30) == 0 ? at<uint16_t>(car + 0x174) : at<int16_t>(car + 0x172) == 0 ? 100 : at<uint16_t>(car + 0x174);
     if (!(drawn < 0x157c))
         return;
     const uint32_t sp = vfx::sprite();
@@ -471,19 +472,19 @@ void VfxRenderer_SpinPickup(ptr32<_sVfx_Object> mem)
     at<uint8_t>(sp + vfx::spr::kCode) = 0;
     at<float>(sp + vfx::spr::kScale) = 16.0f;
     at<float>(sp + vfx::spr::kPos + 8) = ee_itof(at<int16_t>(m + 0xec));
-    const uint32_t hud = 0x1ecda0u + screen * 4; // hudVarG
+    const uint32_t hud = sym::hudVarG + screen * 4; // hudVarG
     const uint32_t offset = frame.local<float>(0).address, pos = frame.local<float>(0x10).address;
     at<float>(offset) = ee_itof(at<int32_t>(hud + 0x84) - 0x140) * ee_float(0.5f);
-    if (at<uint8_t>(0x1edc68u) == 0) // mainVarG.splitScreen
+    if (at<uint8_t>((sym::mainVarG + 0x368u)) == 0) // mainVarG.splitScreen
         at<float>(offset + 4) = ee_itof(0x78 - at<int32_t>(hud + 0x8c));
     else
-        at<float>(offset + 4) = ee_itof(0x78 - at<int32_t>(hud + 0x8c)) * ee_float(at<float>(0x327810u));
+        at<float>(offset + 4) = ee_itof(0x78 - at<int32_t>(hud + 0x8c)) * ee_float(at<float>(sym::lit4_327810));
     at<float>(offset + 8) = 270.0f;
     sceVu0ApplyMatrix(ptr32<ee_float>(offset), ptr32<ee_float>(kVisFx + 0x170), ptr32<ee_float>(offset));
     vfx::vu0Add(offset, kVisFx + 0x160, offset);
     const ee_float t = ee_float(1.0f) - ee_itof(at<uint16_t>(m + 0x10)) * ee_float(0.015625f);
-    guest_call(0x1c8308u, t, ptr32<ee_float>(pos), ptr32<ee_float>(offset), ptr32<ee_float>(sp + vfx::spr::kPos)); // sceVu0InterVectorXYZ
-    guest_call(0x1c82e8u, ptr32<ee_float>(sp + vfx::spr::kPos), ptr32<ee_float>(pos));                              // sceVu0CopyVectorXYZ
+    guest_call(sym::sceVu0InterVectorXYZ, t, ptr32<ee_float>(pos), ptr32<ee_float>(offset), ptr32<ee_float>(sp + vfx::spr::kPos)); // sceVu0InterVectorXYZ
+    guest_call(sym::sceVu0CopyVectorXYZ, ptr32<ee_float>(sp + vfx::spr::kPos), ptr32<ee_float>(pos));                              // sceVu0CopyVectorXYZ
     at<uint32_t>(sp + vfx::spr::kTexture) = at<uint32_t>(at<uint32_t>(hudRes + 0x80));
     VfxPS2SpriteRotated3D(ee_float(0.0f));
     const uint32_t s2 = vfx::sprite();
@@ -602,7 +603,7 @@ void VfxHandler_WaterBallFlying(ptr32<_sVfx_Object> mem)
     at<int32_t>(ints + 8) = at<int16_t>(m + 0x18);
     sortPosFromLocal(m, ints);
     at<int32_t>(m + 0x654) = at<int32_t>(m + 0x654) + 0x37;
-    const ee_float scale(at<float>(0x327844u)), spread(2.3283064e-08f), half(25.0f);
+    const ee_float scale(at<float>(sym::lit4_327844)), spread(2.3283064e-08f), half(25.0f);
     uint32_t tail = at<uint8_t>(ring + 3);
     for (int32_t pass = 2; pass >= 0; --pass)
     {
@@ -668,7 +669,7 @@ void VfxRenderer_WaterBallFlying(ptr32<_sVfx_Object> mem)
     const uint32_t m = mem.address;
     {
         GuestFrame frame(0xc0);
-        const ee_float turn(at<float>(0x327848u)), range(4096.0f);
+        const ee_float turn(at<float>(sym::lit4_327848)), range(4096.0f);
         at<uint8_t>(vfx::sprite() + vfx::spr::kFlipX) = 0;
         at<uint8_t>(vfx::sprite() + vfx::spr::kCode) = 2;
         const uint32_t sp = vfx::sprite();
@@ -727,7 +728,7 @@ void VfxRenderer_WaterBallFlying(ptr32<_sVfx_Object> mem)
         at<float>(s3 + vfx::spr::kPos + 8) = ee_itof(at<int16_t>(m + 0x18));
         at<uint8_t>(s3 + vfx::spr::kCode) = 4;
         at<uint16_t>(s3 + vfx::spr::kAngle) = at<uint16_t>(m + 0x654);
-        at<float>(s3 + vfx::spr::kScale) = at<float>(0x32784cu);
+        at<float>(s3 + vfx::spr::kScale) = at<float>(sym::lit4_32784c);
         at<uint32_t>(s3 + vfx::spr::kTexture) = vfx::vfxTexture(6);
         at<uint32_t>(s3 + vfx::spr::kRgb) = 0x2d4696;
         VfxPS2SpriteRotated3D(ee_float(-31.0f));
@@ -749,11 +750,12 @@ void VfxRenderer_WaterBallFlying(ptr32<_sVfx_Object> mem)
 // (or the only one), with the scissor override set while drawing.
 void VfxRenderer_ReadySteadyGo(ptr32<_sVfx_Object> mem)
 {
+    RC_DIVERT_IF_CHANGED(VfxRenderer_ReadySteadyGo, mem);
     GuestFrame frame(0xa0);
     const uint32_t m = mem.address;
-    const uint32_t hudRes = at<uint32_t>(at<uint32_t>(0x327e80u) + 0x40); // pLvlG->pHudRes
-    const uint32_t screen = at<uint32_t>(0x1edc78u);                      // mainVarG.iWhichSplitScreen
-    const bool split = at<uint8_t>(0x1edc68u) != 0;                       // mainVarG.splitScreen
+    const uint32_t hudRes = at<uint32_t>(at<uint32_t>(sym::pLvlG) + 0x40); // pLvlG->pHudRes
+    const uint32_t screen = at<uint32_t>((sym::mainVarG + 0x378u));                      // mainVarG.iWhichSplitScreen
+    const bool split = at<uint8_t>((sym::mainVarG + 0x368u)) != 0;                       // mainVarG.splitScreen
     if (split && screen != 1)
         return;
     const uint64_t scissor = G(gRdrStateScissorOverride);
@@ -864,21 +866,21 @@ void VfxRenderer_RocketSmoke(ptr32<_sVfx_Object> mem)
     at<float>(zAxis.address + 8) = ee_itof(at<int16_t>(m + 0x2d0));
     at<float>(zAxis.address) = ee_itof(at<int16_t>(m + 0x2cc));
     at<float>(zAxis.address + 4) = ee_itof(at<int16_t>(m + 0x2ce));
-    guest_call(0x1c7868u, ptr32<uint8>(zAxis.address), ptr32<uint8>(zAxis.address)); // sceVu0Normalize
+    guest_call(sym::sceVu0Normalize, ptr32<uint8>(zAxis.address), ptr32<uint8>(zAxis.address)); // sceVu0Normalize
     const ee_float zx = at<float>(zAxis.address), zz = at<float>(zAxis.address + 8);
     at<float>(xAxis.address + 4) = 0.0f;
     at<float>(xAxis.address) = zz;
     at<float>(xAxis.address + 8) = -zx;
-    guest_call(0x1c7868u, ptr32<uint8>(xAxis.address), ptr32<uint8>(xAxis.address));
-    guest_call(0x1c7820u, ptr32<uint8>(yAxis.address), ptr32<uint8>(xAxis.address), ptr32<uint8>(zAxis.address)); // sceVu0OuterProduct
+    guest_call(sym::sceVu0Normalize, ptr32<uint8>(xAxis.address), ptr32<uint8>(xAxis.address));
+    guest_call(sym::sceVu0OuterProduct, ptr32<uint8>(yAxis.address), ptr32<uint8>(xAxis.address), ptr32<uint8>(zAxis.address)); // sceVu0OuterProduct
     const ptr32<float> matrix = frame.local<float>(0x30);
     const uint32_t axes[3] = {xAxis.address, yAxis.address, zAxis.address};
     for (uint32_t row = 0; row < 3; ++row)
         for (uint32_t col = 0; col < 3; ++col)
             at<float>(matrix.address + row * 0x10 + col * 4) = at<float>(axes[row] + col * 4);
     const ptr32<uint8> block = frame.local<uint8>(0x70);
-    guest_call(0x1a1550u, block); // RdrState_SetStateBlockToDefaults
-    guest_call(0x1a1058u, block); // RdrState_ForceApplyStateBlock
+    guest_call(sym::RdrState_SetStateBlockToDefaults, block); // RdrState_SetStateBlockToDefaults
+    guest_call(sym::RdrState_ForceApplyStateBlock, block); // RdrState_ForceApplyStateBlock
     const uint32_t shape = at<uint32_t>(G(visFxVarG).pVfxRes.address + 0x88);
     for (uint32_t row = 0; row < 3; ++row)
         for (uint32_t col = 0; col < 3; ++col)
@@ -887,7 +889,7 @@ void VfxRenderer_RocketSmoke(ptr32<_sVfx_Object> mem)
     at<float>(shape + 0x2c) = at<float>(s2 + vfx::spr::kPos);
     at<float>(shape + 0x30) = at<float>(s2 + vfx::spr::kPos + 4);
     at<float>(shape + 0x34) = at<float>(s2 + vfx::spr::kPos + 8);
-    guest_call(0x1a55b8u, ptr32<uint8>(shape), ptr32<uint8>(0x1f40b8u), 0); // TRdr_VUShape(shape, &rdrCameraG, 0)
+    guest_call(sym::TRdr_VUShape, ptr32<uint8>(shape), ptr32<uint8>(sym::rdrCameraG), 0); // TRdr_VUShape(shape, &rdrCameraG, 0)
 }
 
 // The car rocket's flight: a puff of smoke at a random point near the rocket (the car's aerial, section 5) each frame while
@@ -911,8 +913,8 @@ void VfxHandler_CarRocket(ptr32<_sVfx_Object> mem)
     if (at<uint8_t>(ring + 1) < at<uint8_t>(m + 0x40))
     {
         const uint32_t tail = at<uint8_t>(ring + 3);
-        const ee_float spread(2.3283064e-08f), centre(25.0f), scatter(at<float>(0x327888u));
-        const ee_float push(at<float>(0x32788cu)), drag(at<float>(0x327890u));
+        const ee_float spread(2.3283064e-08f), centre(25.0f), scatter(at<float>(sym::lit4_327888));
+        const ee_float push(at<float>(sym::lit4_32788c)), drag(at<float>(sym::lit4_327890));
         const uint32_t p = particles + tail * 0x30;
         at<float>(p) = (ee_itof(rand()) * spread - centre) * scatter;
         at<float>(p + 4) = (ee_itof(rand()) * spread - centre) * scatter;
@@ -975,16 +977,16 @@ void vfxRocketSmokeRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch
 void vfxCarRocketHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 }
 
-RC_DECOMP_FN_SETUP(VfxSetupCameraMatrix, 0x156dc0, rc::fuzz::vfxCameraMatrix)
-RC_DECOMP_FN_SETUP(VfxRenderer_CarHeatRayAerial, 0x15c1e0, rc::fuzz::vfxCarHeatRayAerialRenderer)
-RC_DECOMP_FN_SETUP(VfxRenderer_Quake2, 0x1689f8, rc::fuzz::vfxQuake)
-RC_DECOMP_FN_SETUP(VfxRenderer_WaterSploosh, 0x15d2a0, rc::fuzz::vfxWaterSploosh)
-RC_DECOMP_FN_SETUP(VfxRenderer_OilSlick, 0x15ad18, rc::fuzz::vfxOilSlick)
-RC_DECOMP_FN_SETUP(VfxRenderer_Aerial, 0x15ee38, rc::fuzz::vfxAerialRenderer)
-RC_DECOMP_FN_SETUP(VfxRenderer_SpinPickup, 0x161390, rc::fuzz::vfxSpinPickup)
-RC_DECOMP_FN_SETUP(VfxHandler_CarAerialRibbon, 0x159a20, rc::fuzz::vfxCarAerialRibbon)
-RC_DECOMP_FN_SETUP(VfxHandler_WaterBallFlying, 0x1647d8, rc::fuzz::vfxWaterBallHandler)
-RC_DECOMP_FN_SETUP(VfxRenderer_WaterBallFlying, 0x164b50, rc::fuzz::vfxWaterBallRenderer)
-RC_DECOMP_FN_SETUP(VfxRenderer_ReadySteadyGo, 0x1658d0, rc::fuzz::vfxReadySteadyGo)
-RC_DECOMP_FN_SETUP(VfxRenderer_RocketSmoke, 0x165070, rc::fuzz::vfxRocketSmokeRenderer)
-RC_DECOMP_FN_SETUP(VfxHandler_CarRocket, 0x1690f8, rc::fuzz::vfxCarRocketHandler)
+RC_DECOMP_FN_SETUP(VfxSetupCameraMatrix, rc::fuzz::vfxCameraMatrix)
+RC_DECOMP_FN_SETUP(VfxRenderer_CarHeatRayAerial, rc::fuzz::vfxCarHeatRayAerialRenderer)
+RC_DECOMP_FN_SETUP(VfxRenderer_Quake2, rc::fuzz::vfxQuake)
+RC_DECOMP_FN_SETUP(VfxRenderer_WaterSploosh, rc::fuzz::vfxWaterSploosh)
+RC_DECOMP_FN_SETUP(VfxRenderer_OilSlick, rc::fuzz::vfxOilSlick)
+RC_DECOMP_FN_SETUP(VfxRenderer_Aerial, rc::fuzz::vfxAerialRenderer)
+RC_DECOMP_FN_SETUP(VfxRenderer_SpinPickup, rc::fuzz::vfxSpinPickup)
+RC_DECOMP_FN_SETUP(VfxHandler_CarAerialRibbon, rc::fuzz::vfxCarAerialRibbon)
+RC_DECOMP_FN_SETUP(VfxHandler_WaterBallFlying, rc::fuzz::vfxWaterBallHandler)
+RC_DECOMP_FN_SETUP(VfxRenderer_WaterBallFlying, rc::fuzz::vfxWaterBallRenderer)
+RC_DECOMP_FN_SETUP(VfxRenderer_ReadySteadyGo, rc::fuzz::vfxReadySteadyGo)
+RC_DECOMP_FN_SETUP(VfxRenderer_RocketSmoke, rc::fuzz::vfxRocketSmokeRenderer)
+RC_DECOMP_FN_SETUP(VfxHandler_CarRocket, rc::fuzz::vfxCarRocketHandler)

@@ -93,17 +93,17 @@ void WeaponSkullFreeHexed(ptr32<_sWeapon> pWeapon);
 namespace weapon {
 
 // Guest functions still recompiled.
-constexpr uint32_t kMemFragCreate = 0x193228, kMemFragDelete = 0x193418, kMemFragPoolCreate = 0x193368, kMemFragPoolDelete = 0x193148;
-constexpr uint32_t kTaskSet = 0x1afad8, kTaskCachedInsert = 0x1afb68, kTaskDelete = 0x1afc48;
-constexpr uint32_t kRevSfxPlay3D = 0x1418a8, kRevSfxSpecialTrigger = 0x143878, kSfxPlay = 0x1ad0a0, kSfxStop = 0x1ad448;
-constexpr uint32_t kTimerGet = 0x1b4188, kObjectWeaponAffectRemove = 0x137800, kPhysicsApplyIntForce = 0x13e520;
-constexpr uint32_t kMat3nBuildXYZ = 0x19e768, kMat3nDecompose = 0x19dc78, kNormalMulMatPsx = 0x19e7c0, kMemset = 0x1b7d10;
-constexpr uint32_t kVec16Normalise = 0x19eb68, kVec32Length = 0x19fae8, kVec32Normalise = 0x19fb78, kAnimFindByTSOTag = 0x10f960;
-constexpr uint32_t kWeaponProcessAddr = 0x17a6b8;
+constexpr uint32_t kMemFragCreate = sym::MemFragCreate, kMemFragDelete = sym::MemFragDelete, kMemFragPoolCreate = sym::MemFragPoolCreate, kMemFragPoolDelete = sym::MemFragPoolDelete;
+constexpr uint32_t kTaskSet = sym::TaskSet, kTaskCachedInsert = sym::TaskCachedInsert, kTaskDelete = sym::TaskDelete;
+constexpr uint32_t kRevSfxPlay3D = sym::RevSfxPlay3D, kRevSfxSpecialTrigger = sym::RevSfxSpecialTrigger, kSfxPlay = sym::SfxPlay, kSfxStop = sym::SfxStop;
+constexpr uint32_t kTimerGet = sym::TimerGet, kObjectWeaponAffectRemove = sym::ObjectWeaponAffectRemove, kPhysicsApplyIntForce = sym::PhysicsApplyIntForce;
+constexpr uint32_t kMat3nBuildXYZ = sym::Mat3nBuildXYZ, kMat3nDecompose = sym::Mat3nDecompose, kNormalMulMatPsx = sym::NormalMulMatPsx, kMemset = sym::memset;
+constexpr uint32_t kVec16Normalise = sym::_Vec16Normalise, kVec32Length = sym::_Vec32Length, kVec32Normalise = sym::_Vec32Normalise, kAnimFindByTSOTag = sym::AnimFindByTSOTag;
+constexpr uint32_t kWeaponProcessAddr = sym::WeaponProcess;
 
 // Globals.
-constexpr uint32_t kObjectList = 0x1ee390u, kWeaponVars = 0x1f3a80u, kCameras = 0x1e9fb0u, kGameTimer = 0x1ed910u;
-constexpr uint32_t kRaceOrder = 0x1e9404u, kRaceOrderStride = 12u;
+constexpr uint32_t kObjectList = sym::objectVarG, kWeaponVars = sym::weaponVarG, kCameras = sym::cameraVarG, kGameTimer = (sym::mainVarG + 0x10u);
+constexpr uint32_t kRaceOrder = (sym::aiVarG + 0x4u), kRaceOrderStride = 12u;
 constexpr uint32_t kTypeFirstBoat = 0x14u; // OBJECT_TYPE_BADDRC_BOAT: types below are cars
 
 template <typename T>

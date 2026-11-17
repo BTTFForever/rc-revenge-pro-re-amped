@@ -81,9 +81,9 @@ void LineRender2D(ptr32<_sLine2D> pLine, f32 otz)
     tag[3] = line.blue;
     tag[0] = (tag[0] & 0xffffffffffff0000ull) | ((tag[0] & 0x7fff) + 1);
     gfx.buffIdx = gfx.buffIdx + 5;
-    tag[5] = lineDepth(otz, 0x327960u);
+    tag[5] = lineDepth(otz, sym::lit4_327960);
     tag[4] = screenXY(line.x0, line.y0);
-    lineVertex(line.red, line.green, line.blue, screenXY(line.x1, line.y1), lineDepth(otz, 0x327964u));
+    lineVertex(line.red, line.green, line.blue, screenXY(line.x1, line.y1), lineDepth(otz, sym::lit4_327964));
 }
 
 // A line in the world, seen through the current camera: clipped against the four sides of the view, projected,
@@ -145,7 +145,7 @@ void LineRender3D(ptr32<_sLine3D> pLine)
     }
     else if ((flags & 8) != 0)
     {
-        const ee_float nudge = *static_cast<ee_float *>(guest_host(0x327968u));
+        const ee_float nudge = *static_cast<ee_float *>(guest_host(sym::lit4_327968));
         zS = (zS - nudge) - nudge;
     }
     sGfxP2 &gfx = G(gGfxP2);
@@ -158,11 +158,11 @@ void LineRender3D(ptr32<_sLine3D> pLine)
         return (static_cast<uint64_t>(ee_ftoi((x + ee_float(2048.0f)) * ee_float(16.0f))) & 0xffffu) |
                ((static_cast<uint64_t>(ee_ftoi((ee_float(2048.0f) - y) * ee_float(16.0f))) & 0xffffu) << 32);
     };
-    lineVertex(line.red, line.green, line.blue, project(pxS, pyS), lineDepth(zS, 0x32796cu));
-    lineVertex(line.red, line.green, line.blue, project(pxE, pyE), lineDepth(zE, 0x327970u));
+    lineVertex(line.red, line.green, line.blue, project(pxS, pyS), lineDepth(zS, sym::lit4_32796c));
+    lineVertex(line.red, line.green, line.blue, project(pxE, pyE), lineDepth(zE, sym::lit4_327970));
 }
 
 } // namespace rc
 
-RC_DECOMP_FN(LineRender2D, 0x184e08)
-RC_DECOMP_FN(LineRender3D, 0x185158)
+RC_DECOMP_FN(LineRender2D)
+RC_DECOMP_FN(LineRender3D)

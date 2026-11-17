@@ -92,7 +92,7 @@ void VfxSpriteRotatedHud() {}
 
 void VfxTerm()
 {
-    ResTypeUnSetConstructDaemon(ptr32<char>(0x3280d0u));
+    ResTypeUnSetConstructDaemon(ptr32<char>((sym::sec_sdata + 0x4d0u)));
 }
 
 // The level's effects data, kept where the effects code reads it.
@@ -288,7 +288,7 @@ void VfxHandler_SargeLights(ptr32<_sVfx_Object> mem)
 // sizes the effects use for each car body. The table is two halfwords per body, in the order the original stores them.
 void VfxInit()
 {
-    ResTypeSetConstructDaemon(ptr32<char>(0x3280d0u), 0u, 4);
+    ResTypeSetConstructDaemon(ptr32<char>((sym::sec_sdata + 0x4d0u)), 0u, 4);
     static constexpr uint16_t kShadowSizes[][2] = {
         {0x2738, 22}, {0x2740, 18}, {0x2748, 11}, {0x275c, 9}, {0x2760, 7}, {0x2764, 13}, {0x2766, 3}, {0x276e, 4},
         {0x2774, 10}, {0x2734, 9}, {0x273a, 10}, {0x273c, 10}, {0x273e, 4}, {0x2742, 10}, {0x2744, 10}, {0x2746, 8},
@@ -296,7 +296,7 @@ void VfxInit()
         {0x275a, 5}, {0x275e, 7}, {0x2762, 6}, {0x2768, 10}, {0x276a, 6}, {0x276c, 4}, {0x2770, 8}, {0x2772, 8},
         {0x2736, 0}, {0x2776, 6}, {0x277e, 8}, {0x277a, 5}, {0x277c, 14}, {0x2778, 5}};
     for (const auto &entry : kShadowSizes)
-        at<uint16_t>(0x1f1000u + entry[0]) = entry[1];
+        at<uint16_t>(sym::visFxVarG + entry[0]) = entry[1];
 }
 
 // The PSX rotation matrix (3 by 3 shorts, 4.12 fixed point) as a PS2 matrix in a shared global, transposed.
@@ -468,7 +468,7 @@ void VfxHandler_Milk(ptr32<_sVfx_Object> mem)
     at<uint8_t>(first + 0x18b) = at<uint8_t>(first + 0x18b) | 4;
     const uint32_t second = at<uint32_t>(car + 0x17c);
     at<uint8_t>(second + 0x18b) = at<uint8_t>(second + 0x18b) | 4;
-    uint16_t &state = at<uint16_t>(0x1f37e0u + static_cast<uint32_t>(at<uint8_t>(car + 0x45)) * 4u);
+    uint16_t &state = at<uint16_t>(sym::u8PlayerStates + static_cast<uint32_t>(at<uint8_t>(car + 0x45)) * 4u);
     state = state | 0x20;
     if (at<uint16_t>(mem.address + kLifeSpan) == 0)
     {
@@ -703,9 +703,9 @@ void VfxSimpleParticleMover(ptr32<_sVfx_PartHeader> pHeader, ptr32<_VFX_SIMPLEPA
 
 namespace {
 
-constexpr uint32_t kCont = 0x1f1040u;      // visFxVarG.vuCont: the half-width vector the ribbon is built around
-constexpr uint32_t kCont2 = 0x1f1050u;     // visFxVarG.vuCont2: the previous one, for continuing a ribbon
-constexpr uint32_t kCamTrans = 0x1f1160u;  // visFxVarG.ps2CameraTrans
+constexpr uint32_t kCont = (sym::visFxVarG + 0x40u);      // visFxVarG.vuCont: the half-width vector the ribbon is built around
+constexpr uint32_t kCont2 = (sym::visFxVarG + 0x50u);     // visFxVarG.vuCont2: the previous one, for continuing a ribbon
+constexpr uint32_t kCamTrans = (sym::visFxVarG + 0x160u);  // visFxVarG.ps2CameraTrans
 
 // Corners 2 and 3 are corner 1 minus and plus the vector in kCont; 1 and 0 are corner 0 plus and minus the vector in
 // `back` (kCont2, or kCont itself); the vector is then kept in kCont2.
@@ -726,8 +726,8 @@ void facingVector(const GuestFrame &frame, uint32_t quad, ee_float width)
     const ptr32<ee_float> vu1 = frame.local<ee_float>(0x10);
     vfx::vu0Sub(vu0.address, quad + 0x10, quad);
     vfx::vu0Sub(vu1.address, kCamTrans, quad);
-    guest_call(0x1c7820u, vu0, vu0, vu1);                                     // sceVu0OuterProduct
-    guest_call(0x1c7868u, ptr32<ee_float>(kCont), vu0);                       // sceVu0Normalize
+    guest_call(sym::sceVu0OuterProduct, vu0, vu0, vu1);                                     // sceVu0OuterProduct
+    guest_call(sym::sceVu0Normalize, ptr32<ee_float>(kCont), vu0);                       // sceVu0Normalize
     sceVu0ScaleVector(ptr32<ee_float>(kCont), ptr32<ee_float>(kCont), width); // sceVu0ScaleVector
 }
 
@@ -862,11 +862,11 @@ void VfxPS2SpriteRotated3D(ee_float zOffset)
     GuestFrame frame(0xF0);
     const ptr32<ee_float> mat = frame.local<ee_float>(0x10);
     const ptr32<ee_float> vPos = frame.local<ee_float>(0);
-    guest_call(0x1c7ac8u, mat); // sceVu0UnitMatrix
+    guest_call(sym::sceVu0UnitMatrix, mat); // sceVu0UnitMatrix
     const uint32_t sprite = G(visFxVarG).sprite.address;
     const uint32_t quad = G(visFxVarG).pGT4.address;
-    const ee_float angleScale = at<float>(0x32786cu);
-    guest_call(0x1c7b68u, mat, mat, ee_itof(static_cast<int32_t>(at<uint16_t>(sprite + 0x26) & 0xfffu) - 0x800) * angleScale); // sceVu0RotMatrixZ
+    const ee_float angleScale = at<float>(sym::lit4_32786c);
+    guest_call(sym::sceVu0RotMatrixZ, mat, mat, ee_itof(static_cast<int32_t>(at<uint16_t>(sprite + 0x26) & 0xfffu) - 0x800) * angleScale); // sceVu0RotMatrixZ
     const ee_float scale = at<float>(sprite);
     at<float>(quad) = -scale;
     at<float>(quad + 8) = 0.0f;
@@ -874,7 +874,7 @@ void VfxPS2SpriteRotated3D(ee_float zOffset)
     at<float>(quad + 0x10) = ee_float(at<float>(sprite));
     at<float>(quad + 0x18) = 0.0f;
     at<float>(quad + 0x14) = ee_float(at<float>(sprite));
-    guest_call(0x1c77d8u, mat, ptr32<ee_float>(0x1f1170u), mat); // sceVu0MulMatrix
+    guest_call(sym::sceVu0MulMatrix, mat, ptr32<ee_float>((sym::visFxVarG + 0x170u)), mat); // sceVu0MulMatrix
     at<float>(quad + 0x20) = -ee_float(at<float>(sprite));
     at<float>(quad + 0x28) = 0.0f;
     at<float>(quad + 0x24) = -ee_float(at<float>(sprite));
@@ -890,7 +890,7 @@ void VfxPS2SpriteGroundRotated3D(ptr32<SVECTOR> svNormal, ee_float zOffset)
     GuestFrame frame(0x110);
     const ptr32<ee_float> mat = frame.local<ee_float>(0x20);
     const ptr32<ee_float> vPos = frame.local<ee_float>(0x10);
-    guest_call(0x1c7ac8u, mat); // sceVu0UnitMatrix
+    guest_call(sym::sceVu0UnitMatrix, mat); // sceVu0UnitMatrix
     const uint32_t sprite = G(visFxVarG).sprite.address;
     const uint32_t quad = G(visFxVarG).pGT4.address;
     const ee_float scale = at<float>(sprite);
@@ -905,14 +905,14 @@ void VfxPS2SpriteGroundRotated3D(ptr32<SVECTOR> svNormal, ee_float zOffset)
     at<float>(quad + 0x28) = -ee_float(at<float>(sprite));
     at<float>(quad + 0x34) = 0.0f;
     at<float>(quad + 0x30) = ee_float(at<float>(sprite));
-    const ee_float angleScale = at<float>(0x327870u);
+    const ee_float angleScale = at<float>(sym::lit4_327870);
     const ee_float angle = ee_itof(static_cast<int32_t>(at<uint16_t>(sprite + 0x26) & 0xfffu) - 0x800) * angleScale;
     at<float>(quad + 0x38) = -ee_float(at<float>(sprite));
-    guest_call(0x1c7cb8u, mat, mat, angle); // sceVu0RotMatrixY
-    ee_float a = guest_call<ee_float>(0x1c87d0u, ee_itof(svNormal->vz), ee_itof(svNormal->vy)); // atan2f
-    guest_call(0x1c7c10u, mat, mat, a); // sceVu0RotMatrixX
-    a = guest_call<ee_float>(0x1c87d0u, ee_itof(svNormal->vx), ee_itof(svNormal->vy));
-    guest_call(0x1c7b68u, mat, mat, -a); // sceVu0RotMatrixZ
+    guest_call(sym::sceVu0RotMatrixY, mat, mat, angle); // sceVu0RotMatrixY
+    ee_float a = guest_call<ee_float>(sym::atan2f, ee_itof(svNormal->vz), ee_itof(svNormal->vy)); // atan2f
+    guest_call(sym::sceVu0RotMatrixX, mat, mat, a); // sceVu0RotMatrixX
+    a = guest_call<ee_float>(sym::atan2f, ee_itof(svNormal->vx), ee_itof(svNormal->vy));
+    guest_call(sym::sceVu0RotMatrixZ, mat, mat, -a); // sceVu0RotMatrixZ
     spriteQuadFinish(mat, vPos, sprite, quad, false, true, zOffset);
 }
 
@@ -941,7 +941,7 @@ void freeList(uint32_t head)
 
 namespace {
 
-constexpr uint32_t kVfxAddNew = 0x157c50, kNodeCalcWorldPos = 0x1339d0, kTaskSet = 0x1afad8, kTaskDelete = 0x1afc48, kTaskCachedInsert = 0x1afb68;
+constexpr uint32_t kVfxAddNew = sym::VfxAddNew, kNodeCalcWorldPos = sym::NodeCalcWorldPos, kTaskSet = sym::TaskSet, kTaskDelete = sym::TaskDelete, kTaskCachedInsert = sym::TaskCachedInsert;
 
 // The world position of a car's aerial tip: the aerial node's position through the car's render matrix, in 24.8
 // fixed point, in a local of the caller's frame (at +0x10).
@@ -996,18 +996,18 @@ uint64_t VfxCarAerialVal(ptr32<_sObject> pObj, int32 n)
 // glints, and flushes the polygons.
 void VfxRender()
 {
-    guest_call(0x156dc0u); // VfxSetupCameraMatrix
-    guest_call(0x1a9208u, 0); // RdrZedsWriteOff
+    guest_call(sym::VfxSetupCameraMatrix); // VfxSetupCameraMatrix
+    guest_call(sym::RdrZedsWriteOff, 0); // RdrZedsWriteOff
     visFxClass &fx = G(visFxVarG);
     fx.sprite = fx.uiScratchSpriteAddress;
     at<uint32_t>(fx.uiScratchSpriteAddress.address + 0x1c) = 0; // vuPos[3]
-    guest_call(0x16ae30u); // Vfx2PodiumPlay
-    guest_call(0x16b2c0u); // VfxSkyChangeStuff
-    guest_call(0x16d8f0u); // Vfx2RenderTSFX
-    guest_call(0x157768u); // VfxCallRenderers
-    guest_call(0x1793d8u); // Vfx3Rain
-    guest_call(0x179a20u); // Vfx3Glint
-    guest_call(0x1a8fa0u, 0); // RdrPolyFlush
+    guest_call(sym::Vfx2PodiumPlay); // Vfx2PodiumPlay
+    guest_call(sym::VfxSkyChangeStuff); // VfxSkyChangeStuff
+    guest_call(sym::Vfx2RenderTSFX); // Vfx2RenderTSFX
+    guest_call(sym::VfxCallRenderers); // VfxCallRenderers
+    guest_call(sym::Vfx3Rain); // Vfx3Rain
+    guest_call(sym::Vfx3Glint); // Vfx3Glint
+    guest_call(sym::RdrPolyFlush, 0); // RdrPolyFlush
 }
 
 // Sets up the effects at the start of a level: clears the lists and the sky state, points the polygon and sprite at the
@@ -1025,21 +1025,21 @@ void VfxLvlInit()
     fx.pGT4 = ptr32<_sRdrPoly>(0x70000030u);
     fx.sprite = ptr32<_sVfx_CommonSprite>(0x70000000u);
     fx.uiScratchSpriteAddress = ptr32<_sVfx_CommonSprite>(0x70000000u);
-    guest_call(kTaskSet, ptr32<uint8>(0x1f1000u), 0x157190u, 1, 0); // TaskSet(&Task, VfxUpdate, 1, 0)
-    guest_call(kTaskCachedInsert, ptr32<uint8>(0x1f1000u));
+    guest_call(kTaskSet, ptr32<uint8>(sym::visFxVarG), sym::VfxUpdate, 1, 0); // TaskSet(&Task, VfxUpdate, 1, 0)
+    guest_call(kTaskCachedInsert, ptr32<uint8>(sym::visFxVarG));
     if (G(mainVarG).level == 0x62 && G(frontEndVarG).active != 5)
     {
         VfxAddNewPlace(0x22a, 0x10e, -0x9dd, 0x29);
         VfxAddNewPlace(-0x6ee, 0x122, 0x1e5, 0x29);
         VfxAddNewPlace(-0xeb4, 0x1e, -0x1067, 0x29);
     }
-    guest_call(0x1791e0u); // Vfx3RainInit
+    guest_call(sym::Vfx3RainInit); // Vfx3RainInit
 }
 
 // The effects list is emptied when the level ends: its task stops and every effect is freed.
 void VfxLvlTerm()
 {
-    guest_call(kTaskDelete, ptr32<uint8>(0x1f1000u)); // visFxVarG.Task
+    guest_call(kTaskDelete, ptr32<uint8>(sym::visFxVarG)); // visFxVarG.Task
     vfx::freeList(G(visFxVarG).vfxHeader.address);
     G(visFxVarG).vfxFooter = nullptr;
     G(visFxVarG).vfxHeader = nullptr;
@@ -1228,7 +1228,7 @@ void VfxRenderer_Sparks(ptr32<_sVfx_Object> mem)
         VfxPutGT4rgba1(brightness >> 1);
         VfxPutGT4rgba2(brightness * 0x101);
         VfxPutGT4rgba3(brightness * 0x101);
-        VfxPutGT4FacingPoly(head, tail, ptr32<_sGfxTexture>(vfx::vfxTexture(0x19)), 2, 4.0f, at<float>(0x3280ecu));
+        VfxPutGT4FacingPoly(head, tail, ptr32<_sGfxTexture>(vfx::vfxTexture(0x19)), 2, 4.0f, at<float>((sym::sec_sdata + 0x4ecu)));
     }
 }
 
@@ -1298,7 +1298,7 @@ void VfxRenderer_BlastMoonrover(ptr32<_sVfx_Object> mem)
     at<uint16_t>(vfx::sprite() + vfx::spr::kAngle) = static_cast<uint16_t>(random & 0xfff);
     VfxPutGT4FacingContinueVU(vC, vB);
     sceVu0CopyVector(ptr32<ee_float>(vfx::sprite() + vfx::spr::kPos), vA);
-    const ee_float zOffset = at<float>(0x3280f0u);
+    const ee_float zOffset = at<float>((sym::sec_sdata + 0x4f0u));
     const uint32_t sp = vfx::sprite();
     at<uint8_t>(sp + vfx::spr::kCode) = 2;
     at<uint32_t>(sp + vfx::spr::kRgb) = 0x400000;
@@ -1329,7 +1329,7 @@ void VfxRenderer_BlastLightning(ptr32<_sVfx_Object> mem)
     to[0] = ee_itof(static_cast<int16_t>(b));
     to[1] = ee_itof(static_cast<int16_t>(b >> 16));
     to[2] = ee_itof(static_cast<int16_t>(b >> 32));
-    guest_call(0x1681f0u, from, to, 1, ee_float(12.0f), ee_float(at<float>(0x32780cu))); // VfxDrawLightningBetween
+    guest_call(sym::VfxDrawLightningBetween, from, to, 1, ee_float(12.0f), ee_float(at<float>(sym::lit4_32780c))); // VfxDrawLightningBetween
 }
 
 } // namespace rc
@@ -1372,77 +1372,77 @@ void vfxBlastMoonroverRenderer(R5900Context *ctx, uint64_t &state, uint32_t scra
 void vfxBlastLightningRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 }
 
-RC_DECOMP_FN(VfxSpriteRotated3D, 0x16a5c0)
-RC_DECOMP_FN(VfxSpriteGroundRotated3D, 0x16a5c8)
-RC_DECOMP_FN(VfxSkyBackdrop, 0x16a5d0)
-RC_DECOMP_FN(VfxSkyActualSlowChange, 0x16a5d8)
-RC_DECOMP_FN(VfxRenderer_CarAerialRibbon, 0x16a5e0)
-RC_DECOMP_FN(VfxHandler_Shadow, 0x16a658)
-RC_DECOMP_FN(VfxRenderer_Shadow, 0x16a660)
-RC_DECOMP_FN(VfxRenderer_Milk, 0x16aa98)
-RC_DECOMP_FN(VfxSpriteRotatedHud, 0x16ab80)
-RC_DECOMP_FN_NOFUZZ(VfxTerm, 0x156db0)
-RC_DECOMP_FN(VfxSetup, 0x16a0b0)
-RC_DECOMP_FN_SETUP(VfxCarSpeedVal, 0x16a320, rc::fuzz::aiCar)
-RC_DECOMP_FN_SETUP(VfxHasCarBeenRendered, 0x16a340, rc::fuzz::vfxRendered)
-RC_DECOMP_FN_SETUP(VfxShortestLastDistRendered, 0x16aaa0, rc::fuzz::vfxRendered)
-RC_DECOMP_FN_SETUP(VfxCarMatrixVal, 0x16a1a8, rc::fuzz::aiMatrixAndCar)
-RC_DECOMP_FN_SETUP(VfxCarVelocityVal, 0x16a2a8, rc::fuzz::aiCar)
-RC_DECOMP_FN_SETUP(VfxVUCarPositionPoi, 0x16a430, rc::fuzz::aiCar)
-RC_DECOMP_FN_SETUP(VfxIsWheelSkidding, 0x16aad0, rc::fuzz::vfxWheel)
-RC_DECOMP_FN_SETUP(VfxIsWheelTouching, 0x16aaf0, rc::fuzz::vfxWheel)
-RC_DECOMP_FN_SETUP(VfxMaterialUnderWheel, 0x16ab58, rc::fuzz::vfxWheel)
-RC_DECOMP_FN(VfxSVtoV3, 0x169d68)
-RC_DECOMP_FN(VfxSortPos, 0x169fb8)
-RC_DECOMP_FN_SETUP(VfxCarSortPos, 0x169f68, rc::fuzz::vfxCarAndEffect)
-RC_DECOMP_FN(VfxSortFunc, 0x16a178)
-RC_DECOMP_FN_SETUP(VfxPutGT4rgba, 0x169ea8, rc::fuzz::vfxQuad)
-RC_DECOMP_FN_SETUP(VfxPutGT4rgba0, 0x169ec8, rc::fuzz::vfxQuad)
-RC_DECOMP_FN_SETUP(VfxPutGT4rgba1, 0x169ed8, rc::fuzz::vfxQuad)
-RC_DECOMP_FN_SETUP(VfxPutGT4rgba2, 0x169ee8, rc::fuzz::vfxQuad)
-RC_DECOMP_FN_SETUP(VfxPutGT4rgba3, 0x169ef8, rc::fuzz::vfxQuad)
-RC_DECOMP_FN_SETUP(VfxPutUV0, 0x169f08, rc::fuzz::vfxQuad)
-RC_DECOMP_FN_SETUP(VfxPutUV1, 0x169f20, rc::fuzz::vfxQuad)
-RC_DECOMP_FN_SETUP(VfxPutUV2, 0x169f38, rc::fuzz::vfxQuad)
-RC_DECOMP_FN_SETUP(VfxPutUV3, 0x169f50, rc::fuzz::vfxQuad)
-RC_DECOMP_FN_SETUP(VfxHandler_CarHeatRayBlast, 0x16a5e8, rc::fuzz::vfxEffectOnCar)
-RC_DECOMP_FN_SETUP(VfxHandler_BlastLightning, 0x16a780, rc::fuzz::vfxEffectOnCar)
-RC_DECOMP_FN_SETUP(VfxHandler_SargeLights, 0x16a938, rc::fuzz::vfxEffectOnCar)
-RC_DECOMP_FN(VfxInit, 0x156bb8)
-RC_DECOMP_FN(VfxPSXToVUMatrix, 0x156aa8)
-RC_DECOMP_FN_SETUP_HEAP(VfxDelete, 0x16a0c8, rc::fuzz::vfxDelete)           // Frees a heap block that is on the effect list.
-RC_DECOMP_FN_SETUP_HEAP(VfxHandOverFXDelete, 0x157668, rc::fuzz::vfxHandOver) // As above, for every effect.
-RC_DECOMP_FN_NOFUZZ(VfxCallHandlers, 0x16a470)     // Runs every live effect's handler.
-RC_DECOMP_FN_SETUP(VfxCarPositionVal, 0x16a1f8, rc::fuzz::aiCar)
-RC_DECOMP_FN_SETUP(VfxWheelPositionPoi, 0x156840, rc::fuzz::vfxWheel)
-RC_DECOMP_FN_SETUP(VfxWheelPositionVal, 0x156940, rc::fuzz::vfxWheel)
-RC_DECOMP_FN_SETUP(VfxHandler_Milk, 0x16aa10, rc::fuzz::vfxMilk)
-RC_DECOMP_FN_SETUP(VfxHandler_AerialLightning, 0x16a668, rc::fuzz::vfxLightning)
-RC_DECOMP_FN_SETUP(VfxHandler_DamageLightning, 0x16a7f8, rc::fuzz::vfxLightning)
-RC_DECOMP_FN_SETUP(VfxHandler_BlastMoonrover, 0x168d60, rc::fuzz::vfxBlast)
-RC_DECOMP_FN_SETUP(VfxCreate_Sparks, 0x1645c0, rc::fuzz::vfxSparks)
-RC_DECOMP_FN_SETUP(VfxParticleMover, 0x158e00, rc::fuzz::vfxMover)
-RC_DECOMP_FN_SETUP(VfxSimpleParticleMover, 0x158f18, rc::fuzz::vfxSimpleMover)
-RC_DECOMP_FN_SETUP(VfxPutGT4vecs, 0x169da8, rc::fuzz::vfxFourEnds)
-RC_DECOMP_FN_SETUP(VfxPutGT4FacingContinue, 0x167e88, rc::fuzz::vfxRibbonShorts)
-RC_DECOMP_FN_SETUP(VfxPutGT4FacingContinueVU, 0x168118, rc::fuzz::vfxRibbon)
-RC_DECOMP_FN_SETUP(VfxPutGT4FacingPoly, 0x167cd0, rc::fuzz::vfxRibbonShorts)
-RC_DECOMP_FN_SETUP(VfxPutGT4FacingPolyVU, 0x167fa8, rc::fuzz::vfxRibbon)
-RC_DECOMP_FN_SETUP(VfxPS2SpriteRotated3D, 0x167788, rc::fuzz::vfxSprite)
-RC_DECOMP_FN_SETUP(VfxPS2SpriteGroundRotated3D, 0x167a20, rc::fuzz::vfxGroundSprite)
-RC_DECOMP_FN_SETUP_HEAP(VfxAddNewPlace, 0x16a158, rc::fuzz::vfxAddNewPlace)
-RC_DECOMP_FN_SETUP(VfxCarAerialPoi, 0x16a370, rc::fuzz::vfxAerial)
-RC_DECOMP_FN_SETUP(VfxCarAerialVal, 0x156718, rc::fuzz::vfxAerial)
-RC_DECOMP_FN_NOFUZZ(VfxRender, 0x157be0)
-RC_DECOMP_FN_SETUP_HEAP(VfxLvlInit, 0x156cc0, rc::fuzz::vfxLvlInit)
-RC_DECOMP_FN_SETUP_HEAP(VfxLvlTerm, 0x16a030, rc::fuzz::vfxLvlTerm)
-RC_DECOMP_FN_SETUP(VfxHandler_Sparks, 0x16a998, rc::fuzz::vfxSparkHandler)
-RC_DECOMP_FN_SETUP(VfxHandler_RocketSmoke, 0x164f70, rc::fuzz::vfxRocketSmoke)
-RC_DECOMP_FN_SETUP(VfxHandler_Explosion, 0x159e70, rc::fuzz::vfxExplosion)
-RC_DECOMP_FN_SETUP(VfxRenderer_Explosion, 0x15a000, rc::fuzz::vfxExplosionRenderer)
-RC_DECOMP_FN_SETUP(VfxHandler_CarSmoke, 0x1590d8, rc::fuzz::vfxCarSmoke)
-RC_DECOMP_FN_SETUP(VfxRenderer_CarSmoke, 0x1592c0, rc::fuzz::vfxCarSmokeRenderer)
-RC_DECOMP_FN_SETUP(VfxRenderer_Sparks, 0x1643d0, rc::fuzz::vfxSparksRenderer)
-RC_DECOMP_FN_SETUP(VfxHandler_TakeTerror, 0x160790, rc::fuzz::vfxTakeTerror)
-RC_DECOMP_FN_SETUP(VfxRenderer_BlastMoonrover, 0x168f20, rc::fuzz::vfxBlastMoonroverRenderer)
-RC_DECOMP_FN_SETUP(VfxRenderer_BlastLightning, 0x15f6e8, rc::fuzz::vfxBlastLightningRenderer)
+RC_DECOMP_FN(VfxSpriteRotated3D)
+RC_DECOMP_FN(VfxSpriteGroundRotated3D)
+RC_DECOMP_FN(VfxSkyBackdrop)
+RC_DECOMP_FN(VfxSkyActualSlowChange)
+RC_DECOMP_FN(VfxRenderer_CarAerialRibbon)
+RC_DECOMP_FN(VfxHandler_Shadow)
+RC_DECOMP_FN(VfxRenderer_Shadow)
+RC_DECOMP_FN(VfxRenderer_Milk)
+RC_DECOMP_FN(VfxSpriteRotatedHud)
+RC_DECOMP_FN_NOFUZZ(VfxTerm)
+RC_DECOMP_FN(VfxSetup)
+RC_DECOMP_FN_SETUP(VfxCarSpeedVal, rc::fuzz::aiCar)
+RC_DECOMP_FN_SETUP(VfxHasCarBeenRendered, rc::fuzz::vfxRendered)
+RC_DECOMP_FN_SETUP(VfxShortestLastDistRendered, rc::fuzz::vfxRendered)
+RC_DECOMP_FN_SETUP(VfxCarMatrixVal, rc::fuzz::aiMatrixAndCar)
+RC_DECOMP_FN_SETUP(VfxCarVelocityVal, rc::fuzz::aiCar)
+RC_DECOMP_FN_SETUP(VfxVUCarPositionPoi, rc::fuzz::aiCar)
+RC_DECOMP_FN_SETUP(VfxIsWheelSkidding, rc::fuzz::vfxWheel)
+RC_DECOMP_FN_SETUP(VfxIsWheelTouching, rc::fuzz::vfxWheel)
+RC_DECOMP_FN_SETUP(VfxMaterialUnderWheel, rc::fuzz::vfxWheel)
+RC_DECOMP_FN(VfxSVtoV3)
+RC_DECOMP_FN(VfxSortPos)
+RC_DECOMP_FN_SETUP(VfxCarSortPos, rc::fuzz::vfxCarAndEffect)
+RC_DECOMP_FN(VfxSortFunc)
+RC_DECOMP_FN_SETUP(VfxPutGT4rgba, rc::fuzz::vfxQuad)
+RC_DECOMP_FN_SETUP(VfxPutGT4rgba0, rc::fuzz::vfxQuad)
+RC_DECOMP_FN_SETUP(VfxPutGT4rgba1, rc::fuzz::vfxQuad)
+RC_DECOMP_FN_SETUP(VfxPutGT4rgba2, rc::fuzz::vfxQuad)
+RC_DECOMP_FN_SETUP(VfxPutGT4rgba3, rc::fuzz::vfxQuad)
+RC_DECOMP_FN_SETUP(VfxPutUV0, rc::fuzz::vfxQuad)
+RC_DECOMP_FN_SETUP(VfxPutUV1, rc::fuzz::vfxQuad)
+RC_DECOMP_FN_SETUP(VfxPutUV2, rc::fuzz::vfxQuad)
+RC_DECOMP_FN_SETUP(VfxPutUV3, rc::fuzz::vfxQuad)
+RC_DECOMP_FN_SETUP(VfxHandler_CarHeatRayBlast, rc::fuzz::vfxEffectOnCar)
+RC_DECOMP_FN_SETUP(VfxHandler_BlastLightning, rc::fuzz::vfxEffectOnCar)
+RC_DECOMP_FN_SETUP(VfxHandler_SargeLights, rc::fuzz::vfxEffectOnCar)
+RC_DECOMP_FN(VfxInit)
+RC_DECOMP_FN(VfxPSXToVUMatrix)
+RC_DECOMP_FN_SETUP_HEAP(VfxDelete, rc::fuzz::vfxDelete)           // Frees a heap block that is on the effect list.
+RC_DECOMP_FN_SETUP_HEAP(VfxHandOverFXDelete, rc::fuzz::vfxHandOver) // As above, for every effect.
+RC_DECOMP_FN_NOFUZZ(VfxCallHandlers)     // Runs every live effect's handler.
+RC_DECOMP_FN_SETUP(VfxCarPositionVal, rc::fuzz::aiCar)
+RC_DECOMP_FN_SETUP(VfxWheelPositionPoi, rc::fuzz::vfxWheel)
+RC_DECOMP_FN_SETUP(VfxWheelPositionVal, rc::fuzz::vfxWheel)
+RC_DECOMP_FN_SETUP(VfxHandler_Milk, rc::fuzz::vfxMilk)
+RC_DECOMP_FN_SETUP(VfxHandler_AerialLightning, rc::fuzz::vfxLightning)
+RC_DECOMP_FN_SETUP(VfxHandler_DamageLightning, rc::fuzz::vfxLightning)
+RC_DECOMP_FN_SETUP(VfxHandler_BlastMoonrover, rc::fuzz::vfxBlast)
+RC_DECOMP_FN_SETUP(VfxCreate_Sparks, rc::fuzz::vfxSparks)
+RC_DECOMP_FN_SETUP(VfxParticleMover, rc::fuzz::vfxMover)
+RC_DECOMP_FN_SETUP(VfxSimpleParticleMover, rc::fuzz::vfxSimpleMover)
+RC_DECOMP_FN_SETUP(VfxPutGT4vecs, rc::fuzz::vfxFourEnds)
+RC_DECOMP_FN_SETUP(VfxPutGT4FacingContinue, rc::fuzz::vfxRibbonShorts)
+RC_DECOMP_FN_SETUP(VfxPutGT4FacingContinueVU, rc::fuzz::vfxRibbon)
+RC_DECOMP_FN_SETUP(VfxPutGT4FacingPoly, rc::fuzz::vfxRibbonShorts)
+RC_DECOMP_FN_SETUP(VfxPutGT4FacingPolyVU, rc::fuzz::vfxRibbon)
+RC_DECOMP_FN_SETUP(VfxPS2SpriteRotated3D, rc::fuzz::vfxSprite)
+RC_DECOMP_FN_SETUP(VfxPS2SpriteGroundRotated3D, rc::fuzz::vfxGroundSprite)
+RC_DECOMP_FN_SETUP_HEAP(VfxAddNewPlace, rc::fuzz::vfxAddNewPlace)
+RC_DECOMP_FN_SETUP(VfxCarAerialPoi, rc::fuzz::vfxAerial)
+RC_DECOMP_FN_SETUP(VfxCarAerialVal, rc::fuzz::vfxAerial)
+RC_DECOMP_FN_NOFUZZ(VfxRender)
+RC_DECOMP_FN_SETUP_HEAP(VfxLvlInit, rc::fuzz::vfxLvlInit)
+RC_DECOMP_FN_SETUP_HEAP(VfxLvlTerm, rc::fuzz::vfxLvlTerm)
+RC_DECOMP_FN_SETUP(VfxHandler_Sparks, rc::fuzz::vfxSparkHandler)
+RC_DECOMP_FN_SETUP(VfxHandler_RocketSmoke, rc::fuzz::vfxRocketSmoke)
+RC_DECOMP_FN_SETUP(VfxHandler_Explosion, rc::fuzz::vfxExplosion)
+RC_DECOMP_FN_SETUP(VfxRenderer_Explosion, rc::fuzz::vfxExplosionRenderer)
+RC_DECOMP_FN_SETUP(VfxHandler_CarSmoke, rc::fuzz::vfxCarSmoke)
+RC_DECOMP_FN_SETUP(VfxRenderer_CarSmoke, rc::fuzz::vfxCarSmokeRenderer)
+RC_DECOMP_FN_SETUP(VfxRenderer_Sparks, rc::fuzz::vfxSparksRenderer)
+RC_DECOMP_FN_SETUP(VfxHandler_TakeTerror, rc::fuzz::vfxTakeTerror)
+RC_DECOMP_FN_SETUP(VfxRenderer_BlastMoonrover, rc::fuzz::vfxBlastMoonroverRenderer)
+RC_DECOMP_FN_SETUP(VfxRenderer_BlastLightning, rc::fuzz::vfxBlastLightningRenderer)

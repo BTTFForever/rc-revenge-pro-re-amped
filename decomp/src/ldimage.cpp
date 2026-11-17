@@ -128,13 +128,13 @@ void setLoadImageTagsTile(ptr32<u_int> tags, ptr32<void> image, int32_t x, int32
 
 } // namespace rc
 
-RC_DECOMP_FN_SETUP(setLoadImageTags, 0x195b58, rc::fuzz::imageTags)
-RC_DECOMP_FN_SETUP(setLoadImageTagsTile, 0x195b78, rc::fuzz::imageTags)
-RC_DECOMP_FN_SETUP(setLoadImageTagsYX, 0x195b98, rc::fuzz::imageTagsYX)
-RC_DECOMP_FN_BLOCKING_SETUP(loadImage, 0x195e00, rc::fuzz::hardwareArg)
-RC_DECOMP_FN_SETUP(setGIFtag, 0x195e40, rc::fuzz::packerArgs)
-RC_DECOMP_FN_SETUP(setBITBLTBUF, 0x195e90, rc::fuzz::packerArgs)
-RC_DECOMP_FN_SETUP(setTRXPOS, 0x195ec0, rc::fuzz::packerArgs)
-RC_DECOMP_FN_SETUP(setTRXREG, 0x195ef0, rc::fuzz::packerArgs)
-RC_DECOMP_FN_SETUP(setTRXDIR, 0x195f28, rc::fuzz::packerArgs)
-RC_DECOMP_FN_SETUP(setDMAscTag, 0x195f50, rc::fuzz::packerArgs)
+RC_DECOMP_FN_SETUP(setLoadImageTags, rc::fuzz::imageTags)
+RC_DECOMP_FN_SETUP(setLoadImageTagsTile, rc::fuzz::imageTags)
+RC_DECOMP_FN_SETUP(setLoadImageTagsYX, rc::fuzz::imageTagsYX)
+RC_DECOMP_FN_BLOCKING_SETUP(loadImage, rc::fuzz::hardwareArg)
+RC_DECOMP_FN_SETUP(setGIFtag, rc::fuzz::packerArgs)
+RC_DECOMP_FN_SETUP(setBITBLTBUF, rc::fuzz::packerArgs)
+RC_DECOMP_FN_SETUP(setTRXPOS, rc::fuzz::packerArgs)
+RC_DECOMP_FN_SETUP(setTRXREG, rc::fuzz::packerArgs)
+RC_DECOMP_FN_SETUP(setTRXDIR, rc::fuzz::packerArgs)
+RC_DECOMP_FN_SETUP(setDMAscTag, rc::fuzz::packerArgs)

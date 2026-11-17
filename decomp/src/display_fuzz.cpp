@@ -20,8 +20,8 @@ namespace {
 constexpr uint32_t kValidWindow = 0x7f645459u;
 // Functions replaced offline by logged calls: the buffer swap and the GS sync (both wait), FlushCache (a syscall),
 // a texture level's upload (DMA) and GfxP2_Init (resets the GS).
-constexpr uint32_t kGfxP2_SwapBuffers = 0x18e988u, kSceGsSyncPath = 0x1c3e28u, kFlushCache = 0x1be9a0u,
-                   kLoadTexMip = 0x18fd70u, kGfxP2Init = 0x18e770u;
+constexpr uint32_t kGfxP2_SwapBuffers = sym::GfxP2_SwapBuffers, kSceGsSyncPath = sym::sceGsSyncPath, kFlushCache = sym::FlushCache,
+                   kLoadTexMip = sym::GfxP2_LoadTexMip, kGfxP2Init = sym::GfxP2_Init;
 constexpr uint32_t kLog = kFuzzScratch + 0x7c00u, kLogMax = 50u; // count word, then 5 words an entry
 constexpr uint32_t kHardwareStore = 1u;                          // an entry's kind for a hardware store
 

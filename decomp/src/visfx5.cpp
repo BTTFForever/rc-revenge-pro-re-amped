@@ -547,12 +547,12 @@ void Vfx2Renderer_SkullWave(ptr32<_sVfx_Object> mem)
     at<float>(centre + 8) = ee_itof(at<int16_t>(m + 0x658));
     const uint32_t life = at<uint16_t>(m + kLifeSpan);
     const uint32_t colour = life * 4 + (life * 4 << 16);
-    ee_float u = ee_itof(static_cast<int32_t>(life)) * ee_float(at<float>(0x3278acu));
+    ee_float u = ee_itof(static_cast<int32_t>(life)) * ee_float(at<float>(sym::lit4_3278ac));
     RdrPolyTexture(0, ptr32<_sGfxTexture>(vfx::vfxTexture(0x10)), 0x12);
     uint32_t index = at<uint8_t>(m + kRing + 2);
     if (index != at<uint8_t>(m + kRing + 3))
     {
-        const ee_float outer = at<float>(0x3278b0u), inner = at<float>(0x3278b4u), step = at<float>(0x3278b8u);
+        const ee_float outer = at<float>(sym::lit4_3278b0), inner = at<float>(sym::lit4_3278b4), step = at<float>(sym::lit4_3278b8);
         do
         {
             const uint32_t quad = G(visFxVarG).pGT4.address;
@@ -838,13 +838,13 @@ void Vfx2Renderer_TTclock(ptr32<_sVfx_Object> mem)
     const uint32_t offset = frame.local<uint8>(0).address; // vuOffset
     const uint32_t pos = frame.local<uint8>(0x10).address;  // vuPos
     at<float>(offset) = 6.0f;
-    at<float>(offset + 4) = at<float>(0x3278d8u);
+    at<float>(offset + 4) = at<float>(sym::lit4_3278d8);
     at<float>(offset + 8) = 13.5f;
-    sceVu0ApplyMatrix(ptr32<ee_float>(offset), ptr32<ee_float>(0x1f1170u), ptr32<ee_float>(offset));
-    vfx::vu0Add(offset, 0x1f1160u, offset);
+    sceVu0ApplyMatrix(ptr32<ee_float>(offset), ptr32<ee_float>((sym::visFxVarG + 0x170u)), ptr32<ee_float>(offset));
+    vfx::vu0Add(offset, (sym::visFxVarG + 0x160u), offset);
     int32_t remaining = static_cast<int32_t>(at<uint16_t>(m + kLifeSpan)) - 0x40;
     remaining = remaining > -1 ? remaining : 0;
-    guest_call(0x1c8308u, ee_float(1.0f) - ee_itof(remaining) * ee_float(0.015625f), ptr32<ee_float>(pos), ptr32<ee_float>(offset),
+    guest_call(sym::sceVu0InterVectorXYZ, ee_float(1.0f) - ee_itof(remaining) * ee_float(0.015625f), ptr32<ee_float>(pos), ptr32<ee_float>(offset),
                ptr32<ee_float>(sp + vfx::spr::kPos)); // sceVu0InterVectorXYZ
     sp = vfx::sprite();
     at<uint8_t>(sp + vfx::spr::kCode) = 2;
@@ -853,7 +853,7 @@ void Vfx2Renderer_TTclock(ptr32<_sVfx_Object> mem)
     for (uint32_t index = at<uint8_t>(m + kRing + 2); index != at<uint8_t>(m + kRing + 3); index = (index + 1) & at<uint8_t>(m + kRing))
     {
         const uint32_t p = m + 0x48 + index * 0x14u;
-        at<float>(sp + vfx::spr::kScale) = ee_itof(at<uint16_t>(p + 0x10) + 6) * ee_float(at<float>(0x3278dcu)) + ee_float(at<float>(0x3278e0u));
+        at<float>(sp + vfx::spr::kScale) = ee_itof(at<uint16_t>(p + 0x10) + 6) * ee_float(at<float>(sym::lit4_3278dc)) + ee_float(at<float>(sym::lit4_3278e0));
         const ee_float step = ee_float(0.00390625f);
         const ee_float dx = ee_itof(at<int16_t>(p) >> 4) * step, dy = ee_itof(at<int16_t>(p + 2) >> 4) * step, dz = ee_itof(at<int16_t>(p + 4) >> 4) * step;
         at<float>(sp + vfx::spr::kPos) = ee_float(at<float>(pos)) + dx;
@@ -864,18 +864,18 @@ void Vfx2Renderer_TTclock(ptr32<_sVfx_Object> mem)
     }
     remaining = static_cast<int32_t>(at<uint16_t>(m + kLifeSpan)) - 0x40;
     remaining = remaining > -1 ? remaining : 0;
-    at<float>(sp + vfx::spr::kScale) = ee_itof(remaining) * ee_float(at<float>(0x3278e4u)) + ee_float(at<float>(0x3278e8u));
-    guest_call(0x1b4188u, ptr32<uint8>(0x1ed910u)); // TimerGet(&mainVarG.gameTimer)
-    const uint32_t time = guest_call<uint32_t>(0x1b4188u, ptr32<uint8>(0x1ed910u));
+    at<float>(sp + vfx::spr::kScale) = ee_itof(remaining) * ee_float(at<float>(sym::lit4_3278e4)) + ee_float(at<float>(sym::lit4_3278e8));
+    guest_call(sym::TimerGet, ptr32<uint8>((sym::mainVarG + 0x10u))); // TimerGet(&mainVarG.gameTimer)
+    const uint32_t time = guest_call<uint32_t>(sym::TimerGet, ptr32<uint8>((sym::mainVarG + 0x10u)));
     const ee_float turn = ee_itof(static_cast<int32_t>((time << 3) & 0xfff));
-    const ee_float sine = ee_sinf((turn + turn) * ee_float(at<float>(0x3278ecu)));
+    const ee_float sine = ee_sinf((turn + turn) * ee_float(at<float>(sym::lit4_3278ec)));
     at<uint16_t>(sp + vfx::spr::kAngle) = static_cast<uint16_t>(at<uint16_t>(m + 0x110) + (ee_ftoi(sine * ee_float(4096.0f)) >> 5));
     at<uint8_t>(sp + vfx::spr::kFlipX) = 1;
     sp = vfx::sprite();
     at<uint8_t>(sp + vfx::spr::kCode) = 0;
     at<uint32_t>(sp + vfx::spr::kRgb) = 0x80c0c0c0;
     at<uint32_t>(sp + vfx::spr::kTexture) = at<uint32_t>(hud + 0xd4);
-    guest_call(0x1c82e8u, ptr32<ee_float>(sp + vfx::spr::kPos), ptr32<ee_float>(pos)); // sceVu0CopyVectorXYZ
+    guest_call(sym::sceVu0CopyVectorXYZ, ptr32<ee_float>(sp + vfx::spr::kPos), ptr32<ee_float>(pos)); // sceVu0CopyVectorXYZ
     VfxPS2SpriteRotated3D(ee_float(0.0f));
 }
 
@@ -1039,7 +1039,7 @@ void Vfx3Renderer_RocketCar(ptr32<_sVfx_Object> mem)
     {
         const ptr32<MATRIX> matrix = VfxCarMatrixPoi(car);
         const ptr32<ee_float> vuMatrix = VfxPSXToVUMatrix(matrix);
-        const ee_float spread = at<float>(0x327914u), push = at<float>(0x327918u);
+        const ee_float spread = at<float>(sym::lit4_327914), push = at<float>(sym::lit4_327918);
         if (at<uint8_t>(m + kRing + 1) < at<uint8_t>(m + kRing))
         {
             const uint32_t p = m + 0x50 + static_cast<uint32_t>(at<uint8_t>(m + kRing + 3)) * 0x30u;
@@ -1080,7 +1080,7 @@ void Vfx3Renderer_RocketCar(ptr32<_sVfx_Object> mem)
         vfx::vu0Add(sp + vfx::spr::kPos, sp + vfx::spr::kPos, p);
         VfxPS2SpriteRotated3D(ee_float(-10.0f));
         at<uint32_t>(sp + vfx::spr::kRgb) = static_cast<uint32_t>(at<int32_t>(p + 0x24)) * 0x40200u;
-        at<float>(sp + vfx::spr::kScale) = ee_float(at<float>(sp + vfx::spr::kScale)) * ee_float(at<float>(0x32791cu));
+        at<float>(sp + vfx::spr::kScale) = ee_float(at<float>(sp + vfx::spr::kScale)) * ee_float(at<float>(sym::lit4_32791c));
         VfxPS2SpriteRotated3D(ee_float(-10.0f));
     }
 }
@@ -1115,30 +1115,30 @@ void vfxFinishPosition(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxSkullWave(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 }
 
-RC_DECOMP_FN_SETUP(Vfx2Renderer_MonkeySmoke, 0x176278, rc::fuzz::vfxMonkeySmokeRenderer)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_BigVolcano, 0x1765a0, rc::fuzz::vfxBigVolcanoRenderer)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_Fountain, 0x173078, rc::fuzz::vfxFountainRenderer)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_MobyDick, 0x178b10, rc::fuzz::vfxMobyDickRenderer)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_PipeSteam, 0x16f038, rc::fuzz::vfxPipeSteamRenderer)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_SciFiBubbles, 0x175f68, rc::fuzz::vfxSciFiBubblesRenderer)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_SciFiSteam, 0x172890, rc::fuzz::vfxSciFiSteamRenderer)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_Smoking, 0x16fb48, rc::fuzz::vfxSmokingRenderer)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_Gargoyle, 0x175a68, rc::fuzz::vfxGargoyleRenderer)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_CarRight, 0x173a10, rc::fuzz::vfxCarRightRenderer)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_ScifiRocket, 0x1733c0, rc::fuzz::vfxScifiRocketRenderer)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_ScifiRocketOld, 0x173618, rc::fuzz::vfxScifiRocketOldRenderer)
-RC_DECOMP_FN_SETUP(Vfx2Handler_CartoonTrainSmoke, 0x16dd30, rc::fuzz::vfxCartoonTrainHandler)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_CartoonTrainSmoke, 0x16df28, rc::fuzz::vfxCartoonTrainRenderer)
-RC_DECOMP_FN_SETUP(Vfx2Handler_FinishPosition, 0x173c20, rc::fuzz::vfxFinishPosition)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_SkullWave, 0x170640, rc::fuzz::vfxSkullWave)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_UFOBurner, 0x171978, rc::fuzz::vfxUfoBurnerRenderer)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_LavaSpit, 0x1755f8, rc::fuzz::vfxLavaSpit)
-RC_DECOMP_FN_SETUP(Vfx2Handler_Feathers, 0x172a78, rc::fuzz::vfxFeathersHandler)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_RouteFinder, 0x176788, rc::fuzz::vfxRouteFinderRenderer)
-RC_DECOMP_FN_SETUP(Vfx2Handler_TTclock, 0x174418, rc::fuzz::vfxTTclockHandler)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_TTclock, 0x174710, rc::fuzz::vfxTTclockRenderer)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_Cannon, 0x177e10, rc::fuzz::vfxCannon)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_JungleFire, 0x16fe80, rc::fuzz::vfxJungleFireRenderer)
-RC_DECOMP_FN_SETUP(Vfx2Handler_Bees, 0x176a10, rc::fuzz::vfxBeesHandler)
-RC_DECOMP_FN_SETUP(Vfx2Handler_Flies, 0x176ec0, rc::fuzz::vfxBeesHandler)
-RC_DECOMP_FN_SETUP(Vfx3Renderer_RocketCar, 0x17a158, rc::fuzz::vfxRocketCar)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_MonkeySmoke, rc::fuzz::vfxMonkeySmokeRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_BigVolcano, rc::fuzz::vfxBigVolcanoRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_Fountain, rc::fuzz::vfxFountainRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_MobyDick, rc::fuzz::vfxMobyDickRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_PipeSteam, rc::fuzz::vfxPipeSteamRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_SciFiBubbles, rc::fuzz::vfxSciFiBubblesRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_SciFiSteam, rc::fuzz::vfxSciFiSteamRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_Smoking, rc::fuzz::vfxSmokingRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_Gargoyle, rc::fuzz::vfxGargoyleRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_CarRight, rc::fuzz::vfxCarRightRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_ScifiRocket, rc::fuzz::vfxScifiRocketRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_ScifiRocketOld, rc::fuzz::vfxScifiRocketOldRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Handler_CartoonTrainSmoke, rc::fuzz::vfxCartoonTrainHandler)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_CartoonTrainSmoke, rc::fuzz::vfxCartoonTrainRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Handler_FinishPosition, rc::fuzz::vfxFinishPosition)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_SkullWave, rc::fuzz::vfxSkullWave)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_UFOBurner, rc::fuzz::vfxUfoBurnerRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_LavaSpit, rc::fuzz::vfxLavaSpit)
+RC_DECOMP_FN_SETUP(Vfx2Handler_Feathers, rc::fuzz::vfxFeathersHandler)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_RouteFinder, rc::fuzz::vfxRouteFinderRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Handler_TTclock, rc::fuzz::vfxTTclockHandler)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_TTclock, rc::fuzz::vfxTTclockRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_Cannon, rc::fuzz::vfxCannon)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_JungleFire, rc::fuzz::vfxJungleFireRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Handler_Bees, rc::fuzz::vfxBeesHandler)
+RC_DECOMP_FN_SETUP(Vfx2Handler_Flies, rc::fuzz::vfxBeesHandler)
+RC_DECOMP_FN_SETUP(Vfx3Renderer_RocketCar, rc::fuzz::vfxRocketCar)

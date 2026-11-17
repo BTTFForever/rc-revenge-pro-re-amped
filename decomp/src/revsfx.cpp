@@ -52,10 +52,10 @@ int16 RevSfxPlay3D(int16 num, int16 vol, int16 pitch, ptr32<vec32_> pos, int16 f
 
 namespace {
 
-constexpr uint32_t kRev = 0x1ef3b0u, kSfx = 0x31e488u, kMain = 0x1ed900u, kCamera = 0x1e9fb0u, kCamera2 = 0x1ea568u;
-constexpr uint32_t kObjects = 0x1ee390u, kAnimData = 0x1e99d0u, kSifAllocIopHeap = 0x1c18c8u, kSdRemote = 0x1ca550u,
-                   kSdTransToIOP = 0x1ca4d0u, kFlushCache = 0x1be9a0u;
-constexpr uint32_t kSfxType = 0x327f78u, kSFXConstructDaemon = 0x143258u; // "SFX"
+constexpr uint32_t kRev = sym::revSfxVarG, kSfx = sym::sfxVarG, kMain = sym::mainVarG, kCamera = sym::cameraVarG, kCamera2 = (sym::cameraVarG + 0x5b8u);
+constexpr uint32_t kObjects = sym::objectVarG, kAnimData = sym::animVarG, kSifAllocIopHeap = sym::sceSifAllocIopHeap, kSdRemote = sym::sceSdRemote,
+                   kSdTransToIOP = sym::sceSdTransToIOP, kFlushCache = sym::FlushCache;
+constexpr uint32_t kSfxType = (sym::sec_sdata + 0x378u), kSFXConstructDaemon = sym::SFXConstructDaemon; // "SFX"
 constexpr uint32_t kCameraStride = 0x5b8u;
 // mainVarG fields.
 constexpr uint32_t kStatus = kMain, kGameTimer = kMain + 0x10u, kTime = kMain + 0x1cu, kGameEndPos = kMain + 0x174u,
@@ -281,6 +281,7 @@ void RevSfxInit()
 
 void RevSfxUpdateAmbient(int32 split)
 {
+    RC_DIVERT_IF_CHANGED(RevSfxUpdateAmbient, split);
     GuestFrame frame(0xc0);
     revsfxClass &r = rev();
     int32_t pitch = 0x100, ambientVol = 0x100;
@@ -742,7 +743,7 @@ void SFXSetupClass()
 {
     revsfxClass &r = rev();
     sfxClass &s = G(sfxVarG);
-    const uint32_t data = at<uint32_t>(at<uint32_t>(0x327e80u) + 0x24u); // pLvlG->pSFXData
+    const uint32_t data = at<uint32_t>(at<uint32_t>(sym::pLvlG) + 0x24u); // pLvlG->pSFXData
     if (s.effectList[0].dwAddr == s.endOfGenericAddr)
     {
         r.genericSoundCt = 0;
@@ -1083,26 +1084,26 @@ void RevSfxDolby(int32 mode, int32 flags)
 
 } // namespace rc
 
-RC_DECOMP_FN_BLOCKING_SETUP(RevSfxPlay3D, 0x1418a8, rc::fuzz::revPlay3D)
-RC_DECOMP_FN_BLOCKING_SETUP(RevSfxPlay3DCombine, 0x141bd8, rc::fuzz::revPlay3D)
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(RevSfxStopAll, 0x141fc8, rc::fuzz::revStopAll)
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(RevSfxInit, 0x142300, rc::fuzz::revInit)
-RC_DECOMP_FN_BLOCKING_SETUP(RevSfxUpdateAmbient, 0x1423b0, rc::fuzz::revAmbient)
-RC_DECOMP_FN_BLOCKING_SETUP(RevSfxPauseFade, 0x142e20, rc::fuzz::revPauseFade)
-RC_DECOMP_FN_BLOCKING_SETUP(RevSfxCalcReverb, 0x143240, rc::fuzz::revReverb)
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(SFXConstructDaemon, 0x143258, rc::fuzz::revSfxDaemon)
-RC_DECOMP_FN_SETUP(SFXSetupClass, 0x143508, rc::fuzz::revSetupClass)
-RC_DECOMP_FN_BLOCKING_SETUP(RevSfxTrigger, 0x1436d0, rc::fuzz::revTrigger)
-RC_DECOMP_FN_BLOCKING_SETUP(RevSfxSpecialTrigger, 0x143878, rc::fuzz::revSpecialTrigger)
-RC_DECOMP_FN_BLOCKING_SETUP(RevSfxInitialReverb, 0x1439a8, rc::fuzz::revReverb)
-RC_DECOMP_FN_BLOCKING_SETUP(RevSfxAnim, 0x143a10, rc::fuzz::revAnim)
-RC_DECOMP_FN_BLOCKING_SETUP(RevSfxTSO, 0x143ba8, rc::fuzz::revTso)
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(RevSfxSetMode, 0x143d30, rc::fuzz::revStopAll)
-RC_DECOMP_FN_SETUP(RevSfxInitAmbient, 0x143d50, rc::fuzz::revAmbientList)
-RC_DECOMP_FN_SETUP(RevSfxInitAmbientRestart, 0x143f68, rc::fuzz::revAmbientList)
-RC_DECOMP_FN(RevsfxDebugInfo, 0x144040)
-RC_DECOMP_FN_SETUP(RevSfxReset, 0x144048, rc::fuzz::revAmbientList)
-RC_DECOMP_FN_BLOCKING_SETUP(RevSfxModifyVolume, 0x144098, rc::fuzz::revModifyVolume)
-RC_DECOMP_FN_SETUP(RevSfxStopPauseSfx, 0x144150, rc::fuzz::revAmbientList)
-RC_DECOMP_FN_SETUP(RevSfxReadyGoFade, 0x144178, rc::fuzz::revReadyGo)
-RC_DECOMP_FN_SETUP(RevSfxDolby, 0x144208, rc::fuzz::revDolby)
+RC_DECOMP_FN_BLOCKING_SETUP(RevSfxPlay3D, rc::fuzz::revPlay3D)
+RC_DECOMP_FN_BLOCKING_SETUP(RevSfxPlay3DCombine, rc::fuzz::revPlay3D)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(RevSfxStopAll, rc::fuzz::revStopAll)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(RevSfxInit, rc::fuzz::revInit)
+RC_DECOMP_FN_BLOCKING_SETUP(RevSfxUpdateAmbient, rc::fuzz::revAmbient)
+RC_DECOMP_FN_BLOCKING_SETUP(RevSfxPauseFade, rc::fuzz::revPauseFade)
+RC_DECOMP_FN_BLOCKING_SETUP(RevSfxCalcReverb, rc::fuzz::revReverb)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(SFXConstructDaemon, rc::fuzz::revSfxDaemon)
+RC_DECOMP_FN_SETUP(SFXSetupClass, rc::fuzz::revSetupClass)
+RC_DECOMP_FN_BLOCKING_SETUP(RevSfxTrigger, rc::fuzz::revTrigger)
+RC_DECOMP_FN_BLOCKING_SETUP(RevSfxSpecialTrigger, rc::fuzz::revSpecialTrigger)
+RC_DECOMP_FN_BLOCKING_SETUP(RevSfxInitialReverb, rc::fuzz::revReverb)
+RC_DECOMP_FN_BLOCKING_SETUP(RevSfxAnim, rc::fuzz::revAnim)
+RC_DECOMP_FN_BLOCKING_SETUP(RevSfxTSO, rc::fuzz::revTso)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(RevSfxSetMode, rc::fuzz::revStopAll)
+RC_DECOMP_FN_SETUP(RevSfxInitAmbient, rc::fuzz::revAmbientList)
+RC_DECOMP_FN_SETUP(RevSfxInitAmbientRestart, rc::fuzz::revAmbientList)
+RC_DECOMP_FN(RevsfxDebugInfo)
+RC_DECOMP_FN_SETUP(RevSfxReset, rc::fuzz::revAmbientList)
+RC_DECOMP_FN_BLOCKING_SETUP(RevSfxModifyVolume, rc::fuzz::revModifyVolume)
+RC_DECOMP_FN_SETUP(RevSfxStopPauseSfx, rc::fuzz::revAmbientList)
+RC_DECOMP_FN_SETUP(RevSfxReadyGoFade, rc::fuzz::revReadyGo)
+RC_DECOMP_FN_SETUP(RevSfxDolby, rc::fuzz::revDolby)

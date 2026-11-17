@@ -1,0 +1,523 @@
+# Reviewed hex literals in the address range (tools/addr_convert.py). Columns: decision, file, value, the source
+# line with blanks squeezed, note. keep = not an address (left as written); addr = an address (converted).
+# addr-changed = an address inside a function that differs in another version, used only by that function's own
+# native, which is not registered there (converted; the other version's value is not used).
+# Lines whose decision is addr disappear from the source once converted and stay here as the record.
+addr	decomp/src/ai.cpp	0x327c00	const ptr32<char> kAINodeType(0x327c00u); // "AIN"	# decomp/src/ai.cpp:25 -> sym::sec_sdata
+addr	decomp/src/ai.cpp	0x322628	guest_call(kPrintf, 0x322628u, static_cast<int32_t>(i)); // "Warning - AINode Downcast failed (node %d)!"	# decomp/src/ai.cpp:544 -> (sym::sec_rodata + 0x28u)
+addr	decomp/src/ai.cpp	0x327c08	const uint32_t intFormat = 0x327c08, speedFormat = 0x322658; // "%d", "speed %d"	# decomp/src/ai.cpp:1141 -> (sym::sec_sdata + 0x8u)
+addr	decomp/src/ai.cpp	0x322658	const uint32_t intFormat = 0x327c08, speedFormat = 0x322658; // "%d", "speed %d"	# decomp/src/ai.cpp:1141 -> (sym::sec_rodata + 0x58u)
+addr	decomp/src/ai.cpp	0x327588	gap -= ee_ftoi(obj.pPhysics->speed * ee_itof(gap) * rodataFloat(0x327588));	# decomp/src/ai.cpp:1640 -> sym::lit4_327588
+addr	decomp/src/ai.cpp	0x327580	if (G(hudVarG).iReadySteadyGo != 0 || !(speed.v < rodataFloat(0x327580).v))	# decomp/src/ai.cpp:1956 -> sym::lit4_327580
+addr	decomp/src/ai.cpp	0x327584	if (hardness < 0x6a || !(rodataFloat(0x327584).v < physics.speed.v))	# decomp/src/ai.cpp:1997 -> sym::lit4_327584
+addr	decomp/src/amenu.h	0x1f0fec	constexpr uint32_t kTEditGeneralText = 0x1f0fecu, kTEditCarNames = 0x1f0ff0u, kCameraPtr = 0x1eab20u;	# decomp/src/amenu.h:149 -> (sym::tEditVarG + 0x6ecu)
+addr	decomp/src/amenu.h	0x1f0ff0	constexpr uint32_t kTEditGeneralText = 0x1f0fecu, kTEditCarNames = 0x1f0ff0u, kCameraPtr = 0x1eab20u;	# decomp/src/amenu.h:149 -> (sym::tEditVarG + 0x6f0u)
+addr	decomp/src/amenu.h	0x1eab20	constexpr uint32_t kTEditGeneralText = 0x1f0fecu, kTEditCarNames = 0x1f0ff0u, kCameraPtr = 0x1eab20u;	# decomp/src/amenu.h:149 -> (sym::cameraVarG + 0xb70u)
+addr	decomp/src/amenu.h	0x1ee8e0	constexpr uint32_t kMusicUserVol = 0x1ee8e0u, kSfxUserVol = 0x1f04f4u, kMusicVolG = 0x327dc4u, kSfxVolG = 0x327dc0u;	# decomp/src/amenu.h:150 -> (sym::rcmusicVarG + 0x20u)
+addr	decomp/src/amenu.h	0x1f04f4	constexpr uint32_t kMusicUserVol = 0x1ee8e0u, kSfxUserVol = 0x1f04f4u, kMusicVolG = 0x327dc4u, kSfxVolG = 0x327dc0u;	# decomp/src/amenu.h:150 -> (sym::revSfxVarG + 0x1144u)
+addr	decomp/src/amenu.h	0x327c58	constexpr uint32_t kFormatD = 0x327c58u, kTextP1 = 0x327c48u, kTextP2 = 0x327c50u;	# decomp/src/amenu.h:336 -> (sym::sec_sdata + 0x58u)
+addr	decomp/src/amenu.h	0x327c48	constexpr uint32_t kFormatD = 0x327c58u, kTextP1 = 0x327c48u, kTextP2 = 0x327c50u;	# decomp/src/amenu.h:336 -> (sym::sec_sdata + 0x48u)
+addr	decomp/src/amenu.h	0x327c50	constexpr uint32_t kFormatD = 0x327c58u, kTextP1 = 0x327c48u, kTextP2 = 0x327c50u;	# decomp/src/amenu.h:336 -> (sym::sec_sdata + 0x50u)
+addr	decomp/src/amenu_fuzz.cpp	0x1f0fec	constexpr uint32_t kLevelPtr = 0x327e80u, kTEditGeneralText = 0x1f0fecu, kTEditCarNames = 0x1f0ff0u, kTEditHelp = 0x1f0b4cu;	# decomp/src/amenu_fuzz.cpp:15 -> (sym::tEditVarG + 0x6ecu)
+addr	decomp/src/amenu_fuzz.cpp	0x1f0ff0	constexpr uint32_t kLevelPtr = 0x327e80u, kTEditGeneralText = 0x1f0fecu, kTEditCarNames = 0x1f0ff0u, kTEditHelp = 0x1f0b4cu;	# decomp/src/amenu_fuzz.cpp:15 -> (sym::tEditVarG + 0x6f0u)
+addr	decomp/src/amenu_fuzz.cpp	0x1f0b4c	constexpr uint32_t kLevelPtr = 0x327e80u, kTEditGeneralText = 0x1f0fecu, kTEditCarNames = 0x1f0ff0u, kTEditHelp = 0x1f0b4cu;	# decomp/src/amenu_fuzz.cpp:15 -> (sym::tEditVarG + 0x24cu)
+addr	decomp/src/amenu_fuzz.cpp	0x1eab20	constexpr uint32_t kCameraPtr = 0x1eab20u, kInput = 0x1f4c80u, kGfx = 0x1f4b30u, kFastScroll = 0x1e9900u;	# decomp/src/amenu_fuzz.cpp:16 -> (sym::cameraVarG + 0xb70u)
+addr	decomp/src/amenu_fuzz.cpp	0x1ee8e0	constexpr uint32_t kMusicUserVol = 0x1ee8e0u, kSfxUserVol = 0x1f04f4u, kMusicVolG = 0x327dc4u, kSfxVolG = 0x327dc0u;	# decomp/src/amenu_fuzz.cpp:17 -> (sym::rcmusicVarG + 0x20u)
+addr	decomp/src/amenu_fuzz.cpp	0x1f04f4	constexpr uint32_t kMusicUserVol = 0x1ee8e0u, kSfxUserVol = 0x1f04f4u, kMusicVolG = 0x327dc4u, kSfxVolG = 0x327dc0u;	# decomp/src/amenu_fuzz.cpp:17 -> (sym::revSfxVarG + 0x1144u)
+keep	decomp/src/amenu_fuzz.cpp	0x100000	bool inRam(uint32_t address) { return address >= 0x100000u && address < 0x2000000u; }	# a size, RAM bound or random range, not the start of .text
+addr	decomp/src/amenu_process.cpp	0x1f4940	for (const uint32_t display : {0x1f4940u, 0x1f4918u})	# decomp/src/amenu_process.cpp:735 -> (sym::gGfxP2_DBuff + 0x40u)
+addr	decomp/src/amenu_process.cpp	0x1f4918	for (const uint32_t display : {0x1f4940u, 0x1f4918u})	# decomp/src/amenu_process.cpp:735 -> (sym::gGfxP2_DBuff + 0x18u)
+keep	decomp/src/anim_fuzz.cpp	0x100000	bool inRam(uint32_t address) { return address >= 0x100000u && address < 0x2000000u && (address & 3u) == 0; }	# a size, RAM bound or random range, not the start of .text
+addr	decomp/src/astring.cpp	0x327cc0	constexpr uint32_t kSpaceString = 0x327cc0; // " ", the string the space's width is measured on.	# decomp/src/astring.cpp:17 -> (sym::sec_sdata + 0xc0u)
+addr	decomp/src/backdrop.cpp	0x322848	constexpr uint32_t kSplashFolder = 0x322848u; // "\splash\"	# decomp/src/backdrop.cpp:26 -> (sym::sec_rodata + 0x248u)
+addr	decomp/src/backdrop.cpp	0x3227c8	constexpr uint32_t kLegal = 0x3227c8u, kLeftVag = 0x3227d8u, kRightVag = 0x3227e8u, kAcclaimMovie = 0x3227f8u,	# decomp/src/backdrop.cpp:27 -> (sym::sec_rodata + 0x1c8u)
+addr	decomp/src/backdrop.cpp	0x3227d8	constexpr uint32_t kLegal = 0x3227c8u, kLeftVag = 0x3227d8u, kRightVag = 0x3227e8u, kAcclaimMovie = 0x3227f8u,	# decomp/src/backdrop.cpp:27 -> (sym::sec_rodata + 0x1d8u)
+addr	decomp/src/backdrop.cpp	0x3227e8	constexpr uint32_t kLegal = 0x3227c8u, kLeftVag = 0x3227d8u, kRightVag = 0x3227e8u, kAcclaimMovie = 0x3227f8u,	# decomp/src/backdrop.cpp:27 -> (sym::sec_rodata + 0x1e8u)
+addr	decomp/src/backdrop.cpp	0x3227f8	constexpr uint32_t kLegal = 0x3227c8u, kLeftVag = 0x3227d8u, kRightVag = 0x3227e8u, kAcclaimMovie = 0x3227f8u,	# decomp/src/backdrop.cpp:27 -> (sym::sec_rodata + 0x1f8u)
+addr	decomp/src/backdrop.cpp	0x322808	kCarMovie = 0x322808u, kAscScreen = 0x322818u, kDbyScreen = 0x322828u, kLogoScreen = 0x322838u;	# decomp/src/backdrop.cpp:28 -> (sym::sec_rodata + 0x208u)
+addr	decomp/src/backdrop.cpp	0x322818	kCarMovie = 0x322808u, kAscScreen = 0x322818u, kDbyScreen = 0x322828u, kLogoScreen = 0x322838u;	# decomp/src/backdrop.cpp:28 -> (sym::sec_rodata + 0x218u)
+addr	decomp/src/backdrop.cpp	0x322828	kCarMovie = 0x322808u, kAscScreen = 0x322818u, kDbyScreen = 0x322828u, kLogoScreen = 0x322838u;	# decomp/src/backdrop.cpp:28 -> (sym::sec_rodata + 0x228u)
+addr	decomp/src/backdrop.cpp	0x322838	kCarMovie = 0x322808u, kAscScreen = 0x322818u, kDbyScreen = 0x322828u, kLogoScreen = 0x322838u;	# decomp/src/backdrop.cpp:28 -> (sym::sec_rodata + 0x238u)
+addr	decomp/src/backdrop.cpp	0x31e440	constexpr uint32_t kGsLoadImage = 0x1e9ee0u, kErrorFn = 0x31e440u; // gs_limage, resVarG.pfLoadErrorFunction	# decomp/src/backdrop.cpp:29 -> (sym::resVarG + 0x3d0u)
+addr	decomp/src/camera.cpp	0x327d08	const uint32_t kObjectList = 0x1ee390u, kCopyCam = 0x1eab28u, kCameras = 0x1e9fb0u, kOrbitAngles = 0x327d08u;	# decomp/src/camera.cpp:47 -> (sym::sec_sdata + 0x108u)
+addr	decomp/src/camera.cpp	0x112fb4	call(0, 0x112fb4);	# decomp/src/camera.cpp:676 -> (sym::CameraStartGridHitFirstNodeCallBack + 0x44u)
+addr	decomp/src/camera.cpp	0x112fdc	call(1, 0x112fdc);	# decomp/src/camera.cpp:677 -> (sym::CameraStartGridHitFirstNodeCallBack + 0x6cu)
+addr	decomp/src/camera.cpp	0x113004	call(2, 0x113004);	# decomp/src/camera.cpp:678 -> (sym::CameraStartGridHitFirstNodeCallBack + 0x94u)
+addr	decomp/src/camera.cpp	0x11643c	static const uint32_t kLoopReturns[4] = {0x11643c, 0x11646c, 0x11649c, 0x1164cc};	# decomp/src/camera.cpp:685 -> (sym::CameraSetNewPath + 0x7cu)
+addr	decomp/src/camera.cpp	0x11646c	static const uint32_t kLoopReturns[4] = {0x11643c, 0x11646c, 0x11649c, 0x1164cc};	# decomp/src/camera.cpp:685 -> (sym::CameraSetNewPath + 0xacu)
+addr	decomp/src/camera.cpp	0x11649c	static const uint32_t kLoopReturns[4] = {0x11643c, 0x11646c, 0x11649c, 0x1164cc};	# decomp/src/camera.cpp:685 -> (sym::CameraSetNewPath + 0xdcu)
+addr	decomp/src/camera.cpp	0x1164cc	static const uint32_t kLoopReturns[4] = {0x11643c, 0x11646c, 0x11649c, 0x1164cc};	# decomp/src/camera.cpp:685 -> (sym::CameraSetNewPath + 0x10cu)
+addr	decomp/src/camera.cpp	0x116508	static const uint32_t kEndReturns[3] = {0x116508, 0x116530, 0x116558};	# decomp/src/camera.cpp:686 -> (sym::CameraSetNewPath + 0x148u)
+addr	decomp/src/camera.cpp	0x116530	static const uint32_t kEndReturns[3] = {0x116508, 0x116530, 0x116558};	# decomp/src/camera.cpp:686 -> (sym::CameraSetNewPath + 0x170u)
+addr	decomp/src/camera.cpp	0x116558	static const uint32_t kEndReturns[3] = {0x116508, 0x116530, 0x116558};	# decomp/src/camera.cpp:686 -> (sym::CameraSetNewPath + 0x198u)
+addr	decomp/src/camera.cpp	0x116410	tagToPathNode(pPath, 0, camera.path.pNodes, pCamera, 0x116410);	# decomp/src/camera.cpp:693 -> (sym::CameraSetNewPath + 0x50u)
+keep	decomp/src/camera_fuzz.cpp	0x100000	setVec(v, rng.between(-0x100000, 0x100000), static_cast<int32_t>(rng.next()), rng.between(-1000, 1000));	# a size, RAM bound or random range, not the start of .text
+keep	decomp/src/camera_fuzz.cpp	0x100000	setVec(v, rng.between(-0x100000, 0x100000), static_cast<int32_t>(rng.next()), rng.between(-1000, 1000));	# a size, RAM bound or random range, not the start of .text
+keep	decomp/src/camera_fuzz.cpp	0x100000	const int32_t reach = kind < 6 ? 0x30000 : kind < 8 ? 0x4000 : kind < 9 ? 0x100000 : 0x800;	# a size, RAM bound or random range, not the start of .text
+addr	decomp/src/collision.cpp	0x3281f8	constexpr uint32_t kLevelCollisionType = 0x003281F8u; // "RCAF"	# decomp/src/collision.cpp:380 -> (sym::sec_sdata + 0x5f8u)
+addr	decomp/src/collision.cpp	0x327fa8	constexpr uint32_t kTrackCollisionType = 0x00327FA8u; // "TCAF"	# decomp/src/collision.cpp:381 -> (sym::sec_sdata + 0x3a8u)
+addr	decomp/src/fm.cpp	0x328300	constexpr uint32_t kBackslash = 0x328300u, kEmpty = 0x328308u, kVersion = 0x328310u;	# decomp/src/fm.cpp:42 -> (sym::sec_sdata + 0x700u)
+addr	decomp/src/fm.cpp	0x328308	constexpr uint32_t kBackslash = 0x328300u, kEmpty = 0x328308u, kVersion = 0x328310u;	# decomp/src/fm.cpp:42 -> (sym::sec_sdata + 0x708u)
+addr	decomp/src/fm.cpp	0x328310	constexpr uint32_t kBackslash = 0x328300u, kEmpty = 0x328308u, kVersion = 0x328310u;	# decomp/src/fm.cpp:42 -> (sym::sec_sdata + 0x710u)
+addr	decomp/src/fm.cpp	0x327f50	constexpr uint32_t kHost = 0x327f50u, kReadBuffer = 0x3285c0u, kWriteBuffer = 0x3285d0u;	# decomp/src/fm.cpp:43 -> (sym::sec_sdata + 0x350u)
+addr-changed	decomp/src/font.cpp	0x18a320	const uint64_t savedRa = 0x18a320u;	# a return address inside FontSpecialCharacterOrColourChange, used only by its own native (diverted where that function changed)
+addr	decomp/src/gametask.cpp	0x1ece10	constexpr uint32_t kReadySteadyGo = 0x1ece10u, kResultTrigger = 0x1f3730u, kDoApplyAIBoost = 0x328490u;	# decomp/src/gametask.cpp:37 -> (sym::hudVarG + 0x70u)
+addr	decomp/src/gametask.cpp	0x1f3730	constexpr uint32_t kReadySteadyGo = 0x1ece10u, kResultTrigger = 0x1f3730u, kDoApplyAIBoost = 0x328490u;	# decomp/src/gametask.cpp:37 -> (sym::visFxVarG + 0x2730u)
+addr	decomp/src/gametask.cpp	0x32762c	constexpr uint32_t kMorphScaleProcess = 0x32762cu, kShadowDefault = 0x327630u, kMorphScale = 0x327634u;	# decomp/src/gametask.cpp:39 -> sym::lit4_32762c
+addr	decomp/src/gametask.cpp	0x327630	constexpr uint32_t kMorphScaleProcess = 0x32762cu, kShadowDefault = 0x327630u, kMorphScale = 0x327634u;	# decomp/src/gametask.cpp:39 -> sym::lit4_327630
+addr	decomp/src/gametask.cpp	0x327634	constexpr uint32_t kMorphScaleProcess = 0x32762cu, kShadowDefault = 0x327630u, kMorphScale = 0x327634u;	# decomp/src/gametask.cpp:39 -> sym::lit4_327634
+keep	decomp/src/gfxtex.cpp	0x1e0000	const uint32_t kFirstTexAddr = 0x1e0000, kLastTexAddr = 0x400000;	# GS memory address (first texture)
+keep	decomp/src/gfxtex.cpp	0x400000	const uint32_t kFirstTexAddr = 0x1e0000, kLastTexAddr = 0x400000;	# GS memory address (last texture)
+addr	decomp/src/gfxtex.cpp	0x3248b8	guest_call(kPrintf, 0x3248b8u, level); // "Storing MIPMAP Level %d, 32x64 as 64x64\n"	# decomp/src/gfxtex.cpp:141 -> (sym::sec_rodata + 0x22b8u)
+addr	decomp/src/gfxtex.cpp	0x3248e8	guest_call(kPrintf, 0x3248e8u, levels); // "MIP Levels %d\n"	# decomp/src/gfxtex.cpp:158 -> (sym::sec_rodata + 0x22e8u)
+addr	decomp/src/hud.cpp	0x1eab20	constexpr uint32_t kCameraPtr = 0x1eab20u, kCameraRSG = 0x1eab24u, kObjectList = 0x1ee390u, kNoObjects = 0x1ee500u;	# decomp/src/hud.cpp:50 -> (sym::cameraVarG + 0xb70u)
+addr	decomp/src/hud.cpp	0x1eab24	constexpr uint32_t kCameraPtr = 0x1eab20u, kCameraRSG = 0x1eab24u, kObjectList = 0x1ee390u, kNoObjects = 0x1ee500u;	# decomp/src/hud.cpp:50 -> (sym::cameraVarG + 0xb74u)
+addr	decomp/src/hud.cpp	0x1ee500	constexpr uint32_t kCameraPtr = 0x1eab20u, kCameraRSG = 0x1eab24u, kObjectList = 0x1ee390u, kNoObjects = 0x1ee500u;	# decomp/src/hud.cpp:50 -> (sym::objectVarG + 0x170u)
+addr	decomp/src/hud.cpp	0x1f3c34	constexpr uint32_t kAINode = 0x1e9478u, kVsyncInc = 0x1f3c34u, kVfxSprite = 0x1f3720u, kVfxRes = 0x1f106cu;	# decomp/src/hud.cpp:51 -> (sym::displayVarG + 0x64u)
+addr	decomp/src/hud.cpp	0x1f3720	constexpr uint32_t kAINode = 0x1e9478u, kVsyncInc = 0x1f3c34u, kVfxSprite = 0x1f3720u, kVfxRes = 0x1f106cu;	# decomp/src/hud.cpp:51 -> (sym::visFxVarG + 0x2720u)
+addr	decomp/src/hud.cpp	0x1f106c	constexpr uint32_t kAINode = 0x1e9478u, kVsyncInc = 0x1f3c34u, kVfxSprite = 0x1f3720u, kVfxRes = 0x1f106cu;	# decomp/src/hud.cpp:51 -> (sym::visFxVarG + 0x6cu)
+addr	decomp/src/hud.cpp	0x322e10	guest_call(kSprintf, buffer, 0x322e10u, minutes, seconds, tenths); // "%02d:%02d.%1d"	# decomp/src/hud.cpp:152 -> (sym::sec_rodata + 0x810u)
+addr	decomp/src/hud.cpp	0x32765c	const uint64_t z = depth(otz, 0x32765cu);	# decomp/src/hud.cpp:283 -> sym::lit4_32765c
+addr	decomp/src/hud.cpp	0x327664	const uint64_t z = depth(otz, 0x327664u);	# decomp/src/hud.cpp:325 -> sym::lit4_327664
+addr	decomp/src/hud.cpp	0x327e00	guest_call(kSprintf, kBuff, 0x327e00u, laps + 1); // "Lap %d"	# decomp/src/hud.cpp:430 -> (sym::sec_sdata + 0x200u)
+addr	decomp/src/hud.cpp	0x322e20	guest_call(kSprintf, kBuff, 0x322e20u); // "Best lap"	# decomp/src/hud.cpp:435 -> (sym::sec_rodata + 0x820u)
+addr	decomp/src/hud.cpp	0x327e08	row(0x50, 0x327e08u); // "--:--.-"	# decomp/src/hud.cpp:439 -> (sym::sec_sdata + 0x208u)
+addr	decomp/src/hud.cpp	0x327e10	guest_call(kSprintf, kBuff, 0x327e10u); // "Target"	# decomp/src/hud.cpp:447 -> (sym::sec_sdata + 0x210u)
+addr	decomp/src/hud.cpp	0x327e18	guest_call(kSprintf, kBuff, 0x327e18u, static_cast<int32_t>(at<int8_t>(car + 0x194u))); // "%d"	# decomp/src/hud.cpp:607 -> (sym::sec_sdata + 0x218u)
+addr	decomp/src/hud.cpp	0x327e20	print(-100, -100, 0x327e20u); // "."	# decomp/src/hud.cpp:650 -> (sym::sec_sdata + 0x220u)
+keep	decomp/src/hud.cpp	0x387038	at<uint32_t>(spr + 0x28u) = 0x387038u;	# a sprite word (colour)
+addr	decomp/src/hud_fuzz.cpp	0x1ee500	constexpr uint32_t kObjectList = 0x1ee390u, kNoObjects = 0x1ee500u, kGfx = 0x1f4b30u, kVsyncInc = 0x1f3c34u;	# decomp/src/hud_fuzz.cpp:12 -> (sym::objectVarG + 0x170u)
+addr	decomp/src/hud_fuzz.cpp	0x1f3c34	constexpr uint32_t kObjectList = 0x1ee390u, kNoObjects = 0x1ee500u, kGfx = 0x1f4b30u, kVsyncInc = 0x1f3c34u;	# decomp/src/hud_fuzz.cpp:12 -> (sym::displayVarG + 0x64u)
+addr	decomp/src/hud_fuzz.cpp	0x1eab24	constexpr uint32_t kCameraRSG = 0x1eab24u, kVfxSprite = 0x1f3720u, kVfxRes = 0x1f106cu, kSfxInitOk = 0x31e488u;	# decomp/src/hud_fuzz.cpp:13 -> (sym::cameraVarG + 0xb74u)
+addr	decomp/src/hud_fuzz.cpp	0x1f3720	constexpr uint32_t kCameraRSG = 0x1eab24u, kVfxSprite = 0x1f3720u, kVfxRes = 0x1f106cu, kSfxInitOk = 0x31e488u;	# decomp/src/hud_fuzz.cpp:13 -> (sym::visFxVarG + 0x2720u)
+addr	decomp/src/hud_fuzz.cpp	0x1f106c	constexpr uint32_t kCameraRSG = 0x1eab24u, kVfxSprite = 0x1f3720u, kVfxRes = 0x1f106cu, kSfxInitOk = 0x31e488u;	# decomp/src/hud_fuzz.cpp:13 -> (sym::visFxVarG + 0x6cu)
+keep	decomp/src/hud_fuzz.cpp	0x400000	mem<int32_t>(c + k) = rng.between(-0x400000, 0x400000);	# a GS memory address, a colour or a random range
+keep	decomp/src/hud_fuzz.cpp	0x400000	mem<int32_t>(c + k) = rng.between(-0x400000, 0x400000);	# a GS memory address, a colour or a random range
+addr	decomp/src/input.cpp	0x3248f8	constexpr uint32_t kPadInitFailed = 0x3248f8u, kPort0OpenFailed = 0x324910u, kPort1OpenFailed = 0x324930u;	# decomp/src/input.cpp:28 -> (sym::sec_rodata + 0x22f8u)
+addr	decomp/src/input.cpp	0x324910	constexpr uint32_t kPadInitFailed = 0x3248f8u, kPort0OpenFailed = 0x324910u, kPort1OpenFailed = 0x324930u;	# decomp/src/input.cpp:28 -> (sym::sec_rodata + 0x2310u)
+addr	decomp/src/input.cpp	0x324930	constexpr uint32_t kPadInitFailed = 0x3248f8u, kPort0OpenFailed = 0x324910u, kPort1OpenFailed = 0x324930u;	# decomp/src/input.cpp:28 -> (sym::sec_rodata + 0x2330u)
+addr	decomp/src/input.cpp	0x324950	constexpr uint32_t kPort0CloseFailed = 0x324950u, kPort1CloseFailed = 0x324970u, kPadEndFailed = 0x324990u;	# decomp/src/input.cpp:29 -> (sym::sec_rodata + 0x2350u)
+addr	decomp/src/input.cpp	0x324970	constexpr uint32_t kPort0CloseFailed = 0x324950u, kPort1CloseFailed = 0x324970u, kPadEndFailed = 0x324990u;	# decomp/src/input.cpp:29 -> (sym::sec_rodata + 0x2370u)
+addr	decomp/src/input.cpp	0x324990	constexpr uint32_t kPort0CloseFailed = 0x324950u, kPort1CloseFailed = 0x324970u, kPadEndFailed = 0x324990u;	# decomp/src/input.cpp:29 -> (sym::sec_rodata + 0x2390u)
+addr	decomp/src/input.cpp	0x328268	constexpr uint32_t kVibratePorts = 0x328268u, kModePorts = 0x328270u, kPadPorts = 0x3249a8u;	# decomp/src/input.cpp:32 -> (sym::sec_sdata + 0x668u)
+addr	decomp/src/input.cpp	0x328270	constexpr uint32_t kVibratePorts = 0x328268u, kModePorts = 0x328270u, kPadPorts = 0x3249a8u;	# decomp/src/input.cpp:32 -> (sym::sec_sdata + 0x670u)
+addr	decomp/src/input.cpp	0x3249a8	constexpr uint32_t kVibratePorts = 0x328268u, kModePorts = 0x328270u, kPadPorts = 0x3249a8u;	# decomp/src/input.cpp:32 -> (sym::sec_rodata + 0x23a8u)
+addr	decomp/src/level.cpp	0x1f106c	constexpr uint32_t kVfxRes = 0x1f106cu, kTEditVars = 0x1f0900u;	# decomp/src/level.cpp:32 -> (sym::visFxVarG + 0x6cu)
+addr	decomp/src/level.cpp	0x327e30	constexpr uint32_t kLevelTypes = 0x327e30u;	# decomp/src/level.cpp:34 -> (sym::sec_sdata + 0x230u)
+addr	decomp/src/level.cpp	0x322fd8	constexpr uint32_t kTexOverflow = 0x322fd8u, kGpuBuffers = 0x323000u, kBBLoadStarted = 0x323048u;	# decomp/src/level.cpp:55 -> (sym::sec_rodata + 0x9d8u)
+addr	decomp/src/level.cpp	0x323000	constexpr uint32_t kTexOverflow = 0x322fd8u, kGpuBuffers = 0x323000u, kBBLoadStarted = 0x323048u;	# decomp/src/level.cpp:55 -> (sym::sec_rodata + 0xa00u)
+addr	decomp/src/level.cpp	0x323048	constexpr uint32_t kTexOverflow = 0x322fd8u, kGpuBuffers = 0x323000u, kBBLoadStarted = 0x323048u;	# decomp/src/level.cpp:55 -> (sym::sec_rodata + 0xa48u)
+addr	decomp/src/level.cpp	0x323058	constexpr uint32_t kBBLoadCompleted = 0x323058u, kDynamicStarted = 0x323070u, kDynamicCompleted = 0x323088u;	# decomp/src/level.cpp:56 -> (sym::sec_rodata + 0xa58u)
+addr	decomp/src/level.cpp	0x323070	constexpr uint32_t kBBLoadCompleted = 0x323058u, kDynamicStarted = 0x323070u, kDynamicCompleted = 0x323088u;	# decomp/src/level.cpp:56 -> (sym::sec_rodata + 0xa70u)
+addr	decomp/src/level.cpp	0x323088	constexpr uint32_t kBBLoadCompleted = 0x323058u, kDynamicStarted = 0x323070u, kDynamicCompleted = 0x323088u;	# decomp/src/level.cpp:56 -> (sym::sec_rodata + 0xa88u)
+keep	decomp/src/level.cpp	0x1f4000	guest_call(levelNum == kTrackLevel ? kFMPrepareHi : kFMPrepare, 0x1f4000u);	# FMPrepare cache size
+keep	decomp/src/level.cpp	0x400000	if (texTop > 0x400000u)	# GS memory limit
+keep	decomp/src/level.cpp	0x400000	guest_call(kPrintf, kTexOverflow, texTop - 0x400000u);	# GS memory limit
+addr	decomp/src/line.cpp	0x327960	tag[5] = lineDepth(otz, 0x327960u);	# decomp/src/line.cpp:84 -> sym::lit4_327960
+addr	decomp/src/line.cpp	0x327964	lineVertex(line.red, line.green, line.blue, screenXY(line.x1, line.y1), lineDepth(otz, 0x327964u));	# decomp/src/line.cpp:86 -> sym::lit4_327964
+addr	decomp/src/line.cpp	0x32796c	lineVertex(line.red, line.green, line.blue, project(pxS, pyS), lineDepth(zS, 0x32796cu));	# decomp/src/line.cpp:161 -> sym::lit4_32796c
+addr	decomp/src/line.cpp	0x327970	lineVertex(line.red, line.green, line.blue, project(pxE, pyE), lineDepth(zE, 0x327970u));	# decomp/src/line.cpp:162 -> sym::lit4_327970
+addr	decomp/src/loading.cpp	0x3230a0	constexpr uint32_t kScar1 = 0x3230a0u, kSbot2 = 0x3230b0u, kSbot1 = 0x3230c0u, kScar2 = 0x3230d0u, kFileUsed = 0x1ece48u;	# decomp/src/loading.cpp:16 -> (sym::sec_rodata + 0xaa0u)
+addr	decomp/src/loading.cpp	0x3230b0	constexpr uint32_t kScar1 = 0x3230a0u, kSbot2 = 0x3230b0u, kSbot1 = 0x3230c0u, kScar2 = 0x3230d0u, kFileUsed = 0x1ece48u;	# decomp/src/loading.cpp:16 -> (sym::sec_rodata + 0xab0u)
+addr	decomp/src/loading.cpp	0x3230c0	constexpr uint32_t kScar1 = 0x3230a0u, kSbot2 = 0x3230b0u, kSbot1 = 0x3230c0u, kScar2 = 0x3230d0u, kFileUsed = 0x1ece48u;	# decomp/src/loading.cpp:16 -> (sym::sec_rodata + 0xac0u)
+addr	decomp/src/loading.cpp	0x3230d0	constexpr uint32_t kScar1 = 0x3230a0u, kSbot2 = 0x3230b0u, kSbot1 = 0x3230c0u, kScar2 = 0x3230d0u, kFileUsed = 0x1ece48u;	# decomp/src/loading.cpp:16 -> (sym::sec_rodata + 0xad0u)
+addr	decomp/src/loading.cpp	0x3282a4	constexpr uint32_t kMpegBuffer1 = 0x3282a4u, kMainLevel = 0x1edc4au, kMainNoHuman = 0x1edc69u, kFlyingLogo = 0x1eccfcu;	# decomp/src/loading.cpp:17 -> (sym::mpegBuffer + 0x4u)
+addr	decomp/src/loading.cpp	0x1edc4a	constexpr uint32_t kMpegBuffer1 = 0x3282a4u, kMainLevel = 0x1edc4au, kMainNoHuman = 0x1edc69u, kFlyingLogo = 0x1eccfcu;	# decomp/src/loading.cpp:17 -> (sym::mainVarG + 0x34au)
+addr	decomp/src/loading.cpp	0x1edc69	constexpr uint32_t kMpegBuffer1 = 0x3282a4u, kMainLevel = 0x1edc4au, kMainNoHuman = 0x1edc69u, kFlyingLogo = 0x1eccfcu;	# decomp/src/loading.cpp:17 -> (sym::mainVarG + 0x369u)
+addr	decomp/src/loading.cpp	0x1eccfc	constexpr uint32_t kMpegBuffer1 = 0x3282a4u, kMainLevel = 0x1edc4au, kMainNoHuman = 0x1edc69u, kFlyingLogo = 0x1eccfcu;	# decomp/src/loading.cpp:17 -> (sym::frontEndVarG + 0x2a4u)
+addr	decomp/src/main.cpp	0x323628	guest_call(kPrintf, 0x323628u, count);	# decomp/src/main.cpp:113 -> (sym::sec_rodata + 0x1028u)
+addr	decomp/src/main.cpp	0x3233a0	guest_call(kPrintf, 0x3233a0u);	# decomp/src/main.cpp:122 -> (sym::sec_rodata + 0xda0u)
+addr	decomp/src/main.cpp	0x327ef0	guest_call(kResInit, 0x327ef0u, at<uint32_t>(kResHandle), 0x1194000);	# decomp/src/main.cpp:143 -> (sym::sec_sdata + 0x2f0u)
+addr	decomp/src/main.cpp	0x327ef8	guest_call(kFontPrint, 0x294, 0x2e, 0x327ef8u);	# decomp/src/main.cpp:288 -> (sym::sec_sdata + 0x2f8u)
+addr	decomp/src/main.cpp	0x3233b8	guest_call(kPrintf, 0x3233b8u);	# decomp/src/main.cpp:315 -> (sym::sec_rodata + 0xdb8u)
+addr	decomp/src/main.cpp	0x3233d8	guest_call(kPrintf, 0x3233d8u);	# decomp/src/main.cpp:317 -> (sym::sec_rodata + 0xdd8u)
+addr	decomp/src/main.cpp	0x3233f0	guest_call(kPrintf, 0x3233f0u);	# decomp/src/main.cpp:319 -> (sym::sec_rodata + 0xdf0u)
+addr	decomp/src/main.cpp	0x323408	guest_call(kPrintf, 0x323408u);	# decomp/src/main.cpp:321 -> (sym::sec_rodata + 0xe08u)
+addr	decomp/src/main.cpp	0x323420	guest_call(kPrintf, 0x323420u);	# decomp/src/main.cpp:323 -> (sym::sec_rodata + 0xe20u)
+addr	decomp/src/main.cpp	0x323438	guest_call(kPrintf, 0x323438u);	# decomp/src/main.cpp:325 -> (sym::sec_rodata + 0xe38u)
+addr	decomp/src/main.cpp	0x323450	guest_call(kPrintf, 0x323450u);	# decomp/src/main.cpp:327 -> (sym::sec_rodata + 0xe50u)
+addr	decomp/src/main.cpp	0x323468	guest_call(kPrintf, 0x323468u);	# decomp/src/main.cpp:329 -> (sym::sec_rodata + 0xe68u)
+addr	decomp/src/main.cpp	0x323480	guest_call(kPrintf, 0x323480u);	# decomp/src/main.cpp:331 -> (sym::sec_rodata + 0xe80u)
+addr	decomp/src/main.cpp	0x323498	guest_call(kPrintf, 0x323498u);	# decomp/src/main.cpp:333 -> (sym::sec_rodata + 0xe98u)
+addr	decomp/src/main.cpp	0x3234b8	guest_call(kPrintf, 0x3234b8u);	# decomp/src/main.cpp:335 -> (sym::sec_rodata + 0xeb8u)
+addr	decomp/src/main.cpp	0x3234e0	guest_call(kPrintf, 0x3234e0u);	# decomp/src/main.cpp:337 -> (sym::sec_rodata + 0xee0u)
+addr	decomp/src/main.cpp	0x323500	guest_call(kPrintf, 0x323500u);	# decomp/src/main.cpp:339 -> (sym::sec_rodata + 0xf00u)
+addr	decomp/src/main.cpp	0x323518	guest_call(kPrintf, 0x323518u);	# decomp/src/main.cpp:342 -> (sym::sec_rodata + 0xf18u)
+addr	decomp/src/main.cpp	0x323530	guest_call(kPrintf, 0x323530u);	# decomp/src/main.cpp:345 -> (sym::sec_rodata + 0xf30u)
+addr	decomp/src/main.cpp	0x323548	guest_call(kPrintf, 0x323548u);	# decomp/src/main.cpp:373 -> (sym::sec_rodata + 0xf48u)
+addr	decomp/src/main.cpp	0x323560	guest_call(kPrintf, 0x323560u);	# decomp/src/main.cpp:382 -> (sym::sec_rodata + 0xf60u)
+addr	decomp/src/main.cpp	0x323578	guest_call(kPrintf, 0x323578u);	# decomp/src/main.cpp:384 -> (sym::sec_rodata + 0xf78u)
+addr	decomp/src/main.cpp	0x323598	guest_call(kPrintf, 0x323598u);	# decomp/src/main.cpp:386 -> (sym::sec_rodata + 0xf98u)
+addr	decomp/src/main.cpp	0x3235b8	guest_call(kPrintf, 0x3235b8u);	# decomp/src/main.cpp:388 -> (sym::sec_rodata + 0xfb8u)
+addr	decomp/src/main.cpp	0x3235d0	guest_call(kPrintf, 0x3235d0u);	# decomp/src/main.cpp:390 -> (sym::sec_rodata + 0xfd0u)
+addr	decomp/src/main.cpp	0x3235f0	guest_call(kPrintf, 0x3235f0u);	# decomp/src/main.cpp:397 -> (sym::sec_rodata + 0xff0u)
+addr	decomp/src/main.cpp	0x323608	guest_call(kPrintf, 0x323608u);	# decomp/src/main.cpp:415 -> (sym::sec_rodata + 0x1008u)
+addr	decomp/src/main.cpp	0x323638	guest_call(kPrintf, 0x323638u);	# decomp/src/main.cpp:611 -> (sym::sec_rodata + 0x1038u)
+addr	decomp/src/main.h	0x1e9404	constexpr uint32_t kMain = 0x1ed900u, kFrontEnd = 0x1eca58u, kAi = 0x1e9400u, kRaceOrder = 0x1e9404u, kCarList = 0x1eb7a0u;	# decomp/src/main.h:48 -> (sym::aiVarG + 0x4u)
+addr	decomp/src/main.h	0x1f3730	constexpr uint32_t kResultTrigger = 0x1f3730u, kRacePoints = 0x1ed460u, kPauseLinks = 0x1ed468u, kRacePointsText = 0x327f00u;	# decomp/src/main.h:50 -> (sym::visFxVarG + 0x2730u)
+addr	decomp/src/main.h	0x327f00	constexpr uint32_t kResultTrigger = 0x1f3730u, kRacePoints = 0x1ed460u, kPauseLinks = 0x1ed468u, kRacePointsText = 0x327f00u;	# decomp/src/main.h:50 -> (sym::sec_sdata + 0x300u)
+addr	decomp/src/main2.cpp	0x323670	guest_call(kPrintf, 0x323670u, at<uint32_t>(kCarList + 12u * static_cast<uint32_t>(i)));	# decomp/src/main2.cpp:567 -> (sym::sec_rodata + 0x1070u)
+keep	decomp/src/math_core.cpp	0x19660d	seed = seed * 0x19660Du + 0x3C6EF35Fu;	# random number generator multiplier
+keep	decomp/src/maths.cpp	0x3fffff	value = (value & 0x3FFFFFu) << 2 | 1u;	# a mask
+addr	decomp/src/matrix.cpp	0x3282e8	constexpr uint32_t kNewline = 0x3282e8u, kDifferent = 0x324b78u; // "\n", "Different %f %f"	# decomp/src/matrix.cpp:30 -> (sym::sec_sdata + 0x6e8u)
+addr	decomp/src/matrix.cpp	0x324b78	constexpr uint32_t kNewline = 0x3282e8u, kDifferent = 0x324b78u; // "\n", "Different %f %f"	# decomp/src/matrix.cpp:30 -> (sym::sec_rodata + 0x2578u)
+addr	decomp/src/matrix.cpp	0x327b8c	rotMatrix3(pVec, pMat, {Axis::X, Axis::Y, Axis::Z}, {0x327b8cu, 0x327b90u, 0x327b94u});	# decomp/src/matrix.cpp:94 -> sym::lit4_327b8c
+addr	decomp/src/matrix.cpp	0x327b90	rotMatrix3(pVec, pMat, {Axis::X, Axis::Y, Axis::Z}, {0x327b8cu, 0x327b90u, 0x327b94u});	# decomp/src/matrix.cpp:94 -> sym::lit4_327b90
+addr	decomp/src/matrix.cpp	0x327b94	rotMatrix3(pVec, pMat, {Axis::X, Axis::Y, Axis::Z}, {0x327b8cu, 0x327b90u, 0x327b94u});	# decomp/src/matrix.cpp:94 -> sym::lit4_327b94
+addr	decomp/src/matrix.cpp	0x327b98	rotMatrix3(pVec, pMat, {Axis::Y, Axis::X, Axis::Z}, {0x327b98u, 0x327b9cu, 0x327ba0u});	# decomp/src/matrix.cpp:99 -> sym::lit4_327b98
+addr	decomp/src/matrix.cpp	0x327b9c	rotMatrix3(pVec, pMat, {Axis::Y, Axis::X, Axis::Z}, {0x327b98u, 0x327b9cu, 0x327ba0u});	# decomp/src/matrix.cpp:99 -> sym::lit4_327b9c
+addr	decomp/src/matrix.cpp	0x327ba0	rotMatrix3(pVec, pMat, {Axis::Y, Axis::X, Axis::Z}, {0x327b98u, 0x327b9cu, 0x327ba0u});	# decomp/src/matrix.cpp:99 -> sym::lit4_327ba0
+addr	decomp/src/matrix.cpp	0x327ba4	rotMatrix3(pVec, pMat, {Axis::Z, Axis::Y, Axis::X}, {0x327ba4u, 0x327ba8u, 0x327bacu});	# decomp/src/matrix.cpp:104 -> sym::lit4_327ba4
+addr	decomp/src/matrix.cpp	0x327ba8	rotMatrix3(pVec, pMat, {Axis::Z, Axis::Y, Axis::X}, {0x327ba4u, 0x327ba8u, 0x327bacu});	# decomp/src/matrix.cpp:104 -> sym::lit4_327ba8
+addr	decomp/src/matrix.cpp	0x327bac	rotMatrix3(pVec, pMat, {Axis::Z, Axis::Y, Axis::X}, {0x327ba4u, 0x327ba8u, 0x327bacu});	# decomp/src/matrix.cpp:104 -> sym::lit4_327bac
+addr	decomp/src/matrix.cpp	0x327bb0	const ee_float y = radians(pVec->vy, 0x327bb0u), x = radians(pVec->vx, 0x327bb0u), z = radians(pVec->vz, 0x327bb0u);	# decomp/src/matrix.cpp:112 -> sym::lit4_327bb0
+addr	decomp/src/matrix.cpp	0x327bb0	const ee_float y = radians(pVec->vy, 0x327bb0u), x = radians(pVec->vx, 0x327bb0u), z = radians(pVec->vz, 0x327bb0u);	# decomp/src/matrix.cpp:112 -> sym::lit4_327bb0
+addr	decomp/src/matrix.cpp	0x327bb0	const ee_float y = radians(pVec->vy, 0x327bb0u), x = radians(pVec->vx, 0x327bb0u), z = radians(pVec->vz, 0x327bb0u);	# decomp/src/matrix.cpp:112 -> sym::lit4_327bb0
+keep	decomp/src/mem_fuzz.cpp	0x100000	setArg(ctx, 3, chance(state, 10) ? nextFuzz(state) % 0x100000u : rnd(state, 0x400));	# a size, RAM bound or random range, not the start of .text
+keep	decomp/src/misc.cpp	0x403030	Surface s{0, 0x403030, 0x304040, 0, 6000}; // The default.	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x304040	Surface s{0, 0x403030, 0x304040, 0, 6000}; // The default.	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x404040	case 1: case 4: case 9: s = {0, 0x504040, 0x404040, 0, 6000}; break;	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x304040	case 2: s = {0, 0x504040, 0x304040, 0, 6000}; break;	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x402040	case 3: s = {0, 0x402040, 0x2500, 0, 6000}; break;	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x404040	case 5: s = {0, 0x2030, 0x404040, 0, 0x2ee}; break;	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x404040	case 6: s = {8, 0xf08040, 0x404040, 0, 6000}; break;	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x404040	case 7: case 0xc: case 0x18: s = {0, 0x404040, 0x404040, 0, 6000}; break;	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x404040	case 7: case 0xc: case 0x18: s = {0, 0x404040, 0x404040, 0, 6000}; break;	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x403020	case 8: s = {0, 0x403020, 0x2040, 0, 6000}; break;	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x303030	case 10: s = {2, 0x2040, 0x303030, 10, 2000}; break;	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x402020	case 0xb: s = {8, 0x402020, 0x104040, 0, 6000}; break;	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x104040	case 0xb: s = {8, 0x402020, 0x104040, 0, 6000}; break;	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x403020	case 0xd: s = {8, 0x403020, 0x103040, 0, 6000}; break;	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x103040	case 0xd: s = {8, 0x403020, 0x103040, 0, 6000}; break;	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x200000	case 0xe: s = {0, 0xe0e0e0, 0x200000, 0, 2000}; break;	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x384040	case 0xf: s = {0, 0x808080, 0x384040, 0, 6000}; break;	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x404040	case 0x10: s = {0, 0x802020, 0x404040, 0, 6000}; break;	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x303030	case 0x12: case 0x13: case 0x45: s = {2, 0x2040, 0x303030, 0, 6000}; break;	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x404040	case 0x23: s = {0, 0x505050, 0x404040, 0, 500}; break;	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x403028	s = {0, 0x403028, 0x303030, 0, 6000};	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x303030	s = {0, 0x403028, 0x303030, 0, 6000};	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x403028	s = {0, 0x403028, 0x303030, 0, 6000};	# surface colours (Surface{...} tables)
+keep	decomp/src/misc.cpp	0x303030	s = {0, 0x403028, 0x303030, 0, 6000};	# surface colours (Surface{...} tables)
+addr	decomp/src/misc.cpp	0x32792c	guest_call(kRdrSetupCamera, cameraAddress, static_cast<int32_t>(ee_ftoi(G(lsVarG).fov * constantAt(0x32792cu))));	# decomp/src/misc.cpp:366 -> sym::lit4_32792c
+addr	decomp/src/misc.cpp	0x32799c	if (constantAt(0x3281b8u) * constantAt(0x32799cu) * radius * camera.normDVal < depth)	# decomp/src/misc.cpp:599 -> sym::lit4_32799c
+addr	decomp/src/misc.cpp	0x3279a0	G(maxEnvMapDistG) = G(maxEnvMapDistG) * constantAt(0x3279a0u);	# decomp/src/misc.cpp:631 -> sym::lit4_3279a0
+addr	decomp/src/misc.cpp	0x3279a0	G(fadeEnvMapDistG) = G(fadeEnvMapDistG) * constantAt(0x3279a0u);	# decomp/src/misc.cpp:632 -> sym::lit4_3279a0
+addr	decomp/src/misc.cpp	0x3279a4	G(gEnvRamp) = ee_itof(ee_rem(static_cast<int32_t>(G(gRdr).frameNumber), 0xd)) * constantAt(0x3279a4u);	# decomp/src/misc.cpp:649 -> sym::lit4_3279a4
+addr	decomp/src/misc.cpp	0x3279a8	const ee_float ramp = G(gEnvRamp) + constantAt(0x3279a8u);	# decomp/src/misc.cpp:660 -> sym::lit4_3279a8
+addr	decomp/src/mpeg.cpp	0x324a80	constexpr uint32_t kSplashDir = 0x324a80u, kCannotOpen = 0x324a90u, kSeekFails = 0x324aa0u, kAllocFails = 0x324ab8u,	# decomp/src/mpeg.cpp:54 -> (sym::sec_rodata + 0x2480u)
+addr	decomp/src/mpeg.cpp	0x324a90	constexpr uint32_t kSplashDir = 0x324a80u, kCannotOpen = 0x324a90u, kSeekFails = 0x324aa0u, kAllocFails = 0x324ab8u,	# decomp/src/mpeg.cpp:54 -> (sym::sec_rodata + 0x2490u)
+addr	decomp/src/mpeg.cpp	0x324aa0	constexpr uint32_t kSplashDir = 0x324a80u, kCannotOpen = 0x324a90u, kSeekFails = 0x324aa0u, kAllocFails = 0x324ab8u,	# decomp/src/mpeg.cpp:54 -> (sym::sec_rodata + 0x24a0u)
+addr	decomp/src/mpeg.cpp	0x324ab8	constexpr uint32_t kSplashDir = 0x324a80u, kCannotOpen = 0x324a90u, kSeekFails = 0x324aa0u, kAllocFails = 0x324ab8u,	# decomp/src/mpeg.cpp:54 -> (sym::sec_rodata + 0x24b8u)
+addr	decomp/src/mpeg.cpp	0x324ad0	kCannotRead = 0x324ad0u, kPlaying = 0x324a50u, kPictureFailed = 0x324a60u, kFrameDrop = 0x324ae0u;	# decomp/src/mpeg.cpp:55 -> (sym::sec_rodata + 0x24d0u)
+addr	decomp/src/mpeg.cpp	0x324a50	kCannotRead = 0x324ad0u, kPlaying = 0x324a50u, kPictureFailed = 0x324a60u, kFrameDrop = 0x324ae0u;	# decomp/src/mpeg.cpp:55 -> (sym::sec_rodata + 0x2450u)
+addr	decomp/src/mpeg.cpp	0x324a60	kCannotRead = 0x324ad0u, kPlaying = 0x324a50u, kPictureFailed = 0x324a60u, kFrameDrop = 0x324ae0u;	# decomp/src/mpeg.cpp:55 -> (sym::sec_rodata + 0x2460u)
+addr	decomp/src/mpeg.cpp	0x324ae0	kCannotRead = 0x324ad0u, kPlaying = 0x324a50u, kPictureFailed = 0x324a60u, kFrameDrop = 0x324ae0u;	# decomp/src/mpeg.cpp:55 -> (sym::sec_rodata + 0x24e0u)
+keep	decomp/src/mpeg.cpp	0x340000	guest_call(kMpegReset, kMpegG, 0x340000);	# sceMpegReset argument (a size)
+keep	decomp/src/mpeg.cpp	0x340000	guest_call(kMpegReset, kMpegG, 0x340000);	# sceMpegReset argument (a size)
+keep	decomp/src/mpeg.cpp	0x200000	guest_call(kGsPutDispEnv, kDisp, 0x200000, drawid);	# sceGsPutDispEnv argument
+keep	decomp/src/mpeg.cpp	0x340000	guest_call(kMpegReset, kMpegG, 0x340000);	# sceMpegReset argument (a size)
+keep	decomp/src/mpeg.cpp	0x200000	guest_call(kGsPutDispEnv, kDisp, 0x200000, drawid);	# sceGsPutDispEnv argument
+addr	decomp/src/object.h	0x327f18	constexpr uint32_t kObjectVars = 0x1ee390u, kObjectType = 0x327f18u, kObjectType2 = 0x327f20u, kCarList = 0x1eb7a0u;	# decomp/src/object.h:85 -> (sym::sec_sdata + 0x318u)
+addr	decomp/src/object.h	0x327f20	constexpr uint32_t kObjectVars = 0x1ee390u, kObjectType = 0x327f18u, kObjectType2 = 0x327f20u, kCarList = 0x1eb7a0u;	# decomp/src/object.h:85 -> (sym::sec_sdata + 0x320u)
+addr	decomp/src/object2.cpp	0x32768c	constexpr uint32_t kAiVolumeScale = 0x32768c, kVolumeScale = 0x327690, kBoatVolumeScale = 0x327694, kMaterialVolumeScale = 0x327698;	# decomp/src/object2.cpp:21 -> sym::lit4_32768c
+addr	decomp/src/object2.cpp	0x327690	constexpr uint32_t kAiVolumeScale = 0x32768c, kVolumeScale = 0x327690, kBoatVolumeScale = 0x327694, kMaterialVolumeScale = 0x327698;	# decomp/src/object2.cpp:21 -> sym::lit4_327690
+addr	decomp/src/object2.cpp	0x327694	constexpr uint32_t kAiVolumeScale = 0x32768c, kVolumeScale = 0x327690, kBoatVolumeScale = 0x327694, kMaterialVolumeScale = 0x327698;	# decomp/src/object2.cpp:21 -> sym::lit4_327694
+addr	decomp/src/object2.cpp	0x327698	constexpr uint32_t kAiVolumeScale = 0x32768c, kVolumeScale = 0x327690, kBoatVolumeScale = 0x327694, kMaterialVolumeScale = 0x327698;	# decomp/src/object2.cpp:21 -> sym::lit4_327698
+addr	decomp/src/object2.cpp	0x327684	constexpr uint32_t kRocketVolumeScale = 0x327684;	# decomp/src/object2.cpp:22 -> sym::lit4_327684
+addr	decomp/src/object2.cpp	0x3276cc	const int32_t v = ee_ftoi(o->pPhysics->speed * constAt(0x3276ccu) + k40);	# decomp/src/object2.cpp:470 -> sym::lit4_3276cc
+addr	decomp/src/object3.cpp	0x1f106c	constexpr uint32_t kCameraVars = 0x1e9fb0u, kVfxRes = 0x1f106cu, kSplitScreen = 0x1edc78u, kWheel = 0x328580u;	# decomp/src/object3.cpp:26 -> (sym::visFxVarG + 0x6cu)
+addr	decomp/src/object3.cpp	0x1edc78	constexpr uint32_t kCameraVars = 0x1e9fb0u, kVfxRes = 0x1f106cu, kSplitScreen = 0x1edc78u, kWheel = 0x328580u;	# decomp/src/object3.cpp:26 -> (sym::mainVarG + 0x378u)
+addr	decomp/src/object3.cpp	0x1ed908	constexpr uint32_t kRdrCamera = 0x1f40b8u, kCurrentDo = 0x1ed908u, kResultTrigger = 0x1f3730u;	# decomp/src/object3.cpp:27 -> (sym::mainVarG + 0x8u)
+addr	decomp/src/object3.cpp	0x1f3730	constexpr uint32_t kRdrCamera = 0x1f40b8u, kCurrentDo = 0x1ed908u, kResultTrigger = 0x1f3730u;	# decomp/src/object3.cpp:27 -> (sym::visFxVarG + 0x2730u)
+addr	decomp/src/object3.cpp	0x1ee50c	constexpr uint32_t kDumperRockHead = 0x1ee50cu, kSledOffset = 0x323938u, kRockOffset = 0x323948u, kSledTrig = 0x32769cu;	# decomp/src/object3.cpp:28 -> (sym::objectVarG + 0x17cu)
+addr	decomp/src/object3.cpp	0x323938	constexpr uint32_t kDumperRockHead = 0x1ee50cu, kSledOffset = 0x323938u, kRockOffset = 0x323948u, kSledTrig = 0x32769cu;	# decomp/src/object3.cpp:28 -> (sym::sec_rodata + 0x1338u)
+addr	decomp/src/object3.cpp	0x323948	constexpr uint32_t kDumperRockHead = 0x1ee50cu, kSledOffset = 0x323938u, kRockOffset = 0x323948u, kSledTrig = 0x32769cu;	# decomp/src/object3.cpp:28 -> (sym::sec_rodata + 0x1348u)
+addr	decomp/src/object3.cpp	0x32769c	constexpr uint32_t kDumperRockHead = 0x1ee50cu, kSledOffset = 0x323938u, kRockOffset = 0x323948u, kSledTrig = 0x32769cu;	# decomp/src/object3.cpp:28 -> sym::lit4_32769c
+keep	decomp/src/object3.cpp	0x1122ff	L.glow(0x224u, 0x1122ffu);	# a glow colour
+addr	decomp/src/ocol.cpp	0x327f44	const ptr32<_sOColObj> headAddress(0x327f44u); // &oColG.pHead	# decomp/src/ocol.cpp:144 -> (sym::oColG + 0x4u)
+addr	decomp/src/ocol.cpp	0x327f44	const ptr32<_sOColObj> headAddress(0x327f44u);	# decomp/src/ocol.cpp:174 -> (sym::oColG + 0x4u)
+addr	decomp/src/path.cpp	0x1eab20	constexpr uint32_t kCameraPtr = 0x1eab20u; // cameraVarG.pCamera	# decomp/src/path.cpp:34 -> (sym::cameraVarG + 0xb70u)
+addr	decomp/src/path.cpp	0x327f48	constexpr uint32_t kPathType = 0x327f48u;	# decomp/src/path.cpp:36 -> (sym::sec_sdata + 0x348u)
+addr	decomp/src/path_fuzz.cpp	0x1eab20	constexpr uint32_t kFrontEnd = 0x1eca58u, kPathLinks = 0x1ebef0u, kCameraPtr = 0x1eab20u, kLevelPtr = 0x327e80u;	# decomp/src/path_fuzz.cpp:13 -> (sym::cameraVarG + 0xb70u)
+addr	decomp/src/physics2.cpp	0x3276d0	constexpr uint32_t kWheelRadiusScale = 0x3276d0u, kRideHeight = 0x3276d4u, kForceScale = 0x3276d8u;	# decomp/src/physics2.cpp:46 -> sym::lit4_3276d0
+addr	decomp/src/physics2.cpp	0x3276d4	constexpr uint32_t kWheelRadiusScale = 0x3276d0u, kRideHeight = 0x3276d4u, kForceScale = 0x3276d8u;	# decomp/src/physics2.cpp:46 -> sym::lit4_3276d4
+addr	decomp/src/physics2.cpp	0x3276d8	constexpr uint32_t kWheelRadiusScale = 0x3276d0u, kRideHeight = 0x3276d4u, kForceScale = 0x3276d8u;	# decomp/src/physics2.cpp:46 -> sym::lit4_3276d8
+addr	decomp/src/physics2.cpp	0x3276dc	constexpr uint32_t kSpringScale = 0x3276dcu, kBoatThrustScale = 0x3276e0u, kHelpOutScale = 0x327f58u;	# decomp/src/physics2.cpp:47 -> sym::lit4_3276dc
+addr	decomp/src/physics2.cpp	0x3276e0	constexpr uint32_t kSpringScale = 0x3276dcu, kBoatThrustScale = 0x3276e0u, kHelpOutScale = 0x327f58u;	# decomp/src/physics2.cpp:47 -> sym::lit4_3276e0
+addr	decomp/src/physics_fuzz.cpp	0x1ece10	constexpr uint32_t kReadySteadyGo = 0x1ece10u, kResultTrigger = 0x1f3730u, kDoApplyAIBoost = 0x328490u;	# decomp/src/physics_fuzz.cpp:23 -> (sym::hudVarG + 0x70u)
+addr	decomp/src/physics_fuzz.cpp	0x1f3730	constexpr uint32_t kReadySteadyGo = 0x1ece10u, kResultTrigger = 0x1f3730u, kDoApplyAIBoost = 0x328490u;	# decomp/src/physics_fuzz.cpp:23 -> (sym::visFxVarG + 0x2730u)
+addr	decomp/src/physics_fuzz.cpp	0x1e9404	constexpr uint32_t kScratchPadG = 0x1ed4c0u, kRaceOrder = 0x1e9404u;	# decomp/src/physics_fuzz.cpp:26 -> (sym::aiVarG + 0x4u)
+addr	decomp/src/pickup.cpp	0x1f48d8	constexpr uint32_t kVisMask0 = 0x1f48d8u, kVisMask1 = 0x1f48dcu;	# decomp/src/pickup.cpp:33 -> (sym::visVarG + 0x8u)
+addr	decomp/src/pickup.cpp	0x1f48dc	constexpr uint32_t kVisMask0 = 0x1f48d8u, kVisMask1 = 0x1f48dcu;	# decomp/src/pickup.cpp:33 -> (sym::visVarG + 0xcu)
+addr	decomp/src/pickup.cpp	0x1eab20	constexpr uint32_t kCameraPtr = 0x1eab20u, kObjectList = 0x1ee390u, kNoObjects = 0x1ee500u, kRaceOrder = 0x1e9404u;	# decomp/src/pickup.cpp:34 -> (sym::cameraVarG + 0xb70u)
+addr	decomp/src/pickup.cpp	0x1ee500	constexpr uint32_t kCameraPtr = 0x1eab20u, kObjectList = 0x1ee390u, kNoObjects = 0x1ee500u, kRaceOrder = 0x1e9404u;	# decomp/src/pickup.cpp:34 -> (sym::objectVarG + 0x170u)
+addr	decomp/src/pickup.cpp	0x1e9404	constexpr uint32_t kCameraPtr = 0x1eab20u, kObjectList = 0x1ee390u, kNoObjects = 0x1ee500u, kRaceOrder = 0x1e9404u;	# decomp/src/pickup.cpp:34 -> (sym::aiVarG + 0x4u)
+addr	decomp/src/pickup.cpp	0x323bd0	constexpr uint32_t kPickupProcess = 0x13ead0u, kPrintf = 0x12e9e8u, kNotOverGround = 0x323bd0u;	# decomp/src/pickup.cpp:36 -> (sym::sec_rodata + 0x15d0u)
+keep	decomp/src/pickup.cpp	0x3a97ff	if (0x3a97ff < absolute(dx) || 0x3a97ff < absolute(dy) || 0x3a97ff < absolute(dz))	# a distance limit
+keep	decomp/src/pickup.cpp	0x3a97ff	if (0x3a97ff < absolute(dx) || 0x3a97ff < absolute(dy) || 0x3a97ff < absolute(dz))	# a distance limit
+keep	decomp/src/pickup.cpp	0x3a97ff	if (0x3a97ff < absolute(dx) || 0x3a97ff < absolute(dy) || 0x3a97ff < absolute(dz))	# a distance limit
+addr	decomp/src/pickup_fuzz.cpp	0x1f48d8	constexpr uint32_t kVisMask0 = 0x1f48d8u, kVisMask1 = 0x1f48dcu, kCameraPtr = 0x1eab20u;	# decomp/src/pickup_fuzz.cpp:15 -> (sym::visVarG + 0x8u)
+addr	decomp/src/pickup_fuzz.cpp	0x1f48dc	constexpr uint32_t kVisMask0 = 0x1f48d8u, kVisMask1 = 0x1f48dcu, kCameraPtr = 0x1eab20u;	# decomp/src/pickup_fuzz.cpp:15 -> (sym::visVarG + 0xcu)
+addr	decomp/src/pickup_fuzz.cpp	0x1eab20	constexpr uint32_t kVisMask0 = 0x1f48d8u, kVisMask1 = 0x1f48dcu, kCameraPtr = 0x1eab20u;	# decomp/src/pickup_fuzz.cpp:15 -> (sym::cameraVarG + 0xb70u)
+addr	decomp/src/pickup_fuzz.cpp	0x1ee500	constexpr uint32_t kObjectList = 0x1ee390u, kNoObjects = 0x1ee500u, kRaceOrder = 0x1e9404u, kLevelPtr = 0x327e80u;	# decomp/src/pickup_fuzz.cpp:16 -> (sym::objectVarG + 0x170u)
+addr	decomp/src/pickup_fuzz.cpp	0x1e9404	constexpr uint32_t kObjectList = 0x1ee390u, kNoObjects = 0x1ee500u, kRaceOrder = 0x1e9404u, kLevelPtr = 0x327e80u;	# decomp/src/pickup_fuzz.cpp:16 -> (sym::aiVarG + 0x4u)
+addr	decomp/src/psxdefs.cpp	0x324b88	constexpr uint32_t kPrintf = 0x12e9e8u, kWarningFormat = 0x324b88u; // "\nPMATHS:PSXDEFS WARNING : %s\n"	# decomp/src/psxdefs.cpp:340 -> (sym::sec_rodata + 0x2588u)
+addr	decomp/src/rcmusic.cpp	0x3241f8	constexpr uint32_t kSetVolFormat = 0x3241f8u, kModifyFormat = 0x324228u, kRcSetVolFormat = 0x324238u,	# decomp/src/rcmusic.cpp:50 -> (sym::sec_rodata + 0x1bf8u)
+addr	decomp/src/rcmusic.cpp	0x324228	constexpr uint32_t kSetVolFormat = 0x3241f8u, kModifyFormat = 0x324228u, kRcSetVolFormat = 0x324238u,	# decomp/src/rcmusic.cpp:50 -> (sym::sec_rodata + 0x1c28u)
+addr	decomp/src/rcmusic.cpp	0x324238	constexpr uint32_t kSetVolFormat = 0x3241f8u, kModifyFormat = 0x324228u, kRcSetVolFormat = 0x324238u,	# decomp/src/rcmusic.cpp:50 -> (sym::sec_rodata + 0x1c38u)
+addr	decomp/src/rcmusic.cpp	0x323ea0	kLocateFormat = 0x323ea0u, kBindError = 0x325178u;	# decomp/src/rcmusic.cpp:51 -> (sym::sec_rodata + 0x18a0u)
+addr	decomp/src/rcmusic.cpp	0x325178	kLocateFormat = 0x323ea0u, kBindError = 0x325178u;	# decomp/src/rcmusic.cpp:51 -> (sym::sec_rodata + 0x2b78u)
+addr	decomp/src/rcmusic.cpp	0x323eb8	0x323eb8u, 0x323ed0u, 0x323ee8u, 0x323f00u, 0x323f18u, 0x323f30u, 0x323f48u, 0x323f60u, 0x323f78u,	# decomp/src/rcmusic.cpp:54 -> (sym::sec_rodata + 0x18b8u)
+addr	decomp/src/rcmusic.cpp	0x323ed0	0x323eb8u, 0x323ed0u, 0x323ee8u, 0x323f00u, 0x323f18u, 0x323f30u, 0x323f48u, 0x323f60u, 0x323f78u,	# decomp/src/rcmusic.cpp:54 -> (sym::sec_rodata + 0x18d0u)
+addr	decomp/src/rcmusic.cpp	0x323ee8	0x323eb8u, 0x323ed0u, 0x323ee8u, 0x323f00u, 0x323f18u, 0x323f30u, 0x323f48u, 0x323f60u, 0x323f78u,	# decomp/src/rcmusic.cpp:54 -> (sym::sec_rodata + 0x18e8u)
+addr	decomp/src/rcmusic.cpp	0x323f00	0x323eb8u, 0x323ed0u, 0x323ee8u, 0x323f00u, 0x323f18u, 0x323f30u, 0x323f48u, 0x323f60u, 0x323f78u,	# decomp/src/rcmusic.cpp:54 -> (sym::sec_rodata + 0x1900u)
+addr	decomp/src/rcmusic.cpp	0x323f18	0x323eb8u, 0x323ed0u, 0x323ee8u, 0x323f00u, 0x323f18u, 0x323f30u, 0x323f48u, 0x323f60u, 0x323f78u,	# decomp/src/rcmusic.cpp:54 -> (sym::sec_rodata + 0x1918u)
+addr	decomp/src/rcmusic.cpp	0x323f30	0x323eb8u, 0x323ed0u, 0x323ee8u, 0x323f00u, 0x323f18u, 0x323f30u, 0x323f48u, 0x323f60u, 0x323f78u,	# decomp/src/rcmusic.cpp:54 -> (sym::sec_rodata + 0x1930u)
+addr	decomp/src/rcmusic.cpp	0x323f48	0x323eb8u, 0x323ed0u, 0x323ee8u, 0x323f00u, 0x323f18u, 0x323f30u, 0x323f48u, 0x323f60u, 0x323f78u,	# decomp/src/rcmusic.cpp:54 -> (sym::sec_rodata + 0x1948u)
+addr	decomp/src/rcmusic.cpp	0x323f60	0x323eb8u, 0x323ed0u, 0x323ee8u, 0x323f00u, 0x323f18u, 0x323f30u, 0x323f48u, 0x323f60u, 0x323f78u,	# decomp/src/rcmusic.cpp:54 -> (sym::sec_rodata + 0x1960u)
+addr	decomp/src/rcmusic.cpp	0x323f78	0x323eb8u, 0x323ed0u, 0x323ee8u, 0x323f00u, 0x323f18u, 0x323f30u, 0x323f48u, 0x323f60u, 0x323f78u,	# decomp/src/rcmusic.cpp:54 -> (sym::sec_rodata + 0x1978u)
+addr	decomp/src/rcmusic.cpp	0x323f88	0x323f88u, 0x323fa0u, 0x323fb0u, 0x323fc8u, 0x323fd8u, 0x323ff0u, 0x324000u, 0x324018u, 0x324028u,	# decomp/src/rcmusic.cpp:55 -> (sym::sec_rodata + 0x1988u)
+addr	decomp/src/rcmusic.cpp	0x323fa0	0x323f88u, 0x323fa0u, 0x323fb0u, 0x323fc8u, 0x323fd8u, 0x323ff0u, 0x324000u, 0x324018u, 0x324028u,	# decomp/src/rcmusic.cpp:55 -> (sym::sec_rodata + 0x19a0u)
+addr	decomp/src/rcmusic.cpp	0x323fb0	0x323f88u, 0x323fa0u, 0x323fb0u, 0x323fc8u, 0x323fd8u, 0x323ff0u, 0x324000u, 0x324018u, 0x324028u,	# decomp/src/rcmusic.cpp:55 -> (sym::sec_rodata + 0x19b0u)
+addr	decomp/src/rcmusic.cpp	0x323fc8	0x323f88u, 0x323fa0u, 0x323fb0u, 0x323fc8u, 0x323fd8u, 0x323ff0u, 0x324000u, 0x324018u, 0x324028u,	# decomp/src/rcmusic.cpp:55 -> (sym::sec_rodata + 0x19c8u)
+addr	decomp/src/rcmusic.cpp	0x323fd8	0x323f88u, 0x323fa0u, 0x323fb0u, 0x323fc8u, 0x323fd8u, 0x323ff0u, 0x324000u, 0x324018u, 0x324028u,	# decomp/src/rcmusic.cpp:55 -> (sym::sec_rodata + 0x19d8u)
+addr	decomp/src/rcmusic.cpp	0x323ff0	0x323f88u, 0x323fa0u, 0x323fb0u, 0x323fc8u, 0x323fd8u, 0x323ff0u, 0x324000u, 0x324018u, 0x324028u,	# decomp/src/rcmusic.cpp:55 -> (sym::sec_rodata + 0x19f0u)
+addr	decomp/src/rcmusic.cpp	0x324000	0x323f88u, 0x323fa0u, 0x323fb0u, 0x323fc8u, 0x323fd8u, 0x323ff0u, 0x324000u, 0x324018u, 0x324028u,	# decomp/src/rcmusic.cpp:55 -> (sym::sec_rodata + 0x1a00u)
+addr	decomp/src/rcmusic.cpp	0x324018	0x323f88u, 0x323fa0u, 0x323fb0u, 0x323fc8u, 0x323fd8u, 0x323ff0u, 0x324000u, 0x324018u, 0x324028u,	# decomp/src/rcmusic.cpp:55 -> (sym::sec_rodata + 0x1a18u)
+addr	decomp/src/rcmusic.cpp	0x324028	0x323f88u, 0x323fa0u, 0x323fb0u, 0x323fc8u, 0x323fd8u, 0x323ff0u, 0x324000u, 0x324018u, 0x324028u,	# decomp/src/rcmusic.cpp:55 -> (sym::sec_rodata + 0x1a28u)
+addr	decomp/src/rcmusic.cpp	0x324040	0x324040u, 0x324050u, 0x324068u, 0x324080u, 0x324098u, 0x3240a8u, 0x3240c0u, 0x3240d0u, 0x3240e8u,	# decomp/src/rcmusic.cpp:56 -> (sym::sec_rodata + 0x1a40u)
+addr	decomp/src/rcmusic.cpp	0x324050	0x324040u, 0x324050u, 0x324068u, 0x324080u, 0x324098u, 0x3240a8u, 0x3240c0u, 0x3240d0u, 0x3240e8u,	# decomp/src/rcmusic.cpp:56 -> (sym::sec_rodata + 0x1a50u)
+addr	decomp/src/rcmusic.cpp	0x324068	0x324040u, 0x324050u, 0x324068u, 0x324080u, 0x324098u, 0x3240a8u, 0x3240c0u, 0x3240d0u, 0x3240e8u,	# decomp/src/rcmusic.cpp:56 -> (sym::sec_rodata + 0x1a68u)
+addr	decomp/src/rcmusic.cpp	0x324080	0x324040u, 0x324050u, 0x324068u, 0x324080u, 0x324098u, 0x3240a8u, 0x3240c0u, 0x3240d0u, 0x3240e8u,	# decomp/src/rcmusic.cpp:56 -> (sym::sec_rodata + 0x1a80u)
+addr	decomp/src/rcmusic.cpp	0x324098	0x324040u, 0x324050u, 0x324068u, 0x324080u, 0x324098u, 0x3240a8u, 0x3240c0u, 0x3240d0u, 0x3240e8u,	# decomp/src/rcmusic.cpp:56 -> (sym::sec_rodata + 0x1a98u)
+addr	decomp/src/rcmusic.cpp	0x3240a8	0x324040u, 0x324050u, 0x324068u, 0x324080u, 0x324098u, 0x3240a8u, 0x3240c0u, 0x3240d0u, 0x3240e8u,	# decomp/src/rcmusic.cpp:56 -> (sym::sec_rodata + 0x1aa8u)
+addr	decomp/src/rcmusic.cpp	0x3240c0	0x324040u, 0x324050u, 0x324068u, 0x324080u, 0x324098u, 0x3240a8u, 0x3240c0u, 0x3240d0u, 0x3240e8u,	# decomp/src/rcmusic.cpp:56 -> (sym::sec_rodata + 0x1ac0u)
+addr	decomp/src/rcmusic.cpp	0x3240d0	0x324040u, 0x324050u, 0x324068u, 0x324080u, 0x324098u, 0x3240a8u, 0x3240c0u, 0x3240d0u, 0x3240e8u,	# decomp/src/rcmusic.cpp:56 -> (sym::sec_rodata + 0x1ad0u)
+addr	decomp/src/rcmusic.cpp	0x3240e8	0x324040u, 0x324050u, 0x324068u, 0x324080u, 0x324098u, 0x3240a8u, 0x3240c0u, 0x3240d0u, 0x3240e8u,	# decomp/src/rcmusic.cpp:56 -> (sym::sec_rodata + 0x1ae8u)
+addr	decomp/src/rcmusic.cpp	0x3240f8	0x3240f8u, 0x324110u, 0x324120u, 0x324138u, 0x324150u, 0x324168u, 0x324178u, 0x324190u, 0x3241a0u,	# decomp/src/rcmusic.cpp:57 -> (sym::sec_rodata + 0x1af8u)
+addr	decomp/src/rcmusic.cpp	0x324110	0x3240f8u, 0x324110u, 0x324120u, 0x324138u, 0x324150u, 0x324168u, 0x324178u, 0x324190u, 0x3241a0u,	# decomp/src/rcmusic.cpp:57 -> (sym::sec_rodata + 0x1b10u)
+addr	decomp/src/rcmusic.cpp	0x324120	0x3240f8u, 0x324110u, 0x324120u, 0x324138u, 0x324150u, 0x324168u, 0x324178u, 0x324190u, 0x3241a0u,	# decomp/src/rcmusic.cpp:57 -> (sym::sec_rodata + 0x1b20u)
+addr	decomp/src/rcmusic.cpp	0x324138	0x3240f8u, 0x324110u, 0x324120u, 0x324138u, 0x324150u, 0x324168u, 0x324178u, 0x324190u, 0x3241a0u,	# decomp/src/rcmusic.cpp:57 -> (sym::sec_rodata + 0x1b38u)
+addr	decomp/src/rcmusic.cpp	0x324150	0x3240f8u, 0x324110u, 0x324120u, 0x324138u, 0x324150u, 0x324168u, 0x324178u, 0x324190u, 0x3241a0u,	# decomp/src/rcmusic.cpp:57 -> (sym::sec_rodata + 0x1b50u)
+addr	decomp/src/rcmusic.cpp	0x324168	0x3240f8u, 0x324110u, 0x324120u, 0x324138u, 0x324150u, 0x324168u, 0x324178u, 0x324190u, 0x3241a0u,	# decomp/src/rcmusic.cpp:57 -> (sym::sec_rodata + 0x1b68u)
+addr	decomp/src/rcmusic.cpp	0x324178	0x3240f8u, 0x324110u, 0x324120u, 0x324138u, 0x324150u, 0x324168u, 0x324178u, 0x324190u, 0x3241a0u,	# decomp/src/rcmusic.cpp:57 -> (sym::sec_rodata + 0x1b78u)
+addr	decomp/src/rcmusic.cpp	0x324190	0x3240f8u, 0x324110u, 0x324120u, 0x324138u, 0x324150u, 0x324168u, 0x324178u, 0x324190u, 0x3241a0u,	# decomp/src/rcmusic.cpp:57 -> (sym::sec_rodata + 0x1b90u)
+addr	decomp/src/rcmusic.cpp	0x3241a0	0x3240f8u, 0x324110u, 0x324120u, 0x324138u, 0x324150u, 0x324168u, 0x324178u, 0x324190u, 0x3241a0u,	# decomp/src/rcmusic.cpp:57 -> (sym::sec_rodata + 0x1ba0u)
+addr	decomp/src/rdr.cpp	0x327bd0	constexpr uint32_t kAngleToRadians = 0x327bd0u, kCameraMinZ = 0x327bd4u, kCameraMaxZ = 0x327bd8u, kAspect = 0x327bdcu;	# decomp/src/rdr.cpp:89 -> sym::lit4_327bd0
+addr	decomp/src/rdr.cpp	0x327bd4	constexpr uint32_t kAngleToRadians = 0x327bd0u, kCameraMinZ = 0x327bd4u, kCameraMaxZ = 0x327bd8u, kAspect = 0x327bdcu;	# decomp/src/rdr.cpp:89 -> sym::lit4_327bd4
+addr	decomp/src/rdr.cpp	0x327bd8	constexpr uint32_t kAngleToRadians = 0x327bd0u, kCameraMinZ = 0x327bd4u, kCameraMaxZ = 0x327bd8u, kAspect = 0x327bdcu;	# decomp/src/rdr.cpp:89 -> sym::lit4_327bd8
+addr	decomp/src/rdr.cpp	0x327bdc	constexpr uint32_t kAngleToRadians = 0x327bd0u, kCameraMinZ = 0x327bd4u, kCameraMaxZ = 0x327bd8u, kAspect = 0x327bdcu;	# decomp/src/rdr.cpp:89 -> sym::lit4_327bdc
+addr	decomp/src/rdr.cpp	0x327be0	constexpr uint32_t kScreenLimit = 0x327be0u, kLineDepth1 = 0x327be4u, kLineDepth2 = 0x327be8u;	# decomp/src/rdr.cpp:90 -> sym::lit4_327be0
+addr	decomp/src/rdr.cpp	0x327be4	constexpr uint32_t kScreenLimit = 0x327be0u, kLineDepth1 = 0x327be4u, kLineDepth2 = 0x327be8u;	# decomp/src/rdr.cpp:90 -> sym::lit4_327be4
+addr	decomp/src/rdr.cpp	0x327be8	constexpr uint32_t kScreenLimit = 0x327be0u, kLineDepth1 = 0x327be4u, kLineDepth2 = 0x327be8u;	# decomp/src/rdr.cpp:90 -> sym::lit4_327be8
+addr	decomp/src/rdr.cpp	0x32839c	const uint32_t kPolyOne = 0x32839c, kTriOne = 0x3283a4; // Each holds the vertex w (1.0) the packets carry.	# decomp/src/rdr.cpp:730 -> (sym::fConst_450 + 0x4u)
+addr	decomp/src/rdr.cpp	0x3283a4	const uint32_t kPolyOne = 0x32839c, kTriOne = 0x3283a4; // Each holds the vertex w (1.0) the packets carry.	# decomp/src/rdr.cpp:730 -> (sym::fConst_454 + 0x4u)
+addr	decomp/src/rect.cpp	0x327930	corner(colour, blue, x0, y0, otz, 0x327930u);	# decomp/src/rect.cpp:102 -> sym::lit4_327930
+addr	decomp/src/rect.cpp	0x327934	corner(colour, blue, rect.x3, rect.y3, otz, 0x327934u);	# decomp/src/rect.cpp:103 -> sym::lit4_327934
+addr	decomp/src/rect.cpp	0x327938	corner(colour, blue, x2, y2, otz, 0x327938u);	# decomp/src/rect.cpp:105 -> sym::lit4_327938
+addr	decomp/src/rect.cpp	0x32793c	corner(colour, blue, x0, y0, otz, 0x32793cu);	# decomp/src/rect.cpp:106 -> sym::lit4_32793c
+addr	decomp/src/rect.cpp	0x327940	corner(colour, blue, x1, rect.y1, otz, 0x327940u);	# decomp/src/rect.cpp:107 -> sym::lit4_327940
+addr	decomp/src/rect.cpp	0x327944	corner(colour, blue, x2, y2, otz, 0x327944u);	# decomp/src/rect.cpp:108 -> sym::lit4_327944
+addr	decomp/src/rect.cpp	0x327948	corner(low(rect.r0, rect.g0), rect.b0, x0, y0, otz, 0x327948u);	# decomp/src/rect.cpp:148 -> sym::lit4_327948
+addr	decomp/src/rect.cpp	0x32794c	corner(low(rect.r3, rect.g3), rect.b3, rect.x3, rect.y3, otz, 0x32794cu);	# decomp/src/rect.cpp:149 -> sym::lit4_32794c
+addr	decomp/src/rect.cpp	0x327950	corner(low(rect.r2, rect.g2), rect.b2, x2, y2, otz, 0x327950u);	# decomp/src/rect.cpp:151 -> sym::lit4_327950
+addr	decomp/src/rect.cpp	0x327954	corner(low(rect.r0, rect.g0), rect.b0, x0, y0, otz, 0x327954u);	# decomp/src/rect.cpp:152 -> sym::lit4_327954
+addr	decomp/src/rect.cpp	0x327958	corner(low(rect.r1, rect.g1), rect.b1, x1, rect.y1, otz, 0x327958u);	# decomp/src/rect.cpp:153 -> sym::lit4_327958
+addr	decomp/src/rect.cpp	0x32795c	corner(low(rect.r2, rect.g2), rect.b2, x2, y2, otz, 0x32795cu);	# decomp/src/rect.cpp:154 -> sym::lit4_32795c
+addr	decomp/src/res.cpp	0x3283c8	constexpr uint32_t kBackslash = 0x3283c8u, kStbType = 0x3283c0u, kCatName = 0x324d10u, kCatFormat = 0x324d20u;	# decomp/src/res.cpp:45 -> (sym::sec_sdata + 0x7c8u)
+addr	decomp/src/res.cpp	0x3283c0	constexpr uint32_t kBackslash = 0x3283c8u, kStbType = 0x3283c0u, kCatName = 0x324d10u, kCatFormat = 0x324d20u;	# decomp/src/res.cpp:45 -> (sym::sec_sdata + 0x7c0u)
+addr	decomp/src/res.cpp	0x324d10	constexpr uint32_t kBackslash = 0x3283c8u, kStbType = 0x3283c0u, kCatName = 0x324d10u, kCatFormat = 0x324d20u;	# decomp/src/res.cpp:45 -> (sym::sec_rodata + 0x2710u)
+addr	decomp/src/res.cpp	0x324d20	constexpr uint32_t kBackslash = 0x3283c8u, kStbType = 0x3283c0u, kCatName = 0x324d10u, kCatFormat = 0x324d20u;	# decomp/src/res.cpp:45 -> (sym::sec_rodata + 0x2720u)
+keep	decomp/src/res_fuzz.cpp	0x200000	constexpr uint32_t kLoadArea = 0x200000u; // a load area, more than any setup's loads need	# load area (any free RAM) / tick edge
+keep	decomp/src/res_fuzz.cpp	0x100000	if (r.swizzles != 0u && r.closure <= 0x100000u)	# a size, RAM bound or random range, not the start of .text
+keep	decomp/src/res_fuzz.cpp	0x100000	openSlot(r.catHandle, "CAT/RDS.CAT", rnd(state, 0x100000));	# a size, RAM bound or random range, not the start of .text
+keep	decomp/src/res_fuzz.cpp	0x100000	makeRoom(kLoadArea + 0x100000u, scratch + 0x7904u);	# a size, RAM bound or random range, not the start of .text
+keep	decomp/src/res_fuzz.cpp	0x100000	const uint32_t buffer = kind == 1 ? 0x100000u + rnd(state, 0x3c0000) : scratch + rnd(state, 0x100);	# a size, RAM bound or random range, not the start of .text
+keep	decomp/src/res_fuzz.cpp	0x3c0000	const uint32_t buffer = kind == 1 ? 0x100000u + rnd(state, 0x3c0000) : scratch + rnd(state, 0x100);	# random range
+keep	decomp/src/res_fuzz.cpp	0x100000	setArg(ctx, 1, chance(state, 10) ? 0x100000u + 4u * rnd(state, 0xf0000) : scratch + 4u * rnd(state, 0x40));	# a size, RAM bound or random range, not the start of .text
+addr	decomp/src/res_fuzz.cpp	0x3283b8	static const uint32_t kExtensions[] = {0x3283b8u, 0x3283b0u, 0x3283a8u}; // ".luf", ".tlf", ".cfg"	# decomp/src/res_fuzz.cpp:875 -> (sym::sec_sdata + 0x7b8u)
+addr	decomp/src/res_fuzz.cpp	0x3283b0	static const uint32_t kExtensions[] = {0x3283b8u, 0x3283b0u, 0x3283a8u}; // ".luf", ".tlf", ".cfg"	# decomp/src/res_fuzz.cpp:875 -> (sym::sec_sdata + 0x7b0u)
+addr	decomp/src/res_fuzz.cpp	0x3283a8	static const uint32_t kExtensions[] = {0x3283b8u, 0x3283b0u, 0x3283a8u}; // ".luf", ".tlf", ".cfg"	# decomp/src/res_fuzz.cpp:875 -> (sym::sec_sdata + 0x7a8u)
+addr	decomp/src/res_fuzz.cpp	0x3282a4	store<uint32_t>(0x3282a4u, chance(state, 70) ? 0u : nextFuzz(state));	# decomp/src/res_fuzz.cpp:971 -> (sym::mpegBuffer + 0x4u)
+addr	decomp/src/res_fuzz.cpp	0x1edc4a	store<uint8_t>(0x1edc4au, static_cast<uint8_t>(nextFuzz(state)));	# decomp/src/res_fuzz.cpp:973 -> (sym::mainVarG + 0x34au)
+addr	decomp/src/res_fuzz.cpp	0x1edc69	store<uint8_t>(0x1edc69u, chance(state, 80) ? static_cast<uint8_t>(rnd(state, 3)) : static_cast<uint8_t>(nextFuzz(state)));	# decomp/src/res_fuzz.cpp:974 -> (sym::mainVarG + 0x369u)
+addr	decomp/src/res_fuzz.cpp	0x1eccfc	store<uint32_t>(0x1eccfcu, chance(state, 60) ? kFrames[rnd(state, 5)] : nextFuzz(state));	# decomp/src/res_fuzz.cpp:984 -> (sym::frontEndVarG + 0x2a4u)
+keep	decomp/src/res_fuzz.cpp	0x1fc27a	static const uint32_t kTicks[] = {0u, 0x1fc27au, 0x1fffffu, 0x200000u, 0x200001u, 0xffffffffu};	# timer tick edge value
+keep	decomp/src/res_fuzz.cpp	0x1fffff	static const uint32_t kTicks[] = {0u, 0x1fc27au, 0x1fffffu, 0x200000u, 0x200001u, 0xffffffffu};	# timer tick edge value
+keep	decomp/src/res_fuzz.cpp	0x200000	static const uint32_t kTicks[] = {0u, 0x1fc27au, 0x1fffffu, 0x200000u, 0x200001u, 0xffffffffu};	# load area (any free RAM) / tick edge
+keep	decomp/src/res_fuzz.cpp	0x200001	static const uint32_t kTicks[] = {0u, 0x1fc27au, 0x1fffffu, 0x200000u, 0x200001u, 0xffffffffu};	# timer tick edge value
+keep	decomp/src/res_fuzz.cpp	0x300000	makeRoom(0x300000u, kFuzzScratch + 0x7904u); // the screens' files, the converted image and the file cache	# a size
+keep	decomp/src/res_fuzz.cpp	0x100000	setEnv(eIopHeap, chance(state, 80) ? 0x100000u + 0x40u * rnd(state, 0x1000) : nextFuzz(state));	# a size, RAM bound or random range, not the start of .text
+keep	decomp/src/res_fuzz.cpp	0x100000	setArg(ctx, 0, chance(state, 80) ? 0x100000u + rnd(state, 0x1700000) : nextFuzz(state) & 0x1f00000u);	# a size, RAM bound or random range, not the start of .text
+addr	decomp/src/revsfx.cpp	0x1ea568	constexpr uint32_t kRev = 0x1ef3b0u, kSfx = 0x31e488u, kMain = 0x1ed900u, kCamera = 0x1e9fb0u, kCamera2 = 0x1ea568u;	# decomp/src/revsfx.cpp:55 -> (sym::cameraVarG + 0x5b8u)
+addr	decomp/src/revsfx.cpp	0x327f78	constexpr uint32_t kSfxType = 0x327f78u, kSFXConstructDaemon = 0x143258u; // "SFX"	# decomp/src/revsfx.cpp:58 -> (sym::sec_sdata + 0x378u)
+addr	decomp/src/sfx.cpp	0x3283d8	constexpr uint32_t kVagType = 0x3283d8u, kVAGConstructDaemon = 0x1adc70u; // "VAG"	# decomp/src/sfx.cpp:45 -> (sym::sec_sdata + 0x7d8u)
+addr	decomp/src/sfx.cpp	0x325130	constexpr uint32_t kAllocatedFormat = 0x325130u, kSendingFormat = 0x325150u;	# decomp/src/sfx.cpp:46 -> (sym::sec_rodata + 0x2b30u)
+addr	decomp/src/sfx.cpp	0x325150	constexpr uint32_t kAllocatedFormat = 0x325130u, kSendingFormat = 0x325150u;	# decomp/src/sfx.cpp:46 -> (sym::sec_rodata + 0x2b50u)
+keep	decomp/src/sfx.cpp	0x1dffff	sdRemote(kSetAddr, 0x1d00, 0x1dffff);	# SPU2 address
+keep	decomp/src/sfx.cpp	0x1fffff	sdRemote(kSetAddr, 0x1d01, 0x1fffff);	# SPU2 address
+keep	decomp/src/sfx_fuzz.cpp	0x1f0000	return (r & 6u) == 0 ? r2 : (r2 % 0x1f0000u) & ~0xfu;	# SPU2 address range
+keep	decomp/src/sfx_fuzz.cpp	0x10bb50	static const int32_t kAddresses[] = {0xc2310, 0xc37d0, 0x5000, 0x10bb50};	# SPU2 address
+keep	decomp/src/sfx_fuzz.cpp	0x200000	vc.dwStoreAddress = chance(state, 15) ? kAddresses[rnd(state, 4)] : static_cast<int32_t>(rnd(state, 0x200000));	# a size, SPU address, tick count or random range
+keep	decomp/src/sfx_fuzz.cpp	0x200000	vc.dwStoreLoopAddress = chance(state, 30) ? 0 : static_cast<int32_t>(rnd(state, 0x200000));	# a size, SPU address, tick count or random range
+keep	decomp/src/sfx_fuzz.cpp	0x200000	ef.dwLoopAddr = chance(state, 30) ? 0 : static_cast<int32_t>(rnd(state, 0x200000));	# a size, SPU address, tick count or random range
+keep	decomp/src/sfx_fuzz.cpp	0x200000	sfx().SPUCurrentAddr = chance(state, 50) ? sfx().SPUCurrentAddr : static_cast<int32_t>(rnd(state, 0x200000));	# a size, SPU address, tick count or random range
+keep	decomp/src/sfx_fuzz.cpp	0x200000	ef.dwAddr = static_cast<int32_t>(rnd(state, 0x200000));	# a size, SPU address, tick count or random range
+keep	decomp/src/sfx_fuzz.cpp	0x200000	mem<int32_t>(kCamera + 0x5b8u + 0xcu + axis * 4u) += between(state, -0x200000, 0x200000);	# a size, SPU address, tick count or random range
+keep	decomp/src/sfx_fuzz.cpp	0x200000	mem<int32_t>(kCamera + 0x5b8u + 0xcu + axis * 4u) += between(state, -0x200000, 0x200000);	# a size, SPU address, tick count or random range
+addr	decomp/src/sfx_fuzz.cpp	0x1ea568	placeNear(state, pos, (flags & 1) != 0 ? 0x1ea568u : kCamera, range);	# decomp/src/sfx_fuzz.cpp:683 -> (sym::cameraVarG + 0x5b8u)
+keep	decomp/src/sfx_fuzz.cpp	0x100000	timer.time = static_cast<int32_t>(rnd(state, 0x100000));	# a size, RAM bound or random range, not the start of .text
+keep	decomp/src/sfx_fuzz.cpp	0x100000	timer.time = static_cast<int32_t>(rnd(state, 0x100000));	# a size, RAM bound or random range, not the start of .text
+keep	decomp/src/shape.cpp	0x15f900	MemBlockAllocLo(handle1, 0x15f900);	# MemBlockAllocLo size
+keep	decomp/src/shape.cpp	0x178800	MemBlockAllocLo(handle2, 0x178800);	# MemBlockAllocLo size
+keep	decomp/src/shape.cpp	0x2f7000	MemBlockAllocLo(handle, 0x2f7000);	# MemBlockAllocLo size
+addr	decomp/src/shape.cpp	0x1d5524	global(0x1d5524) = static_cast<uint32_t>(tex0 >> 32);	# decomp/src/shape.cpp:615 -> (sym::sec_vutext + 0xd4u)
+addr	decomp/src/shape.cpp	0x1d551c	global(0x1d551c) = 0;	# decomp/src/shape.cpp:627 -> (sym::sec_vutext + 0xccu)
+addr	decomp/src/shape.cpp	0x1d54f4	putw(p, 0xa4, global(0x1d54f4));	# decomp/src/shape.cpp:632 -> (sym::sec_vutext + 0xa4u)
+addr	decomp/src/shape.cpp	0x324cf0	guest_call(kPrintf, 0x324cf0u); // "overflowed\n"	# decomp/src/shape.cpp:933 -> (sym::sec_rodata + 0x26f0u)
+addr	decomp/src/shape.cpp	0x324d00	guest_call(kPrintf, 0x324d00u); // "ovecounted\n"	# decomp/src/shape.cpp:935 -> (sym::sec_rodata + 0x2700u)
+addr	decomp/src/skinanim.cpp	0x3281c0	constexpr uint32_t kVertAnimTypes[3] = {0x3281c0u, 0x3281c8u, 0x3281d0u};	# decomp/src/skinanim.cpp:25 -> (sym::sec_sdata + 0x5c0u)
+addr	decomp/src/skinanim.cpp	0x3281c8	constexpr uint32_t kVertAnimTypes[3] = {0x3281c0u, 0x3281c8u, 0x3281d0u};	# decomp/src/skinanim.cpp:25 -> (sym::sec_sdata + 0x5c8u)
+addr	decomp/src/skinanim.cpp	0x3281d0	constexpr uint32_t kVertAnimTypes[3] = {0x3281c0u, 0x3281c8u, 0x3281d0u};	# decomp/src/skinanim.cpp:25 -> (sym::sec_sdata + 0x5d0u)
+addr	decomp/src/skinanim.cpp	0x328340	constexpr uint32_t kSkinTypes[6] = {0x328340u, 0x328348u, 0x328350u, 0x328358u, 0x328360u, 0x328368u};	# decomp/src/skinanim.cpp:26 -> (sym::sec_sdata + 0x740u)
+addr	decomp/src/skinanim.cpp	0x328348	constexpr uint32_t kSkinTypes[6] = {0x328340u, 0x328348u, 0x328350u, 0x328358u, 0x328360u, 0x328368u};	# decomp/src/skinanim.cpp:26 -> (sym::sec_sdata + 0x748u)
+addr	decomp/src/skinanim.cpp	0x328350	constexpr uint32_t kSkinTypes[6] = {0x328340u, 0x328348u, 0x328350u, 0x328358u, 0x328360u, 0x328368u};	# decomp/src/skinanim.cpp:26 -> (sym::sec_sdata + 0x750u)
+addr	decomp/src/skinanim.cpp	0x328358	constexpr uint32_t kSkinTypes[6] = {0x328340u, 0x328348u, 0x328350u, 0x328358u, 0x328360u, 0x328368u};	# decomp/src/skinanim.cpp:26 -> (sym::sec_sdata + 0x758u)
+addr	decomp/src/skinanim.cpp	0x328360	constexpr uint32_t kSkinTypes[6] = {0x328340u, 0x328348u, 0x328350u, 0x328358u, 0x328360u, 0x328368u};	# decomp/src/skinanim.cpp:26 -> (sym::sec_sdata + 0x760u)
+addr	decomp/src/skinanim.cpp	0x328368	constexpr uint32_t kSkinTypes[6] = {0x328340u, 0x328348u, 0x328350u, 0x328358u, 0x328360u, 0x328368u};	# decomp/src/skinanim.cpp:26 -> (sym::sec_sdata + 0x768u)
+addr	decomp/src/skinanim.cpp	0x328150	constexpr uint32_t kSvfType = 0x328150u;	# decomp/src/skinanim.cpp:27 -> (sym::sec_sdata + 0x550u)
+addr	decomp/src/sprite.cpp	0x327974	const uint64_t z = depth(otz, 0x327974u);	# decomp/src/sprite.cpp:104 -> sym::lit4_327974
+addr	decomp/src/sprite.cpp	0x327974	strip.vertex(st(1.0f, 0.0f), kWhite, kWhiteBA, xy(x1, yBottom), depth(otz, 0x327974u));	# decomp/src/sprite.cpp:114 -> sym::lit4_327974
+addr	decomp/src/sprite.cpp	0x327978	renderSprite(pSprite, pSpriteParams, otz, SpriteSize::Normal, true, 0x327978u);	# decomp/src/sprite.cpp:252 -> sym::lit4_327978
+addr	decomp/src/sprite.cpp	0x32797c	renderSprite(pSprite, pSpriteParams, otz, SpriteSize::Half, false, 0x32797cu);	# decomp/src/sprite.cpp:258 -> sym::lit4_32797c
+addr	decomp/src/sprite.cpp	0x327980	renderSprite(pSprite, pSpriteParams, otz, SpriteSize::Scaled, true, 0x327980u);	# decomp/src/sprite.cpp:264 -> sym::lit4_327980
+addr	decomp/src/sprite.cpp	0x327984	strip.vertex(texel(0), rgbaLow, rgbaHigh, xy(x0, y0), depth(order, 0x327984u));	# decomp/src/sprite.cpp:316 -> sym::lit4_327984
+addr	decomp/src/sprite.cpp	0x327988	strip.vertex(texel(2), rgbaLow, rgbaHigh, xy(x0, y1), depth(order, 0x327988u));	# decomp/src/sprite.cpp:317 -> sym::lit4_327988
+addr	decomp/src/sprite.cpp	0x32798c	strip.vertex(texel(3), rgbaLow, rgbaHigh, xy(x1, y1), depth(order, 0x32798cu));	# decomp/src/sprite.cpp:318 -> sym::lit4_32798c
+addr	decomp/src/sprite.cpp	0x327990	strip.vertex(texel(0), rgbaLow, rgbaHigh, xy(x0, y0), depth(order, 0x327990u));	# decomp/src/sprite.cpp:319 -> sym::lit4_327990
+addr	decomp/src/sprite.cpp	0x327994	strip.vertex(texel(1), rgbaLow, rgbaHigh, xy(x1, y0), depth(order, 0x327994u));	# decomp/src/sprite.cpp:320 -> sym::lit4_327994
+addr	decomp/src/sprite.cpp	0x327998	strip.vertex(texel(3), rgbaLow, rgbaHigh, xy(x1, y1), depth(order, 0x327998u));	# decomp/src/sprite.cpp:321 -> sym::lit4_327998
+keep	decomp/src/stream_fuzz.cpp	0x100000	store<uint32_t>(fileAt(i) + 12u, chance(state, 50) ? rnd(state, 0x100000) : nextFuzz(state));	# a size, RAM bound or random range, not the start of .text
+keep	decomp/src/stream_fuzz.cpp	0x100000	store<uint32_t>(dirAt(i) + 0x18u, rnd(state, 0x100000));	# a size, RAM bound or random range, not the start of .text
+addr	decomp/src/tbox.cpp	0x1e9404	constexpr uint32_t kRaceOrder = 0x1e9404u, kRevSfx = 0x1ef3b0u, kReadySteadyGo = 0x1ece10u, kLevelPtr = 0x327e80u;	# decomp/src/tbox.cpp:29 -> (sym::aiVarG + 0x4u)
+addr	decomp/src/tbox.cpp	0x1ece10	constexpr uint32_t kRaceOrder = 0x1e9404u, kRevSfx = 0x1ef3b0u, kReadySteadyGo = 0x1ece10u, kLevelPtr = 0x327e80u;	# decomp/src/tbox.cpp:29 -> (sym::hudVarG + 0x70u)
+addr	decomp/src/tile.cpp	0x328168	constexpr uint32_t kTileListType = 0x328168u, kTileType = 0x328170u, kTileConstructDaemon = 0x184a98u;	# decomp/src/tile.cpp:26 -> (sym::sec_sdata + 0x568u)
+addr	decomp/src/tile.cpp	0x328170	constexpr uint32_t kTileListType = 0x328168u, kTileType = 0x328170u, kTileConstructDaemon = 0x184a98u;	# decomp/src/tile.cpp:26 -> (sym::sec_sdata + 0x570u)
+addr	decomp/src/timer.cpp	0x31ff50	constexpr uint32_t kSysTimerHandler = 0x1af270u, kSysTimer = 0x31ff38u, kProgramCounter = 0x31ff50u, kListHead = 0x31ff4cu;	# decomp/src/timer.cpp:23 -> (sym::sysTimerVarG + 0x18u)
+addr	decomp/src/timer.cpp	0x31ff4c	constexpr uint32_t kSysTimerHandler = 0x1af270u, kSysTimer = 0x31ff38u, kProgramCounter = 0x31ff50u, kListHead = 0x31ff4cu;	# decomp/src/timer.cpp:23 -> (sym::sysTimerVarG + 0x14u)
+keep	decomp/src/timer.cpp	0x200000	if (tick > 0x200000u)	# timer tick wrap
+keep	decomp/src/timer.cpp	0x200000	t.tickTime = tick - 0x200000u;	# timer tick wrap
+addr	decomp/src/tso.cpp	0x3279ac	constexpr uint32_t kDistanceThreshold = 0x3281e0u, kViewConeScale = 0x3279acu;	# decomp/src/tso.cpp:16 -> sym::lit4_3279ac
+addr	decomp/src/visfx.cpp	0x1f1040	constexpr uint32_t kCont = 0x1f1040u; // visFxVarG.vuCont: the half-width vector the ribbon is built around	# decomp/src/visfx.cpp:706 -> (sym::visFxVarG + 0x40u)
+addr	decomp/src/visfx.cpp	0x1f1050	constexpr uint32_t kCont2 = 0x1f1050u; // visFxVarG.vuCont2: the previous one, for continuing a ribbon	# decomp/src/visfx.cpp:707 -> (sym::visFxVarG + 0x50u)
+addr	decomp/src/visfx.cpp	0x1f1160	constexpr uint32_t kCamTrans = 0x1f1160u; // visFxVarG.ps2CameraTrans	# decomp/src/visfx.cpp:708 -> (sym::visFxVarG + 0x160u)
+keep	decomp/src/visfx.cpp	0x2fff00	at<uint32_t>(quad + 0x6c) = 0x2fff00;	# a UV/colour word
+keep	decomp/src/visfx.cpp	0x2fff00	at<uint32_t>(quad + 0x68) = 0x2fff00;	# a UV/colour word
+keep	decomp/src/visfx.cpp	0x400000	at<uint32_t>(sp + vfx::spr::kRgb) = 0x400000;	# a GS memory address, a colour or a random range
+addr	decomp/src/visfx11.cpp	0x1eab20	constexpr uint32_t kCamera = 0x1eab20; // cameraVarG.pCamera	# decomp/src/visfx11.cpp:28 -> (sym::cameraVarG + 0xb70u)
+addr	decomp/src/visfx11.cpp	0x1ed910	constexpr uint32_t kGameTimer = 0x1ed910; // mainVarG.gameTimer	# decomp/src/visfx11.cpp:30 -> (sym::mainVarG + 0x10u)
+keep	decomp/src/visfx11.cpp	0x140000	return static_cast<uint32_t>(wave + 0x64 + (atLeastZero(wave + 0x32) << 8) + 0x140000);	# a colour
+keep	decomp/src/visfx11.cpp	0x14465a	at<uint32_t>(s + spr::kRgb) = 0x14465a;	# a colour
+addr	decomp/src/visfx11.cpp	0x327820	constexpr uint32_t kTurn = 0x327820;	# decomp/src/visfx11.cpp:269 -> sym::lit4_327820
+addr	decomp/src/visfx11.cpp	0x3278d0	const int32_t wobble = sine4096(time << 3, 0x3278d0) >> 5;	# decomp/src/visfx11.cpp:501 -> sym::lit4_3278d0
+addr	decomp/src/visfx11.cpp	0x3278d4	y += (sine4096(time << 2, 0x3278d4) >> 8) + 0x64;	# decomp/src/visfx11.cpp:536 -> sym::lit4_3278d4
+addr	decomp/src/visfx12.cpp	0x1f3710	constexpr uint32_t kFxHeader = 0x1f3710, kFxFooter = 0x1f3714; // visFxVarG.vfxHeader / vfxFooter	# decomp/src/visfx12.cpp:41 -> (sym::visFxVarG + 0x2710u)
+addr	decomp/src/visfx12.cpp	0x1f3714	constexpr uint32_t kFxHeader = 0x1f3710, kFxFooter = 0x1f3714; // visFxVarG.vfxHeader / vfxFooter	# decomp/src/visfx12.cpp:41 -> (sym::visFxVarG + 0x2714u)
+addr	decomp/src/visfx12.cpp	0x1f3718	constexpr uint32_t kTsfxHeader = 0x1f3718; // visFxVarG.vfxTSFXHeader	# decomp/src/visfx12.cpp:42 -> (sym::visFxVarG + 0x2718u)
+addr	decomp/src/visfx12.cpp	0x1f3728	constexpr uint32_t kSkyTerror = 0x1f3728, kCueForward = 0x1f372c, kResultTrigger = 0x1f3730;	# decomp/src/visfx12.cpp:43 -> (sym::visFxVarG + 0x2728u)
+addr	decomp/src/visfx12.cpp	0x1f372c	constexpr uint32_t kSkyTerror = 0x1f3728, kCueForward = 0x1f372c, kResultTrigger = 0x1f3730;	# decomp/src/visfx12.cpp:43 -> (sym::visFxVarG + 0x272cu)
+addr	decomp/src/visfx12.cpp	0x1f3730	constexpr uint32_t kSkyTerror = 0x1f3728, kCueForward = 0x1f372c, kResultTrigger = 0x1f3730;	# decomp/src/visfx12.cpp:43 -> (sym::visFxVarG + 0x2730u)
+addr	decomp/src/visfx12.cpp	0x1f1160	constexpr uint32_t kCameraPos = 0x1f1160; // visFxVarG.ps2CameraTrans: the camera position the effects are sorted from	# decomp/src/visfx12.cpp:44 -> (sym::visFxVarG + 0x160u)
+addr	decomp/src/visfx12.cpp	0x1f1190	constexpr uint32_t kCameraDir = 0x1f1190; // the camera's view direction (sort depth = dot with it)	# decomp/src/visfx12.cpp:45 -> (sym::visFxVarG + 0x190u)
+addr	decomp/src/visfx12.cpp	0x1ed904	constexpr uint32_t kMainToDo = 0x1ed904, kMainTime = 0x1ed91c, kWhichSplitScreen = 0x1edc78;	# decomp/src/visfx12.cpp:48 -> (sym::mainVarG + 0x4u)
+addr	decomp/src/visfx12.cpp	0x1ed91c	constexpr uint32_t kMainToDo = 0x1ed904, kMainTime = 0x1ed91c, kWhichSplitScreen = 0x1edc78;	# decomp/src/visfx12.cpp:48 -> (sym::mainVarG + 0x1cu)
+addr	decomp/src/visfx12.cpp	0x1edc78	constexpr uint32_t kMainToDo = 0x1ed904, kMainTime = 0x1ed91c, kWhichSplitScreen = 0x1edc78;	# decomp/src/visfx12.cpp:48 -> (sym::mainVarG + 0x378u)
+addr	decomp/src/visfx12.cpp	0x1f48e4	constexpr uint32_t kSky = 0x1f48e4; // visVarG.sky	# decomp/src/visfx12.cpp:51 -> (sym::visVarG + 0x14u)
+keep	decomp/src/visfx12.cpp	0x209060	{0x1000027e, 0x1000027e, 0x6060, 0x10, 2}, {0x1000027f, 0x1000027f, 0x209060, 0, 4},	# a colour
+keep	decomp/src/visfx12.cpp	0x306080	return index == 2 ? 0x306080 : 0x606060;	# a colour
+addr	decomp/src/visfx12.cpp	0x324570	printFinishLine(0x324570); // "PLAYER 1"	# decomp/src/visfx12.cpp:1229 -> (sym::sec_rodata + 0x1f70u)
+addr	decomp/src/visfx12.cpp	0x324580	printFinishLine(0x324580); // "PLAYER 2"	# decomp/src/visfx12.cpp:1237 -> (sym::sec_rodata + 0x1f80u)
+addr	decomp/src/visfx12.cpp	0x324590	const int32_t width = printPlayerName(0x324590, y1); // "Player 1"	# decomp/src/visfx12.cpp:1249 -> (sym::sec_rodata + 0x1f90u)
+addr	decomp/src/visfx12.cpp	0x327894	holdPodiumCar(obj, 0x327894, true);	# decomp/src/visfx12.cpp:1257 -> sym::lit4_327894
+addr	decomp/src/visfx12.cpp	0x3245a0	const int32_t width = printPlayerName(0x3245a0, y2); // "Player 2"	# decomp/src/visfx12.cpp:1263 -> (sym::sec_rodata + 0x1fa0u)
+addr	decomp/src/visfx12.cpp	0x327898	holdPodiumCar(obj, 0x327898, false);	# decomp/src/visfx12.cpp:1269 -> sym::lit4_327898
+addr	decomp/src/visfx12.cpp	0x1f11c0	constexpr uint32_t kParts = 0x1f11c0, kRaining = 0x1f1e60, kTobs = 0x1f1e64, kCamPos16 = 0x1f1108;	# decomp/src/visfx12.cpp:1307 -> (sym::visFxVarG + 0x1c0u)
+addr	decomp/src/visfx12.cpp	0x1f1e60	constexpr uint32_t kParts = 0x1f11c0, kRaining = 0x1f1e60, kTobs = 0x1f1e64, kCamPos16 = 0x1f1108;	# decomp/src/visfx12.cpp:1307 -> (sym::visFxVarG + 0xe60u)
+addr	decomp/src/visfx12.cpp	0x1f1e64	constexpr uint32_t kParts = 0x1f11c0, kRaining = 0x1f1e60, kTobs = 0x1f1e64, kCamPos16 = 0x1f1108;	# decomp/src/visfx12.cpp:1307 -> (sym::visFxVarG + 0xe64u)
+addr	decomp/src/visfx12.cpp	0x1f1108	constexpr uint32_t kParts = 0x1f11c0, kRaining = 0x1f1e60, kTobs = 0x1f1e64, kCamPos16 = 0x1f1108;	# decomp/src/visfx12.cpp:1307 -> (sym::visFxVarG + 0x108u)
+addr	decomp/src/visfx2.cpp	0x3245b0	static constexpr Message kExcellent{0x3245b0u, 11}, kCongratulations{0x3245c0u, 17}, kWellDone{0x3245d8u, 11},	# decomp/src/visfx2.cpp:219 -> (sym::sec_rodata + 0x1fb0u)
+addr	decomp/src/visfx2.cpp	0x3245c0	static constexpr Message kExcellent{0x3245b0u, 11}, kCongratulations{0x3245c0u, 17}, kWellDone{0x3245d8u, 11},	# decomp/src/visfx2.cpp:219 -> (sym::sec_rodata + 0x1fc0u)
+addr	decomp/src/visfx2.cpp	0x3245d8	static constexpr Message kExcellent{0x3245b0u, 11}, kCongratulations{0x3245c0u, 17}, kWellDone{0x3245d8u, 11},	# decomp/src/visfx2.cpp:219 -> (sym::sec_rodata + 0x1fd8u)
+addr	decomp/src/visfx2.cpp	0x3245e8	kRecord{0x3245e8u, 19}, kBetterLuck{0x324600u, 23};	# decomp/src/visfx2.cpp:220 -> (sym::sec_rodata + 0x1fe8u)
+addr	decomp/src/visfx2.cpp	0x324600	kRecord{0x3245e8u, 19}, kBetterLuck{0x324600u, 23};	# decomp/src/visfx2.cpp:220 -> (sym::sec_rodata + 0x2000u)
+addr	decomp/src/visfx2.cpp	0x1f1e64	constexpr uint32_t kRainTable = 0x1f1e64u, kGlintTable = 0x1f36b0u;	# decomp/src/visfx2.cpp:380 -> (sym::visFxVarG + 0xe64u)
+addr	decomp/src/visfx2.cpp	0x1f36b0	constexpr uint32_t kRainTable = 0x1f1e64u, kGlintTable = 0x1f36b0u;	# decomp/src/visfx2.cpp:380 -> (sym::visFxVarG + 0x26b0u)
+addr	decomp/src/visfx2.cpp	0x1f1160	constexpr uint32_t kCamTrans = 0x1f1160u, kCamMatrix = 0x1f1120u;	# decomp/src/visfx2.cpp:381 -> (sym::visFxVarG + 0x160u)
+addr	decomp/src/visfx2.cpp	0x1f1120	constexpr uint32_t kCamTrans = 0x1f1160u, kCamMatrix = 0x1f1120u;	# decomp/src/visfx2.cpp:381 -> (sym::visFxVarG + 0x120u)
+addr	decomp/src/visfx2.cpp	0x1f1dc0	copyVector(0x1f1dc0u, kCamTrans);	# decomp/src/visfx2.cpp:402 -> (sym::visFxVarG + 0xdc0u)
+addr	decomp/src/visfx2.cpp	0x1f1dd0	copyVector(0x1f1dd0u, kCamTrans);	# decomp/src/visfx2.cpp:404 -> (sym::visFxVarG + 0xdd0u)
+addr	decomp/src/visfx2.cpp	0x1f36f0	copyVector(0x1f36f0u, kCamTrans);	# decomp/src/visfx2.cpp:409 -> (sym::visFxVarG + 0x26f0u)
+addr	decomp/src/visfx2.cpp	0x1f3700	copyVector(0x1f3700u, kCamTrans);	# decomp/src/visfx2.cpp:410 -> (sym::visFxVarG + 0x2700u)
+keep	decomp/src/visfx3.cpp	0x404050	at<uint32_t>(sp + vfx::spr::kRgb) = 0x404050;	# sprite colours
+keep	decomp/src/visfx3.cpp	0x303030	at<uint32_t>(sp + vfx::spr::kRgb) = 0x303030;	# sprite colours
+keep	decomp/src/visfx3.cpp	0x460000	at<uint32_t>(sp + vfx::spr::kRgb) = 0x460000;	# sprite colours
+keep	decomp/src/visfx4.cpp	0x400000	at<uint32_t>(s2 + vfx::spr::kRgb) = 0x400000;	# a colour
+keep	decomp/src/visfx4.cpp	0x460000	at<uint32_t>(s4 + vfx::spr::kRgb) = 0x460000;	# a colour
+keep	decomp/src/visfx4.cpp	0x204060	at<uint32_t>(sp + vfx::spr::kRgb) = 0x204060;	# a colour
+addr	decomp/src/visfx4.cpp	0x1edcf0	const uint32_t colour = 0x1edcf0u + material * 0x18;	# decomp/src/visfx4.cpp:1148 -> (sym::mtlG + 0x8u)
+addr	decomp/src/visfx5.cpp	0x1f1160	vfx::vu0Add(offset, 0x1f1160u, offset);	# decomp/src/visfx5.cpp:844 -> (sym::visFxVarG + 0x160u)
+keep	decomp/src/visfx6.cpp	0x2d4696	at<uint32_t>(s3 + vfx::spr::kRgb) = 0x2d4696;	# sprite colours
+keep	decomp/src/visfx6.cpp	0x404040	at<uint32_t>(s5 + vfx::spr::kRgb) = at<uint16_t>(m + 0x10) < 0x18 ? 0x404040 : 0x2020;	# sprite colours
+keep	decomp/src/visfx9.cpp	0x2d4696	spriteLook(4, vfx::vfxTexture(6), 0x2d4696, ee_float(at<float>(sym::lit4_3277e8)), at<uint16_t>(m + 0x654));	# sprite colours
+keep	decomp/src/visfx9.cpp	0x282828	aerialSpark(points, tip, (0u - at<uint16_t>(m + 0x10)) & 7, 0x282828, svDir);	# sprite colours
+keep	decomp/src/visfx9.cpp	0x2c2c00	aerialSpark(points, tip, (3u - at<uint16_t>(m + 0x10)) & 7, 0x2c2c00, svDir);	# sprite colours
+keep	decomp/src/visfx9.cpp	0x242424	at<uint32_t>(quad + 0x60 + 4 * c) = 0x242424;	# sprite colours
+keep	decomp/src/visfx_fuzz.cpp	0x100000	const bool realCar = levelHasCars() && car.pPhysics.address == scratch + 0x1000u && car.pDef.address >= 0x100000u && car.pDef.address < 0x1ffff00u;	# a size, RAM bound or random range, not the start of .text
+addr	decomp/src/visfx_fuzz.cpp	0x1f1030	g_quad.set(0x1f1030u, scratch + kEffect); // visFxVarG.pGT4	# decomp/src/visfx_fuzz.cpp:236 -> (sym::visFxVarG + 0x30u)
+addr	decomp/src/visfx_fuzz.cpp	0x1ecbf0	g_trackHints.set(0x1ecbf0u, rnd(state, 2) ? 1u : 0u); // frontEndVarG.gameStateData.gameConfig.trackDirHints	# decomp/src/visfx_fuzz.cpp:311 -> (sym::frontEndVarG + 0x198u)
+addr	decomp/src/visfx_fuzz.cpp	0x1f1e64	void vfxRainTable(R5900Context *ctx, uint64_t &state, uint32_t scratch) { tableSetup(ctx, state, scratch, g_rain, 0x1f1e64u); }	# decomp/src/visfx_fuzz.cpp:438 -> (sym::visFxVarG + 0xe64u)
+addr	decomp/src/visfx_fuzz.cpp	0x1f36b0	void vfxGlintTable(R5900Context *ctx, uint64_t &state, uint32_t scratch) { tableSetup(ctx, state, scratch, g_glint, 0x1f36b0u); }	# decomp/src/visfx_fuzz.cpp:439 -> (sym::visFxVarG + 0x26b0u)
+addr	decomp/src/visfx_fuzz.cpp	0x1f1030	g_quad.set(0x1f1030u, scratch + kEffect);	# decomp/src/visfx_fuzz.cpp:564 -> (sym::visFxVarG + 0x30u)
+addr	decomp/src/visfx_fuzz.cpp	0x1f1030	g_quad.set(0x1f1030u, scratch + kEffect);	# decomp/src/visfx_fuzz.cpp:588 -> (sym::visFxVarG + 0x30u)
+addr	decomp/src/visfx_fuzz.cpp	0x1f1030	g_quad.set(0x1f1030u, scratch + kQuad);	# decomp/src/visfx_fuzz.cpp:597 -> (sym::visFxVarG + 0x30u)
+addr	decomp/src/visfx_fuzz.cpp	0x1f3720	g_sprite.set(0x1f3720u, scratch + kSprite); // visFxVarG.sprite	# decomp/src/visfx_fuzz.cpp:598 -> (sym::visFxVarG + 0x2720u)
+addr	decomp/src/visfx_fuzz.cpp	0x1f106c	g_res.set(0x1f106cu, scratch + kRes);	# decomp/src/visfx_fuzz.cpp:643 -> (sym::visFxVarG + 0x6cu)
+addr	decomp/src/visfx_fuzz.cpp	0x1edc4a	g_level.set(0x1edc4au, rnd(state, 2) ? 0x62 : 0x10);	# decomp/src/visfx_fuzz.cpp:1532 -> (sym::mainVarG + 0x34au)
+addr	decomp/src/visfx_fuzz.cpp	0x1ecbf0	g_trackHints.set(0x1ecbf0u, rnd(state, 8) ? 1u : 0u);	# decomp/src/visfx_fuzz.cpp:1562 -> (sym::frontEndVarG + 0x198u)
+addr	decomp/src/visfx_fuzz.cpp	0x1eab20	g_camera.set(0x1eab20u, scratch + kAuxA);	# decomp/src/visfx_fuzz.cpp:1563 -> (sym::cameraVarG + 0xb70u)
+addr	decomp/src/visfx_fuzz.cpp	0x1eab20	g_camera.set(0x1eab20u, scratch + kAuxA);	# decomp/src/visfx_fuzz.cpp:1594 -> (sym::cameraVarG + 0xb70u)
+addr	decomp/src/visfx_fuzz.cpp	0x1edc4a	g_level.set(0x1edc4au, rnd(state, 2) ? 0x62 : 0x10);	# decomp/src/visfx_fuzz.cpp:1641 -> (sym::mainVarG + 0x34au)
+addr	decomp/src/visfx_fuzz.cpp	0x1edc68	g_split.set(0x1edc68u, 1);	# decomp/src/visfx_fuzz.cpp:1895 -> (sym::mainVarG + 0x368u)
+addr	decomp/src/visfx_fuzz.cpp	0x1edc78	g_screen.set(0x1edc78u, rnd(state, 4) ? 0 : 1);	# decomp/src/visfx_fuzz.cpp:1896 -> (sym::mainVarG + 0x378u)
+addr	decomp/src/visfx_fuzz.cpp	0x1edc4a	g_level.set(0x1edc4au, rnd(state, 2) ? 0x62 : 0x10);	# decomp/src/visfx_fuzz.cpp:1954 -> (sym::mainVarG + 0x34au)
+addr	decomp/src/visfx_fuzz.cpp	0x1edc68	g_split.set(0x1edc68u, static_cast<uint8_t>(rnd(state, 2)));	# decomp/src/visfx_fuzz.cpp:1974 -> (sym::mainVarG + 0x368u)
+addr	decomp/src/visfx_fuzz.cpp	0x1edc78	g_screen.set(0x1edc78u, rnd(state, 2));	# decomp/src/visfx_fuzz.cpp:1975 -> (sym::mainVarG + 0x378u)
+keep	decomp/src/visfx_fuzz.cpp	0x100000	if (handler && (grid < 0x100000u || grid >= 0x1ffff00u))	# a size, RAM bound or random range, not the start of .text
+addr	decomp/src/visfx_fuzz.cpp	0x1edc68	g_split.set(0x1edc68u, static_cast<uint8_t>(rnd(state, 2)));	# decomp/src/visfx_fuzz.cpp:2052 -> (sym::mainVarG + 0x368u)
+addr	decomp/src/visfx_fuzz.cpp	0x1edc78	g_screen.set(0x1edc78u, rnd(state, 2));	# decomp/src/visfx_fuzz.cpp:2053 -> (sym::mainVarG + 0x378u)
+addr	decomp/src/visfx_fuzz.cpp	0x1f1160	g_cameraVector.set(0x1f1160u, camera);	# decomp/src/visfx_fuzz.cpp:2225 -> (sym::visFxVarG + 0x160u)
+addr	decomp/src/visfx_fuzz.cpp	0x1edc78	g_screen.set(0x1edc78u, rnd(state, 4) ? 0 : 1);	# decomp/src/visfx_fuzz.cpp:2226 -> (sym::mainVarG + 0x378u)
+keep	decomp/src/visfx_fuzz.cpp	0x100000	const bool haveGrid = grid >= 0x100000u && grid < 0x1ffff00u;	# a size, RAM bound or random range, not the start of .text
+addr	decomp/src/visfx_fuzz.cpp	0x1f36f0	g_lastSpots.set(0x1f36f0u, spots);	# decomp/src/visfx_fuzz.cpp:2233 -> (sym::visFxVarG + 0x26f0u)
+addr	decomp/src/visfx_fuzz.cpp	0x1f1eb0	g_glints.set(0x1f1eb0u, block);	# decomp/src/visfx_fuzz.cpp:2236 -> (sym::visFxVarG + 0xeb0u)
+addr	decomp/src/visfx_fuzz.cpp	0x1f1eb0	const uint32_t glint = 0x1f1eb0u + i * 0x30;	# decomp/src/visfx_fuzz.cpp:2239 -> (sym::visFxVarG + 0xeb0u)
+keep	decomp/src/visfx_fuzz.cpp	0x100000	return grid >= 0x100000u && grid < 0x1ffff00u;	# a size, RAM bound or random range, not the start of .text
+addr	decomp/src/visfx_fuzz.cpp	0x1edc68	g_split.set(0x1edc68u, static_cast<uint8_t>(rnd(state, 2)));	# decomp/src/visfx_fuzz.cpp:2436 -> (sym::mainVarG + 0x368u)
+addr	decomp/src/visfx_fuzz.cpp	0x1eab20	g_camera.set(0x1eab20u, scratch + kCameraRecord);	# decomp/src/visfx_fuzz.cpp:2878 -> (sym::cameraVarG + 0xb70u)
+keep	decomp/src/visfx_fuzz.cpp	0x100000	mem<int32_t>(rendObj + 4 + 4 * axis) + (rnd(state, 2) ? static_cast<int32_t>(rnd(state, 0x100000)) - 0x80000 : static_cast<int32_t>(nextFuzz(state) >> 4));	# a size, RAM bound or random range, not the start of .text
+addr	decomp/src/visfx_fuzz.cpp	0x1eab20	g_camera.set(0x1eab20u, scratch + kCameraRecord);	# decomp/src/visfx_fuzz.cpp:2946 -> (sym::cameraVarG + 0xb70u)
+addr	decomp/src/visfx_fuzz.cpp	0x1f3710	constexpr uint32_t kFxHeaderAddr = 0x1f3710u, kTsfxHeaderAddr = 0x1f3718u;	# decomp/src/visfx_fuzz.cpp:2960 -> (sym::visFxVarG + 0x2710u)
+addr	decomp/src/visfx_fuzz.cpp	0x1f3718	constexpr uint32_t kFxHeaderAddr = 0x1f3710u, kTsfxHeaderAddr = 0x1f3718u;	# decomp/src/visfx_fuzz.cpp:2960 -> (sym::visFxVarG + 0x2718u)
+addr	decomp/src/visfx_fuzz.cpp	0x1f3728	constexpr uint32_t kSkyTerrorAddr = 0x1f3728u, kResultTriggerAddr = 0x1f3730u;	# decomp/src/visfx_fuzz.cpp:2961 -> (sym::visFxVarG + 0x2728u)
+addr	decomp/src/visfx_fuzz.cpp	0x1f3730	constexpr uint32_t kSkyTerrorAddr = 0x1f3728u, kResultTriggerAddr = 0x1f3730u;	# decomp/src/visfx_fuzz.cpp:2961 -> (sym::visFxVarG + 0x2730u)
+addr	decomp/src/visfx_fuzz.cpp	0x1f11c0	const uint32_t p = 0x1f11c0u + 0x30 * i;	# decomp/src/visfx_fuzz.cpp:3135 -> (sym::visFxVarG + 0x1c0u)
+addr	decomp/src/weapon.h	0x1ed910	constexpr uint32_t kObjectList = 0x1ee390u, kWeaponVars = 0x1f3a80u, kCameras = 0x1e9fb0u, kGameTimer = 0x1ed910u;	# decomp/src/weapon.h:105 -> (sym::mainVarG + 0x10u)
+addr	decomp/src/weapon.h	0x1e9404	constexpr uint32_t kRaceOrder = 0x1e9404u, kRaceOrderStride = 12u;	# decomp/src/weapon.h:106 -> (sym::aiVarG + 0x4u)
+addr	decomp/src/weapon3.cpp	0x1eb778	constexpr uint32_t kTriggerState = 0x1eb778u; // carColG.triggerState[9]	# decomp/src/weapon3.cpp:18 -> (sym::carColG + 0xe0u)
+addr	decomp/src/weapon_fuzz.cpp	0x1ed91c	constexpr uint32_t kObjectList = 0x1ee390u, kWeaponVars = 0x1f3a80u, kSfxInitOk = 0x31e488u, kMainTime = 0x1ed91cu;	# decomp/src/weapon_fuzz.cpp:17 -> (sym::mainVarG + 0x1cu)
+addr	decomp/src/weapon_fuzz.cpp	0x1eb778	constexpr uint32_t kTriggerState = 0x1eb778u;	# decomp/src/weapon_fuzz.cpp:19 -> (sym::carColG + 0xe0u)
+addr	overrides/rc_revenge_pro_overrides.cpp	0x1edac0	std::memcpy(rdram + 0x001EDAC0u, "TEST", 5u);	# overrides/rc_revenge_pro_overrides.cpp:249 -> (sym::mainVarG + 0x1c0u)
+keep	overrides/rc_revenge_pro_overrides.cpp	0x100000	constexpr uint32_t kChunkBytes = 0x00100000u;	# a chunk size (kChunkBytes) / see kTextStart
+addr	overrides/rc_revenge_pro_overrides.cpp	0x100000	constexpr uint32_t kTextStart = 0x00100000u;	# start of .text
+keep	overrides/rc_revenge_pro_overrides.cpp	0x1d5444	constexpr uint32_t kTextEnd = 0x001D5444u;	# end of .text: written as rc::sym::sec_text_end by hand
+addr-changed	decomp/src/rdr.cpp	0x327bf8	put(0x114, player == 1 ? 0x44f90000u : player == 2 ? *static_cast<uint32_t *>(guest_host(0x327bf8u)) : 0x45000000u);	# a .lit4 float read only by RdrPolyInitCamera, which is resized in Europe (that entry is not in its .lit4)

@@ -74,15 +74,15 @@ void ObjectInterpolateTint(ptr32<_sObject> pObject);
 namespace object {
 
 // Guest functions still recompiled.
-constexpr uint32_t kResLoad = 0x1ab1b0, kTaskSet = 0x1afad8, kTaskCachedInsert = 0x1afb68, kTaskDelete = 0x1afc48;
-constexpr uint32_t kPhysicsAddCar = 0x13d1e0, kPhysicsDeleteCar = 0x13e3e8, kPhysicsCarBoatSwap = 0x13e470;
-constexpr uint32_t kSfxStop = 0x1ad448, kSfxPlay = 0x1ad0a0, kRevSfxPlay3D = 0x1418a8, kRevSfxPlay3DCombine = 0x141bd8;
-constexpr uint32_t kRCMusicSwitchAlternate = 0x1411e8, kSfxStopNow = 0x1adff0;
-constexpr uint32_t kTimerGet = 0x1b4188, kPhysicsApplyIntForce = 0x13e520;
-constexpr uint32_t kObjectConstructDaemonAddr = 0x133ab0, kObjectDefaultControlAddr = 0x139a28;
+constexpr uint32_t kResLoad = sym::ResLoad, kTaskSet = sym::TaskSet, kTaskCachedInsert = sym::TaskCachedInsert, kTaskDelete = sym::TaskDelete;
+constexpr uint32_t kPhysicsAddCar = sym::PhysicsAddCar, kPhysicsDeleteCar = sym::PhysicsDeleteCar, kPhysicsCarBoatSwap = sym::PhysicsCarBoatSwap;
+constexpr uint32_t kSfxStop = sym::SfxStop, kSfxPlay = sym::SfxPlay, kRevSfxPlay3D = sym::RevSfxPlay3D, kRevSfxPlay3DCombine = sym::RevSfxPlay3DCombine;
+constexpr uint32_t kRCMusicSwitchAlternate = sym::RCMusicSwitchAlternate, kSfxStopNow = sym::SfxStopNow;
+constexpr uint32_t kTimerGet = sym::TimerGet, kPhysicsApplyIntForce = sym::PhysicsApplyIntForce;
+constexpr uint32_t kObjectConstructDaemonAddr = sym::ObjectConstructDaemon, kObjectDefaultControlAddr = sym::ObjectDefaultControl;
 
 // Globals.
-constexpr uint32_t kObjectVars = 0x1ee390u, kObjectType = 0x327f18u, kObjectType2 = 0x327f20u, kCarList = 0x1eb7a0u;
+constexpr uint32_t kObjectVars = sym::objectVarG, kObjectType = (sym::sec_sdata + 0x318u), kObjectType2 = (sym::sec_sdata + 0x320u), kCarList = sym::carListVarG;
 
 template <typename T>
 T &at(uint32_t address) { return *static_cast<T *>(guest_host(address)); }

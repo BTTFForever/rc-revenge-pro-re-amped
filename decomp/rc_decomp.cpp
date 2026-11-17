@@ -575,6 +575,17 @@ void registerEntry(Entry &entry, RecompFn shadow)
     registry().push_back({&entry, shadow});
 }
 
+std::vector<const char *> &versionSkipped()
+{
+    static std::vector<const char *> names;
+    return names;
+}
+
+void notRegistered(const char *name)
+{
+    versionSkipped().push_back(name);
+}
+
 // Functions whose writes are confined to known memory can be compared cheaply: only those ranges are snapshot,
 // restored and compared, instead of all of RAM. Each provider returns the ranges at the time of the call.
 std::vector<std::pair<std::string, RegionProvider>> &regionProviders()
@@ -883,6 +894,9 @@ void installDecomp(PS2Runtime &runtime)
             installed += runtime.replaceFunction(item.entry->address, shadow ? item.shadow : item.entry->native) ? 1u : 0u;
     std::fprintf(stderr, "[decomp] %zu of %zu functions installed%s\n", installed, registry().size(),
                  shadow ? ", comparing against the recompiled originals" : "");
+    if (!versionSkipped().empty())
+        std::fprintf(stderr, "[decomp] %zu natives not registered: their functions differ in this version of the game\n",
+                     versionSkipped().size());
 }
 
 } // namespace rc

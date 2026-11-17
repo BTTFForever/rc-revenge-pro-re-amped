@@ -25,17 +25,17 @@ void PathOptimize();
 
 namespace {
 
-constexpr uint32_t kDetails = 0x1ee578u;            // pathDetailsG
+constexpr uint32_t kDetails = sym::pathDetailsG;            // pathDetailsG
 constexpr uint32_t kCurrentTag = kDetails + 0x0u, kActivePath = kDetails + 0x4u, kFinalDestTag = kDetails + 0x8u;
 constexpr uint32_t kBuilt = kDetails + 0x24u;       // constructedPath: length (byte), +1 its high byte, +2 speed, +4 id
 constexpr uint32_t kBuiltTags = kDetails + 0x2cu;   // constructedPath.startTag
-constexpr uint32_t kFrontEnd = 0x1eca58u;           // frontEndVarG: pFELevelData, +0x288 destTag, +0x2be pilot mode
-constexpr uint32_t kPathLinks = 0x1ebef0u;
-constexpr uint32_t kCameraPtr = 0x1eab20u;          // cameraVarG.pCamera
-constexpr uint32_t kCameraVars = 0x1e9fb0u;         // cameraVarG.camera
-constexpr uint32_t kPathType = 0x327f48u;
-constexpr uint32_t kPathConstructDaemon = 0x13ce88u, kPathPilotEndCallback = 0x13c380u, kPathPilotNodeCallback = 0x13ca78u;
-constexpr uint32_t kMat3nBuildXYZ = 0x19e768u;
+constexpr uint32_t kFrontEnd = sym::frontEndVarG;           // frontEndVarG: pFELevelData, +0x288 destTag, +0x2be pilot mode
+constexpr uint32_t kPathLinks = sym::pathLinks;
+constexpr uint32_t kCameraPtr = (sym::cameraVarG + 0xb70u);          // cameraVarG.pCamera
+constexpr uint32_t kCameraVars = sym::cameraVarG;         // cameraVarG.camera
+constexpr uint32_t kPathType = (sym::sec_sdata + 0x348u);
+constexpr uint32_t kPathConstructDaemon = sym::PathConstructDaemon, kPathPilotEndCallback = sym::PathPilotEndCallback, kPathPilotNodeCallback = sym::PathPilotNodeCallback;
+constexpr uint32_t kMat3nBuildXYZ = sym::Mat3nBuildXYZ;
 
 template <typename T>
 T &at(uint32_t address) { return *static_cast<T *>(guest_host(address)); }
@@ -378,20 +378,20 @@ void PathPilotEndCallback(ptr32<void>)
 
 } // namespace rc
 
-RC_DECOMP_FN_SETUP(GetCameraFromTag, 0x13ca18, rc::fuzz::pathCameras)
-RC_DECOMP_FN_SETUP(PathPilotNodeCallback, 0x13ca78, rc::fuzz::pathNode)
-RC_DECOMP_FN_SETUP(SetCameraToThisTag, 0x13ca98, rc::fuzz::pathCameras)
-RC_DECOMP_FN_SETUP(PathCopy, 0x13cb70, rc::fuzz::pathCopy)
-RC_DECOMP_FN_SETUP(PathEmpty, 0x13cc60, rc::fuzz::pathBuilt)
-RC_DECOMP_FN_SETUP(CameraPitchFixup, 0x13cc80, rc::fuzz::pathPitch)
-RC_DECOMP_FN_SETUP(PathSmoother, 0x13ccf0, rc::fuzz::pathSmoother)
-RC_DECOMP_FN_SETUP(GetPath, 0x13cdb8, rc::fuzz::pathTags)
-RC_DECOMP_FN_SETUP(CheckPathDirection, 0x13ce48, rc::fuzz::pathDirection)
-RC_DECOMP_FN_SETUP(PathConstructDaemon, 0x13ce88, rc::fuzz::pathDaemon)
-RC_DECOMP_FN_SETUP_HEAP(PathInit, 0x13c5f8, rc::fuzz::pathNone)
-RC_DECOMP_FN_SETUP_HEAP(PathTerm, 0x13c610, rc::fuzz::pathNone)
-RC_DECOMP_FN_SETUP(GetViaPath, 0x13c4b8, rc::fuzz::pathTags)
-RC_DECOMP_FN_SETUP(SetPath, 0x13c620, rc::fuzz::pathTags)
-RC_DECOMP_FN_SETUP(PathOptimize, 0x13c7d8, rc::fuzz::pathBuilt)
-RC_DECOMP_FN_SETUP(PathBuilder, 0x13c170, rc::fuzz::pathBuilder)
-RC_DECOMP_FN_SETUP_HEAP(PathPilotEndCallback, 0x13c380, rc::fuzz::pathEnd)
+RC_DECOMP_FN_SETUP(GetCameraFromTag, rc::fuzz::pathCameras)
+RC_DECOMP_FN_SETUP(PathPilotNodeCallback, rc::fuzz::pathNode)
+RC_DECOMP_FN_SETUP(SetCameraToThisTag, rc::fuzz::pathCameras)
+RC_DECOMP_FN_SETUP(PathCopy, rc::fuzz::pathCopy)
+RC_DECOMP_FN_SETUP(PathEmpty, rc::fuzz::pathBuilt)
+RC_DECOMP_FN_SETUP(CameraPitchFixup, rc::fuzz::pathPitch)
+RC_DECOMP_FN_SETUP(PathSmoother, rc::fuzz::pathSmoother)
+RC_DECOMP_FN_SETUP(GetPath, rc::fuzz::pathTags)
+RC_DECOMP_FN_SETUP(CheckPathDirection, rc::fuzz::pathDirection)
+RC_DECOMP_FN_SETUP(PathConstructDaemon, rc::fuzz::pathDaemon)
+RC_DECOMP_FN_SETUP_HEAP(PathInit, rc::fuzz::pathNone)
+RC_DECOMP_FN_SETUP_HEAP(PathTerm, rc::fuzz::pathNone)
+RC_DECOMP_FN_SETUP(GetViaPath, rc::fuzz::pathTags)
+RC_DECOMP_FN_SETUP(SetPath, rc::fuzz::pathTags)
+RC_DECOMP_FN_SETUP(PathOptimize, rc::fuzz::pathBuilt)
+RC_DECOMP_FN_SETUP(PathBuilder, rc::fuzz::pathBuilder)
+RC_DECOMP_FN_SETUP_HEAP(PathPilotEndCallback, rc::fuzz::pathEnd)

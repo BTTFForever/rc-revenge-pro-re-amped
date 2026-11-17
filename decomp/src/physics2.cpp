@@ -42,11 +42,11 @@ namespace {
 
 using weapon::at;
 
-constexpr uint32_t kPhysicsGlobal = 0x327f60u; // bInited, bLevelInited, unused, numCars
-constexpr uint32_t kWheelRadiusScale = 0x3276d0u, kRideHeight = 0x3276d4u, kForceScale = 0x3276d8u;
-constexpr uint32_t kSpringScale = 0x3276dcu, kBoatThrustScale = 0x3276e0u, kHelpOutScale = 0x327f58u;
-constexpr uint32_t kWheelTags = 0x323bb8u, kBodySphereTag = 0x10000235u;
-constexpr uint32_t kObjectList = 0x1ee390u, kMainVars = 0x1ed900u, kFPhysLib = 0x1faa30u;
+constexpr uint32_t kPhysicsGlobal = sym::PhysicsGlobal; // bInited, bLevelInited, unused, numCars
+constexpr uint32_t kWheelRadiusScale = sym::lit4_3276d0, kRideHeight = sym::lit4_3276d4, kForceScale = sym::lit4_3276d8;
+constexpr uint32_t kSpringScale = sym::lit4_3276dc, kBoatThrustScale = sym::lit4_3276e0, kHelpOutScale = sym::_dbgHelpOutScale_534;
+constexpr uint32_t kWheelTags = sym::wheelTag_562, kBodySphereTag = 0x10000235u;
+constexpr uint32_t kObjectList = sym::objectVarG, kMainVars = sym::mainVarG, kFPhysLib = sym::FPhysLib;
 const ee_float kS = ee_float(0.00024414062f); // 1 / 4096
 const ee_float kToCell = ee_float(0.00390625f); // 1 / 256
 
@@ -484,22 +484,22 @@ void PhysicsSetOldIntegerState(ptr32<_sFPhysLibCar> pPhysics, int32_t bSet)
     }
 }
 
-RC_DECOMP_FN_SETUP_HEAP(PhysicsAddCar, 0x13d1e0, rc::fuzz::physicsAddCar)
-RC_DECOMP_FN_SETUP_HEAP(PhysicsCollisionResponseUpdate, 0x13d3e0, rc::fuzz::physicsRace)
-RC_DECOMP_FN_SETUP_HEAP(PhysicsRightCar, 0x13d6a0, rc::fuzz::physicsObject)
-RC_DECOMP_FN_SETUP(PhysicsApplyForce, 0x13d8f8, rc::fuzz::physicsForce)
-RC_DECOMP_FN_SETUP_HEAP(InitCarSpheres, 0x13db58, rc::fuzz::physicsCarDef)
-RC_DECOMP_FN_SETUP_HEAP(LoadCarDataResource, 0x13df60, rc::fuzz::physicsCarDef)
-RC_DECOMP_FN_SETUP_HEAP(PhysicsInit, 0x13e368, rc::fuzz::physicsRace)
-RC_DECOMP_FN_SETUP_HEAP(PhysicsTerm, 0x13e3a0, rc::fuzz::physicsRace)
-RC_DECOMP_FN(PhysicsLevelInit, 0x13e3c8)
-RC_DECOMP_FN(PhysicsLevelTerm, 0x13e3d8)
-RC_DECOMP_FN_SETUP_HEAP(PhysicsDeleteCar, 0x13e3e8, rc::fuzz::physicsObject)
-RC_DECOMP_FN_SETUP_HEAP(PhysicsMotion, 0x13e450, rc::fuzz::physicsRace)
-RC_DECOMP_FN_SETUP_HEAP(PhysicsCarBoatSwap, 0x13e470, rc::fuzz::physicsBoatSwap)
-RC_DECOMP_FN_SETUP_HEAP(PhysicsResetCar, 0x13e4e8, rc::fuzz::physicsObject)
-RC_DECOMP_FN_SETUP(PhysicsApplyIntForce, 0x13e520, rc::fuzz::physicsIntForce)
-RC_DECOMP_FN_SETUP(PhysicsSetOldIntegerState, 0x13e5e8, rc::fuzz::physicsCarFlag)
-RC_DECOMP_FN_SETUP(PhysicsCollisionHelpOut, 0x13e7b0, rc::fuzz::physicsCarFlag)
+RC_DECOMP_FN_SETUP_HEAP(PhysicsAddCar, rc::fuzz::physicsAddCar)
+RC_DECOMP_FN_SETUP_HEAP(PhysicsCollisionResponseUpdate, rc::fuzz::physicsRace)
+RC_DECOMP_FN_SETUP_HEAP(PhysicsRightCar, rc::fuzz::physicsObject)
+RC_DECOMP_FN_SETUP(PhysicsApplyForce, rc::fuzz::physicsForce)
+RC_DECOMP_FN_SETUP_HEAP(InitCarSpheres, rc::fuzz::physicsCarDef)
+RC_DECOMP_FN_SETUP_HEAP(LoadCarDataResource, rc::fuzz::physicsCarDef)
+RC_DECOMP_FN_SETUP_HEAP(PhysicsInit, rc::fuzz::physicsRace)
+RC_DECOMP_FN_SETUP_HEAP(PhysicsTerm, rc::fuzz::physicsRace)
+RC_DECOMP_FN(PhysicsLevelInit)
+RC_DECOMP_FN(PhysicsLevelTerm)
+RC_DECOMP_FN_SETUP_HEAP(PhysicsDeleteCar, rc::fuzz::physicsObject)
+RC_DECOMP_FN_SETUP_HEAP(PhysicsMotion, rc::fuzz::physicsRace)
+RC_DECOMP_FN_SETUP_HEAP(PhysicsCarBoatSwap, rc::fuzz::physicsBoatSwap)
+RC_DECOMP_FN_SETUP_HEAP(PhysicsResetCar, rc::fuzz::physicsObject)
+RC_DECOMP_FN_SETUP(PhysicsApplyIntForce, rc::fuzz::physicsIntForce)
+RC_DECOMP_FN_SETUP(PhysicsSetOldIntegerState, rc::fuzz::physicsCarFlag)
+RC_DECOMP_FN_SETUP(PhysicsCollisionHelpOut, rc::fuzz::physicsCarFlag)
 
 } // namespace rc

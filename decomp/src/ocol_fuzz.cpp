@@ -291,7 +291,7 @@ void buildList(Rng &rng, uint32_t scratch, bool inCells, Objects &out)
     }
     // Fix the head sentinel: the first object's pUpdPrev is the address of oColG.pHead.
     if (head)
-        head->pUpdPrev = ptr32<_sOColObj>(0x327f44u);
+        head->pUpdPrev = ptr32<_sOColObj>((sym::oColG + 0x4u));
     G(oColG).pHead = head;
     G(oColG).numObjects = linked;
 }

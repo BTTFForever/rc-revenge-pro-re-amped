@@ -101,7 +101,7 @@ void SpriteRenderFast(ptr32<_sSprite> pSprite, int16 x, int16 y, f32 otz)
     const uint8 width = pSprite->width, height = pSprite->height;
     GfxP2_TexExt(pSprite->pTextureHandle, 0, 0);
     const int32_t left = x + 0x6c0;
-    const uint64_t z = depth(otz, 0x327974u);
+    const uint64_t z = depth(otz, sym::lit4_327974);
     const uint64_t x0 = gsCoord(left);
     const uint64_t yTop = gsCoord(y + 0x780), yBottom = gsCoord(y + 0x780 + height);
     const uint64_t x1 = gsCoord(left + width);
@@ -111,7 +111,7 @@ void SpriteRenderFast(ptr32<_sSprite> pSprite, int16 x, int16 y, f32 otz)
     strip.vertex(st(1.0f, 0.0f), kWhite, kWhiteBA, xy(x1, yBottom), z);
     strip.vertex(st(0.0f, 1.0f), kWhite, kWhiteBA, xy(x0, yTop), z);
     strip.vertex(st(1.0f, 1.0f), kWhite, kWhiteBA, xy(gsCoord(left + pSprite->width), yTop), z);
-    strip.vertex(st(1.0f, 0.0f), kWhite, kWhiteBA, xy(x1, yBottom), depth(otz, 0x327974u));
+    strip.vertex(st(1.0f, 0.0f), kWhite, kWhiteBA, xy(x1, yBottom), depth(otz, sym::lit4_327974));
 }
 
 namespace {
@@ -249,19 +249,19 @@ void renderSprite(ptr32<_sSprite> pSprite, ptr32<_sSpriteParams> pSpriteParams, 
 // A sprite with a colour, a texel rectangle, rotation and mirroring.
 void SpriteRender(ptr32<_sSprite> pSprite, ptr32<_sSpriteParams> pSpriteParams, f32 otz)
 {
-    renderSprite(pSprite, pSpriteParams, otz, SpriteSize::Normal, true, 0x327978u);
+    renderSprite(pSprite, pSpriteParams, otz, SpriteSize::Normal, true, sym::lit4_327978);
 }
 
 // At half height (interlaced screens), always unfiltered.
 void SpriteRenderHalf(ptr32<_sSprite> pSprite, ptr32<_sSpriteParams> pSpriteParams, f32 otz)
 {
-    renderSprite(pSprite, pSpriteParams, otz, SpriteSize::Half, false, 0x32797cu);
+    renderSprite(pSprite, pSpriteParams, otz, SpriteSize::Half, false, sym::lit4_32797c);
 }
 
 // Scaled by xScale and yScale (8.8 fixed point).
 void SpriteRenderScaled(ptr32<_sSprite> pSprite, ptr32<_sSpriteParams> pSpriteParams, f32 otz)
 {
-    renderSprite(pSprite, pSpriteParams, otz, SpriteSize::Scaled, true, 0x327980u);
+    renderSprite(pSprite, pSpriteParams, otz, SpriteSize::Scaled, true, sym::lit4_327980);
 }
 
 // A sprite at double width (wide-screen menus), with its texel corners chosen by the rotation flags and swapped by
@@ -313,12 +313,12 @@ void SpriteRenderNew(ptr32<_sSprite> pSprite, ptr32<_sSpriteParams> pSpriteParam
     const uint64_t x0 = gsCoord(static_cast<int16_t>(px) + 0x6c0), x1 = gsCoord(right + 0x6c0);
     const uint64_t y0 = gsCoord(static_cast<int16_t>(py) + 0x780), y1 = gsCoord(bottom + 0x780);
     SpriteStrip strip;
-    strip.vertex(texel(0), rgbaLow, rgbaHigh, xy(x0, y0), depth(order, 0x327984u));
-    strip.vertex(texel(2), rgbaLow, rgbaHigh, xy(x0, y1), depth(order, 0x327988u));
-    strip.vertex(texel(3), rgbaLow, rgbaHigh, xy(x1, y1), depth(order, 0x32798cu));
-    strip.vertex(texel(0), rgbaLow, rgbaHigh, xy(x0, y0), depth(order, 0x327990u));
-    strip.vertex(texel(1), rgbaLow, rgbaHigh, xy(x1, y0), depth(order, 0x327994u));
-    strip.vertex(texel(3), rgbaLow, rgbaHigh, xy(x1, y1), depth(order, 0x327998u));
+    strip.vertex(texel(0), rgbaLow, rgbaHigh, xy(x0, y0), depth(order, sym::lit4_327984));
+    strip.vertex(texel(2), rgbaLow, rgbaHigh, xy(x0, y1), depth(order, sym::lit4_327988));
+    strip.vertex(texel(3), rgbaLow, rgbaHigh, xy(x1, y1), depth(order, sym::lit4_32798c));
+    strip.vertex(texel(0), rgbaLow, rgbaHigh, xy(x0, y0), depth(order, sym::lit4_327990));
+    strip.vertex(texel(1), rgbaLow, rgbaHigh, xy(x1, y0), depth(order, sym::lit4_327994));
+    strip.vertex(texel(3), rgbaLow, rgbaHigh, xy(x1, y1), depth(order, sym::lit4_327998));
 }
 
 // A font character: half height, at the farthest depth, coloured, through the effects texture setter.
@@ -360,18 +360,18 @@ void SpriteRenderFont(ptr32<_sSprite> pSprite, ptr32<_sSpriteParams> pSpritePara
 
 void SpriteInit()
 {
-    ResTypeSetConstructDaemon(ptr32<char>(0x328178u), 0x1897a0u, 4);
+    ResTypeSetConstructDaemon(ptr32<char>((sym::sec_sdata + 0x578u)), sym::SpriteConstructDaemon, 4);
 }
 
 } // namespace rc
 
-RC_DECOMP_FN(SpriteConstructDaemon, 0x1897a0)
-RC_DECOMP_FN(SpriteSetTextureHandle, 0x1897c8)
-RC_DECOMP_FN(SpriteRenderSprite, 0x1897d0)
-RC_DECOMP_FN(SpriteRenderFast, 0x185830)
-RC_DECOMP_FN(SpriteRender, 0x185e78)
-RC_DECOMP_FN(SpriteRenderHalf, 0x1869d8)
-RC_DECOMP_FN(SpriteRenderScaled, 0x187540)
-RC_DECOMP_FN(SpriteRenderNew, 0x1880f8)
-RC_DECOMP_FN(SpriteRenderFont, 0x188e90)
-RC_DECOMP_FN_NOFUZZ(SpriteInit, 0x185818)
+RC_DECOMP_FN(SpriteConstructDaemon)
+RC_DECOMP_FN(SpriteSetTextureHandle)
+RC_DECOMP_FN(SpriteRenderSprite)
+RC_DECOMP_FN(SpriteRenderFast)
+RC_DECOMP_FN(SpriteRender)
+RC_DECOMP_FN(SpriteRenderHalf)
+RC_DECOMP_FN(SpriteRenderScaled)
+RC_DECOMP_FN(SpriteRenderNew)
+RC_DECOMP_FN(SpriteRenderFont)
+RC_DECOMP_FN_NOFUZZ(SpriteInit)

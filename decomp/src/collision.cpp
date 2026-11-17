@@ -377,9 +377,9 @@ void collideSolid(_sCarCol &car, ptr32<_sColPolyPSX> polyPtr, int32_t list)
 }
 
 // The resource types of the two kinds of collision file, as the loader names them.
-constexpr uint32_t kLevelCollisionType = 0x003281F8u; // "RCAF"
-constexpr uint32_t kTrackCollisionType = 0x00327FA8u; // "TCAF"
-constexpr uint32_t kAColRCAConstructDaemon = 0x0018E748u;
+constexpr uint32_t kLevelCollisionType = (sym::sec_sdata + 0x5f8u); // "RCAF"
+constexpr uint32_t kTrackCollisionType = (sym::sec_sdata + 0x3a8u); // "TCAF"
+constexpr uint32_t kAColRCAConstructDaemon = sym::AColRCAConstructDaemon;
 
 // The doors of the sci-fi levels are vertex animations. These are the two flags the triggers change; the names are
 // what this code does with them.
@@ -846,6 +846,7 @@ void CarColCheckScifiTriggers()
 // car's dead flags start as "skip" for a car its physics marks as not colliding (flags bit 1).
 void CarColColDetCars()
 {
+    RC_DIVERT_IF_CHANGED(CarColColDetCars);
     _sCarColClass &carCol = G(carColG);
     const sObjectClass &objects = G(objectVarG);
     G(oldSp) = 0;
@@ -895,7 +896,7 @@ void CarColColDetCars()
 
 namespace {
 
-const uint32_t kAnimFindByTSOTag = 0x10f960, kRevSfxSpecialTrigger = 0x143878, kRevSfxPlay3D = 0x1418a8;
+const uint32_t kAnimFindByTSOTag = sym::AnimFindByTSOTag, kRevSfxSpecialTrigger = sym::RevSfxSpecialTrigger, kRevSfxPlay3D = sym::RevSfxPlay3D;
 
 // A car dropping into deep water or lava: an effect for the kind (iY, iType), a splash sound, the splash effect, and
 // the car stops being drawn (it respawns).
@@ -1136,6 +1137,7 @@ void TColTerm()
 // extents in X and Z. The debug data gives this an int result, but it returns nothing meaningful.
 void TColMakePolyList()
 {
+    RC_DIVERT_IF_CHANGED(TColMakePolyList);
     SVECTOR &minExt = G(minExtG), &maxExt = G(maxExtG);
     minExt.vx = minExt.vy = minExt.vz = 0x7FFF;
     maxExt.vx = maxExt.vy = maxExt.vz = -0x7FFF;
@@ -1264,6 +1266,7 @@ void TColBuildGrid()
 // Works out which cells each poly touches and writes every cell's two id lists.
 void TColComputeCellResidency()
 {
+    RC_DIVERT_IF_CHANGED(TColComputeCellResidency);
     _sColGridPSX &grid = G(gridG);
     const _sTcol &tcol = G(tcolG);
     auto &cellLists = G(pCellPolyIdsG);
@@ -1422,52 +1425,52 @@ void TColAddPolyId(int32_t cellId, int32_t extra, int32_t polyId)
 
 } // namespace rc
 
-RC_DECOMP_FN_NOFUZZ(AColInit, 0x18ccd0)
-RC_DECOMP_FN_NOFUZZ(AColTerm, 0x18cce8)
-RC_DECOMP_FN_SETUP(AColPointInPolyX_NCLIP_DWO, 0x18ccf8, rc::fuzz::pointAndPoly)
-RC_DECOMP_FN_SETUP(AColPointInPolyY_NCLIP_DWO, 0x18ced0, rc::fuzz::pointAndPoly)
-RC_DECOMP_FN_SETUP(AColPointInPolyY_NCLIP, 0x18d0b0, rc::fuzz::pointAndPoly)
-RC_DECOMP_FN_SETUP(AColPointInPolyZ_NCLIP_DWO, 0x18d288, rc::fuzz::pointAndPoly)
-RC_DECOMP_FN_SETUP(AColDownCastInt, 0x18d468, rc::fuzz::downCastInt)
-RC_DECOMP_FN_SETUP(AColDownCast, 0x18d8b0, rc::fuzz::downCast)
-RC_DECOMP_FN_SETUP(AColGeneralRayCast, 0x18db98, rc::fuzz::generalRayCast)
-RC_DECOMP_FN_SETUP(AColCellCastCell, 0x18df38, rc::fuzz::cellCastCell)
-RC_DECOMP_FN(AColLvlInit, 0x18e1c8)
-RC_DECOMP_FN(AColLvlTerm, 0x18e1d0)
-RC_DECOMP_FN_SETUP(AColRay_Poly_1Way, 0x18e1d8, rc::fuzz::rayAndPoly)
-RC_DECOMP_FN_SETUP(AColPointInPoly_RayPoly, 0x18e360, rc::fuzz::pointOnRayAndPoly)
-RC_DECOMP_FN(AColGetCell, 0x18e3e0)
-RC_DECOMP_FN(AColGetCellIdFromXZ, 0x18e490)
-RC_DECOMP_FN_SETUP(AColIsPositionOutsideWorld, 0x18e4a0, rc::fuzz::positionAndTolerance)
-RC_DECOMP_FN_SETUP(AColIsPositionUnderWorld, 0x18e5d0, rc::fuzz::positionAndTolerance)
-RC_DECOMP_FN_SETUP(AColIsPositionOutsideWorldExtentsXZ, 0x18e6a8, rc::fuzz::positionAndTolerance)
-RC_DECOMP_FN(AColCellIdFromPosUnbounded, 0x18e710)
-RC_DECOMP_FN(AColRCAConstructDaemon, 0x18e748)
+RC_DECOMP_FN_NOFUZZ(AColInit)
+RC_DECOMP_FN_NOFUZZ(AColTerm)
+RC_DECOMP_FN_SETUP(AColPointInPolyX_NCLIP_DWO, rc::fuzz::pointAndPoly)
+RC_DECOMP_FN_SETUP(AColPointInPolyY_NCLIP_DWO, rc::fuzz::pointAndPoly)
+RC_DECOMP_FN_SETUP(AColPointInPolyY_NCLIP, rc::fuzz::pointAndPoly)
+RC_DECOMP_FN_SETUP(AColPointInPolyZ_NCLIP_DWO, rc::fuzz::pointAndPoly)
+RC_DECOMP_FN_SETUP(AColDownCastInt, rc::fuzz::downCastInt)
+RC_DECOMP_FN_SETUP(AColDownCast, rc::fuzz::downCast)
+RC_DECOMP_FN_SETUP(AColGeneralRayCast, rc::fuzz::generalRayCast)
+RC_DECOMP_FN_SETUP(AColCellCastCell, rc::fuzz::cellCastCell)
+RC_DECOMP_FN(AColLvlInit)
+RC_DECOMP_FN(AColLvlTerm)
+RC_DECOMP_FN_SETUP(AColRay_Poly_1Way, rc::fuzz::rayAndPoly)
+RC_DECOMP_FN_SETUP(AColPointInPoly_RayPoly, rc::fuzz::pointOnRayAndPoly)
+RC_DECOMP_FN(AColGetCell)
+RC_DECOMP_FN(AColGetCellIdFromXZ)
+RC_DECOMP_FN_SETUP(AColIsPositionOutsideWorld, rc::fuzz::positionAndTolerance)
+RC_DECOMP_FN_SETUP(AColIsPositionUnderWorld, rc::fuzz::positionAndTolerance)
+RC_DECOMP_FN_SETUP(AColIsPositionOutsideWorldExtentsXZ, rc::fuzz::positionAndTolerance)
+RC_DECOMP_FN(AColCellIdFromPosUnbounded)
+RC_DECOMP_FN(AColRCAConstructDaemon)
 
-RC_DECOMP_FN_SETUP(CarColDetect, 0x1185a0, rc::fuzz::carsInCells)
-RC_DECOMP_FN(CarColInit, 0x119c08)
-RC_DECOMP_FN(CarColTerm, 0x119c10)
-RC_DECOMP_FN(CarColLvlInit, 0x119c18)
-RC_DECOMP_FN(CarColLvlTerm, 0x119c48)
-RC_DECOMP_FN_SETUP(CarColInitObj, 0x119c50, rc::fuzz::objectForCarCol)
-RC_DECOMP_FN(ColDebugInfoRenderPolys, 0x119c88)
-RC_DECOMP_FN_SETUP(CarColTriggerScifiAnim, 0x119438, rc::fuzz::scifiDoor)
-RC_DECOMP_FN_SETUP(CarColCheckScifiTriggers, 0x119570, rc::fuzz::scifiTriggers)
-RC_DECOMP_FN_SETUP_HEAP(CarColColDetCars, 0x118488, rc::fuzz::carColObjects)
-RC_DECOMP_FN_SETUP_HEAP(CarColPostDetectProcess, 0x118e60, rc::fuzz::carColObjects)
-RC_DECOMP_FN_SETUP_HEAP(ColDrawColPoly, 0x119908, rc::fuzz::colDrawPoly)
+RC_DECOMP_FN_SETUP(CarColDetect, rc::fuzz::carsInCells)
+RC_DECOMP_FN(CarColInit)
+RC_DECOMP_FN(CarColTerm)
+RC_DECOMP_FN(CarColLvlInit)
+RC_DECOMP_FN(CarColLvlTerm)
+RC_DECOMP_FN_SETUP(CarColInitObj, rc::fuzz::objectForCarCol)
+RC_DECOMP_FN(ColDebugInfoRenderPolys)
+RC_DECOMP_FN_SETUP(CarColTriggerScifiAnim, rc::fuzz::scifiDoor)
+RC_DECOMP_FN_SETUP(CarColCheckScifiTriggers, rc::fuzz::scifiTriggers)
+RC_DECOMP_FN_SETUP_HEAP(CarColColDetCars, rc::fuzz::carColObjects)
+RC_DECOMP_FN_SETUP_HEAP(CarColPostDetectProcess, rc::fuzz::carColObjects)
+RC_DECOMP_FN_SETUP_HEAP(ColDrawColPoly, rc::fuzz::colDrawPoly)
 
-RC_DECOMP_FN_NOFUZZ(TColInit, 0x144ed0)
-RC_DECOMP_FN_NOFUZZ(TColTerm, 0x144ef0)
-RC_DECOMP_FN_SETUP(TColMakePolyList, 0x144f98, rc::fuzz::trackModules)
-RC_DECOMP_FN_SETUP_HEAP(TColBuildPolyList, 0x1456c8, rc::fuzz::trackModulesOnHeap)
-RC_DECOMP_FN_SETUP(TColBuildGrid, 0x145768, rc::fuzz::trackExtents)
-RC_DECOMP_FN_SETUP_HEAP(TColComputeCellResidency, 0x1458a0, rc::fuzz::trackPolysForGrid)
-RC_DECOMP_FN_SETUP(TColSortPolysInCells, 0x146018, rc::fuzz::unsortedCells)
-RC_DECOMP_FN(TColLvlInit, 0x146318)
-RC_DECOMP_FN(TColLvlTerm, 0x146320)
-RC_DECOMP_FN_SETUP_HEAP(TColBuildLvlCollision, 0x146328, rc::fuzz::trackToBuild)
-RC_DECOMP_FN(TColBoxesOverlapXZ, 0x146398)
-RC_DECOMP_FN(TColGetNextLLPtr, 0x146400)
-RC_DECOMP_FN_SETUP(TColGetPolyId, 0x146420, rc::fuzz::cellLinkLists)
-RC_DECOMP_FN_SETUP(TColAddPolyId, 0x1464a8, rc::fuzz::cellLinkLists)
+RC_DECOMP_FN_NOFUZZ(TColInit)
+RC_DECOMP_FN_NOFUZZ(TColTerm)
+RC_DECOMP_FN_SETUP(TColMakePolyList, rc::fuzz::trackModules)
+RC_DECOMP_FN_SETUP_HEAP(TColBuildPolyList, rc::fuzz::trackModulesOnHeap)
+RC_DECOMP_FN_SETUP(TColBuildGrid, rc::fuzz::trackExtents)
+RC_DECOMP_FN_SETUP_HEAP(TColComputeCellResidency, rc::fuzz::trackPolysForGrid)
+RC_DECOMP_FN_SETUP(TColSortPolysInCells, rc::fuzz::unsortedCells)
+RC_DECOMP_FN(TColLvlInit)
+RC_DECOMP_FN(TColLvlTerm)
+RC_DECOMP_FN_SETUP_HEAP(TColBuildLvlCollision, rc::fuzz::trackToBuild)
+RC_DECOMP_FN(TColBoxesOverlapXZ)
+RC_DECOMP_FN(TColGetNextLLPtr)
+RC_DECOMP_FN_SETUP(TColGetPolyId, rc::fuzz::cellLinkLists)
+RC_DECOMP_FN_SETUP(TColAddPolyId, rc::fuzz::cellLinkLists)

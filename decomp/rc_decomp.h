@@ -1,7 +1,8 @@
 // Connects decompiled functions to the running game.
 //
-// RC_DECOMP_FN(name, 0xaddress) puts rc::name in place of the recompiled function at that guest
-// address. With RC_SHADOW=1 in the environment, each sampled call runs the recompiled original and
+// RC_DECOMP_FN(name) puts rc::name in place of the recompiled function of that name (rc::fns::name, generated per
+// version of the game by tools/gen_addrs.py: its address, its recompiled function, and whether it behaves as in the USA
+// version; a native whose function differs in the version being built is not registered). With RC_SHADOW=1 in the environment, each sampled call runs the recompiled original and
 // the decompiled function on the same state and compares their results and every byte of guest RAM.
 //
 // A function that can block uses RC_DECOMP_FN_BLOCKING instead, and calls guest code with guest_call.
@@ -21,8 +22,13 @@
 #include "ps2_recompiled_functions.h"
 #include "runtime/ee_scheduler.h"
 #include "rc_guest.h"
+#include "rc_addrs.h"
+#include "rc_fns.h"
 #include "rc_globals.h"
 #include "rc_types.h"
+
+// Guest addresses are written as symbols: sym::name or sym::name + offset (rc_addrs.h, one per version of the game).
+namespace sym = ::rc::sym;
 
 namespace rc {
 
@@ -46,6 +52,8 @@ struct Entry
 };
 
 void registerEntry(Entry &entry, RecompFn shadow);
+// A native whose function differs in this version of the game (FnInfo::sameAsReference false): not registered, listed.
+void notRegistered(const char *name);
 void shadowCall(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, Entry &entry);
 
 // Called once when the game is loaded.
@@ -53,7 +61,7 @@ void installDecomp(PS2Runtime &runtime);
 
 // The random test's memory: the scratch area its inputs are built in, and the game's globals (the ELF's data and bss).
 constexpr uint32_t kFuzzScratch = 0x01F00000u, kFuzzScratchSize = 0x8000u;
-constexpr uint32_t kFuzzDataStart = 0x001E9400u, kFuzzDataEnd = 0x004C7190u;
+constexpr uint32_t kFuzzDataStart = sym::sec_data, kFuzzDataEnd = sym::image_end;
 constexpr int kFuzzWholeRamInputs = 40; // At most, for a function registered with RC_DECOMP_FN_SETUP_HEAP.
 
 struct FuzzCaseResult
@@ -79,6 +87,7 @@ extern bool g_offline; // Set by installForOracle: running in the offline oracle
 
 // The decompiled version of the function at an address, or fallback if it has none or decompilation is off.
 RecompFn decompOr(uint32_t address, RecompFn fallback);
+inline RecompFn decompOr(const FnInfo &fn) { return decompOr(fn.address, fn.original); }
 
 extern PS2Runtime *g_runtime;
 
@@ -231,7 +240,13 @@ struct Thunk<Fn>
 
 struct Registrar
 {
-    Registrar(Entry &entry, RecompFn shadow) { registerEntry(entry, shadow); }
+    Registrar(Entry &entry, RecompFn shadow, bool sameAsReference)
+    {
+        if (sameAsReference)
+            registerEntry(entry, shadow);
+        else
+            notRegistered(entry.name);
+    }
 };
 
 template <typename R, typename... A>
@@ -245,7 +260,7 @@ R guest_call(uint32_t address, A... args)
         using T = decltype(value);
         if constexpr (std::is_same_v<T, ee_float> || std::is_same_v<T, float>)
             ctx.f[fpr++] = value;
-        else if constexpr (is_ptr32<T>::value)
+        else if constexpr (is_ptr32<T>::value || std::is_same_v<T, ee_fnptr>)
         {
             SET_GPR_S32((&ctx), gpr, static_cast<int32_t>(value.address));
             ++gpr;
@@ -349,6 +364,15 @@ inline uint32_t ee_divu(uint32_t a, uint32_t b)
 
 } // namespace rc
 
+// The first statement of a native whose function differs in some version of the game (a changed function, listed by
+// tools/version_diff.py), when other native code calls it directly: in a version where it differs, the call goes to
+// that version's recompiled function instead, as guest code's calls do (the native is not registered there).
+//   int32_t SysTimerGet() { RC_DIVERT_IF_CHANGED(SysTimerGet); ... }
+//   void HudSprite(ptr32<_sSprite> s, ee_float x, ...) { RC_DIVERT_IF_CHANGED(HudSprite, s, x, ...); ... }
+#define RC_DIVERT_IF_CHANGED(name, ...)                                                              \
+    if constexpr (!::rc::fns::name.sameAsReference)                                                  \
+        return ::rc::guest_call<decltype(::rc::name(__VA_ARGS__))>(::rc::fns::name.address __VA_OPT__(, ) __VA_ARGS__)
+
 // A function that is never compared live still counts its calls (the "calls" column of RC_SHADOW_LOG).
 #define RC_DECOMP_COUNTED(name)                                                                      \
     static void rc_counted_##name(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)            \
@@ -356,69 +380,69 @@ inline uint32_t ee_divu(uint32_t a, uint32_t b)
         rc_entry_##name.calls.fetch_add(1u, std::memory_order_relaxed);                              \
         ::rc::Thunk<&::rc::name>::run(rdram, ctx, runtime);                                          \
     }                                                                                                \
-    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_counted_##name);
+    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_counted_##name, ::rc::fns::name.sameAsReference);
 
 // For a function that can block: it runs natively and cannot be compared call by call, because the
 // comparison needs to run it twice from one state.
-#define RC_DECOMP_FN_BLOCKING(name, address)                                                         \
-    static ::rc::Entry rc_entry_##name{#name, address, &::rc::Thunk<&::rc::name>::run,               \
-                                       &::name##_##address, ::rc::Thunk<&::rc::name>::returns,       \
+#define RC_DECOMP_FN_BLOCKING(name)                                                         \
+    static ::rc::Entry rc_entry_##name{#name, ::rc::fns::name.address, &::rc::Thunk<&::rc::name>::run,               \
+                                       ::rc::fns::name.original, ::rc::Thunk<&::rc::name>::returns,       \
                                        nullptr};                                                     \
     RC_DECOMP_COUNTED(name)
 
 // For a function that can block, or that writes hardware registers (a live comparison would run them twice), but whose
 // waits and hardware the setup can replace offline: not compared in the game, as RC_DECOMP_FN_BLOCKING, and given
 // random inputs by setup in the offline oracle only. The _HEAP form compares all of RAM.
-#define RC_DECOMP_FN_BLOCKING_SETUP_IMPL(name, address, setup, wholeRam)                              \
-    static ::rc::Entry rc_entry_##name{#name, address, &::rc::Thunk<&::rc::name>::run,               \
-                                       &::name##_##address, ::rc::Thunk<&::rc::name>::returns,       \
+#define RC_DECOMP_FN_BLOCKING_SETUP_IMPL(name, setup, wholeRam)                              \
+    static ::rc::Entry rc_entry_##name{#name, ::rc::fns::name.address, &::rc::Thunk<&::rc::name>::run,               \
+                                       ::rc::fns::name.original, ::rc::Thunk<&::rc::name>::returns,       \
                                        &setup, wholeRam, true};                                      \
     RC_DECOMP_COUNTED(name)
-#define RC_DECOMP_FN_BLOCKING_SETUP(name, address, setup) RC_DECOMP_FN_BLOCKING_SETUP_IMPL(name, address, setup, false)
-#define RC_DECOMP_FN_BLOCKING_SETUP_HEAP(name, address, setup) RC_DECOMP_FN_BLOCKING_SETUP_IMPL(name, address, setup, true)
+#define RC_DECOMP_FN_BLOCKING_SETUP(name, setup) RC_DECOMP_FN_BLOCKING_SETUP_IMPL(name, setup, false)
+#define RC_DECOMP_FN_BLOCKING_SETUP_HEAP(name, setup) RC_DECOMP_FN_BLOCKING_SETUP_IMPL(name, setup, true)
 
 // Compared on the game's own calls but not on random inputs, for functions whose real inputs are limited.
-#define RC_DECOMP_FN_NOFUZZ(name, address)                                                           \
-    static ::rc::Entry rc_entry_##name{#name, address, &::rc::Thunk<&::rc::name>::run,               \
-                                       &::name##_##address, ::rc::Thunk<&::rc::name>::returns,       \
+#define RC_DECOMP_FN_NOFUZZ(name)                                                           \
+    static ::rc::Entry rc_entry_##name{#name, ::rc::fns::name.address, &::rc::Thunk<&::rc::name>::run,               \
+                                       ::rc::fns::name.original, ::rc::Thunk<&::rc::name>::returns,       \
                                        nullptr};                                                     \
     static void rc_shadow_##name(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)             \
     {                                                                                                \
         ::rc::shadowCall(rdram, ctx, runtime, rc_entry_##name);                                      \
     }                                                                                                \
-    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_shadow_##name);
+    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_shadow_##name, ::rc::fns::name.sameAsReference);
 
 // For a function that follows pointers stored in its data, where random bytes would be meaningless. The random test
 // calls setup(ctx, state, scratch) instead of randomising the arguments: it builds valid inputs in the scratch area
 // (0x8000 bytes of guest RAM at the address given) and in the game's globals, and sets the argument registers.
-#define RC_DECOMP_FN_SETUP(name, address, setup)                                                     \
-    static ::rc::Entry rc_entry_##name{#name, address, &::rc::Thunk<&::rc::name>::run,               \
-                                       &::name##_##address, ::rc::Thunk<&::rc::name>::returns,       \
+#define RC_DECOMP_FN_SETUP(name, setup)                                                     \
+    static ::rc::Entry rc_entry_##name{#name, ::rc::fns::name.address, &::rc::Thunk<&::rc::name>::run,               \
+                                       ::rc::fns::name.original, ::rc::Thunk<&::rc::name>::returns,       \
                                        &setup};                                                      \
     static void rc_shadow_##name(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)             \
     {                                                                                                \
         ::rc::shadowCall(rdram, ctx, runtime, rc_entry_##name);                                      \
     }                                                                                                \
-    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_shadow_##name);
+    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_shadow_##name, ::rc::fns::name.sameAsReference);
 
 // As RC_DECOMP_FN_SETUP, for a function that allocates from the game's heap: the random test compares all of guest
 // RAM instead of the scratch area and the globals, on fewer inputs because that is slow.
-#define RC_DECOMP_FN_SETUP_HEAP(name, address, setup)                                                \
-    static ::rc::Entry rc_entry_##name{#name, address, &::rc::Thunk<&::rc::name>::run,               \
-                                       &::name##_##address, ::rc::Thunk<&::rc::name>::returns,       \
+#define RC_DECOMP_FN_SETUP_HEAP(name, setup)                                                \
+    static ::rc::Entry rc_entry_##name{#name, ::rc::fns::name.address, &::rc::Thunk<&::rc::name>::run,               \
+                                       ::rc::fns::name.original, ::rc::Thunk<&::rc::name>::returns,       \
                                        &setup, true};                                                \
     static void rc_shadow_##name(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)             \
     {                                                                                                \
         ::rc::shadowCall(rdram, ctx, runtime, rc_entry_##name);                                      \
     }                                                                                                \
-    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_shadow_##name);
+    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_shadow_##name, ::rc::fns::name.sameAsReference);
 
-#define RC_DECOMP_FN(name, address)                                                                  \
-    static ::rc::Entry rc_entry_##name{#name, address, &::rc::Thunk<&::rc::name>::run,               \
-                                       &::name##_##address, ::rc::Thunk<&::rc::name>::returns,       \
+#define RC_DECOMP_FN(name)                                                                  \
+    static ::rc::Entry rc_entry_##name{#name, ::rc::fns::name.address, &::rc::Thunk<&::rc::name>::run,               \
+                                       ::rc::fns::name.original, ::rc::Thunk<&::rc::name>::returns,       \
                                        &::rc::Thunk<&::rc::name>::randomise};                        \
     static void rc_shadow_##name(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)             \
     {                                                                                                \
         ::rc::shadowCall(rdram, ctx, runtime, rc_entry_##name);                                      \
     }                                                                                                \
-    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_shadow_##name);
+    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_shadow_##name, ::rc::fns::name.sameAsReference);

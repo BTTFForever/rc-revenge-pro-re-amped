@@ -6,11 +6,11 @@ namespace rc {
 
 namespace {
 constexpr uint32_t kT0Count = 0x10000000u;
-constexpr uint32_t kSceGsSyncPath = 0x001C3E28u;
-constexpr uint32_t kSceGsSyncV = 0x001C3D90u;
-constexpr uint32_t kSceGsSetHalfOffset = 0x001C44A8u;
-constexpr uint32_t kSceGsSwapDBuff = 0x001C3D30u;
-constexpr uint32_t kGfxP2_RenderDmaSendActual = 0x0018FF88u;
+constexpr uint32_t kSceGsSyncPath = sym::sceGsSyncPath;
+constexpr uint32_t kSceGsSyncV = sym::sceGsSyncV;
+constexpr uint32_t kSceGsSetHalfOffset = sym::sceGsSetHalfOffset;
+constexpr uint32_t kSceGsSwapDBuff = sym::sceGsSwapDBuff;
+constexpr uint32_t kGfxP2_RenderDmaSendActual = sym::GfxP2_RenderDmaSendActual;
 } // namespace
 
 // Ends a frame: waits for the GS to finish drawing, kicks the next frame's DMA, waits for vertical
@@ -41,4 +41,4 @@ void GfxP2_SwapBuffers()
 
 } // namespace rc
 
-RC_DECOMP_FN_BLOCKING(GfxP2_SwapBuffers, 0x18e988)
+RC_DECOMP_FN_BLOCKING(GfxP2_SwapBuffers)

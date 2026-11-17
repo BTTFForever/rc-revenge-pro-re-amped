@@ -99,13 +99,13 @@ void RectRender(ptr32<_sRect> pRect, f32 otz)
     const int32_t x0 = rect.x0, y0 = rect.y0;
     G(gLastTex) = ptr32<_sGfxTexture>(0xffffffffu);
     const uint64_t colour = rect.red | (static_cast<uint64_t>(rect.green) << 32), blue = rect.blue;
-    corner(colour, blue, x0, y0, otz, 0x327930u);
-    corner(colour, blue, rect.x3, rect.y3, otz, 0x327934u);
+    corner(colour, blue, x0, y0, otz, sym::lit4_327930);
+    corner(colour, blue, rect.x3, rect.y3, otz, sym::lit4_327934);
     const int32_t y2 = rect.y2;
-    corner(colour, blue, x2, y2, otz, 0x327938u);
-    corner(colour, blue, x0, y0, otz, 0x32793cu);
-    corner(colour, blue, x1, rect.y1, otz, 0x327940u);
-    corner(colour, blue, x2, y2, otz, 0x327944u);
+    corner(colour, blue, x2, y2, otz, sym::lit4_327938);
+    corner(colour, blue, x0, y0, otz, sym::lit4_32793c);
+    corner(colour, blue, x1, rect.y1, otz, sym::lit4_327940);
+    corner(colour, blue, x2, y2, otz, sym::lit4_327944);
 }
 
 void RectRenderGouraud(ptr32<_sGRect> pGRect, f32 otz)
@@ -145,13 +145,13 @@ void RectRenderGouraud(ptr32<_sGRect> pGRect, f32 otz)
     const int32_t x0 = rect.x0, y0 = rect.y0;
     G(gLastTex) = ptr32<_sGfxTexture>(0xffffffffu);
     const auto low = [](uint8 r, uint8 g) { return static_cast<uint64_t>(r) | (static_cast<uint64_t>(g) << 32); };
-    corner(low(rect.r0, rect.g0), rect.b0, x0, y0, otz, 0x327948u);
-    corner(low(rect.r3, rect.g3), rect.b3, rect.x3, rect.y3, otz, 0x32794cu);
+    corner(low(rect.r0, rect.g0), rect.b0, x0, y0, otz, sym::lit4_327948);
+    corner(low(rect.r3, rect.g3), rect.b3, rect.x3, rect.y3, otz, sym::lit4_32794c);
     const int32_t y2 = rect.y2;
-    corner(low(rect.r2, rect.g2), rect.b2, x2, y2, otz, 0x327950u);
-    corner(low(rect.r0, rect.g0), rect.b0, x0, y0, otz, 0x327954u);
-    corner(low(rect.r1, rect.g1), rect.b1, x1, rect.y1, otz, 0x327958u);
-    corner(low(rect.r2, rect.g2), rect.b2, x2, y2, otz, 0x32795cu);
+    corner(low(rect.r2, rect.g2), rect.b2, x2, y2, otz, sym::lit4_327950);
+    corner(low(rect.r0, rect.g0), rect.b0, x0, y0, otz, sym::lit4_327954);
+    corner(low(rect.r1, rect.g1), rect.b1, x1, rect.y1, otz, sym::lit4_327958);
+    corner(low(rect.r2, rect.g2), rect.b2, x2, y2, otz, sym::lit4_32795c);
 }
 
 // The clipped rectangle is not drawn.
@@ -160,6 +160,6 @@ void RectClip(ptr32<_sRectClip> pRectClip, uint32 otz) {}
 } // namespace rc
 
 // These write the packet buffer, which is on the heap.
-RC_DECOMP_FN_SETUP_HEAP(RectRender, 0x1829d0, ::rc::Thunk<&::rc::RectRender>::randomise)
-RC_DECOMP_FN_SETUP_HEAP(RectRenderGouraud, 0x183300, ::rc::Thunk<&::rc::RectRenderGouraud>::randomise)
-RC_DECOMP_FN(RectClip, 0x183c08)
+RC_DECOMP_FN_SETUP_HEAP(RectRender, ::rc::Thunk<&::rc::RectRender>::randomise)
+RC_DECOMP_FN_SETUP_HEAP(RectRenderGouraud, ::rc::Thunk<&::rc::RectRenderGouraud>::randomise)
+RC_DECOMP_FN(RectClip)

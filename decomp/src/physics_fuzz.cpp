@@ -19,12 +19,12 @@ namespace rc::fuzz {
 
 namespace {
 
-constexpr uint32_t kObjectList = 0x1ee390u, kMainVars = 0x1ed900u, kSfxInitOk = 0x31e488u, kHelpOutScale = 0x327f58u;
-constexpr uint32_t kReadySteadyGo = 0x1ece10u, kResultTrigger = 0x1f3730u, kDoApplyAIBoost = 0x328490u;
-constexpr uint32_t kGameTask = 0x1ecd48u, kTaskDelete = 0x1afc48u, kCameras = 0x1e9fb0u, kCameraSize = 0x5b8u;
-constexpr uint32_t kTBoxVars = 0x1f05f8u, kLsParent = 0x1f3c38u, kRevSfx = 0x1ef3b0u, kLevelPtr = 0x327e80u;
-constexpr uint32_t kScratchPadG = 0x1ed4c0u, kRaceOrder = 0x1e9404u;
-constexpr uint32_t kWheelTags = 0x323bb8u, kBodySphereTag = 0x10000235u;
+constexpr uint32_t kObjectList = sym::objectVarG, kMainVars = sym::mainVarG, kSfxInitOk = sym::sfxVarG, kHelpOutScale = sym::_dbgHelpOutScale_534;
+constexpr uint32_t kReadySteadyGo = (sym::hudVarG + 0x70u), kResultTrigger = (sym::visFxVarG + 0x2730u), kDoApplyAIBoost = sym::doApplyAIBoost_534;
+constexpr uint32_t kGameTask = sym::GameTaskGlobals, kTaskDelete = sym::TaskDelete, kCameras = sym::cameraVarG, kCameraSize = 0x5b8u;
+constexpr uint32_t kTBoxVars = sym::tBoxVarG, kLsParent = sym::lsVarG, kRevSfx = sym::revSfxVarG, kLevelPtr = sym::pLvlG;
+constexpr uint32_t kScratchPadG = sym::scratchPadG, kRaceOrder = (sym::aiVarG + 0x4u);
+constexpr uint32_t kWheelTags = sym::wheelTag_562, kBodySphereTag = 0x10000235u;
 
 template <typename T>
 T &mem(uint32_t address) { return *static_cast<T *>(guest_host(address)); }

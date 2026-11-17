@@ -7,7 +7,7 @@ namespace rc {
 
 namespace {
 
-const uint32_t kAsciiToJISTable = 0x1fa880;
+const uint32_t kAsciiToJISTable = sym::asciiToJISTable;
 
 uint16_t tableEntry(uint32_t index) { return *static_cast<uint16_t *>(guest_host(kAsciiToJISTable + index * 2u)); }
 
@@ -110,7 +110,7 @@ uint16_t tableCode(uint64_t &state)
 {
     for (;;)
     {
-        const uint16_t code = *static_cast<uint16_t *>(guest_host(0x1fa880u + (nextFuzz(state) % 0x60u) * 2u));
+        const uint16_t code = *static_cast<uint16_t *>(guest_host(sym::asciiToJISTable + (nextFuzz(state) % 0x60u) * 2u));
         if (code != 0)
             return code;
     }
@@ -163,8 +163,8 @@ void asciiFromJis(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 
 } // namespace rc::fuzz
 
-RC_DECOMP_FN(ASCIIToJIS, 0x1930c0)
-RC_DECOMP_FN(JISToASCII, 0x1930f8)
-RC_DECOMP_FN_SETUP(ASCIIStringToJISPadded, 0x192b10, rc::fuzz::jisFromAscii)
-RC_DECOMP_FN_SETUP(ASCIIStringToJIS, 0x192d60, rc::fuzz::jisFromAscii)
-RC_DECOMP_FN_SETUP(JISStringToASCII, 0x192f40, rc::fuzz::asciiFromJis)
+RC_DECOMP_FN(ASCIIToJIS)
+RC_DECOMP_FN(JISToASCII)
+RC_DECOMP_FN_SETUP(ASCIIStringToJISPadded, rc::fuzz::jisFromAscii)
+RC_DECOMP_FN_SETUP(ASCIIStringToJIS, rc::fuzz::jisFromAscii)
+RC_DECOMP_FN_SETUP(JISStringToASCII, rc::fuzz::asciiFromJis)

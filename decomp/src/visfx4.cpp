@@ -174,7 +174,7 @@ void VfxHandler_Invincible(ptr32<_sVfx_Object> mem)
         G(svVelTemp).vy = static_cast<int16>(pos.y >> 8);
         G(svVelTemp).vz = static_cast<int16>(pos.z >> 8);
         const uint32_t box = at<uint32_t>(at<uint32_t>(car + 0x18));
-        const ee_float step = at<float>(0x327850u);
+        const ee_float step = at<float>(sym::lit4_327850);
         for (int32_t k = 0; k < 32; ++k)
         {
             const uint32_t entry = m + 0x50 + 0x10 * static_cast<uint32_t>(k);
@@ -329,7 +329,7 @@ void VfxRenderer_ArmCannon(ptr32<_sVfx_Object> mem)
         VfxPS2SpriteRotated3D(ee_float(0.0f));
     }
     const ptr32<float> mat = frame.local<float>(0);
-    guest_call(0x1c7ac8u, mat); // sceVu0UnitMatrix
+    guest_call(sym::sceVu0UnitMatrix, mat); // sceVu0UnitMatrix
     const uint32_t shape = at<uint32_t>(G(visFxVarG).pVfxRes.address + 0x84);
     const float *rows = &*mat;
     at<float>(shape + 0x8) = rows[0];
@@ -346,9 +346,9 @@ void VfxRenderer_ArmCannon(ptr32<_sVfx_Object> mem)
     at<float>(shape + 0x34) = ee_itof(at<int16_t>(m + 0x18));
     const float version = at<float>(shape);
     if (version == 2.0f)
-        guest_call(0x1a5230u, ptr32<uint8>(shape), ptr32<uint8>(0x1f40b8u), 0); // Rdr_VUShape(shape, &rdrCameraG, 0)
+        guest_call(sym::Rdr_VUShape, ptr32<uint8>(shape), ptr32<uint8>(sym::rdrCameraG), 0); // Rdr_VUShape(shape, &rdrCameraG, 0)
     else if (version == 3.0f)
-        guest_call(0x1a55b8u, ptr32<uint8>(shape), ptr32<uint8>(0x1f40b8u), 0); // TRdr_VUShape
+        guest_call(sym::TRdr_VUShape, ptr32<uint8>(shape), ptr32<uint8>(sym::rdrCameraG), 0); // TRdr_VUShape
 }
 
 // The barge's oil slick: drawn only when it is within 7,500 units of the camera on each axis. Four layers at its
@@ -456,7 +456,7 @@ void VfxRenderer_WheelDust(ptr32<_sVfx_Object> mem)
     {
         const uint32_t p = m + kParticles + index * 0x18;
         const uint32_t sp = vfx::sprite();
-        const uint32_t dust = 0x1edce8u + static_cast<uint32_t>(at<uint16_t>(m + 0x1ca)) * 0x18 + 0xc; // mtlG.mtl[material].iDustRGB
+        const uint32_t dust = sym::mtlG + static_cast<uint32_t>(at<uint16_t>(m + 0x1ca)) * 0x18 + 0xc; // mtlG.mtl[material].iDustRGB
         at<float>(sp + vfx::spr::kPos) = ee_itof(wx + (at<int16_t>(p) >> 4));
         at<float>(sp + vfx::spr::kPos + 4) = ee_itof(wy + (at<int16_t>(p + 2) >> 4));
         at<float>(sp + vfx::spr::kPos + 8) = ee_itof(wz + (at<int16_t>(p + 4) >> 4));
@@ -593,10 +593,10 @@ void VfxRenderer_CarRocket(ptr32<_sVfx_Object> mem)
     const uint32_t s = vfx::sprite();
     sceVu0CopyVector(ptr32<ee_float>(s + vfx::spr::kPos), ptr32<ee_float>(pos));
     const ptr32<float> matrix = frame.local<float>(0x50);
-    guest_call(0x1c7a60u, matrix, carMatrix); // sceVu0CopyMatrix
+    guest_call(sym::sceVu0CopyMatrix, matrix, carMatrix); // sceVu0CopyMatrix
     const ptr32<uint8> block = frame.local<uint8>(0xa0);
-    guest_call(0x1a1550u, block); // RdrState_SetStateBlockToDefaults
-    guest_call(0x1a1058u, block); // RdrState_ForceApplyStateBlock
+    guest_call(sym::RdrState_SetStateBlockToDefaults, block); // RdrState_SetStateBlockToDefaults
+    guest_call(sym::RdrState_ForceApplyStateBlock, block); // RdrState_ForceApplyStateBlock
     const uint32_t shape = at<uint32_t>(G(visFxVarG).pVfxRes.address + 0x88);
     const uint32_t rows[3] = {0x50, 0x60, 0x70};
     for (uint32_t row = 0; row < 3; ++row)
@@ -605,7 +605,7 @@ void VfxRenderer_CarRocket(ptr32<_sVfx_Object> mem)
     at<float>(shape + 0x2c) = at<float>(s + vfx::spr::kPos);
     at<float>(shape + 0x30) = at<float>(s + vfx::spr::kPos + 4);
     at<float>(shape + 0x34) = at<float>(s + vfx::spr::kPos + 8);
-    guest_call(0x1a55b8u, ptr32<uint8>(shape), ptr32<uint8>(0x1f40b8u), 0); // TRdr_VUShape(shape, &rdrCameraG, 0)
+    guest_call(sym::TRdr_VUShape, ptr32<uint8>(shape), ptr32<uint8>(sym::rdrCameraG), 0); // TRdr_VUShape(shape, &rdrCameraG, 0)
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -832,7 +832,7 @@ void VfxHandler_HeatRayDamage(ptr32<_sVfx_Object> mem)
             at<uint16_t>(car + 0x19a) = 0;
             {
                 GuestFrame frame(0xb0);
-                guest_call(0x137800u, ptr32<_sObject>(car)); // ObjectWeaponAffectRemove
+                guest_call(sym::ObjectWeaponAffectRemove, ptr32<_sObject>(car)); // ObjectWeaponAffectRemove
             }
             at<uint16_t>(car + 0x18c) = 0;
             setSkidFlag(car, 1, false);
@@ -1145,7 +1145,7 @@ namespace {
 uint32_t skidColour(uint32_t particle)
 {
     const uint32_t material = at<uint8_t>(particle + 0x13);
-    const uint32_t colour = 0x1edcf0u + material * 0x18;
+    const uint32_t colour = (sym::mtlG + 0x8u) + material * 0x18;
     const int32_t fade = std::max(static_cast<int32_t>(at<uint16_t>(particle + 0x10)) * -0x20 + 0xff, 0);
     const int32_t green = std::max(static_cast<int32_t>(at<uint8_t>(colour + 1)) - fade, 0);
     const int32_t red = std::max(static_cast<int32_t>(at<uint8_t>(colour)) - fade, 0);
@@ -1220,12 +1220,12 @@ void VfxRenderer_Quake(ptr32<_sVfx_Object> mem)
     at<float>(centre + 8) = ee_itof(at<int16_t>(m + 0x658));
     const int32_t green = std::max(fade * -2 + 0x78, 0), blue = std::max(fade * -4 + 0x78, 0);
     const uint32_t colour = static_cast<uint32_t>((0x78 - (fade >> 1)) + green * 0x100 + blue * 0x10000);
-    ee_float slide = ee_itof(static_cast<int32_t>(life)) * ee_float(at<float>(0x327834u));
+    ee_float slide = ee_itof(static_cast<int32_t>(life)) * ee_float(at<float>(sym::lit4_327834));
     const uint8_t head = at<uint8_t>(m + kRing + 2);
     const uint32_t quad = G(visFxVarG).pGT4.address;
     RdrPolyTexture(0, ptr32<_sGfxTexture>(vfx::vfxTexture(0x10)), 0x12);
     const auto scale = [](float factor, uint32_t dst, uint32_t src)
-    { guest_call(0x1c8338u, ee_float(factor), ptr32<ee_float>(dst), ptr32<ee_float>(src)); }; // sceVu0ScaleVectorXYZ
+    { guest_call(sym::sceVu0ScaleVectorXYZ, ee_float(factor), ptr32<ee_float>(dst), ptr32<ee_float>(src)); }; // sceVu0ScaleVectorXYZ
     if (head != at<uint8_t>(m + kRing + 3))
     {
         const ee_float one(1.0f), band(460.0f);
@@ -1233,7 +1233,7 @@ void VfxRenderer_Quake(ptr32<_sVfx_Object> mem)
         do
         {
             const uint32_t from = m + 0x50 + index * 0x30u;
-            const float inner = at<float>(0x327838u);
+            const float inner = at<float>(sym::lit4_327838);
             vfx::vu0Add(quad, centre, from);
             const uint32_t mask = at<uint8_t>(m + kRing);
             // The original divides by the ring's mask and traps on a zero one; the inputs never have one.
@@ -1241,11 +1241,11 @@ void VfxRenderer_Quake(ptr32<_sVfx_Object> mem)
             vfx::vu0Add(quad + 0x10, centre, to);
             scale(inner, quad + 0x20, from);
             vfx::vu0Add(quad + 0x20, centre, quad + 0x20);
-            const float outer = at<float>(0x32783cu);
+            const float outer = at<float>(sym::lit4_32783c);
             scale(inner, quad + 0x30, to);
             vfx::vu0Add(quad + 0x30, centre, quad + 0x30);
             VfxPutUV0(slide, ee_float(0.0f));
-            const ee_float next = slide + ee_float(at<float>(0x327840u));
+            const ee_float next = slide + ee_float(at<float>(sym::lit4_327840));
             VfxPutUV1(next, ee_float(0.0f));
             VfxPutUV2(slide, one);
             VfxPutUV3(next, one);
@@ -1296,7 +1296,7 @@ void VfxDrawLightningBetween(ptr32<ee_float> v0, ptr32<ee_float> v1, int32 count
     const ee_float step(0.0625f);
     vfx::vu0Sub(line.address, v1.address, v0.address);
     ee_float along = step;
-    const auto scaleXYZ = [](ee_float factor, ptr32<ee_float> dst, ptr32<ee_float> src) { guest_call(0x1c8338u, factor, dst, src); };
+    const auto scaleXYZ = [](ee_float factor, ptr32<ee_float> dst, ptr32<ee_float> src) { guest_call(sym::sceVu0ScaleVectorXYZ, factor, dst, src); };
     do
     {
         scaleXYZ(along, offset, line);
@@ -1324,7 +1324,7 @@ void VfxDrawLightningBetween(ptr32<ee_float> v0, ptr32<ee_float> v1, int32 count
             quad.rgba[2] = colour;
             VfxPutGT4FacingContinueVU(old, offset);
         }
-        guest_call(0x1c82e8u, old, offset); // sceVu0CopyVectorXYZ
+        guest_call(sym::sceVu0CopyVectorXYZ, old, offset); // sceVu0CopyVectorXYZ
         if (count == 1 && (vfx::random15() & 0xf) == 0)
         {
             count = -1;
@@ -1343,7 +1343,7 @@ void VfxDrawLightningBetween(ptr32<ee_float> v0, ptr32<ee_float> v1, int32 count
     quad.rgba[2] = 0;
     VfxPutGT4FacingContinueVU(old, v1);
     if (count == -1)
-        VfxDrawLightningBetween(forkFrom, forkTo, 0, ee_float(6.0f), ee_float(at<float>(0x327874u)));
+        VfxDrawLightningBetween(forkFrom, forkTo, 0, ee_float(6.0f), ee_float(at<float>(sym::lit4_327874)));
 }
 
 } // namespace rc
@@ -1375,30 +1375,30 @@ void vfxQuake(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxLightningBetween(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 }
 
-RC_DECOMP_FN_SETUP(VfxHandler_CarHeatRayAerial, 0x15bf68, rc::fuzz::vfxCarHeatRayAerial)
-RC_DECOMP_FN_SETUP(VfxHandler_Kaboom, 0x161790, rc::fuzz::vfxKaboom)
-RC_DECOMP_FN_SETUP(VfxHandler_Firework, 0x16ba00, rc::fuzz::vfxKaboom)
-RC_DECOMP_FN_SETUP(VfxHandler_Invincible, 0x165cd8, rc::fuzz::vfxInvincible)
-RC_DECOMP_FN_SETUP(VfxHandler_ArmCannon, 0x174e28, rc::fuzz::vfxArmCannon)
-RC_DECOMP_FN_SETUP(VfxHandler_CarFire, 0x1714c8, rc::fuzz::vfxCarHeatRayAerial)
-RC_DECOMP_FN_SETUP(VfxRenderer_CarFire, 0x171730, rc::fuzz::vfxCarFireRenderer)
-RC_DECOMP_FN_SETUP(VfxRenderer_ArmCannon, 0x174fb8, rc::fuzz::vfxArmCannonRenderer)
-RC_DECOMP_FN_SETUP(VfxRenderer_BargeOil, 0x174a58, rc::fuzz::vfxBargeOilRenderer)
-RC_DECOMP_FN_SETUP(VfxRenderer_Kaboom, 0x161980, rc::fuzz::vfxKaboomRenderer)
-RC_DECOMP_FN_SETUP(VfxRenderer_WheelDust, 0x15e760, rc::fuzz::vfxWheelDust)
-RC_DECOMP_FN_SETUP(VfxRenderer_HeatRayDamage, 0x1597c0, rc::fuzz::vfxHeatRayDamage)
-RC_DECOMP_FN_SETUP(VfxRenderer_Firework, 0x16bc00, rc::fuzz::vfxFireworkRenderer)
-RC_DECOMP_FN_SETUP(VfxRenderer_CarRocket, 0x169508, rc::fuzz::vfxCarRocket)
-RC_DECOMP_FN_SETUP(VfxHandler_Bomb, 0x166750, rc::fuzz::vfxBomb)
-RC_DECOMP_FN_SETUP(VfxHandler_WheelDust, 0x15e438, rc::fuzz::vfxWheelDustHandler)
-RC_DECOMP_FN_SETUP(VfxHandler_SpeedUp, 0x163360, rc::fuzz::vfxSpeedUpHandler)
-RC_DECOMP_FN_SETUP(VfxHandler_BoostSpeedUp, 0x163680, rc::fuzz::vfxSpeedUpHandler)
-RC_DECOMP_FN_SETUP(VfxHandler_HeatRayDamage, 0x159498, rc::fuzz::vfxHeatRayDamageHandler)
-RC_DECOMP_FN_SETUP(VfxRenderer_OilDump, 0x15a738, rc::fuzz::vfxOilDump)
-RC_DECOMP_FN_SETUP(VfxRenderer_SpeedUp, 0x163990, rc::fuzz::vfxSpeedUpRenderer)
-RC_DECOMP_FN_SETUP(VfxRenderer_CarRespawn, 0x16c318, rc::fuzz::vfxCarRespawn)
-RC_DECOMP_FN_SETUP(VfxRenderer_CarChangeOver, 0x164060, rc::fuzz::vfxCarRespawn)
-RC_DECOMP_FN_SETUP(VfxRenderer_SargeLights, 0x162ff0, rc::fuzz::vfxSargeLights)
-RC_DECOMP_FN_SETUP(VfxRenderer_CarSkidMark, 0x15b5e0, rc::fuzz::vfxCarSkidMark)
-RC_DECOMP_FN_SETUP(VfxRenderer_Quake, 0x162c68, rc::fuzz::vfxQuake)
-RC_DECOMP_FN_SETUP(VfxDrawLightningBetween, 0x1681f0, rc::fuzz::vfxLightningBetween)
+RC_DECOMP_FN_SETUP(VfxHandler_CarHeatRayAerial, rc::fuzz::vfxCarHeatRayAerial)
+RC_DECOMP_FN_SETUP(VfxHandler_Kaboom, rc::fuzz::vfxKaboom)
+RC_DECOMP_FN_SETUP(VfxHandler_Firework, rc::fuzz::vfxKaboom)
+RC_DECOMP_FN_SETUP(VfxHandler_Invincible, rc::fuzz::vfxInvincible)
+RC_DECOMP_FN_SETUP(VfxHandler_ArmCannon, rc::fuzz::vfxArmCannon)
+RC_DECOMP_FN_SETUP(VfxHandler_CarFire, rc::fuzz::vfxCarHeatRayAerial)
+RC_DECOMP_FN_SETUP(VfxRenderer_CarFire, rc::fuzz::vfxCarFireRenderer)
+RC_DECOMP_FN_SETUP(VfxRenderer_ArmCannon, rc::fuzz::vfxArmCannonRenderer)
+RC_DECOMP_FN_SETUP(VfxRenderer_BargeOil, rc::fuzz::vfxBargeOilRenderer)
+RC_DECOMP_FN_SETUP(VfxRenderer_Kaboom, rc::fuzz::vfxKaboomRenderer)
+RC_DECOMP_FN_SETUP(VfxRenderer_WheelDust, rc::fuzz::vfxWheelDust)
+RC_DECOMP_FN_SETUP(VfxRenderer_HeatRayDamage, rc::fuzz::vfxHeatRayDamage)
+RC_DECOMP_FN_SETUP(VfxRenderer_Firework, rc::fuzz::vfxFireworkRenderer)
+RC_DECOMP_FN_SETUP(VfxRenderer_CarRocket, rc::fuzz::vfxCarRocket)
+RC_DECOMP_FN_SETUP(VfxHandler_Bomb, rc::fuzz::vfxBomb)
+RC_DECOMP_FN_SETUP(VfxHandler_WheelDust, rc::fuzz::vfxWheelDustHandler)
+RC_DECOMP_FN_SETUP(VfxHandler_SpeedUp, rc::fuzz::vfxSpeedUpHandler)
+RC_DECOMP_FN_SETUP(VfxHandler_BoostSpeedUp, rc::fuzz::vfxSpeedUpHandler)
+RC_DECOMP_FN_SETUP(VfxHandler_HeatRayDamage, rc::fuzz::vfxHeatRayDamageHandler)
+RC_DECOMP_FN_SETUP(VfxRenderer_OilDump, rc::fuzz::vfxOilDump)
+RC_DECOMP_FN_SETUP(VfxRenderer_SpeedUp, rc::fuzz::vfxSpeedUpRenderer)
+RC_DECOMP_FN_SETUP(VfxRenderer_CarRespawn, rc::fuzz::vfxCarRespawn)
+RC_DECOMP_FN_SETUP(VfxRenderer_CarChangeOver, rc::fuzz::vfxCarRespawn)
+RC_DECOMP_FN_SETUP(VfxRenderer_SargeLights, rc::fuzz::vfxSargeLights)
+RC_DECOMP_FN_SETUP(VfxRenderer_CarSkidMark, rc::fuzz::vfxCarSkidMark)
+RC_DECOMP_FN_SETUP(VfxRenderer_Quake, rc::fuzz::vfxQuake)
+RC_DECOMP_FN_SETUP(VfxDrawLightningBetween, rc::fuzz::vfxLightningBetween)

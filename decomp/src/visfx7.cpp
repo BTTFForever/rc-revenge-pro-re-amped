@@ -29,7 +29,7 @@ using vfx::sortAtScenery;
 
 constexpr uint32_t kRing = 0x40;      // the ring header: mask, count, head, tail
 constexpr uint32_t kParticles = 0x44; // the first particle
-constexpr uint32_t kVisFx = 0x1f1000; // visFxVarG
+constexpr uint32_t kVisFx = sym::visFxVarG; // visFxVarG
 
 // The distance from the camera (visFxVarG.svCamPos, three shorts at +0x108) to a scenery instance, as the effects measure
 // it: the three whole-unit differences (as 16 bits), then the largest plus half the next plus half the smallest, roughly.
@@ -172,7 +172,7 @@ void Vfx2Renderer_LightFlare(ptr32<_sVfx_TSFX> mem)
     const uint32_t count = at<uint32_t>(m + 0x4c);
     const ee_float size = static_cast<int32_t>(count) >= 0 ? ee_itof(static_cast<int32_t>(count))
                                                            : ee_itof(static_cast<int32_t>((count >> 1) | (count & 1))) + ee_itof(static_cast<int32_t>((count >> 1) | (count & 1)));
-    at<float>(s2 + vfx::spr::kScale) = (size * ee_itof(distance)) * ee_float(at<float>(0x3278a8u));
+    at<float>(s2 + vfx::spr::kScale) = (size * ee_itof(distance)) * ee_float(at<float>(sym::lit4_3278a8));
     VfxPS2SpriteRotated3D(ee_float(-100.0f));
 }
 
@@ -240,7 +240,7 @@ void Vfx2Renderer_Butterflies(ptr32<_sVfx_Object> mem)
         at<float>(centre) = ee_itof(x);
         at<float>(centre + 4) = ee_itof(y);
         at<float>(centre + 8) = ee_itof(z);
-        const ee_float sine = ee_sinf((turn + turn) * ee_float(at<float>(0x3278ccu)));
+        const ee_float sine = ee_sinf((turn + turn) * ee_float(at<float>(sym::lit4_3278cc)));
         const ee_float flap = ee_itof(ee_ftoi(sine * ee_float(4096.0f)) >> 7) + ee_float(35.0f);
         const float points[6][3] = {{0.0f, 10.0f, 28.0f}, {0.0f, 0.0f, -28.0f}, {32.0f, 0.0f, 28.0f}, {32.0f, 0.0f, -28.0f}, {-32.0f, 0.0f, 28.0f}, {-32.0f, 0.0f, -28.0f}};
         for (uint32_t i = 0; i < 6; ++i)
@@ -405,11 +405,11 @@ void VfxRenderer_CarSplash(ptr32<_sVfx_Object> mem)
     at<uint32_t>(sp + vfx::spr::kRgb) = life * 0x10101;
     at<float>(sp + vfx::spr::kPos + 8) = ee_itof(at<int16_t>(m + 0x54c));
     VfxPS2SpriteGroundRotated3D(ptr32<SVECTOR>(sv.address), ee_float(-20.0f));
-    const int32_t shade = ee_ftoi(ee_itof(static_cast<int32_t>(life)) * ee_float(at<float>(0x3278c0u)));
+    const int32_t shade = ee_ftoi(ee_itof(static_cast<int32_t>(life)) * ee_float(at<float>(sym::lit4_3278c0)));
     const uint32_t s2 = vfx::sprite();
     at<uint8_t>(s2 + vfx::spr::kCode) = 2;
-    const ee_float grow = ee_itof(0x50 - static_cast<int32_t>(at<uint16_t>(m + 0x10))) * ee_float(at<float>(0x3278c8u));
-    const int32_t grey = ee_ftoi(ee_itof(shade) * ee_float(at<float>(0x3278c4u)));
+    const ee_float grow = ee_itof(0x50 - static_cast<int32_t>(at<uint16_t>(m + 0x10))) * ee_float(at<float>(sym::lit4_3278c8));
+    const int32_t grey = ee_ftoi(ee_itof(shade) * ee_float(at<float>(sym::lit4_3278c4)));
     at<uint32_t>(s2 + vfx::spr::kRgb) = static_cast<uint32_t>(grey) * 0x10101;
     at<float>(s2 + vfx::spr::kScale) = ee_float(at<float>(s2 + vfx::spr::kScale)) * (grow + ee_float(1.0f));
     VfxPS2SpriteGroundRotated3D(ptr32<SVECTOR>(sv.address), ee_float(-20.0f));
@@ -477,7 +477,7 @@ void Vfx3Glint()
 {
     GuestFrame frame(0x130);
     constexpr uint32_t kGlints = kVisFx + 0xeb0, kCamera = kVisFx + 0x160, kLastSpot = kVisFx + 0x26f0;
-    const uint32_t screen = at<uint32_t>(0x1edc78u) * 0x10;
+    const uint32_t screen = at<uint32_t>((sym::mainVarG + 0x378u)) * 0x10;
     const ptr32<float> offset = frame.local<float>(0);
     const ptr32<float> normal = frame.local<float>(0x20);
     const ptr32<int16_t> sv = frame.local<int16_t>(0x70);
@@ -500,7 +500,7 @@ void Vfx3Glint()
             const int32_t r = rand();
             at<float>(offset.address + 4) = 500.0f;
             at<float>(offset.address + 8) = 4000.0f;
-            at<float>(offset.address) = ee_itof(r) * ee_float(at<float>(0x3278fcu)) - ee_float(at<float>(0x327900u));
+            at<float>(offset.address) = ee_itof(r) * ee_float(at<float>(sym::lit4_3278fc)) - ee_float(at<float>(sym::lit4_327900));
             sceVu0ApplyMatrix(ptr32<ee_float>(offset.address), ptr32<ee_float>(kVisFx + 0x170), ptr32<ee_float>(offset.address));
             vfx::vu0Add(offset.address, offset.address, kCamera);
             const bool hit = AColDownCast(ptr32<_sColCellVecPSX>(offset.address), ptr32<_sColCellVecPSX>(glint), ptr32<_sColNormalPSX>(normal.address),
@@ -508,7 +508,7 @@ void Vfx3Glint()
             nearLast = true;
             if (hit)
             {
-                const uint32_t kind = at<uint32_t>(0x1edcecu + at<uint8_t>(material) * 0x18u);
+                const uint32_t kind = at<uint32_t>((sym::mtlG + 0x4u) + at<uint8_t>(material) * 0x18u);
                 if (kind != 2 || at<uint8_t>(material) == 0xa)
                     continue;
                 at<int16_t>(glint + 0x10) = 1;
@@ -517,7 +517,7 @@ void Vfx3Glint()
             continue;
         }
         vfx::vu0Sub(offset.address, glint, kCamera);
-        const ee_float limit(at<float>(0x327904u));
+        const ee_float limit(at<float>(sym::lit4_327904));
         const ee_float dx = ee_abs(at<float>(offset.address));
         if (limit < dx)
         {
@@ -530,7 +530,7 @@ void Vfx3Glint()
             at<int16_t>(glint + 0x10) = 0;
             continue;
         }
-        const ee_float distance = (dx + dz) * ee_float(at<float>(0x327908u));
+        const ee_float distance = (dx + dz) * ee_float(at<float>(sym::lit4_327908));
         at<uint16_t>(glint + 0x10) = static_cast<uint16_t>(at<uint16_t>(glint + 0x10) + 1);
         int32_t away = ee_ftoi(distance);
         away = away < 0x100 ? away : 0xff;
@@ -566,12 +566,12 @@ void vfxCannonHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxGlint(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 }
 
-RC_DECOMP_FN_SETUP(Vfx2Handler_Bats, 0x16f218, rc::fuzz::vfxBatsHandler)
-RC_DECOMP_FN_SETUP(Vfx2Handler_SciFiBubbles, 0x175c50, rc::fuzz::vfxSciFiBubblesHandler)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_LightFlare, 0x16e708, rc::fuzz::vfxLight)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_LightCandle, 0x16e948, rc::fuzz::vfxLight)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_Butterflies, 0x172180, rc::fuzz::vfxButterflies)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_PirateLava, 0x1784d0, rc::fuzz::vfxPirateLava)
-RC_DECOMP_FN_SETUP(VfxRenderer_CarSplash, 0x1710c0, rc::fuzz::vfxCarSplash)
-RC_DECOMP_FN_SETUP(Vfx2Handler_Cannon, 0x177ad0, rc::fuzz::vfxCannonHandler)
-RC_DECOMP_FN_SETUP(Vfx3Glint, 0x179a20, rc::fuzz::vfxGlint)
+RC_DECOMP_FN_SETUP(Vfx2Handler_Bats, rc::fuzz::vfxBatsHandler)
+RC_DECOMP_FN_SETUP(Vfx2Handler_SciFiBubbles, rc::fuzz::vfxSciFiBubblesHandler)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_LightFlare, rc::fuzz::vfxLight)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_LightCandle, rc::fuzz::vfxLight)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_Butterflies, rc::fuzz::vfxButterflies)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_PirateLava, rc::fuzz::vfxPirateLava)
+RC_DECOMP_FN_SETUP(VfxRenderer_CarSplash, rc::fuzz::vfxCarSplash)
+RC_DECOMP_FN_SETUP(Vfx2Handler_Cannon, rc::fuzz::vfxCannonHandler)
+RC_DECOMP_FN_SETUP(Vfx3Glint, rc::fuzz::vfxGlint)

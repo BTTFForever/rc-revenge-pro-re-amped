@@ -26,9 +26,9 @@ void FontCentre(int16 y, ptr32<char> pString);
 
 namespace {
 
-const uint32_t kResSetReadErrorFn = 0x1abab0, kRdrSetupCamera = 0x1a39f0, kRdrVUShape = 0x1a5230,
-               kTRdrVUShape = 0x1a55b8, kRdrFixVUShape = 0x1a4c28, kGfxP2Init = 0x18e770, kGfxP2Term = 0x18e950,
-               kSprintf = 0x1b8910, kResLoad = 0x1ab1b0, kLoadErrorCallback = 0x129440;
+const uint32_t kResSetReadErrorFn = sym::ResSetReadErrorFn, kRdrSetupCamera = sym::Rdr_SetupCamera, kRdrVUShape = sym::Rdr_VUShape,
+               kTRdrVUShape = sym::TRdr_VUShape, kRdrFixVUShape = sym::Rdr_FixVUShape, kGfxP2Init = sym::GfxP2_Init, kGfxP2Term = sym::GfxP2_Term,
+               kSprintf = sym::sprintf, kResLoad = sym::ResLoad, kLoadErrorCallback = sym::LoadErrorCallback;
 
 ee_float constantAt(uint32_t address) { return *static_cast<ee_float *>(guest_host(address)); }
 
@@ -158,7 +158,7 @@ void VersionDisplay()
     GuestFrame frame(0x30);
     const ptr32<char> buffer = frame.local<char>(0);
     FontSetColour(0x7f, 0x7f, 0x7f);
-    guest_call(kSprintf, buffer, ptr32<char>(0x3243e0u), 0, 0xd, 0x52, ptr32<char>(0x3280c0u));
+    guest_call(kSprintf, buffer, ptr32<char>((sym::sec_rodata + 0x1de0u)), 0, 0xd, 0x52, ptr32<char>((sym::sec_sdata + 0x4c0u)));
     FontCentre(static_cast<int16>(0xff9c), buffer);
 }
 
@@ -247,14 +247,14 @@ ptr32<_sNode> NodeFindNextByTag(ptr32<_sNode> pCurrNode, ptr32<_sNodeHead> pNode
 // A node's world position: its position in the parent's frame, turned by the parent's matrix, plus the parent's.
 void NodeCalcWorldPos(ptr32<_sNode> pNode, ptr32<_matPsx> pParentMatrix, ptr32<vec32_> pParentPos, ptr32<vec32_> pOutputPos)
 {
-    uint16_t *pad = static_cast<uint16_t *>(guest_host(0x1ed4c0u)); // scratchPadG
+    uint16_t *pad = static_cast<uint16_t *>(guest_host(sym::scratchPadG)); // scratchPadG
     pad[0] = static_cast<uint16_t>(static_cast<int16_t>(pNode->matrix.trans.x) << 6);
     pad[1] = static_cast<uint16_t>(static_cast<int16_t>(pNode->matrix.trans.y) << 6);
     pad[2] = static_cast<uint16_t>(static_cast<int16_t>(pNode->matrix.trans.z) << 6);
     PS2C_SetGteMatrix(ptr32<_sMat>(pParentMatrix.address));
-    PS2C_GteMatrixMulVec16(ptr32<_sVec16>(0x1ed4c0u));
+    PS2C_GteMatrixMulVec16(ptr32<_sVec16>(sym::scratchPadG));
     const int32_t z = pParentPos->z, x = pParentPos->x, y = pParentPos->y;
-    PS2C_GetVec16GteResult(ptr32<_sVec16>(0x1ed4c8u));
+    PS2C_GetVec16GteResult(ptr32<_sVec16>((sym::scratchPadG + 0x8u)));
     pOutputPos->x = x + static_cast<int16_t>(pad[4]);
     pOutputPos->y = y + static_cast<int16_t>(pad[5]);
     pOutputPos->z = z + static_cast<int16_t>(pad[6]);
@@ -272,7 +272,7 @@ void MVARLinkup()
         int32_t tag;
         ptr32<int32> pLinkVar;
     };
-    const Link *links = static_cast<const Link *>(guest_host(0x1ee860u)); // menuVariableLinksG
+    const Link *links = static_cast<const Link *>(guest_host(sym::menuVariableLinksG)); // menuVariableLinksG
     if (links[0].tag == 0)
         return;
     const ptr32<sMenuItemVar> first = list[0];
@@ -349,7 +349,7 @@ void LsRenderWorld()
 {
     const ptr32<lsParent> parent = G(lsVarG).pParent;
     const ee_float version = parent->shape.version;
-    const ptr32<sRdrCamera> camera(0x1f40b8u);
+    const ptr32<sRdrCamera> camera(sym::rdrCameraG);
     if (version == 2.0_f)
         guest_call(kRdrVUShape, ptr32<sRdrVUShape>(parent.address), camera, 0);
     else if (version == 3.0_f)
@@ -360,10 +360,11 @@ void LsRenderWorld()
 // split screen), makes it the renderer's, resets the render state and clears the last texture.
 void LsFrameInit(tTime time, uint8 splitScreen, int32_t whichScreen)
 {
+    RC_DIVERT_IF_CHANGED(LsFrameInit, time, splitScreen, whichScreen);
     GuestFrame frame(0x50);
     sRdrCamera &camera = G(rdrCameraG);
-    const ptr32<sRdrCamera> cameraAddress(0x1f40b8u);
-    guest_call(kRdrSetupCamera, cameraAddress, static_cast<int32_t>(ee_ftoi(G(lsVarG).fov * constantAt(0x32792cu))));
+    const ptr32<sRdrCamera> cameraAddress(sym::rdrCameraG);
+    guest_call(kRdrSetupCamera, cameraAddress, static_cast<int32_t>(ee_ftoi(G(lsVarG).fov * constantAt(sym::lit4_32792c))));
     camera.vertDrawOffset = 0.0_f;
     if (splitScreen != 0)
         camera.vertDrawOffset = whichScreen == 0 ? -56.0_f : 56.0_f;
@@ -381,40 +382,41 @@ void LsFrameInit(tTime time, uint8 splitScreen, int32_t whichScreen)
 }
 
 // CARDEF.c, WHEEL.c, RENDOBJ.c, CARLIST.c: resource types' construct daemons.
-void CarDefInit() { ResTypeSetConstructDaemon(ptr32<char>(0x327d20u), 0x119cb8u, 2); }
-void CarDefTerm() { ResTypeUnSetConstructDaemon(ptr32<char>(0x327d20u)); }
-void CarListTerm() { ResTypeUnSetConstructDaemon(ptr32<char>(0x327d30u)); }
+void CarDefInit() { ResTypeSetConstructDaemon(ptr32<char>((sym::sec_sdata + 0x120u)), sym::CarDefCDFConstructDaemon, 2); }
+void CarDefTerm() { ResTypeUnSetConstructDaemon(ptr32<char>((sym::sec_sdata + 0x120u))); }
+void CarListTerm() { ResTypeUnSetConstructDaemon(ptr32<char>((sym::sec_sdata + 0x130u))); }
 
 void CarListInit()
 {
-    std::memset(guest_host(0x1eb7a0u), 0, 0x1e0); // The 20 cars and 20 boats; the shared flag stays.
-    ResTypeSetConstructDaemon(ptr32<char>(0x327d30u), 0x119ce0u, 1);
+    std::memset(guest_host(sym::carListVarG), 0, 0x1e0); // The 20 cars and 20 boats; the shared flag stays.
+    ResTypeSetConstructDaemon(ptr32<char>((sym::sec_sdata + 0x130u)), sym::CarListConstructDaemon, 1);
     G(carListVarG).altRendObjResourceBoat = nullptr;
     G(carListVarG).altRendObjResource = nullptr;
 }
 
 void WheelInit()
 {
-    ResTypeSetConstructDaemon(ptr32<char>(0x328130u), 0x181db8u, 1);
-    ResTypeSetConstructDaemon(ptr32<char>(0x328138u), 0x181e28u, 1);
+    ResTypeSetConstructDaemon(ptr32<char>((sym::sec_sdata + 0x530u)), sym::WheelConstructDaemon, 1);
+    ResTypeSetConstructDaemon(ptr32<char>((sym::sec_sdata + 0x538u)), sym::ROBLConstructDaemon, 1);
 }
 
 void WheelTerm()
 {
-    ResTypeUnSetConstructDaemon(ptr32<char>(0x328130u));
-    ResTypeUnSetConstructDaemon(ptr32<char>(0x328138u));
+    ResTypeUnSetConstructDaemon(ptr32<char>((sym::sec_sdata + 0x530u)));
+    ResTypeUnSetConstructDaemon(ptr32<char>((sym::sec_sdata + 0x538u)));
 }
 
 void RendObjInit()
 {
-    ResTypeSetConstructDaemon(ptr32<char>(0x3281a0u), 0x18a4a8u, 6);
-    ResTypeSetConstructDaemon(ptr32<char>(0x3281a8u), 0x18a4a8u, 6);
+    ResTypeSetConstructDaemon(ptr32<char>((sym::sec_sdata + 0x5a0u)), sym::RendObjConstructDaemon, 6);
+    ResTypeSetConstructDaemon(ptr32<char>((sym::sec_sdata + 0x5a8u)), sym::RendObjConstructDaemon, 6);
 }
 
 // Loads each car and boat model the race needs, once per kind of car; a car or boat that appears twice shares the
 // first one's model but is told (altRendObj) to draw with its own paint. Levels 5, 0, 8, 9 and 11 (mod 12) have boats.
 void CarListConstructDaemon(ptr32<memHandle> pHandle)
 {
+    RC_DIVERT_IF_CHANGED(CarListConstructDaemon, pHandle);
     GuestFrame frame(0xa0);
     sCarListClass &list = G(carListVarG);
     const uint32_t resource = pHandle->address;
@@ -554,13 +556,14 @@ uint64_t envMapTex0(const _sGfxTexture &texture)
 // distance from the camera plane, or 0x7fff if the object is out of sight.
 int16 RendObjRender(ptr32<_sRendObj> pRendObj, ptr32<SVECTOR> pPOI__unused, ptr32<SVECTOR> pNormal__unused, int32_t doTint)
 {
+    RC_DIVERT_IF_CHANGED(RendObjRender, pRendObj, pPOI__unused, pNormal__unused, doTint);
     GuestFrame frame(0x30);
     _sRendObj &object = *pRendObj;
     const ptr32<_sRendObjHead> headAddress = object.pRendObjHead;
     _sRendObjHead &head = *headAddress;
     sRdrVUShape &shape = head.shape;
     const sRdrCamera &camera = G(rdrCameraG);
-    const ptr32<sRdrCamera> cameraAddress(0x1f40b8u);
+    const ptr32<sRdrCamera> cameraAddress(sym::rdrCameraG);
     ee_float version = shape.version;
     if (version != 2.0_f && version != 3.0_f)
         return 0;
@@ -596,7 +599,7 @@ int16 RendObjRender(ptr32<_sRendObj> pRendObj, ptr32<SVECTOR> pPOI__unused, ptr3
         return outOfSight();
     if (radius < side * camera.normBottom.x + dy * camera.normBottom.y + depth * camera.normBottom.z)
         return outOfSight();
-    if (constantAt(0x3281b8u) * constantAt(0x32799cu) * radius * camera.normDVal < depth)
+    if (constantAt(sym::distanceThreshold_438) * constantAt(sym::lit4_32799c) * radius * camera.normDVal < depth)
         return outOfSight();
     const ee_float scale = float_from_bits(0x39800000u); // 1/4096
     const auto turn = [&](int16_t value) { return ee_itof(value) * scale; };
@@ -628,8 +631,8 @@ int16 RendObjRender(ptr32<_sRendObj> pRendObj, ptr32<SVECTOR> pPOI__unused, ptr3
         const ptr32<_sGfxTexture> envMap = head.envMap;
         if (doTint == 5)
         {
-            G(maxEnvMapDistG) = G(maxEnvMapDistG) * constantAt(0x3279a0u);
-            G(fadeEnvMapDistG) = G(fadeEnvMapDistG) * constantAt(0x3279a0u);
+            G(maxEnvMapDistG) = G(maxEnvMapDistG) * constantAt(sym::lit4_3279a0);
+            G(fadeEnvMapDistG) = G(fadeEnvMapDistG) * constantAt(sym::lit4_3279a0);
         }
         if ((partFlags & 0x8000) == 0)
         {
@@ -646,7 +649,7 @@ int16 RendObjRender(ptr32<_sRendObj> pRendObj, ptr32<SVECTOR> pPOI__unused, ptr3
         {
             G(gEnvShield) = 1;
             if ((partFlags & 0x2000) != 0)
-                G(gEnvRamp) = ee_itof(ee_rem(static_cast<int32_t>(G(gRdr).frameNumber), 0xd)) * constantAt(0x3279a4u);
+                G(gEnvRamp) = ee_itof(ee_rem(static_cast<int32_t>(G(gRdr).frameNumber), 0xd)) * constantAt(sym::lit4_3279a4);
         }
         if (doTint == 5)
         {
@@ -657,7 +660,7 @@ int16 RendObjRender(ptr32<_sRendObj> pRendObj, ptr32<SVECTOR> pPOI__unused, ptr3
     }
     if (G(gEnvShield) == 0 && doTint == 5)
     {
-        const ee_float ramp = G(gEnvRamp) + constantAt(0x3279a8u);
+        const ee_float ramp = G(gEnvRamp) + constantAt(sym::lit4_3279a8);
         G(gEnvRamp) = ramp < 1.0_f ? ramp : ee_float(1.0_f);
     }
     guest_call(kTRdrVUShape, shapeAddress, cameraAddress, tint);
@@ -872,7 +875,7 @@ void carListArgs(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 // The car list full of random words (the set-up must clear all of it).
 void carListScramble(R5900Context *, uint64_t &state, uint32_t)
 {
-    uint32_t *words = static_cast<uint32_t *>(guest_host(0x1eb7a0u));
+    uint32_t *words = static_cast<uint32_t *>(guest_host(sym::carListVarG));
     for (uint32_t i = 0; i < 0x1ec / 4u; ++i)
         words[i] = nextFuzz(state);
 }
@@ -886,7 +889,7 @@ void menuVariableArgs(R5900Context *, uint64_t &state, uint32_t)
         int32_t tag;
         ptr32<int32> pLinkVar;
     };
-    const Link *links = static_cast<const Link *>(guest_host(0x1ee860u));
+    const Link *links = static_cast<const Link *>(guest_host(sym::menuVariableLinksG));
     for (uint32_t i = 0; links[i].tag != 0; ++i)
         *static_cast<uint32_t *>(guest_host(links[i].pLinkVar.address)) = nextFuzz(state);
     ptr32<ptr32<sMenuItemVar>> list = G(tEditVarG).pMVARList;
@@ -909,59 +912,59 @@ void lsFrameArgs(R5900Context *ctx, uint64_t &state, uint32_t)
 
 } // namespace rc::fuzz
 
-RC_DECOMP_FN(VSyncCallbackFunction, 0x182680)
-RC_DECOMP_FN(G0Init, 0x181e98)
-RC_DECOMP_FN(GrabBlock, 0x124430)
-RC_DECOMP_FN(MtlInit, 0x1331d8)
-RC_DECOMP_FN(MeshInit, 0x182938)
-RC_DECOMP_FN(MeshInitFrame, 0x182940)
-RC_DECOMP_FN(MeshSetQuality, 0x182948)
-RC_DECOMP_FN(TOBInit, 0x18ccb8)
-RC_DECOMP_FN(TOBTerm, 0x18ccc0)
-RC_DECOMP_FN(TOBRender, 0x18ccc8)
-RC_DECOMP_FN(VISInit, 0x184de0)
-RC_DECOMP_FN(VISTerm, 0x184df8)
-RC_DECOMP_FN(VISUpdate, 0x184e00)
-RC_DECOMP_FN(CarDefCDFConstructDaemon, 0x119cb8)
-RC_DECOMP_FN(CarDefLvlInit, 0x119cc0)
-RC_DECOMP_FN(CarDefLvlTerm, 0x119cc8)
-RC_DECOMP_FN(Gfx_ConstructTex, 0x18e768)
-RC_DECOMP_FN(LoadErrorCallback, 0x129440)
-RC_DECOMP_FN(Mirror, 0x1829a0)
-RC_DECOMP_FN(MirrorSet, 0x182950)
-RC_DECOMP_FN(DepthCueInit, 0x181f70)
-RC_DECOMP_FN(DepthCueSet, 0x181f90)
-RC_DECOMP_FN(DepthCueTrackEditorSet, 0x182020)
-RC_DECOMP_FN(LoadErrorInit, 0x129428)
-RC_DECOMP_FN(LoadErrorTerm, 0x129438)
-RC_DECOMP_FN_SETUP_HEAP(MVARLinkup, 0x140858, rc::fuzz::menuVariableArgs)
-RC_DECOMP_FN_SETUP_HEAP(RCMenuMVarLinkup, 0x140850, rc::fuzz::menuVariableArgs)
-RC_DECOMP_FN_SETUP_HEAP(ProcessDebugMenus, 0x140950, rc::fuzz::debugMenuArgs)
-RC_DECOMP_FN(LsInit, 0x182560)
-RC_DECOMP_FN(LsCameraToRdr, 0x1823e8)
-RC_DECOMP_FN(NodeCalcWorldPos, 0x1339d0)
-RC_DECOMP_FN_SETUP(NodeFindByTag, 0x1337d0, rc::fuzz::nodeFindArgs)
-RC_DECOMP_FN_SETUP(NodeFindNextByTag, 0x1338b8, rc::fuzz::nodeFindNextArgs)
-RC_DECOMP_FN_SETUP(returnPoint, 0x144258, rc::fuzz::splineArgs)
+RC_DECOMP_FN(VSyncCallbackFunction)
+RC_DECOMP_FN(G0Init)
+RC_DECOMP_FN(GrabBlock)
+RC_DECOMP_FN(MtlInit)
+RC_DECOMP_FN(MeshInit)
+RC_DECOMP_FN(MeshInitFrame)
+RC_DECOMP_FN(MeshSetQuality)
+RC_DECOMP_FN(TOBInit)
+RC_DECOMP_FN(TOBTerm)
+RC_DECOMP_FN(TOBRender)
+RC_DECOMP_FN(VISInit)
+RC_DECOMP_FN(VISTerm)
+RC_DECOMP_FN(VISUpdate)
+RC_DECOMP_FN(CarDefCDFConstructDaemon)
+RC_DECOMP_FN(CarDefLvlInit)
+RC_DECOMP_FN(CarDefLvlTerm)
+RC_DECOMP_FN(Gfx_ConstructTex)
+RC_DECOMP_FN(LoadErrorCallback)
+RC_DECOMP_FN(Mirror)
+RC_DECOMP_FN(MirrorSet)
+RC_DECOMP_FN(DepthCueInit)
+RC_DECOMP_FN(DepthCueSet)
+RC_DECOMP_FN(DepthCueTrackEditorSet)
+RC_DECOMP_FN(LoadErrorInit)
+RC_DECOMP_FN(LoadErrorTerm)
+RC_DECOMP_FN_SETUP_HEAP(MVARLinkup, rc::fuzz::menuVariableArgs)
+RC_DECOMP_FN_SETUP_HEAP(RCMenuMVarLinkup, rc::fuzz::menuVariableArgs)
+RC_DECOMP_FN_SETUP_HEAP(ProcessDebugMenus, rc::fuzz::debugMenuArgs)
+RC_DECOMP_FN(LsInit)
+RC_DECOMP_FN(LsCameraToRdr)
+RC_DECOMP_FN(NodeCalcWorldPos)
+RC_DECOMP_FN_SETUP(NodeFindByTag, rc::fuzz::nodeFindArgs)
+RC_DECOMP_FN_SETUP(NodeFindNextByTag, rc::fuzz::nodeFindNextArgs)
+RC_DECOMP_FN_SETUP(returnPoint, rc::fuzz::splineArgs)
 // These work on the resource loader's construct daemon list, which lives on the heap.
-RC_DECOMP_FN_SETUP_HEAP(CarDefInit, 0x119c90, rc::fuzz::noArgs)
-RC_DECOMP_FN_SETUP_HEAP(CarDefTerm, 0x119ca8, rc::fuzz::noArgs)
-RC_DECOMP_FN_SETUP_HEAP(CarListInit, 0x11a070, rc::fuzz::carListScramble)
-RC_DECOMP_FN_SETUP_HEAP(CarListTerm, 0x119cd0, rc::fuzz::noArgs)
-RC_DECOMP_FN_SETUP_HEAP(WheelInit, 0x181d50, rc::fuzz::noArgs)
-RC_DECOMP_FN_SETUP_HEAP(WheelTerm, 0x181d90, rc::fuzz::noArgs)
-RC_DECOMP_FN_SETUP_HEAP(RendObjInit, 0x18a460, rc::fuzz::noArgs)
+RC_DECOMP_FN_SETUP_HEAP(CarDefInit, rc::fuzz::noArgs)
+RC_DECOMP_FN_SETUP_HEAP(CarDefTerm, rc::fuzz::noArgs)
+RC_DECOMP_FN_SETUP_HEAP(CarListInit, rc::fuzz::carListScramble)
+RC_DECOMP_FN_SETUP_HEAP(CarListTerm, rc::fuzz::noArgs)
+RC_DECOMP_FN_SETUP_HEAP(WheelInit, rc::fuzz::noArgs)
+RC_DECOMP_FN_SETUP_HEAP(WheelTerm, rc::fuzz::noArgs)
+RC_DECOMP_FN_SETUP_HEAP(RendObjInit, rc::fuzz::noArgs)
 // These draw through GFX_P2's packet buffer on the heap.
-RC_DECOMP_FN_SETUP_HEAP(VersionDisplay, 0x1566c0, rc::fuzz::noArgs)
-RC_DECOMP_FN_SETUP_HEAP(LsFrameInit, 0x182578, rc::fuzz::lsFrameArgs)
-RC_DECOMP_FN_SETUP_HEAP(LsRenderWorld, 0x182500, rc::fuzz::noArgs)
+RC_DECOMP_FN_SETUP_HEAP(VersionDisplay, rc::fuzz::noArgs)
+RC_DECOMP_FN_SETUP_HEAP(LsFrameInit, rc::fuzz::lsFrameArgs)
+RC_DECOMP_FN_SETUP_HEAP(LsRenderWorld, rc::fuzz::noArgs)
 // These call the loader (ResLoad): the random inputs give them resources that are already loaded, which it hands back
 // as they are. Loading a new one is only compared in a game (RendObjConstructDaemon needs a real shape).
-RC_DECOMP_FN_SETUP(CarListConstructDaemon, 0x119ce0, rc::fuzz::carListArgs)
-RC_DECOMP_FN_SETUP(WheelConstructDaemon, 0x181db8, rc::fuzz::wheelListArgs)
-RC_DECOMP_FN_SETUP(ROBLConstructDaemon, 0x181e28, rc::fuzz::roblListArgs)
-RC_DECOMP_FN_NOFUZZ(RendObjConstructDaemon, 0x18a4a8)
-RC_DECOMP_FN_SETUP_HEAP(RendObjRender, 0x18a4f8, rc::fuzz::rendObjArgs)
+RC_DECOMP_FN_SETUP(CarListConstructDaemon, rc::fuzz::carListArgs)
+RC_DECOMP_FN_SETUP(WheelConstructDaemon, rc::fuzz::wheelListArgs)
+RC_DECOMP_FN_SETUP(ROBLConstructDaemon, rc::fuzz::roblListArgs)
+RC_DECOMP_FN_NOFUZZ(RendObjConstructDaemon)
+RC_DECOMP_FN_SETUP_HEAP(RendObjRender, rc::fuzz::rendObjArgs)
 // Called once, at start-up, to set up the GS: only a whole-game check.
-RC_DECOMP_FN_BLOCKING(Gfx_Init, 0x18e758)
-RC_DECOMP_FN_BLOCKING(Gfx_Term, 0x18e760)
+RC_DECOMP_FN_BLOCKING(Gfx_Init)
+RC_DECOMP_FN_BLOCKING(Gfx_Term)

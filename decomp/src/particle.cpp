@@ -163,17 +163,17 @@ ptr32<_sRdrParticleSystem> RdrParticleNewSystem(u32 type, u32 maxParticles, ptr3
 void RdrParticleInit()
 {
     G(gRdrParticleSystemClass).pFirstSystem = nullptr;
-    G(gVIF1_DMA) = ptr32<anon_0db2ace9>(guest_call<uint32_t>(0x1c4900u, 1)); // sceDmaGetChan(1)
+    G(gVIF1_DMA) = ptr32<anon_0db2ace9>(guest_call<uint32_t>(sym::sceDmaGetChan, 1)); // sceDmaGetChan(1)
 }
 
 } // namespace rc
 
-RC_DECOMP_FN_NOFUZZ(RdrParticleRainProcess, 0x1aa148)
-RC_DECOMP_FN(RdrParticleDMAToRenderer, 0x1aa318)
-RC_DECOMP_FN_NOFUZZ(RdrParticleRemoveSystem, 0x1aa580)
-RC_DECOMP_FN(RdrParticleRender, 0x1aa700)
-RC_DECOMP_FN_NOFUZZ(RdrParticleRainPopulate, 0x1a9f98)
-RC_DECOMP_FN_NOFUZZ(RdrParticleTerm, 0x1aa380)
-RC_DECOMP_FN_NOFUZZ(RdrParticleProcess, 0x1aa5d8)
-RC_DECOMP_FN_NOFUZZ(RdrParticleNewSystem, 0x1aa470)
-RC_DECOMP_FN_NOFUZZ(RdrParticleInit, 0x1aa358)
+RC_DECOMP_FN_NOFUZZ(RdrParticleRainProcess)
+RC_DECOMP_FN(RdrParticleDMAToRenderer)
+RC_DECOMP_FN_NOFUZZ(RdrParticleRemoveSystem)
+RC_DECOMP_FN(RdrParticleRender)
+RC_DECOMP_FN_NOFUZZ(RdrParticleRainPopulate)
+RC_DECOMP_FN_NOFUZZ(RdrParticleTerm)
+RC_DECOMP_FN_NOFUZZ(RdrParticleProcess)
+RC_DECOMP_FN_NOFUZZ(RdrParticleNewSystem)
+RC_DECOMP_FN_NOFUZZ(RdrParticleInit)

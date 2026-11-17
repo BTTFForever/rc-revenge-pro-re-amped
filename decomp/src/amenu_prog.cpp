@@ -16,7 +16,7 @@ using namespace amenu;
 namespace {
 
 constexpr uint32_t kBox = kFrontEnd + 0xa8u; // The page's own menu header, inside frontEndVarG.
-constexpr uint32_t kFastScroll = 0x1e9900u;  // fastScrollPoints
+constexpr uint32_t kFastScroll = sym::fastScrollPoints;  // fastScrollPoints
 
 int16_t &scrollSpeed() { return at<int16_t>(kFrontEnd + 0x2c8u); }
 int16_t &scrollPos() { return at<int16_t>(kFrontEnd + 0x2cau); }
@@ -167,8 +167,8 @@ int32_t DisplayTrackGraphic(int32_t x, int32_t y, int32_t scale, int32_t width, 
     Locals f(0x8d0);
     const uint32_t extra = at<uint32_t>(at<uint32_t>(kFrontEnd) + 0xfcu) + static_cast<uint32_t>(level) * 0x10u;
     const ptr32<char> buffer = f.ptr<char>(0x20), buffer2 = f.ptr<char>(0x410), space = f.ptr<char>(0x800);
-    space[0] = at<char>(0x327c90u);
-    space[1] = at<char>(0x327c91u);
+    space[0] = at<char>((sym::sec_sdata + 0x90u));
+    space[1] = at<char>((sym::sec_sdata + 0x91u));
     const ptr32<_sSprite> pSprite(at<uint32_t>(extra - 0xcu));
     std::memset(guest_host(f.sp), 0, 0x18);
     const int32_t xScale = scale * 2;
@@ -281,7 +281,7 @@ int32_t DisplayProgressHeader(ptr32<sAMenuHeader> pHeader, ptr32<_sFrontGameStat
         row(cups(2), 0x28, cups(6), 0x29);
         row(cups(3), 0x2a, cups(7), 0x2b);
         y += 4;
-        rule(f, 0x50, h, y, constant(0x3275a8u));
+        rule(f, 0x50, h, y, constant(sym::lit4_3275a8));
         y += 9;
     }
     G(amenuScrollProgHeaderHeightG) = y - entryY;
@@ -319,7 +319,7 @@ int32_t DisplayProgressEntry(ptr32<sAMenuHeader> pHeader, ptr32<_sFrontGameState
         DisplayTickBoxText(pHeader, x, y, tick, pNormal, 1);
         DisplayTickBoxText(pHeader, x, y, reverseTick, localReverse, 2);
         y += lineHeight;
-        rule(f, 0x50, h, y, constant(0x3275acu));
+        rule(f, 0x50, h, y, constant(sym::lit4_3275ac));
         y += 9;
     }
     G(amenuScrollProgEntryHeightG) = y - entryY;
@@ -355,7 +355,7 @@ int32_t DisplayTTEntry(ptr32<sAMenuHeader> pHeader, int32_t x, int32_t y, int32_
         };
         line(pNormal, 0);
         line(pReverse, 1);
-        rule(f, 0x70, h, y, constant(0x3275b0u));
+        rule(f, 0x70, h, y, constant(sym::lit4_3275b0));
         y += 9;
     }
     G(amenuScrollTTHeightG) = y - entryY;
@@ -366,6 +366,7 @@ int32_t DisplayTTEntry(ptr32<sAMenuHeader> pHeader, int32_t x, int32_t y, int32_
 // keys, and draws the arrows and the title.
 void BuildProgTTSub(ptr32<sAMenuHeader> pSourceHeader, ptr32<sAMenuHeader> pHeader, int32_t width, ptr32<char> pTitle)
 {
+    RC_DIVERT_IF_CHANGED(BuildProgTTSub, pSourceHeader, pHeader, width, pTitle);
     Locals f(0x60);
     const sAMenuHeader &h = *pHeader;
     if (scrollHeight() == 0)
@@ -378,9 +379,9 @@ void BuildProgTTSub(ptr32<sAMenuHeader> pSourceHeader, ptr32<sAMenuHeader> pHead
     if (firstDrawPTT() == 0)
     {
         if (fastScroll(G(scrollJumpPosG) + 1) != -1)
-            arrowTop(f, h, constant(0x3275b4u));
+            arrowTop(f, h, constant(sym::lit4_3275b4));
         if (G(scrollJumpPosG) > 0)
-            arrowBottom(f, h, constant(0x3275b8u));
+            arrowBottom(f, h, constant(sym::lit4_3275b8));
         if (pTitle)
             pageTitle(pHeader, pTitle);
     }
@@ -392,6 +393,7 @@ void BuildProgTTSub(ptr32<sAMenuHeader> pSourceHeader, ptr32<sAMenuHeader> pHead
 // end (1 and 2 when it reaches them), and up and down jump along the jump list.
 int32_t PTTScroll(ptr32<sAMenuHeader> pHeader)
 {
+    RC_DIVERT_IF_CHANGED(PTTScroll, pHeader);
     GuestFrame frame(0x50);
     const sAMenuHeader &h = *pHeader;
     int32_t retVal = 0;
@@ -445,6 +447,7 @@ int32_t PTTScroll(ptr32<sAMenuHeader> pHeader)
 // The jump keys alone: up and down move along the jump list, wrapping.
 void NewPTTScroll(ptr32<sAMenuHeader> pHeader)
 {
+    RC_DIVERT_IF_CHANGED(NewPTTScroll, pHeader);
     GuestFrame frame(0x10);
     const int32_t hitKey = AMenuNewProcessInput(-1, static_cast<eMenuInputStyle>(2), pHeader);
     if (hitKey == 2)
@@ -473,6 +476,7 @@ void NewPTTScroll(ptr32<sAMenuHeader> pHeader)
 // under a title that scrolls with them. For another card the page's offset is whatever the caller's $s2 held.
 void BuildProgress(ptr32<sAMenuHeader> pSourceHeader, ptr32<_sFrontGameStateData> pGameStateData, int32_t card)
 {
+    RC_DIVERT_IF_CHANGED(BuildProgress, pSourceHeader, pGameStateData, card);
     int32_t y = static_cast<int32_t>(getRegU32(&g_runtime->eeScheduler().runningContext(), 18));
     GuestFrame frame(0x70);
     sAMenuHeader &h = *box();
@@ -687,7 +691,7 @@ void BuildTrackEditorHelp(ptr32<sAMenuHeader> pSourceHeader)
 {
     Locals f(0xa00);
     sAMenuHeader &h = *box();
-    const uint32_t help = at<uint32_t>(0x1f0b4cu); // tEditVarG's help data: flags, height, text group; 0xffff ends.
+    const uint32_t help = at<uint32_t>((sym::tEditVarG + 0x24cu)); // tEditVarG's help data: flags, height, text group; 0xffff ends.
     CreateProgTTMenuBox(pSourceHeader, box(), 0x168);
     AMenuDrawBox(box(), 0);
     AMenuDisplayOptions(box());
@@ -720,6 +724,7 @@ void BuildTrackEditorHelp(ptr32<sAMenuHeader> pSourceHeader)
 // On the first pass of a page: makes its box and draws the arrows.
 void CreateProgTTMenuBox(ptr32<sAMenuHeader> pSourceHeader, ptr32<sAMenuHeader> pHeader, int32_t width)
 {
+    RC_DIVERT_IF_CHANGED(CreateProgTTMenuBox, pSourceHeader, pHeader, width);
     Locals f(0x70);
     if (firstDrawPTT() == 0)
         return;
@@ -729,9 +734,9 @@ void CreateProgTTMenuBox(ptr32<sAMenuHeader> pSourceHeader, ptr32<sAMenuHeader> 
     G(scrollJumpPosG) = 0;
     const sAMenuHeader &h = *pHeader;
     if (fastScroll(1) != -1)
-        arrowTop(f, h, constant(0x3275bcu));
+        arrowTop(f, h, constant(sym::lit4_3275bc));
     if (G(scrollJumpPosG) > 0)
-        arrowBottom(f, h, constant(0x3275c0u));
+        arrowBottom(f, h, constant(sym::lit4_3275c0));
 }
 
 // Scrolls a page with the pad: holding down or up builds the scroll speed up to speed (down negative), letting go
@@ -804,20 +809,20 @@ int32_t PS2ScrollMenu(ptr32<sAMenuHeader> pHeader, int32_t speed)
 
 } // namespace rc
 
-RC_DECOMP_FN_SETUP_HEAP(DisplayTrackGraphic, 0x10a978, rc::fuzz::amenuTrack)
-RC_DECOMP_FN_SETUP_HEAP(DisplayProgressHeader, 0x10ac80, rc::fuzz::amenuProgHeader)
-RC_DECOMP_FN_SETUP_HEAP(DisplayProgressEntry, 0x10b278, rc::fuzz::amenuProgEntry)
-RC_DECOMP_FN_SETUP_HEAP(DisplayTTEntry, 0x10b5b8, rc::fuzz::amenuTTEntry)
-RC_DECOMP_FN_SETUP_HEAP(BuildProgTTSub, 0x10b818, rc::fuzz::amenuPageSub)
-RC_DECOMP_FN_SETUP(PTTScroll, 0x10bb98, rc::fuzz::amenuPageScroll)
-RC_DECOMP_FN_SETUP(NewPTTScroll, 0x10be50, rc::fuzz::amenuPageScroll)
-RC_DECOMP_FN_SETUP_HEAP(BuildProgress, 0x10c010, rc::fuzz::amenuPage)
-RC_DECOMP_FN_SETUP_HEAP(xxyBuildProgress, 0x10c230, rc::fuzz::amenuPage)
-RC_DECOMP_FN_SETUP_HEAP(xxxBuildProgress, 0x10c430, rc::fuzz::amenuPage)
-RC_DECOMP_FN_SETUP_HEAP(OldBuildProgress, 0x10c640, rc::fuzz::amenuPage)
-RC_DECOMP_FN_SETUP_HEAP(BuildTimeTrials, 0x10ca20, rc::fuzz::amenuPage)
-RC_DECOMP_FN_SETUP_HEAP(xxxBuildTimeTrials, 0x10cb80, rc::fuzz::amenuPage)
-RC_DECOMP_FN_SETUP_HEAP(OldBuildTimeTrials, 0x10cd10, rc::fuzz::amenuPage)
-RC_DECOMP_FN_SETUP_HEAP(BuildTrackEditorHelp, 0x10cf70, rc::fuzz::amenuPage)
-RC_DECOMP_FN_SETUP_HEAP(CreateProgTTMenuBox, 0x10d320, rc::fuzz::amenuPageSub)
-RC_DECOMP_FN_SETUP(PS2ScrollMenu, 0x10d5b8, rc::fuzz::amenuPageScroll)
+RC_DECOMP_FN_SETUP_HEAP(DisplayTrackGraphic, rc::fuzz::amenuTrack)
+RC_DECOMP_FN_SETUP_HEAP(DisplayProgressHeader, rc::fuzz::amenuProgHeader)
+RC_DECOMP_FN_SETUP_HEAP(DisplayProgressEntry, rc::fuzz::amenuProgEntry)
+RC_DECOMP_FN_SETUP_HEAP(DisplayTTEntry, rc::fuzz::amenuTTEntry)
+RC_DECOMP_FN_SETUP_HEAP(BuildProgTTSub, rc::fuzz::amenuPageSub)
+RC_DECOMP_FN_SETUP(PTTScroll, rc::fuzz::amenuPageScroll)
+RC_DECOMP_FN_SETUP(NewPTTScroll, rc::fuzz::amenuPageScroll)
+RC_DECOMP_FN_SETUP_HEAP(BuildProgress, rc::fuzz::amenuPage)
+RC_DECOMP_FN_SETUP_HEAP(xxyBuildProgress, rc::fuzz::amenuPage)
+RC_DECOMP_FN_SETUP_HEAP(xxxBuildProgress, rc::fuzz::amenuPage)
+RC_DECOMP_FN_SETUP_HEAP(OldBuildProgress, rc::fuzz::amenuPage)
+RC_DECOMP_FN_SETUP_HEAP(BuildTimeTrials, rc::fuzz::amenuPage)
+RC_DECOMP_FN_SETUP_HEAP(xxxBuildTimeTrials, rc::fuzz::amenuPage)
+RC_DECOMP_FN_SETUP_HEAP(OldBuildTimeTrials, rc::fuzz::amenuPage)
+RC_DECOMP_FN_SETUP_HEAP(BuildTrackEditorHelp, rc::fuzz::amenuPage)
+RC_DECOMP_FN_SETUP_HEAP(CreateProgTTMenuBox, rc::fuzz::amenuPageSub)
+RC_DECOMP_FN_SETUP(PS2ScrollMenu, rc::fuzz::amenuPageScroll)

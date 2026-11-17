@@ -23,12 +23,12 @@ namespace {
 using vfx::at;
 
 constexpr uint32_t kRing = 0x40;          // the ring header: mask, count, head, tail
-constexpr uint32_t kMainVar = 0x1ed900;   // mainVarG (its first word is the status)
-constexpr uint32_t kVisFx = 0x1f1000;     // visFxVarG
-constexpr uint32_t kCamera = 0x1eab20;    // cameraVarG.pCamera
-constexpr uint32_t kGlobalVUVec = 0x1f37c0;
-constexpr uint32_t kGameTimer = 0x1ed910; // mainVarG.gameTimer
-constexpr uint32_t kTimerGet = 0x1b4188, kNormalMulMatPsx = 0x19e7c0, kScaleVectorXYZ = 0x1c8338;
+constexpr uint32_t kMainVar = sym::mainVarG;   // mainVarG (its first word is the status)
+constexpr uint32_t kVisFx = sym::visFxVarG;     // visFxVarG
+constexpr uint32_t kCamera = (sym::cameraVarG + 0xb70u);    // cameraVarG.pCamera
+constexpr uint32_t kGlobalVUVec = sym::globalVUVec;
+constexpr uint32_t kGameTimer = (sym::mainVarG + 0x10u); // mainVarG.gameTimer
+constexpr uint32_t kTimerGet = sym::TimerGet, kNormalMulMatPsx = sym::NormalMulMatPsx, kScaleVectorXYZ = sym::sceVu0ScaleVectorXYZ;
 
 inline uint8_t &ringMask(uint32_t m) { return at<uint8_t>(m + kRing); }
 inline uint8_t &ringHeadU(uint32_t m) { return at<uint8_t>(m + kRing + 2); }
@@ -148,7 +148,7 @@ void VfxRenderer_CarHeatRayBlast(ptr32<_sVfx_Object> mem)
     GuestFrame frame(0x1f0);
     const uint32_t m = mem.address;
     const uint32_t car = at<uint32_t>(m + 0x40);
-    const uint16_t aimZ = at<uint16_t>(0x3280dcu); // iTestRP: the original copies its x, y and z, then replaces x and y
+    const uint16_t aimZ = at<uint16_t>((sym::sec_sdata + 0x4dcu)); // iTestRP: the original copies its x, y and z, then replaces x and y
     const uint32_t camera = at<uint32_t>(kCamera), rendObj = at<uint32_t>(car + 0x18);
     const int32_t dx = static_cast<int32_t>(at<uint32_t>(camera + 0xc) - at<uint32_t>(rendObj + 4)) >> 8;
     const int32_t dy = static_cast<int32_t>(at<uint32_t>(camera + 0x10) - at<uint32_t>(rendObj + 8)) >> 8;
@@ -221,7 +221,7 @@ void VfxRenderer_CarHeatRayBlast(ptr32<_sVfx_Object> mem)
         }
         copyVector(last, point);
         t = t + step;
-        sceVu0ScaleVector(ptr32<ee_float>(kVisFx + 0x40), ptr32<ee_float>(kVisFx + 0x40), ee_float(at<float>(0x3277d4u)));
+        sceVu0ScaleVector(ptr32<ee_float>(kVisFx + 0x40), ptr32<ee_float>(kVisFx + 0x40), ee_float(at<float>(sym::lit4_3277d4)));
         ++segment;
     } while (t < one);
     const uint32_t s = vfx::sprite();
@@ -229,8 +229,8 @@ void VfxRenderer_CarHeatRayBlast(ptr32<_sVfx_Object> mem)
     at<uint8_t>(s + spr::kCode) = 2;
     at<uint32_t>(s + spr::kTexture) = vfx::vfxTexture(0);
     at<uint32_t>(s + spr::kRgb) = 0x14465a;
-    ee_float along = ee_itof(rnd(0xf)) * ee_float(at<float>(0x3277d8u));
-    const ee_float gap(at<float>(0x3277dcu));
+    ee_float along = ee_itof(rnd(0xf)) * ee_float(at<float>(sym::lit4_3277d8));
+    const ee_float gap(at<float>(sym::lit4_3277dc));
     while (along < one)
     {
         scaleXYZ(along, point, dir);
@@ -266,7 +266,7 @@ void VfxRenderer_CarWaterCovered(ptr32<_sVfx_Object> mem)
     at<uint32_t>(vfx::sprite() + spr::kTexture) = vfx::vfxTexture(7);
     at<float>(vfx::sprite() + spr::kScale) = 30.0f;
     at<uint16_t>(vfx::sprite() + spr::kAngle) = at<uint16_t>(m + 0x654);
-    constexpr uint32_t kTurn = 0x327820;
+    constexpr uint32_t kTurn = sym::lit4_327820;
     for (uint32_t i = 0; i < 3; ++i)
     {
         const uint32_t life = at<uint16_t>(m + 0x10), step = i << 8;
@@ -308,7 +308,7 @@ void VfxRenderer_CarWaterCovered(ptr32<_sVfx_Object> mem)
     const int32_t blue = atLeastZero(0x2d - fadeIn), green = atLeastZero(0x3c - fadeIn), red = atLeastZero(0x96 - fadeIn);
     at<uint16_t>(vfx::sprite() + spr::kAngle) = at<uint16_t>(m + 0x654);
     at<uint8_t>(vfx::sprite() + spr::kCode) = 4;
-    at<float>(vfx::sprite() + spr::kScale) = ee_itof(sh16(shape + 0x72) - sh16(shape + 0x6c)) * ee_float(at<float>(0x327824u));
+    at<float>(vfx::sprite() + spr::kScale) = ee_itof(sh16(shape + 0x72) - sh16(shape + 0x6c)) * ee_float(at<float>(sym::lit4_327824));
     at<uint32_t>(vfx::sprite() + spr::kTexture) = vfx::vfxTexture(6);
     at<uint32_t>(vfx::sprite() + spr::kRgb) = static_cast<uint32_t>(red + (green << 8) + (blue << 16));
     VfxPS2SpriteRotated3D(ee_float(-80.0f));
@@ -323,12 +323,12 @@ void VfxRenderer_CarWaterCovered(ptr32<_sVfx_Object> mem)
     at<uint32_t>(s + spr::kRgb) = static_cast<uint32_t>(shine + (shine << 8) + (shine << 16));
     if (shine < 0x64)
     {
-        at<float>(s + spr::kScale) = ee_float(at<float>(s + spr::kScale)) * ee_float(at<float>(0x327828u));
+        at<float>(s + spr::kScale) = ee_float(at<float>(s + spr::kScale)) * ee_float(at<float>(sym::lit4_327828));
         at<uint32_t>(s + spr::kTexture) = vfx::vfxTexture(8);
     }
     else
     {
-        at<float>(s + spr::kScale) = ee_float(at<float>(s + spr::kScale)) * ee_float(at<float>(0x32782cu));
+        at<float>(s + spr::kScale) = ee_float(at<float>(s + spr::kScale)) * ee_float(at<float>(sym::lit4_32782c));
         at<uint32_t>(s + spr::kTexture) = vfx::vfxTexture(7);
     }
     VfxPS2SpriteRotated3D(ee_float(-85.0f));
@@ -368,7 +368,7 @@ void VfxRenderer_Invincible(ptr32<_sVfx_Object> mem)
     at<float>(kGlobalVUVec + 8) = ee_float(at<float>(physics + 0x10)) * unit;
     const uint32_t mat = VfxPSXToVUMatrix(ptr32<MATRIX>(carMatrix)).address;
     RdrPolyTexture(0, ptr32<_sGfxTexture>(vfx::vfxTexture(0x12)), 0x12);
-    const ee_float wide(at<float>(0x327854u)), narrow(at<float>(0x327858u)), step(0.03125f), half(0.5f), one(1.0f);
+    const ee_float wide(at<float>(sym::lit4_327854)), narrow(at<float>(sym::lit4_327858)), step(0.03125f), half(0.5f), one(1.0f);
     at<uint32_t>(quad() + 0x70) = 0;
     const uint32_t shape = at<uint32_t>(at<uint32_t>(car + 0x18));
     ee_float uRight = ee_itof(at<uint16_t>(m + 0x10) & 0x7f) * ee_float(0.0078125f);
@@ -488,7 +488,7 @@ void Vfx2Renderer_FinishPosition(ptr32<_sVfx_Object> mem)
 {
     GuestFrame frame(0xc0);
     const uint32_t m = mem.address;
-    const uint32_t table = at<uint32_t>(at<uint32_t>(0x327e80u) + 0x40); // pLvlG's finish-position textures
+    const uint32_t table = at<uint32_t>(at<uint32_t>(sym::pLvlG) + 0x40); // pLvlG's finish-position textures
     const uint32_t car = at<uint32_t>(m + 0x44);
     if (!(VfxHasCarBeenRendered(ptr32<_sObject>(car)) < 0x157c))
         return;
@@ -498,7 +498,7 @@ void Vfx2Renderer_FinishPosition(ptr32<_sVfx_Object> mem)
     {
         guest_call(kTimerGet, ptr32<uint8>(kGameTimer));
         const uint32_t time = guest_call<uint32_t>(kTimerGet, ptr32<uint8>(kGameTimer));
-        const int32_t wobble = sine4096(time << 3, 0x3278d0) >> 5;
+        const int32_t wobble = sine4096(time << 3, sym::lit4_3278d0) >> 5;
         at<uint16_t>(vfx::sprite() + spr::kAngle) = static_cast<uint16_t>(at<uint16_t>(m + 0x1a0) + wobble);
     }
     else
@@ -533,7 +533,7 @@ void Vfx2Renderer_FinishPosition(ptr32<_sVfx_Object> mem)
         int32_t y = at<int32_t>(state + 8) >> 8;
         guest_call(kTimerGet, ptr32<uint8>(kGameTimer));
         const uint32_t time = guest_call<uint32_t>(kTimerGet, ptr32<uint8>(kGameTimer));
-        y += (sine4096(time << 2, 0x3278d4) >> 8) + 0x64;
+        y += (sine4096(time << 2, sym::lit4_3278d4) >> 8) + 0x64;
         const uint32_t again = at<uint32_t>(at<uint32_t>(car + 0x20) + 0x1e8);
         at<int16_t>(above + 4) = static_cast<int16_t>(at<int32_t>(again + 0xc) >> 8);
         at<int16_t>(above + 2) = static_cast<int16_t>(y);
@@ -579,8 +579,8 @@ void vfxInvincibleRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 void vfxFinishPositionRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 }
 
-RC_DECOMP_FN_SETUP(VfxRenderer_GiveTerror, 0x1601e0, rc::fuzz::vfxGiveTerrorRenderer)
-RC_DECOMP_FN_SETUP(VfxRenderer_CarHeatRayBlast, 0x15b880, rc::fuzz::vfxCarHeatRayBlast)
-RC_DECOMP_FN_SETUP(VfxRenderer_CarWaterCovered, 0x162048, rc::fuzz::vfxCarWaterCoveredRenderer)
-RC_DECOMP_FN_SETUP(VfxRenderer_Invincible, 0x165fb8, rc::fuzz::vfxInvincibleRenderer)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_FinishPosition, 0x173eb8, rc::fuzz::vfxFinishPositionRenderer)
+RC_DECOMP_FN_SETUP(VfxRenderer_GiveTerror, rc::fuzz::vfxGiveTerrorRenderer)
+RC_DECOMP_FN_SETUP(VfxRenderer_CarHeatRayBlast, rc::fuzz::vfxCarHeatRayBlast)
+RC_DECOMP_FN_SETUP(VfxRenderer_CarWaterCovered, rc::fuzz::vfxCarWaterCoveredRenderer)
+RC_DECOMP_FN_SETUP(VfxRenderer_Invincible, rc::fuzz::vfxInvincibleRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_FinishPosition, rc::fuzz::vfxFinishPositionRenderer)

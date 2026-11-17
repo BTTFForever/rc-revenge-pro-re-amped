@@ -274,8 +274,9 @@ void ObjectInitTBoxMask(ptr32<_sObject> pObject, ptr32<_sObjectDef>)
     pObject->tBoxMask = mask;
 }
 
-void ObjectInitRendObj(ptr32<_sObject> pObject, ptr32<_sObjectDef> pDef, tTime)
+void ObjectInitRendObj(ptr32<_sObject> pObject, ptr32<_sObjectDef> pDef, tTime arg2)
 {
+    RC_DIVERT_IF_CHANGED(ObjectInitRendObj, pObject, pDef, arg2);
     at<uint32_t>(pObject.address + 8u) = 0x80000000u; // target tint 0, 0, 0, brightness 0x80
     const ptr32<_sRendObj> r = pObject->pRendObj;
     at<uint32_t>(pObject.address + 4u) = 0x80000000u;
@@ -451,7 +452,7 @@ void ObjectDeleteAll()
 void ObjectCreateCars(tTime time)
 {
     GuestFrame frame(0x110);
-    constexpr uint32_t kPlayerControl = 0x13fa98u, kAIControl = 0x1000c0u;
+    constexpr uint32_t kPlayerControl = sym::PlayerControl, kAIControl = sym::AIControl;
     const int32_t count = G(playerVarG).noPlayers + G(aiVarG).noAIPlayers;
     const auto boatLevel = []() { const uint32_t l = G(mainVarG).level % 12u; return l == 5 || l == 0 || l == 8; };
     const auto carAt = [](int32_t i) { return kCarList + static_cast<uint32_t>(i) * 12u; };
@@ -495,7 +496,7 @@ void ObjectCreateCars(tTime time)
         if (i < static_cast<int32_t>(G(mainVarG).noHuman))
         {
             at<uint32_t>(o->pTask.address + 8u) = kPlayerControl;
-            at<ptr32<_sObject>>(0x1ee7e0u + 8u + static_cast<uint32_t>(i) * 0x38u) = o; // playerVarG.player[i].pObject
+            at<ptr32<_sObject>>(sym::playerVarG + 8u + static_cast<uint32_t>(i) * 0x38u) = o; // playerVarG.player[i].pObject
             o->playerType = static_cast<uint8>(i);
         }
         else
@@ -586,7 +587,7 @@ void ObjectRenderAll()
 void ObjectSfxDoAll(int32 flags, tTime time)
 {
     const mainClass &main = G(mainVarG);
-    if (at<uint16_t>(0x1ed900u + 0x366u) == 1 || static_cast<uint32_t>(main.status) == 4u ||
+    if (at<uint16_t>(sym::mainVarG + 0x366u) == 1 || static_cast<uint32_t>(main.status) == 4u ||
         static_cast<uint32_t>(main.gameEndPos) >= 2u)
         return;
     GuestFrame frame(0x70);
@@ -763,7 +764,7 @@ void ObjectWeaponAffect(ptr32<_sObject> pObject, tTime time)
             at<int16_t>(def + 4u) = o.playerNo;
             at<int16_t>(def + 6u) = 0;
             VfxAddNewPlace(at<int16_t>(fx + 0x1c8u), at<int16_t>(fx + 0x1cau), at<int16_t>(fx + 0x1ccu), 10);
-            const tTime now = guest_call<int32_t>(kTimerGet, ptr32<uint8>(0x1ed910u));
+            const tTime now = guest_call<int32_t>(kTimerGet, ptr32<uint8>((sym::mainVarG + 0x10u)));
             WeaponCreate(ptr32<vec16_>(fx + 0x1c8u), now, ptr32<_sWeaponDef>(def));
             o.pVfxOilSquirt = ptr32<_sVfx_Object>(0u);
             if (at<int32_t>(fx + 0x1d4u) == 2)
@@ -1003,33 +1004,33 @@ void ObjectCarChangeOver(ptr32<_sObject> pObj, int32 iToWhat)
 
 } // namespace rc
 
-RC_DECOMP_FN_SETUP_HEAP(ObjectTerm, 0x133aa0, rc::fuzz::objectNone)
-RC_DECOMP_FN_SETUP_HEAP(ObjectInit, 0x139338, rc::fuzz::objectNone)
-RC_DECOMP_FN(ObjectDefaultControl, 0x139a28)
-RC_DECOMP_FN_SETUP_HEAP(ObjectConstructDaemon, 0x133ab0, rc::fuzz::objectDaemon)
-RC_DECOMP_FN_SETUP(ObjectCalcSize, 0x139a30, rc::fuzz::objectDefOnly)
-RC_DECOMP_FN_SETUP(ObjectSetPointers, 0x139a88, rc::fuzz::objectScratchDef)
-RC_DECOMP_FN_SETUP_HEAP(ObjectCreate, 0x133c20, rc::fuzz::objectCreate)
-RC_DECOMP_FN_SETUP_HEAP(ObjectCreateBoat, 0x1393b8, rc::fuzz::objectCreate)
-RC_DECOMP_FN_SETUP(ObjectInitTBoxMask, 0x139c18, rc::fuzz::objectScratchDef)
-RC_DECOMP_FN_SETUP(ObjectInitRendObj, 0x1353c8, rc::fuzz::objectScratchDef)
-RC_DECOMP_FN_SETUP_HEAP(ObjectInitTask, 0x1354e8, rc::fuzz::objectScratchDef)
-RC_DECOMP_FN_SETUP(ObjectInitWheels, 0x139b50, rc::fuzz::objectScratchDef)
-RC_DECOMP_FN_SETUP(ObjectInitSounds, 0x135528, rc::fuzz::objectScratchDef)
-RC_DECOMP_FN_SETUP(ObjectClearSfx, 0x1355f8, rc::fuzz::objectScratchDef)
-RC_DECOMP_FN_SETUP_HEAP(ObjectInitObject, 0x135288, rc::fuzz::objectInitObject)
-RC_DECOMP_FN_SETUP_HEAP(ObjectDelete, 0x139490, rc::fuzz::objectDelete)
-RC_DECOMP_FN_SETUP_HEAP(ObjectDeleteAll, 0x1356a0, rc::fuzz::objectRace)
-RC_DECOMP_FN_SETUP(ObjectInterpolateTint, 0x139cc0, rc::fuzz::objectScratchDef)
-RC_DECOMP_FN_SETUP_HEAP(ObjectResetAllTint, 0x139620, rc::fuzz::objectRace)
-RC_DECOMP_FN_SETUP_HEAP(ObjectRenderAll, 0x1394f8, rc::fuzz::objectRace)
-RC_DECOMP_FN_SETUP_HEAP(ObjectSfxDoAll, 0x139708, rc::fuzz::objectSfxAll)
-RC_DECOMP_FN_SETUP_HEAP(ObjectTestWaterEscape, 0x1398d8, rc::fuzz::objectWeaponList)
-RC_DECOMP_FN_SETUP_HEAP(ObjectWeaponAffectRemove, 0x137800, rc::fuzz::objectWeaponList)
-RC_DECOMP_FN_SETUP_HEAP(ObjectAllRemoveWeapons, 0x138538, rc::fuzz::objectWeapons)
-RC_DECOMP_FN_SETUP_HEAP(ObjectGiveNextWeapon, 0x138660, rc::fuzz::objectWeapons)
-RC_DECOMP_FN(ObjectMaterialSfx, 0x138fe8)
-RC_DECOMP_FN_SETUP_HEAP(ObjectCreateCars, 0x1368a0, rc::fuzz::objectCreateCars)
-RC_DECOMP_FN_SETUP_HEAP(ObjectWeaponAffect, 0x137368, rc::fuzz::objectAffect)
-RC_DECOMP_FN_SETUP(ObjectAllocateEngineSfx, 0x137988, rc::fuzz::objectScratchDef)
-RC_DECOMP_FN_SETUP_HEAP(ObjectCarChangeOver, 0x137188, rc::fuzz::objectChangeOver)
+RC_DECOMP_FN_SETUP_HEAP(ObjectTerm, rc::fuzz::objectNone)
+RC_DECOMP_FN_SETUP_HEAP(ObjectInit, rc::fuzz::objectNone)
+RC_DECOMP_FN(ObjectDefaultControl)
+RC_DECOMP_FN_SETUP_HEAP(ObjectConstructDaemon, rc::fuzz::objectDaemon)
+RC_DECOMP_FN_SETUP(ObjectCalcSize, rc::fuzz::objectDefOnly)
+RC_DECOMP_FN_SETUP(ObjectSetPointers, rc::fuzz::objectScratchDef)
+RC_DECOMP_FN_SETUP_HEAP(ObjectCreate, rc::fuzz::objectCreate)
+RC_DECOMP_FN_SETUP_HEAP(ObjectCreateBoat, rc::fuzz::objectCreate)
+RC_DECOMP_FN_SETUP(ObjectInitTBoxMask, rc::fuzz::objectScratchDef)
+RC_DECOMP_FN_SETUP(ObjectInitRendObj, rc::fuzz::objectScratchDef)
+RC_DECOMP_FN_SETUP_HEAP(ObjectInitTask, rc::fuzz::objectScratchDef)
+RC_DECOMP_FN_SETUP(ObjectInitWheels, rc::fuzz::objectScratchDef)
+RC_DECOMP_FN_SETUP(ObjectInitSounds, rc::fuzz::objectScratchDef)
+RC_DECOMP_FN_SETUP(ObjectClearSfx, rc::fuzz::objectScratchDef)
+RC_DECOMP_FN_SETUP_HEAP(ObjectInitObject, rc::fuzz::objectInitObject)
+RC_DECOMP_FN_SETUP_HEAP(ObjectDelete, rc::fuzz::objectDelete)
+RC_DECOMP_FN_SETUP_HEAP(ObjectDeleteAll, rc::fuzz::objectRace)
+RC_DECOMP_FN_SETUP(ObjectInterpolateTint, rc::fuzz::objectScratchDef)
+RC_DECOMP_FN_SETUP_HEAP(ObjectResetAllTint, rc::fuzz::objectRace)
+RC_DECOMP_FN_SETUP_HEAP(ObjectRenderAll, rc::fuzz::objectRace)
+RC_DECOMP_FN_SETUP_HEAP(ObjectSfxDoAll, rc::fuzz::objectSfxAll)
+RC_DECOMP_FN_SETUP_HEAP(ObjectTestWaterEscape, rc::fuzz::objectWeaponList)
+RC_DECOMP_FN_SETUP_HEAP(ObjectWeaponAffectRemove, rc::fuzz::objectWeaponList)
+RC_DECOMP_FN_SETUP_HEAP(ObjectAllRemoveWeapons, rc::fuzz::objectWeapons)
+RC_DECOMP_FN_SETUP_HEAP(ObjectGiveNextWeapon, rc::fuzz::objectWeapons)
+RC_DECOMP_FN(ObjectMaterialSfx)
+RC_DECOMP_FN_SETUP_HEAP(ObjectCreateCars, rc::fuzz::objectCreateCars)
+RC_DECOMP_FN_SETUP_HEAP(ObjectWeaponAffect, rc::fuzz::objectAffect)
+RC_DECOMP_FN_SETUP(ObjectAllocateEngineSfx, rc::fuzz::objectScratchDef)
+RC_DECOMP_FN_SETUP_HEAP(ObjectCarChangeOver, rc::fuzz::objectChangeOver)

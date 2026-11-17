@@ -37,27 +37,27 @@ namespace {
 
 using vfx::at;
 
-constexpr uint32_t kVisFx = 0x1f1000;       // visFxVarG (its task is its first member)
-constexpr uint32_t kFxHeader = 0x1f3710, kFxFooter = 0x1f3714; // visFxVarG.vfxHeader / vfxFooter
-constexpr uint32_t kTsfxHeader = 0x1f3718;  // visFxVarG.vfxTSFXHeader
-constexpr uint32_t kSkyTerror = 0x1f3728, kCueForward = 0x1f372c, kResultTrigger = 0x1f3730;
-constexpr uint32_t kCameraPos = 0x1f1160;   // visFxVarG.ps2CameraTrans: the camera position the effects are sorted from
-constexpr uint32_t kCameraDir = 0x1f1190;   // the camera's view direction (sort depth = dot with it)
-constexpr uint32_t kObjects = 0x1ee390;     // objectVarG.list; the count at +0x170
-constexpr uint32_t kPlayerStates = 0x1f37e0; // u8PlayerStates: per player sNew (+0) and sOld (+2)
-constexpr uint32_t kMainToDo = 0x1ed904, kMainTime = 0x1ed91c, kWhichSplitScreen = 0x1edc78;
-constexpr uint32_t kFrontEnd = 0x1eca58;    // frontEndVarG: pFELevelData first; active at +0x2d9
-constexpr uint32_t kAi = 0x1e9400;          // aiVarG: player1CameIn +0x64, player2CameIn +0x66, podium objects +0x68/+0x6a
-constexpr uint32_t kSky = 0x1f48e4;         // visVarG.sky
-constexpr uint32_t kLvl = 0x327e80;         // pLvlG
-constexpr uint32_t kMenuSystem = 0x327c20;  // pMenuSystemG
-constexpr uint32_t kTextBuffer = 0x1f3980;  // buff
-constexpr uint32_t kCrackle = 0x328108;     // Vfx2PodiumPlay's static crackle_528
-constexpr uint32_t kTestFX = 0x3280c8, kTestRP = 0x3280cc;
+constexpr uint32_t kVisFx = sym::visFxVarG;       // visFxVarG (its task is its first member)
+constexpr uint32_t kFxHeader = (sym::visFxVarG + 0x2710u), kFxFooter = (sym::visFxVarG + 0x2714u); // visFxVarG.vfxHeader / vfxFooter
+constexpr uint32_t kTsfxHeader = (sym::visFxVarG + 0x2718u);  // visFxVarG.vfxTSFXHeader
+constexpr uint32_t kSkyTerror = (sym::visFxVarG + 0x2728u), kCueForward = (sym::visFxVarG + 0x272cu), kResultTrigger = (sym::visFxVarG + 0x2730u);
+constexpr uint32_t kCameraPos = (sym::visFxVarG + 0x160u);   // visFxVarG.ps2CameraTrans: the camera position the effects are sorted from
+constexpr uint32_t kCameraDir = (sym::visFxVarG + 0x190u);   // the camera's view direction (sort depth = dot with it)
+constexpr uint32_t kObjects = sym::objectVarG;     // objectVarG.list; the count at +0x170
+constexpr uint32_t kPlayerStates = sym::u8PlayerStates; // u8PlayerStates: per player sNew (+0) and sOld (+2)
+constexpr uint32_t kMainToDo = (sym::mainVarG + 0x4u), kMainTime = (sym::mainVarG + 0x1cu), kWhichSplitScreen = (sym::mainVarG + 0x378u);
+constexpr uint32_t kFrontEnd = sym::frontEndVarG;    // frontEndVarG: pFELevelData first; active at +0x2d9
+constexpr uint32_t kAi = sym::aiVarG;          // aiVarG: player1CameIn +0x64, player2CameIn +0x66, podium objects +0x68/+0x6a
+constexpr uint32_t kSky = (sym::visVarG + 0x14u);         // visVarG.sky
+constexpr uint32_t kLvl = sym::pLvlG;         // pLvlG
+constexpr uint32_t kMenuSystem = sym::pMenuSystemG;  // pMenuSystemG
+constexpr uint32_t kTextBuffer = sym::buff;  // buff
+constexpr uint32_t kCrackle = sym::crackle_528;     // Vfx2PodiumPlay's static crackle_528
+constexpr uint32_t kTestFX = sym::iTestFX, kTestRP = sym::iTestRP;
 
-constexpr uint32_t kQsort = 0x1b7de0, kSortFunc = 0x16a178, kTaskCachedInsert = 0x1afb68, kInputHit = 0x191598;
-constexpr uint32_t kSfxPlay = 0x1ad0a0, kHandoverToFE = 0x120e70, kHudSprite = 0x125b18, kSprintf = 0x1b8910;
-constexpr uint32_t kMulMatrix = 0x1c77d8, kCopyMatrix = 0x1c7a60;
+constexpr uint32_t kQsort = sym::qsort, kSortFunc = sym::VfxSortFunc, kTaskCachedInsert = sym::TaskCachedInsert, kInputHit = sym::InputHit;
+constexpr uint32_t kSfxPlay = sym::SfxPlay, kHandoverToFE = sym::HandoverToFE, kHudSprite = sym::HudSprite, kSprintf = sym::sprintf;
+constexpr uint32_t kMulMatrix = sym::sceVu0MulMatrix, kCopyMatrix = sym::sceVu0CopyMatrix;
 
 inline int32_t sh16(uint32_t address) { return at<int16_t>(address); }
 inline uint32_t vfxRes() { return G(visFxVarG).pVfxRes.address; }
@@ -80,25 +80,25 @@ struct Calls
 {
     uint32_t handler, renderer;
 };
-constexpr Calls kCarSmoke{0x1590d8, 0x1592c0}, kCarFire{0x1714c8, 0x171730}, kAerialRibbon{0x159a20, 0x16a5e0};
-constexpr Calls kOilDump{0x15a1a0, 0x15a738}, kHeatRayAerial{0x15bf68, 0x15c1e0}, kHeatRayBlast{0x16a5e8, 0x15b880};
-constexpr Calls kHeatRayDamage{0x159498, 0x1597c0}, kSkidMark{0x15b010, 0x15b5e0}, kWaterBall{0x15c548, 0x15c930};
-constexpr Calls kWheelDust{0x15e438, 0x15e760}, kBoatWake{0x15d610, 0x15dc20}, kShadow{0x16a658, 0x16a660};
-constexpr Calls kExplosion{0x159e70, 0x15a000}, kOilSlick{0x15a9c8, 0x15ad18}, kWaterSploosh{0x15cde8, 0x15d2a0};
-constexpr Calls kAerial{0x15e970, 0x15ee38}, kAerialLightning{0x16a668, 0x15f210}, kBlastLightning{0x16a780, 0x15f6e8};
-constexpr Calls kBlastMoonrover{0x168d60, 0x168f20}, kDamageLightning{0x16a7f8, 0x15f868}, kGiveTerror{0x15fc28, 0x1601e0};
-constexpr Calls kTakeTerror{0x160790, 0x160950}, kSpinPickup{0x160e80, 0x161390}, kKaboom{0x161790, 0x161980};
-constexpr Calls kWaterCovered{0x161bc8, 0x162048}, kQuake{0x162638, 0x162c68}, kQuake2{0x168540, 0x1689f8};
-constexpr Calls kSargeLights{0x16a938, 0x162ff0}, kSpeedUp{0x163360, 0x163990}, kBoostSpeedUp{0x163680, 0x163990};
-constexpr Calls kChangeOver{0x163cf8, 0x164060}, kSparks{0x16a998, 0x1643d0}, kWaterBallFlying{0x1647d8, 0x164b50};
-constexpr Calls kRocketSmoke{0x164f70, 0x165070}, kReadySteadyGo{0x1654a8, 0x1658d0}, kInvincible{0x165cd8, 0x165fb8};
-constexpr Calls kBomb{0x166750, 0x166a28}, kFirework{0x16ba00, 0x16bc00}, kCarRespawn{0x16be48, 0x16c318};
-constexpr Calls kSkullFart{0x1702b8, 0x1704b8}, kSkullWave{0x162638, 0x170640}, kCarSplash{0x170be0, 0x1710c0};
-constexpr Calls kUfoBurner{0x171940, 0x171978}, kButterflies{0x171d28, 0x172180}, kMilk{0x16aa10, 0x16aa98};
-constexpr Calls kCarRight{0x173860, 0x173a10}, kFinishPosition{0x173c20, 0x173eb8}, kTTclock{0x174418, 0x174710};
-constexpr Calls kBargeOil{0x178d00, 0x174a58}, kOilCovered{0x178d98, 0x174c88}, kArmCannon{0x174e28, 0x174fb8};
-constexpr Calls kRouteFinder{0x176768, 0x176788}, kSpray{0x177370, 0x177890}, kCarRocket{0x1690f8, 0x169508};
-constexpr Calls kRocketCar{0x179d60, 0x17a158};
+constexpr Calls kCarSmoke{sym::VfxHandler_CarSmoke, sym::VfxRenderer_CarSmoke}, kCarFire{sym::VfxHandler_CarFire, sym::VfxRenderer_CarFire}, kAerialRibbon{sym::VfxHandler_CarAerialRibbon, sym::VfxRenderer_CarAerialRibbon};
+constexpr Calls kOilDump{sym::VfxHandler_OilDump, sym::VfxRenderer_OilDump}, kHeatRayAerial{sym::VfxHandler_CarHeatRayAerial, sym::VfxRenderer_CarHeatRayAerial}, kHeatRayBlast{sym::VfxHandler_CarHeatRayBlast, sym::VfxRenderer_CarHeatRayBlast};
+constexpr Calls kHeatRayDamage{sym::VfxHandler_HeatRayDamage, sym::VfxRenderer_HeatRayDamage}, kSkidMark{sym::VfxHandler_CarSkidMark, sym::VfxRenderer_CarSkidMark}, kWaterBall{sym::VfxHandler_CarWaterBall, sym::VfxRenderer_CarWaterBall};
+constexpr Calls kWheelDust{sym::VfxHandler_WheelDust, sym::VfxRenderer_WheelDust}, kBoatWake{sym::VfxHandler_BoatWake, sym::VfxRenderer_BoatWake}, kShadow{sym::VfxHandler_Shadow, sym::VfxRenderer_Shadow};
+constexpr Calls kExplosion{sym::VfxHandler_Explosion, sym::VfxRenderer_Explosion}, kOilSlick{sym::VfxHandler_OilSlick, sym::VfxRenderer_OilSlick}, kWaterSploosh{sym::VfxHandler_WaterSploosh, sym::VfxRenderer_WaterSploosh};
+constexpr Calls kAerial{sym::VfxHandler_Aerial, sym::VfxRenderer_Aerial}, kAerialLightning{sym::VfxHandler_AerialLightning, sym::VfxRenderer_AerialLightning}, kBlastLightning{sym::VfxHandler_BlastLightning, sym::VfxRenderer_BlastLightning};
+constexpr Calls kBlastMoonrover{sym::VfxHandler_BlastMoonrover, sym::VfxRenderer_BlastMoonrover}, kDamageLightning{sym::VfxHandler_DamageLightning, sym::VfxRenderer_DamageLightning}, kGiveTerror{sym::VfxHandler_GiveTerror, sym::VfxRenderer_GiveTerror};
+constexpr Calls kTakeTerror{sym::VfxHandler_TakeTerror, sym::VfxRenderer_TakeTerror}, kSpinPickup{sym::VfxHandler_SpinPickup, sym::VfxRenderer_SpinPickup}, kKaboom{sym::VfxHandler_Kaboom, sym::VfxRenderer_Kaboom};
+constexpr Calls kWaterCovered{sym::VfxHandler_CarWaterCovered, sym::VfxRenderer_CarWaterCovered}, kQuake{sym::VfxHandler_Quake, sym::VfxRenderer_Quake}, kQuake2{sym::VfxHandler_Quake2, sym::VfxRenderer_Quake2};
+constexpr Calls kSargeLights{sym::VfxHandler_SargeLights, sym::VfxRenderer_SargeLights}, kSpeedUp{sym::VfxHandler_SpeedUp, sym::VfxRenderer_SpeedUp}, kBoostSpeedUp{sym::VfxHandler_BoostSpeedUp, sym::VfxRenderer_SpeedUp};
+constexpr Calls kChangeOver{sym::VfxHandler_CarChangeOver, sym::VfxRenderer_CarChangeOver}, kSparks{sym::VfxHandler_Sparks, sym::VfxRenderer_Sparks}, kWaterBallFlying{sym::VfxHandler_WaterBallFlying, sym::VfxRenderer_WaterBallFlying};
+constexpr Calls kRocketSmoke{sym::VfxHandler_RocketSmoke, sym::VfxRenderer_RocketSmoke}, kReadySteadyGo{sym::VfxHandler_ReadySteadyGo, sym::VfxRenderer_ReadySteadyGo}, kInvincible{sym::VfxHandler_Invincible, sym::VfxRenderer_Invincible};
+constexpr Calls kBomb{sym::VfxHandler_Bomb, sym::VfxRenderer_Bomb}, kFirework{sym::VfxHandler_Firework, sym::VfxRenderer_Firework}, kCarRespawn{sym::VfxHandler_CarRespawn, sym::VfxRenderer_CarRespawn};
+constexpr Calls kSkullFart{sym::Vfx2Handler_SkullFart, sym::Vfx2Renderer_SkullFart}, kSkullWave{sym::VfxHandler_Quake, sym::Vfx2Renderer_SkullWave}, kCarSplash{sym::VfxHandler_CarSplash, sym::VfxRenderer_CarSplash};
+constexpr Calls kUfoBurner{sym::Vfx2Handler_UFOBurner, sym::Vfx2Renderer_UFOBurner}, kButterflies{sym::Vfx2Handler_Butterflies, sym::Vfx2Renderer_Butterflies}, kMilk{sym::VfxHandler_Milk, sym::VfxRenderer_Milk};
+constexpr Calls kCarRight{sym::Vfx2Handler_CarRight, sym::Vfx2Renderer_CarRight}, kFinishPosition{sym::Vfx2Handler_FinishPosition, sym::Vfx2Renderer_FinishPosition}, kTTclock{sym::Vfx2Handler_TTclock, sym::Vfx2Renderer_TTclock};
+constexpr Calls kBargeOil{sym::VfxHandler_BargeOil, sym::VfxRenderer_BargeOil}, kOilCovered{sym::VfxHandler_OilCovered, sym::VfxRenderer_OilCovered}, kArmCannon{sym::VfxHandler_ArmCannon, sym::VfxRenderer_ArmCannon};
+constexpr Calls kRouteFinder{sym::Vfx2Handler_RouteFinder, sym::Vfx2Renderer_RouteFinder}, kSpray{sym::VfxHandler_Spray, sym::VfxRenderer_Spray}, kCarRocket{sym::VfxHandler_CarRocket, sym::VfxRenderer_CarRocket};
+constexpr Calls kRocketCar{sym::Vfx3Handler_RocketCar, sym::Vfx3Renderer_RocketCar};
 
 // The fields every effect sets: handler (+8), renderer (+0xc) and life (+0x10, 0xffff for one that lives until it is
 // deleted).
@@ -818,8 +818,8 @@ void printFinishLine(uint32_t name)
     uint32_t n = 0;
     while (at<char>(buff + n) != 0)
         ++n;
-    at<int8_t>(buff + n - 1) = at<int8_t>(0x328110);
-    at<int8_t>(buff + n) = at<int8_t>(0x328111);
+    at<int8_t>(buff + n - 1) = at<int8_t>((sym::sec_sdata + 0x510u));
+    at<int8_t>(buff + n) = at<int8_t>((sym::sec_sdata + 0x511u));
     for (uint32_t i = 0; i < 10; ++i)
         at<int8_t>(buff + n + i) = at<int8_t>(name + i);
 }
@@ -882,8 +882,9 @@ ptr32<_sVfx_Object> VfxAddNew(ptr32<_sObject> pPlayerObj, int32 iY, int32 iZ, in
 // advances the sky terror, frees the effects whose life ran out, starts the boat wake and spray for players whose state
 // changed, and puts the task back in the queue. The aerial is stored in the first car, whichever car it was made for
 // (as in the original).
-void VfxUpdate(ptr32<void>, tTime time)
+void VfxUpdate(ptr32<void> arg0, tTime time)
 {
+    RC_DIVERT_IF_CHANGED(VfxUpdate, arg0, time);
     GuestFrame frame(0xb0);
     const ptr32<memHandle> handle = frame.local<memHandle>(0);
     const uint32_t first = at<uint32_t>(kObjects);
@@ -1056,6 +1057,7 @@ void Vfx2CallBack(ptr32<_sTOBInst> pTOBInst, uint32 tag)
 // menu is set up, and a key (or the count reaching 0x100) hands over to the front end.
 void Vfx2PodiumPlay()
 {
+    RC_DIVERT_IF_CHANGED(Vfx2PodiumPlay);
     {
         GuestFrame frame(0x50);
         const uint32_t start = at<uint32_t>(at<uint32_t>(kLvl) + 0x30); // pLvlG->pStartData: the start positions, 8 bytes each
@@ -1226,7 +1228,7 @@ void VfxSkyChangeStuff()
     else if (p1() < 4 && p1() < p2())
     {
         Vfx2FinishText(static_cast<int16>(p1()), ptr32<char>(kTextBuffer));
-        printFinishLine(0x324570); // "PLAYER 1"
+        printFinishLine((sym::sec_rodata + 0x1f70u)); // "PLAYER 1"
         printCentredTop();
     }
     else if (p2() < 4 && p2() < p1())
@@ -1234,7 +1236,7 @@ void VfxSkyChangeStuff()
         Vfx2FinishText(static_cast<int16>(p2()), ptr32<char>(kTextBuffer));
         y1 = 0x8c;
         y2 = 0x6e;
-        printFinishLine(0x324580); // "PLAYER 2"
+        printFinishLine((sym::sec_rodata + 0x1f80u)); // "PLAYER 2"
         printCentredTop();
     }
     FontSetColour(0x7f, 0x7f, 0x7f);
@@ -1246,7 +1248,7 @@ void VfxSkyChangeStuff()
             const uint32_t colour = placeColour(p1()) | 0x2000000;
             if (p2() != 0)
             {
-                const int32_t width = printPlayerName(0x324590, y1); // "Player 1"
+                const int32_t width = printPlayerName((sym::sec_rodata + 0x1f90u), y1); // "Player 1"
                 guest_call(kHudSprite, ptr32<uint8>(placeSprite(hud, p1())), ee_itof(width + 0x122), ee_itof(y1 - 10), colour);
             }
             else
@@ -1254,19 +1256,19 @@ void VfxSkyChangeStuff()
         }
         const uint32_t obj = at<uint32_t>(kObjects + 4 * at<uint16_t>(kAi + 0x68));
         if (obj)
-            holdPodiumCar(obj, 0x327894, true);
+            holdPodiumCar(obj, sym::lit4_327894, true);
     }
     if (p2() != 0)
     {
         if (at<int32_t>(kResultTrigger) < 0xf3c)
         {
-            const int32_t width = printPlayerName(0x3245a0, y2); // "Player 2"
+            const int32_t width = printPlayerName((sym::sec_rodata + 0x1fa0u), y2); // "Player 2"
             const uint32_t colour = placeColour(p2()) | 0x2000000;
             guest_call(kHudSprite, ptr32<uint8>(placeSprite(hud, p2())), ee_itof(width + 0x122), ee_itof(y2 - 10), colour);
         }
         const uint32_t obj = at<uint32_t>(kObjects + 4 * at<uint16_t>(kAi + 0x6a));
         if (obj)
-            holdPodiumCar(obj, 0x327898, false);
+            holdPodiumCar(obj, sym::lit4_327898, false);
     }
 }
 
@@ -1275,9 +1277,9 @@ void VfxSkyChangeStuff()
 void VfxSkyBackdropMerge(int16)
 {
     GuestFrame frame(0x160);
-    const ee_float size = at<float>(0x327860);   // 6000: a quad's width
-    const ee_float shiftA = at<float>(0x327864); // 3000
-    const ee_float shiftB = at<float>(0x327868); // 3000
+    const ee_float size = at<float>(sym::lit4_327860);   // 6000: a quad's width
+    const ee_float shiftA = at<float>(sym::lit4_327864); // 3000
+    const ee_float shiftB = at<float>(sym::lit4_327868); // 3000
     const ee_float one = 1.0f, quarterTurn = 0.0078125f;
 
     skyColour();
@@ -1304,7 +1306,7 @@ void Vfx3Rain()
 {
     GuestFrame frame(0x140);
     const uint32_t vu = frame.local<float>(0).address, vu2 = vu + 0x10, vu3 = vu + 0x20, mat = vu + 0x30, material = vu + 0x80;
-    constexpr uint32_t kParts = 0x1f11c0, kRaining = 0x1f1e60, kTobs = 0x1f1e64, kCamPos16 = 0x1f1108;
+    constexpr uint32_t kParts = (sym::visFxVarG + 0x1c0u), kRaining = (sym::visFxVarG + 0xe60u), kTobs = (sym::visFxVarG + 0xe64u), kCamPos16 = (sym::visFxVarG + 0x108u);
     at<int32_t>(kRaining) = 0;
     if (at<uint32_t>(kTobs) == 0)
         return;
@@ -1340,10 +1342,10 @@ void Vfx3Rain()
 
     // The camera's motion since the last frame, and its turn raised to the 32nd power ahead of the current matrix.
     vfx::vu0Sub(vu2, kCameraPos, oldCam);
-    guest_call(kMulMatrix, ptr32<float>(mat), ptr32<float>(0x1f1170u), ptr32<float>(oldMat));
+    guest_call(kMulMatrix, ptr32<float>(mat), ptr32<float>((sym::visFxVarG + 0x170u)), ptr32<float>(oldMat));
     for (int i = 0; i < 5; ++i)
         guest_call(kMulMatrix, ptr32<float>(mat), ptr32<float>(mat), ptr32<float>(mat));
-    guest_call(kMulMatrix, ptr32<float>(mat), ptr32<float>(0x1f1170u), ptr32<float>(mat));
+    guest_call(kMulMatrix, ptr32<float>(mat), ptr32<float>((sym::visFxVarG + 0x170u)), ptr32<float>(mat));
 
     int32_t drops = 0;
     for (uint32_t p = kParts; p < kParts + 0xc00; p += 0x30)
@@ -1412,7 +1414,7 @@ void Vfx3Rain()
                                   at<float>(p + 0x14), -10.0f);
         }
     }
-    at<int32_t>(0x1f051c) = drops; // revSfxVarG.rain: the rain sound's strength
+    at<int32_t>((sym::revSfxVarG + 0x116cu)) = drops; // revSfxVarG.rain: the rain sound's strength
     at<uint8_t>(G(visFxVarG).sprite.address + 0x24) = 2;
 
     // The splashes of the drops that have just landed.
@@ -1438,7 +1440,7 @@ void Vfx3Rain()
         VfxPS2SpriteGroundRotated3D(ptr32<SVECTOR>(p + 0x1c), -40.0f);
     }
     sceVu0CopyVector(ptr32<ee_float>(oldCam), ptr32<ee_float>(kCameraPos));
-    guest_call(kCopyMatrix, ptr32<float>(oldMat), ptr32<float>(0x1f1120u));
+    guest_call(kCopyMatrix, ptr32<float>(oldMat), ptr32<float>((sym::visFxVarG + 0x120u)));
 }
 
 } // namespace rc
@@ -1456,12 +1458,12 @@ void vfxSkyMerge(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxSkyChange(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 }
 
-RC_DECOMP_FN_SETUP_HEAP(VfxAddNew, 0x157c50, rc::fuzz::vfxAddNew)
-RC_DECOMP_FN_SETUP_HEAP(VfxUpdate, 0x157190, rc::fuzz::vfxUpdate)
-RC_DECOMP_FN_SETUP_HEAP(VfxCallRenderers, 0x157768, rc::fuzz::vfxCallRenderers)
-RC_DECOMP_FN_SETUP_HEAP(Vfx2RenderTSFX, 0x16d8f0, rc::fuzz::vfxRenderTSFX)
-RC_DECOMP_FN_SETUP_HEAP(Vfx2CallBack, 0x16c638, rc::fuzz::vfxCallBack)
-RC_DECOMP_FN_SETUP_HEAP(Vfx2PodiumPlay, 0x16ae30, rc::fuzz::vfxPodiumPlay)
-RC_DECOMP_FN_SETUP_HEAP(Vfx3Rain, 0x1793d8, rc::fuzz::vfxRain)
-RC_DECOMP_FN_SETUP_HEAP(VfxSkyBackdropMerge, 0x166fc0, rc::fuzz::vfxSkyMerge)
-RC_DECOMP_FN_SETUP_HEAP(VfxSkyChangeStuff, 0x16b2c0, rc::fuzz::vfxSkyChange)
+RC_DECOMP_FN_SETUP_HEAP(VfxAddNew, rc::fuzz::vfxAddNew)
+RC_DECOMP_FN_SETUP_HEAP(VfxUpdate, rc::fuzz::vfxUpdate)
+RC_DECOMP_FN_SETUP_HEAP(VfxCallRenderers, rc::fuzz::vfxCallRenderers)
+RC_DECOMP_FN_SETUP_HEAP(Vfx2RenderTSFX, rc::fuzz::vfxRenderTSFX)
+RC_DECOMP_FN_SETUP_HEAP(Vfx2CallBack, rc::fuzz::vfxCallBack)
+RC_DECOMP_FN_SETUP_HEAP(Vfx2PodiumPlay, rc::fuzz::vfxPodiumPlay)
+RC_DECOMP_FN_SETUP_HEAP(Vfx3Rain, rc::fuzz::vfxRain)
+RC_DECOMP_FN_SETUP_HEAP(VfxSkyBackdropMerge, rc::fuzz::vfxSkyMerge)
+RC_DECOMP_FN_SETUP_HEAP(VfxSkyChangeStuff, rc::fuzz::vfxSkyChange)

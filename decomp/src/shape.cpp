@@ -22,14 +22,14 @@ uint64_t gsTex0(const _sGfxTexture *tex); // rdr.cpp
 
 namespace {
 
-const uint32_t kShapeTemplate = 0x1d8880;  // The packet every shape ring entry starts as.
-const uint32_t kTrackEdTemplate = 0x1dec80; // The same for the Track Editor ring (Ghidra shows both as _dma_1).
-const uint32_t kShapeProgram = 0x1d9840;   // _dma_48: track and shape renderer.
-const uint32_t kEnvProgram = 0x1dc8a0;     // gTRdr_EndShapeData: the shiny (environment map) pass.
-const uint32_t kVUShapeProgram = 0x1e70e0; // _dma_47: Rdr_VUShape's renderer.
-const uint32_t kTrackEdProgram = 0x1dfc50; // The Track Editor's renderer (Ghidra shows it as _dma_48 too).
-const uint32_t kVUShapePacket = 0x1e60f0;  // Rdr_VUShape's single packet; the gRdr_* globals are inside it.
-const uint32_t kRdrAlphaAddTriangles = 0x1a17b0;
+const uint32_t kShapeTemplate = sym::gTRdr_ShapeData__1;  // The packet every shape ring entry starts as.
+const uint32_t kTrackEdTemplate = sym::gTERdr_ShapeData; // The same for the Track Editor ring (Ghidra shows both as _dma_1).
+const uint32_t kShapeProgram = sym::TRdr_VUShapeProg;   // _dma_48: track and shape renderer.
+const uint32_t kEnvProgram = sym::EnvRdr_VUShapeProg;     // gTRdr_EndShapeData: the shiny (environment map) pass.
+const uint32_t kVUShapeProgram = sym::Rdr_VUShapeProg; // _dma_47: Rdr_VUShape's renderer.
+const uint32_t kTrackEdProgram = sym::TERdr_VUShapeProg; // The Track Editor's renderer (Ghidra shows it as _dma_48 too).
+const uint32_t kVUShapePacket = sym::gRdr_ShapeData;  // Rdr_VUShape's single packet; the gRdr_* globals are inside it.
+const uint32_t kRdrAlphaAddTriangles = sym::RdrAlphaAddTriangles;
 const int32_t kShapePackets = 0x168, kTrackEdPackets = 0x180;
 
 ee_float dot(ee_float ax, ee_float ay, ee_float az, ee_float bx, ee_float by, ee_float bz)
@@ -357,7 +357,7 @@ void TRdr_VUShape(ptr32<sRdrVUShape> pShape, ptr32<_sRdrCamera> pCamera, u32 tin
     if (!pShape || !pCamera)
         return;
     uint32_t envAddress = 0;
-    const uint32_t mainAddress = fillTrackPacket(*pShape, *pCamera, tint, *static_cast<ee_float *>(guest_host(0x327becu)), true, envAddress);
+    const uint32_t mainAddress = fillTrackPacket(*pShape, *pCamera, tint, *static_cast<ee_float *>(guest_host(sym::lit4_327bec)), true, envAddress);
     const ptr32<void> mainPacket(mainAddress), envPacket(envAddress), tris = pShape->pTri.cast<void>();
     if (tris)
     {
@@ -369,7 +369,7 @@ void TRdr_VUShape(ptr32<sRdrVUShape> pShape, ptr32<_sRdrCamera> pCamera, u32 tin
         }
         else
         {
-            const ptr32<sRdrStateBlock> state = envState(0x4b9718);
+            const ptr32<sRdrStateBlock> state = envState(sym::envRdrState_454);
             const bool shield = G(gEnvShield) != 0;
             if (shield)
             {
@@ -400,7 +400,7 @@ void TRdr_VUShapeCell(ptr32<sRdrVUShape> pShape, ptr32<_sRdrCamera> pCamera, u32
     if (!pShape || !pCamera)
         return;
     uint32_t envAddress = 0;
-    const uint32_t mainAddress = fillTrackPacket(*pShape, *pCamera, tint, *static_cast<ee_float *>(guest_host(0x327bf0u)), false, envAddress);
+    const uint32_t mainAddress = fillTrackPacket(*pShape, *pCamera, tint, *static_cast<ee_float *>(guest_host(sym::lit4_327bf0)), false, envAddress);
     if (pShape->pTri)
     {
         if (G(gEnvMap) == 0)
@@ -413,7 +413,7 @@ void TRdr_VUShapeCell(ptr32<sRdrVUShape> pShape, ptr32<_sRdrCamera> pCamera, u32
         {
             Rdr_UploadProg(ptr32<u32>(kEnvProgram));
             Rdr_AddDmaCall(ptr32<void>(envAddress));
-            const ptr32<sRdrStateBlock> state = envState(0x4b9748);
+            const ptr32<sRdrStateBlock> state = envState(sym::envRdrState_459);
             Rdr_AddDmaCall(pShape->pTri.cast<void>());
             RdrState_ApplyStateBlock(state);
             Rdr_AddDmaCall(ptr32<void>(mainAddress));
@@ -459,9 +459,9 @@ void TERdr_VUShape(ptr32<sRdrVUShape> pShape, ptr32<_sRdrCamera> pCamera, u32 ti
 // matrix and position for the skin microprogram.
 
 namespace {
-const uint32_t kSkinTemplate = 0x1e1e50, kSkinProgram = 0x1e3df0;
+const uint32_t kSkinTemplate = sym::gRdr_SkinShapeData, kSkinProgram = sym::Rdr_VUSkinProg;
 const int32_t kSkinPackets = 0x180;
-const uint32_t kWaterTemplate = 0x1d5450, kWaterProgram = 0x1d6470;
+const uint32_t kWaterTemplate = sym::gRdr_WaterShapeData, kWaterProgram = sym::gRdr_WaterEndShapeData;
 const int32_t kWaterPackets = 0x20;
 
 void putRows(uint8_t *p, uint32_t offset, const sMat33 &m)
@@ -612,26 +612,26 @@ void Rdr_Water(ptr32<sRdrVUShape> pShape, ptr32<_sRdrCamera> pCamera)
     const uint64_t tex0 = gsTex0(bump ? bump.get() : nullptr);
     sRdr &rdr = G(gRdr);
     const int32_t index = rdr.waterCurrShapeData;
-    global(0x1d5524) = static_cast<uint32_t>(tex0 >> 32);
+    global((sym::sec_vutext + 0xd4u)) = static_cast<uint32_t>(tex0 >> 32);
     rdr.waterCurrShapeData = rdr.waterCurrShapeData + 1;
-    global(0x1d5520) = static_cast<uint32_t>(tex0);
+    global(sym::gRdr_WaterBumpTex) = static_cast<uint32_t>(tex0);
     if (kWaterPackets - 1 < rdr.waterCurrShapeData)
         rdr.waterCurrShapeData = 0;
     const _sRdrCamera &camera = *pCamera;
     const ee_float lightX = camera.pos.x + camera.mat.Zx * ee_float(2000.0f);
-    std::memcpy(guest_host(0x1d5510), &lightX, 4);
+    std::memcpy(guest_host(sym::gRdr_WaterLightPos), &lightX, 4);
     const uint32_t address = (rdr.pWaterShapeData + index * rdr.waterShapeDataSz).address;
     uint8_t *p = static_cast<uint8_t *>(guest_host(address));
     const ee_float lightY = camera.pos.y + ee_float(1000.0f);
-    std::memcpy(guest_host(0x1d5514), &lightY, 4);
-    global(0x1d551c) = 0;
+    std::memcpy(guest_host((sym::sec_vutext + 0xc4u)), &lightY, 4);
+    global((sym::sec_vutext + 0xccu)) = 0;
     const ee_float lightZ = camera.pos.z + camera.mat.Zz * ee_float(2000.0f);
-    std::memcpy(guest_host(0x1d5518), &lightZ, 4);
+    std::memcpy(guest_host((sym::sec_vutext + 0xc8u)), &lightZ, 4);
     writeShapeCamera(p, 0x1a0, *pShape, camera);
-    putw(p, 0xa0, global(0x1d54f0));
-    putw(p, 0xa4, global(0x1d54f4));
+    putw(p, 0xa0, global(sym::gRdr_WaterBumpUVs));
+    putw(p, 0xa4, global((sym::sec_vutext + 0xa4u)));
     for (uint32_t k = 0; k < 8; ++k)
-        putw(p, 0xc0 + k * 4u, global(0x1d5510 + k * 4u));
+        putw(p, 0xc0 + k * 4u, global(sym::gRdr_WaterLightPos + k * 4u));
     RdrState_ForceApplyStateBlock(ptr32<sRdrStateBlock>(guest_addr(&G(waterStateBlock))));
     Rdr_UploadProg(ptr32<u32>(kWaterProgram));
     Rdr_AddDmaCall(ptr32<void>(address));
@@ -645,7 +645,7 @@ void Rdr_Water(ptr32<sRdrVUShape> pShape, ptr32<_sRdrCamera> pCamera)
 
 namespace {
 
-const uint32_t kQsort = 0x1b7de0, kRdrAlphaSortFunc = 0x1a28f0, kPrintf = 0x12e9e8;
+const uint32_t kQsort = sym::qsort, kRdrAlphaSortFunc = sym::RdrAlphaSortFunc, kPrintf = sym::printf;
 
 ee_float f(f32 value) { return ee_float(value); }
 
@@ -669,14 +669,14 @@ void alphaCamera(_sRdrCamera &cam)
     cam.pos.y = ee_itof(trans.y);
     cam.pos.z = ee_itof(trans.z);
     cam.mat.Zz = unit(t.mat.Zz);
-    const ee_float toAngle = *static_cast<ee_float *>(guest_host(0x327bc4u));
-    const ee_float toRadians = *static_cast<ee_float *>(guest_host(0x327bc8u));
+    const ee_float toAngle = *static_cast<ee_float *>(guest_host(sym::lit4_327bc4));
+    const ee_float toRadians = *static_cast<ee_float *>(guest_host(sym::lit4_327bc8));
     const int32_t fov = ee_ftoi(G(lsVarG).fov * toAngle) & 0xffff;
     const ee_float half = ee_itof(ee_ftoi(ee_itof(fov) * ee_float(0.5f)) & 0xffff) * toRadians;
     const ee_float sine = ee_sinf(half), cosine = ee_cosf(half);
     const ee_float dValX = ee_float(1.0f) / (sine / cosine) * ee_itof(G(gGfxP2).wd) * ee_float(0.5f);
     cam.dValX = dValX;
-    cam.dValY = dValX * *static_cast<ee_float *>(guest_host(0x327bccu));
+    cam.dValY = dValX * *static_cast<ee_float *>(guest_host(sym::lit4_327bcc));
     const int32_t player = G(gRdrPolyPlayer);
     cam.vertDrawOffset = player == 1 ? -56.0f : player == 2 ? 56.0f : 0.0f;
 }
@@ -697,6 +697,7 @@ ee_float depth(const f32 *v, const _sRdrCamera &cam)
 
 void RdrAlphaCameraToRdrCamera(ptr32<_sRdrCamera> pCam)
 {
+    RC_DIVERT_IF_CHANGED(RdrAlphaCameraToRdrCamera, pCam);
     alphaCamera(*pCam);
 }
 
@@ -832,7 +833,7 @@ void RdrAlphaAddToDmaChain()
     std::memset(packet + 0xc0, 0, 12);
     putw(packet, 0xcc, 0x3f800000);
     sRdrVUShape origin{};
-    std::memcpy(&origin.mat, guest_host(0x324cc8u), sizeof(sMat33));
+    std::memcpy(&origin.mat, guest_host((sym::sec_rodata + 0x26c8u)), sizeof(sMat33));
     writeShapeCamera(packet, 0xf0, origin, camera);
     Rdr_UploadProg(ptr32<u32>(kShapeProgram));
     Rdr_AddDmaCall(ptr32<void>(packetAddress));
@@ -930,37 +931,37 @@ void RdrAlphaAddToDmaChain()
     alpha.nextTempTri = 0;
     alpha.numTriangles = 0;
     if (vifEnd < vif + 16)
-        guest_call(kPrintf, 0x324cf0u); // "overflowed\n"
+        guest_call(kPrintf, (sym::sec_rodata + 0x26f0u)); // "overflowed\n"
     if (0x600 < vifWords)
-        guest_call(kPrintf, 0x324d00u); // "ovecounted\n"
+        guest_call(kPrintf, (sym::sec_rodata + 0x2700u)); // "ovecounted\n"
 }
 
 } // namespace rc
 
-RC_DECOMP_FN(Rdr_ShapeConstruct, 0x1a7210)
-RC_DECOMP_FN_NOFUZZ(Rdr_FixupShapeTex, 0x1a7230)
-RC_DECOMP_FN_NOFUZZ(Rdr_FixVUGridDma, 0x1a7290) // Walks a DMA list to its end tag.
-RC_DECOMP_FN_NOFUZZ(Rdr_FixVUShapeDma, 0x1a73b0)
-RC_DECOMP_FN_NOFUZZ(Rdr_FixVUShape, 0x1a4c28)
-RC_DECOMP_FN(Rdr_VUShapeExecute, 0x1a7208)
-RC_DECOMP_FN_NOFUZZ(Rdr_ShapeTerm, 0x1a4bf8)
-RC_DECOMP_FN_NOFUZZ(Rdr_ShapeInit, 0x1a4ad0)
-RC_DECOMP_FN(Rdr_VUShape, 0x1a5230)
-RC_DECOMP_FN(Rdr_VUShapeSetup, 0x1a6e98)
-RC_DECOMP_FN_NOFUZZ(TRdr_VUShape, 0x1a55b8) // Random alpha counts would loop for ever.
-RC_DECOMP_FN_NOFUZZ(TRdr_VUShapeCell, 0x1a5ec8)
-RC_DECOMP_FN(TERdr_VUShape, 0x1a66f8)
-RC_DECOMP_FN_NOFUZZ(Rdr_FixVUSkinDma, 0x1a3498)
-RC_DECOMP_FN_NOFUZZ(Rdr_SkinTerm, 0x1a2910)
-RC_DECOMP_FN_NOFUZZ(Rdr_FixVUSkin, 0x1a2920)
-RC_DECOMP_FN_NOFUZZ(Rdr_SkinInit, 0x1a33f0)
-RC_DECOMP_FN_NOFUZZ(Rdr_VUSkin, 0x1a2e58)
-RC_DECOMP_FN_NOFUZZ(Rdr_WaterTerm, 0x1a9470)
-RC_DECOMP_FN_NOFUZZ(Rdr_WaterInit, 0x1a9310)
-RC_DECOMP_FN_NOFUZZ(Rdr_Water, 0x1a9480)
-RC_DECOMP_FN_NOFUZZ(RdrAlphaCameraToRdrCamera, 0x1a1d28)
-RC_DECOMP_FN_NOFUZZ(RdrAlphaSortFunc, 0x1a28f0)
-RC_DECOMP_FN_NOFUZZ(RdrAlphaTerm, 0x1a16d8)
-RC_DECOMP_FN_NOFUZZ(RdrAlphaInit, 0x1a15a0)
-RC_DECOMP_FN_NOFUZZ(RdrAlphaAddTriangles, 0x1a17b0)
-RC_DECOMP_FN_NOFUZZ(RdrAlphaAddToDmaChain, 0x1a1f50)
+RC_DECOMP_FN(Rdr_ShapeConstruct)
+RC_DECOMP_FN_NOFUZZ(Rdr_FixupShapeTex)
+RC_DECOMP_FN_NOFUZZ(Rdr_FixVUGridDma) // Walks a DMA list to its end tag.
+RC_DECOMP_FN_NOFUZZ(Rdr_FixVUShapeDma)
+RC_DECOMP_FN_NOFUZZ(Rdr_FixVUShape)
+RC_DECOMP_FN(Rdr_VUShapeExecute)
+RC_DECOMP_FN_NOFUZZ(Rdr_ShapeTerm)
+RC_DECOMP_FN_NOFUZZ(Rdr_ShapeInit)
+RC_DECOMP_FN(Rdr_VUShape)
+RC_DECOMP_FN(Rdr_VUShapeSetup)
+RC_DECOMP_FN_NOFUZZ(TRdr_VUShape) // Random alpha counts would loop for ever.
+RC_DECOMP_FN_NOFUZZ(TRdr_VUShapeCell)
+RC_DECOMP_FN(TERdr_VUShape)
+RC_DECOMP_FN_NOFUZZ(Rdr_FixVUSkinDma)
+RC_DECOMP_FN_NOFUZZ(Rdr_SkinTerm)
+RC_DECOMP_FN_NOFUZZ(Rdr_FixVUSkin)
+RC_DECOMP_FN_NOFUZZ(Rdr_SkinInit)
+RC_DECOMP_FN_NOFUZZ(Rdr_VUSkin)
+RC_DECOMP_FN_NOFUZZ(Rdr_WaterTerm)
+RC_DECOMP_FN_NOFUZZ(Rdr_WaterInit)
+RC_DECOMP_FN_NOFUZZ(Rdr_Water)
+RC_DECOMP_FN_NOFUZZ(RdrAlphaCameraToRdrCamera)
+RC_DECOMP_FN_NOFUZZ(RdrAlphaSortFunc)
+RC_DECOMP_FN_NOFUZZ(RdrAlphaTerm)
+RC_DECOMP_FN_NOFUZZ(RdrAlphaInit)
+RC_DECOMP_FN_NOFUZZ(RdrAlphaAddTriangles)
+RC_DECOMP_FN_NOFUZZ(RdrAlphaAddToDmaChain)

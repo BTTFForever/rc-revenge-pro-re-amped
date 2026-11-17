@@ -12,10 +12,10 @@ void AngleAxisToMatrix(ptr32<_matPsx> pMat, ptr32<vec16_> pAxis, angle ang); // 
 
 namespace {
 
-constexpr uint32_t kTsoVars = 0x3281f0u, kTsoCallBack = 0x3281f4u, kRdrCamera = 0x1f40b8u;
-constexpr uint32_t kDistanceThreshold = 0x3281e0u, kViewConeScale = 0x3279acu;
-constexpr uint32_t kReInitDelta = 0x3284bcu; // TSOReInit's static dx, dy, dz
-constexpr uint32_t kTobInit = 0x18ccb8u, kTobTerm = 0x18ccc0u, kMat3nBuild = 0x19e710u;
+constexpr uint32_t kTsoVars = sym::tsoVarG, kTsoCallBack = sym::TSOCallBack, kRdrCamera = sym::rdrCameraG;
+constexpr uint32_t kDistanceThreshold = sym::distanceThreshold_468, kViewConeScale = sym::lit4_3279ac;
+constexpr uint32_t kReInitDelta = sym::dx_473; // TSOReInit's static dx, dy, dz
+constexpr uint32_t kTobInit = sym::TOBInit, kTobTerm = sym::TOBTerm, kMat3nBuild = sym::Mat3nBuild;
 
 template <typename T>
 T &mem(uint32_t address) { return *static_cast<T *>(guest_host(address)); }
@@ -176,11 +176,11 @@ using rc::fuzz::tsoLevel;
 using rc::fuzz::tsoObject;
 using rc::fuzz::tsoViewCone;
 
-RC_DECOMP_FN_SETUP(TSOTerm, 0x18b018, tsoLevel)
-RC_DECOMP_FN_SETUP(TSOInit, 0x18ca30, tsoLevel)
-RC_DECOMP_FN_SETUP(TSOSetSFXCallBack, 0x18ccb0, tsoCallback)
-RC_DECOMP_FN_SETUP_HEAP(TSOPreProcess, 0x18ca50, tsoCallback)
-RC_DECOMP_FN_SETUP_HEAP(TSO_UpdateMatrix, 0x18cc38, tsoObject)
-RC_DECOMP_FN_SETUP(IsInViewCone, 0x18b020, tsoViewCone)
+RC_DECOMP_FN_SETUP(TSOTerm, tsoLevel)
+RC_DECOMP_FN_SETUP(TSOInit, tsoLevel)
+RC_DECOMP_FN_SETUP(TSOSetSFXCallBack, tsoCallback)
+RC_DECOMP_FN_SETUP_HEAP(TSOPreProcess, tsoCallback)
+RC_DECOMP_FN_SETUP_HEAP(TSO_UpdateMatrix, tsoObject)
+RC_DECOMP_FN_SETUP(IsInViewCone, tsoViewCone)
 // Vertex-animated and boned objects on the level's heap.
-RC_DECOMP_FN_SETUP_HEAP(TSOReInit, 0x18b1c0, tsoLevel)
+RC_DECOMP_FN_SETUP_HEAP(TSOReInit, tsoLevel)

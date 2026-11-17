@@ -24,10 +24,10 @@ int32 rand();
 
 namespace {
 
-constexpr uint32_t kUnitMatrix = 0x1c7ac8u, kRotMatrixX = 0x1c7c10u, kRotMatrixY = 0x1c7cb8u, kRotMatrixZ = 0x1c7b68u,
-                   kRotMatrix = 0x1c7d60u;
-constexpr uint32_t kVsprintf = 0x1bac98u, kStrcat = 0x1b8af0u, kPrintf = 0x12e9e8u;
-constexpr uint32_t kNewline = 0x3282e8u, kDifferent = 0x324b78u; // "\n", "Different %f %f"
+constexpr uint32_t kUnitMatrix = sym::sceVu0UnitMatrix, kRotMatrixX = sym::sceVu0RotMatrixX, kRotMatrixY = sym::sceVu0RotMatrixY, kRotMatrixZ = sym::sceVu0RotMatrixZ,
+                   kRotMatrix = sym::sceVu0RotMatrix;
+constexpr uint32_t kVsprintf = sym::vsprintf, kStrcat = sym::strcat, kPrintf = sym::printf;
+constexpr uint32_t kNewline = (sym::sec_sdata + 0x6e8u), kDifferent = (sym::sec_rodata + 0x2578u); // "\n", "Different %f %f"
 
 ee_float constant(uint32_t address) { return *static_cast<ee_float *>(guest_host(address)); }
 
@@ -91,17 +91,17 @@ void debugMessage(uint32_t format, double first, double second);
 
 void OldRotMatrixXYZ(ptr32<SVECTOR> pVec, ptr32<MATRIX> pMat)
 {
-    rotMatrix3(pVec, pMat, {Axis::X, Axis::Y, Axis::Z}, {0x327b8cu, 0x327b90u, 0x327b94u});
+    rotMatrix3(pVec, pMat, {Axis::X, Axis::Y, Axis::Z}, {sym::lit4_327b8c, sym::lit4_327b90, sym::lit4_327b94});
 }
 
 void OldRotMatrixYXZ(ptr32<SVECTOR> pVec, ptr32<MATRIX> pMat)
 {
-    rotMatrix3(pVec, pMat, {Axis::Y, Axis::X, Axis::Z}, {0x327b98u, 0x327b9cu, 0x327ba0u});
+    rotMatrix3(pVec, pMat, {Axis::Y, Axis::X, Axis::Z}, {sym::lit4_327b98, sym::lit4_327b9c, sym::lit4_327ba0});
 }
 
 void OldRotMatrixZYX(ptr32<SVECTOR> pVec, ptr32<MATRIX> pMat)
 {
-    rotMatrix3(pVec, pMat, {Axis::Z, Axis::Y, Axis::X}, {0x327ba4u, 0x327ba8u, 0x327bacu});
+    rotMatrix3(pVec, pMat, {Axis::Z, Axis::Y, Axis::X}, {sym::lit4_327ba4, sym::lit4_327ba8, sym::lit4_327bac});
 }
 
 // All three angles at once through sceVu0RotMatrix (rotation vector at sp+0x40), none skipped.
@@ -109,7 +109,7 @@ void OldRotMatrix(ptr32<SVECTOR> pVec, ptr32<MATRIX> pMat)
 {
     GuestFrame frame(0x70);
     const ptr32<ee_float> work = frame.local<ee_float>(0), rot = frame.local<ee_float>(0x40);
-    const ee_float y = radians(pVec->vy, 0x327bb0u), x = radians(pVec->vx, 0x327bb0u), z = radians(pVec->vz, 0x327bb0u);
+    const ee_float y = radians(pVec->vy, sym::lit4_327bb0), x = radians(pVec->vx, sym::lit4_327bb0), z = radians(pVec->vz, sym::lit4_327bb0);
     rot[0] = x;
     rot[2] = z;
     rot[1] = -y;
@@ -365,18 +365,18 @@ void debugMessage(uint32_t format, double first, double second)
 
 } // namespace rc
 
-RC_DECOMP_FN(OldRotMatrixXYZ, 0x19dd40)
-RC_DECOMP_FN(OldRotMatrixYXZ, 0x19def8)
-RC_DECOMP_FN(OldRotMatrixZYX, 0x19e0b0)
-RC_DECOMP_FN(OldRotMatrix, 0x19e268)
-RC_DECOMP_FN(Mat3nBuild, 0x19e710)
-RC_DECOMP_FN(Mat3nBuildXYZ, 0x19e768)
-RC_DECOMP_FN(Mat3nDecompose, 0x19dc78)
-RC_DECOMP_FN_SETUP(NormalMulMatPsx, 0x19e7c0, rc::fuzz::normalMatrix)
-RC_DECOMP_FN_SETUP(NormalMulMatPsxT, 0x19e818, rc::fuzz::normalMatrix)
-RC_DECOMP_FN_SETUP_HEAP(Math_InitSqrtTable, 0x19aa48, rc::fuzz::noInput)
-RC_DECOMP_FN_SETUP_HEAP(Math_InitInvSqrtTable, 0x19ad60, rc::fuzz::noInput)
-RC_DECOMP_FN_SETUP(Math_Test, 0x19b0b0, rc::fuzz::noInput)
-RC_DECOMP_FN_SETUP(Math_SqrtNoTable, 0x19b668, rc::fuzz::floatBits)
-RC_DECOMP_FN_SETUP(Math_InvSqrtNoTable, 0x19b768, rc::fuzz::floatBits)
-RC_DECOMP_FN_SETUP(dbg_msg, 0x19b888, rc::fuzz::debugFormat)
+RC_DECOMP_FN(OldRotMatrixXYZ)
+RC_DECOMP_FN(OldRotMatrixYXZ)
+RC_DECOMP_FN(OldRotMatrixZYX)
+RC_DECOMP_FN(OldRotMatrix)
+RC_DECOMP_FN(Mat3nBuild)
+RC_DECOMP_FN(Mat3nBuildXYZ)
+RC_DECOMP_FN(Mat3nDecompose)
+RC_DECOMP_FN_SETUP(NormalMulMatPsx, rc::fuzz::normalMatrix)
+RC_DECOMP_FN_SETUP(NormalMulMatPsxT, rc::fuzz::normalMatrix)
+RC_DECOMP_FN_SETUP_HEAP(Math_InitSqrtTable, rc::fuzz::noInput)
+RC_DECOMP_FN_SETUP_HEAP(Math_InitInvSqrtTable, rc::fuzz::noInput)
+RC_DECOMP_FN_SETUP(Math_Test, rc::fuzz::noInput)
+RC_DECOMP_FN_SETUP(Math_SqrtNoTable, rc::fuzz::floatBits)
+RC_DECOMP_FN_SETUP(Math_InvSqrtNoTable, rc::fuzz::floatBits)
+RC_DECOMP_FN_SETUP(dbg_msg, rc::fuzz::debugFormat)

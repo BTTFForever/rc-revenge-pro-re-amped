@@ -194,10 +194,10 @@ void MemFragDEBUGValidate(ptr32<_sMemFragPool> pPool)
 
 } // namespace rc
 
-RC_DECOMP_FN_SETUP_HEAP(MemFragPoolDelete, 0x193148, rc::fuzz::fragPoolHandle)
-RC_DECOMP_FN_SETUP_HEAP(MemFragCreate, 0x193228, rc::fuzz::fragPool)
-RC_DECOMP_FN_SETUP_HEAP(MemFragPoolCreate, 0x193368, rc::fuzz::fragPoolCreate)
-RC_DECOMP_FN_SETUP_HEAP(MemFragDelete, 0x193418, rc::fuzz::fragDelete)
-RC_DECOMP_FN_SETUP_HEAP(MemFragBlockCreate, 0x193588, rc::fuzz::fragPool)
-RC_DECOMP_FN_SETUP_HEAP(MemFragBlockDelete, 0x193600, rc::fuzz::fragBlock)
-RC_DECOMP_FN_SETUP_HEAP(MemFragDEBUGValidate, 0x193660, rc::fuzz::fragPool)
+RC_DECOMP_FN_SETUP_HEAP(MemFragPoolDelete, rc::fuzz::fragPoolHandle)
+RC_DECOMP_FN_SETUP_HEAP(MemFragCreate, rc::fuzz::fragPool)
+RC_DECOMP_FN_SETUP_HEAP(MemFragPoolCreate, rc::fuzz::fragPoolCreate)
+RC_DECOMP_FN_SETUP_HEAP(MemFragDelete, rc::fuzz::fragDelete)
+RC_DECOMP_FN_SETUP_HEAP(MemFragBlockCreate, rc::fuzz::fragPool)
+RC_DECOMP_FN_SETUP_HEAP(MemFragBlockDelete, rc::fuzz::fragBlock)
+RC_DECOMP_FN_SETUP_HEAP(MemFragDEBUGValidate, rc::fuzz::fragPool)

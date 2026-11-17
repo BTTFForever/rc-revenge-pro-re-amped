@@ -11,16 +11,16 @@ namespace rc::fuzz {
 namespace {
 
 // Globals.
-constexpr uint32_t kMenuSystem = 0x1e9708u, kMenuSystemPtr = 0x327c20u, kMainVars = 0x1ed900u, kFrontEnd = 0x1eca58u;
-constexpr uint32_t kLevelPtr = 0x327e80u, kTEditGeneralText = 0x1f0fecu, kTEditCarNames = 0x1f0ff0u, kTEditHelp = 0x1f0b4cu;
-constexpr uint32_t kCameraPtr = 0x1eab20u, kInput = 0x1f4c80u, kGfx = 0x1f4b30u, kFastScroll = 0x1e9900u;
-constexpr uint32_t kMusicUserVol = 0x1ee8e0u, kSfxUserVol = 0x1f04f4u, kMusicVolG = 0x327dc4u, kSfxVolG = 0x327dc0u;
+constexpr uint32_t kMenuSystem = sym::menuSystemG, kMenuSystemPtr = sym::pMenuSystemG, kMainVars = sym::mainVarG, kFrontEnd = sym::frontEndVarG;
+constexpr uint32_t kLevelPtr = sym::pLvlG, kTEditGeneralText = (sym::tEditVarG + 0x6ecu), kTEditCarNames = (sym::tEditVarG + 0x6f0u), kTEditHelp = (sym::tEditVarG + 0x24cu);
+constexpr uint32_t kCameraPtr = (sym::cameraVarG + 0xb70u), kInput = sym::inputVarG, kGfx = sym::gGfxP2, kFastScroll = sym::fastScrollPoints;
+constexpr uint32_t kMusicUserVol = (sym::rcmusicVarG + 0x20u), kSfxUserVol = (sym::revSfxVarG + 0x1144u), kMusicVolG = sym::musicVolG, kSfxVolG = sym::sfxVolG;
 constexpr uint32_t kBox = kFrontEnd + 0xa8u;
 
 // The functions replaced offline.
-constexpr uint32_t kSfxPlay = 0x1ad0a0u, kRCMusicModifyVolume = 0x1413f0u, kRevSfxModifyVolume = 0x144098u;
-constexpr uint32_t kHideEmptyMenu = 0x11e270u, kSetRewards = 0x121580u, kGetTimeTrialTime = 0x122b28u, kSelectionTest = 0x120a28u;
-constexpr uint32_t kPadInfoMode = 0x1c6dd8u;
+constexpr uint32_t kSfxPlay = sym::SfxPlay, kRCMusicModifyVolume = sym::RCMusicModifyVolume, kRevSfxModifyVolume = sym::RevSfxModifyVolume;
+constexpr uint32_t kHideEmptyMenu = sym::HideEmptyMenu, kSetRewards = sym::SetRewards, kGetTimeTrialTime = sym::GetTimeTrialTime, kSelectionTest = sym::SelectionTest;
+constexpr uint32_t kPadInfoMode = sym::scePadInfoMode;
 
 // Scratch layout.
 constexpr uint32_t kHeaders = 0x0000u, kColours = 0x0200u, kBorders = 0x0220u, kItems = 0x0300u, kVars = 0x0440u;
@@ -590,8 +590,8 @@ public:
         in.padBuffer1[1] = rng.pick(kIds);
         in.padBuffer2[0] = static_cast<uint8>(rng.chance(85) ? 0 : 0xff);
         in.padBuffer2[1] = rng.pick(kIds);
-        mem<uint8_t>(0x327c2au) = static_cast<uint8_t>(rng.chance(80) ? rng.between(0, 1) : 0xff); // lastHitPadG
-        mem<uint8_t>(0x327c2bu) = static_cast<uint8_t>(rng.between(0, 1));
+        mem<uint8_t>(sym::lastHitPadG) = static_cast<uint8_t>(rng.chance(80) ? rng.between(0, 1) : 0xff); // lastHitPadG
+        mem<uint8_t>(sym::lastHeldPadG) = static_cast<uint8_t>(rng.between(0, 1));
     }
 
     R5900Context *ctx;
@@ -678,7 +678,7 @@ private:
             mem<uint32_t>(s + kExtra + level * 0x10u + 4u) = rng.chance(50) ? r.keys : r.tick;
         }
         // The box and border fiddle factors.
-        for (uint32_t address = 0x327c74u; address <= 0x327c88u; address += 4u)
+        for (uint32_t address = sym::ffRectLeftG; address <= sym::ffBordBottomG; address += 4u)
             mem<int32_t>(address) = rng.chance(50) ? 0 : rng.between(0, 6);
         for (uint32_t offset = 0x188; offset <= 0x194; offset += 4)
             mem<int32_t>(fe + offset) = rng.between(0, 3);
@@ -699,25 +699,25 @@ private:
         mem<int8_t>(fe + 0x2d5u) = static_cast<int8_t>(rng.chance(25) ? 1 : 0);
         mem<uint8_t>(fe + 0x2dau) = static_cast<uint8_t>(rng.chance(30) ? 1 : 0);
         static const int32_t kHeights[] = {-1, -1, 30, 64, 90, 140};
-        mem<int32_t>(0x327c34u) = rng.pick(kHeights); // the entry heights measured on a page's first pass
-        mem<int32_t>(0x327c38u) = rng.pick(kHeights);
-        mem<int32_t>(0x327c3cu) = rng.pick(kHeights);
-        mem<int32_t>(0x327c40u) = rng.between(0, 1);  // bottomOfScrollG
-        mem<int32_t>(0x327c94u) = rng.chance(60) ? 0 : rng.between(0, 30); // scrollLinesG
+        mem<int32_t>(sym::amenuScrollTTHeightG) = rng.pick(kHeights); // the entry heights measured on a page's first pass
+        mem<int32_t>(sym::amenuScrollProgHeaderHeightG) = rng.pick(kHeights);
+        mem<int32_t>(sym::amenuScrollProgEntryHeightG) = rng.pick(kHeights);
+        mem<int32_t>(sym::bottomOfScrollG) = rng.between(0, 1);  // bottomOfScrollG
+        mem<int32_t>(sym::scrollLinesG) = rng.chance(60) ? 0 : rng.between(0, 30); // scrollLinesG
         const int points = rng.chance(70) ? rng.between(0, 8) : rng.between(20, 40);
         for (int i = 0; i < 50; ++i)
             mem<int32_t>(kFastScroll + static_cast<uint32_t>(i) * 4u) = i < points ? -rng.between(0, 900) : -1;
-        mem<int32_t>(0x327c98u) = points == 0 ? 0 : rng.between(0, points - 1); // scrollJumpPosG
-        mem<int32_t>(0x327c2cu) = rng.chance(70) ? 0 : 0x1000028b;              // the delayed vibration checks
-        mem<int32_t>(0x327c30u) = rng.chance(70) ? 0 : 0x10000078;
-        mem<int32_t>(0x327c6cu) = rng.chance(70) ? 0 : rng.between(0, 3);        // areaMenuPauseG
-        mem<uint32_t>(0x327c70u) = rng.chance(50) ? header(0) : 0u;              // pLastHeader
+        mem<int32_t>(sym::scrollJumpPosG) = points == 0 ? 0 : rng.between(0, points - 1); // scrollJumpPosG
+        mem<int32_t>(sym::fixIDSPdelay1G) = rng.chance(70) ? 0 : 0x1000028b;              // the delayed vibration checks
+        mem<int32_t>(sym::fixIDSPdelay2G) = rng.chance(70) ? 0 : 0x10000078;
+        mem<int32_t>(sym::areaMenuPauseG) = rng.chance(70) ? 0 : rng.between(0, 3);        // areaMenuPauseG
+        mem<uint32_t>(sym::pLastHeader_630) = rng.chance(50) ? header(0) : 0u;              // pLastHeader
         // Settings the option menus show.
         mem<int32_t>(kMusicUserVol) = rng.between(0, 16383);
         mem<int32_t>(kSfxUserVol) = rng.between(0, 255);
         mem<int32_t>(kMusicVolG) = rng.between(0, 16383);
         mem<int32_t>(kSfxVolG) = rng.between(0, 255);
-        mem<int32_t>(0x31e490u) = rng.between(0, 2);
+        mem<int32_t>((sym::sfxVarG + 0x8u)) = rng.between(0, 2);
         for (uint32_t offset = 0x3df; offset <= 0x3e4; ++offset)
             mem<uint8_t>(kMainVars + offset) = static_cast<uint8_t>(rng.between(0, 5));
         mem<int32_t>(s + kGameState + 0x124u) = rng.chance(85) ? rng.between(0, 8) : rng.between(-2, 12);
@@ -817,7 +817,7 @@ void amenuItem(R5900Context *ctx, uint64_t &state, uint32_t scratch)
         const uint32_t tag = rng.chance(50) ? 0x1000028bu : 0x10000078u;
         mem<uint32_t>(m.w.item(index) + 0x10u) = tag;
         if (rng.chance(60))
-            mem<uint32_t>(tag == 0x1000028bu ? 0x327c2cu : 0x327c30u) = tag;
+            mem<uint32_t>(tag == 0x1000028bu ? sym::fixIDSPdelay1G : sym::fixIDSPdelay2G) = tag;
     }
 }
 

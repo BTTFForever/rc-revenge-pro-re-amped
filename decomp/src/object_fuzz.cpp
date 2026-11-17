@@ -15,8 +15,8 @@ namespace rc::fuzz {
 
 namespace {
 
-constexpr uint32_t kObjectList = 0x1ee390u, kWeaponVars = 0x1f3a80u, kSfxInitOk = 0x31e488u, kMainVars = 0x1ed900u;
-constexpr uint32_t kVfxAddNew = 0x157c50u, kObjectCreateAddr = 0x133c20u;
+constexpr uint32_t kObjectList = sym::objectVarG, kWeaponVars = sym::weaponVarG, kSfxInitOk = sym::sfxVarG, kMainVars = sym::mainVarG;
+constexpr uint32_t kVfxAddNew = sym::VfxAddNew, kObjectCreateAddr = sym::ObjectCreate;
 
 // Scratch layout.
 constexpr uint32_t kObject = 0x0000u, kDef = 0x1000u, kHandle = 0x1080u, kWeapons = 0x2000u;
@@ -419,7 +419,7 @@ void varySounds(uint64_t &state, uint32_t car)
     if (chance(state, 50))
     {
         // Within earshot of the camera, so RevSfxPlay3D's result (the handle, or -1) depends on the call made.
-        const vec32 &eye = mem<vec32>(0x1e9fb0u + 0xcu);
+        const vec32 &eye = mem<vec32>(sym::cameraVarG + 0xcu);
         _sRendObj &r = *o.pRendObj;
         r.pos.x = eye.x + static_cast<int32_t>(rnd(state, 0x40000)) - 0x20000;
         r.pos.y = eye.y + static_cast<int32_t>(rnd(state, 0x40000)) - 0x20000;
@@ -471,11 +471,11 @@ void objectCar(R5900Context *ctx, uint64_t &state, uint32_t)
     const uint32_t car = objectAt(pickCar(state));
     varySounds(state, car);
     if (chance(state, 30))
-        mem<int32_t>(0x1ece10u) = static_cast<int32_t>(rnd(state, 2)); // hudVarG.iReadySteadyGo
+        mem<int32_t>((sym::hudVarG + 0x70u)) = static_cast<int32_t>(rnd(state, 2)); // hudVarG.iReadySteadyGo
     if (chance(state, 30))
     {
-        mem<int32_t>(0x1ef3b0u + 0x1160u) = static_cast<int32_t>(rnd(state, 2)); // revSfxVarG.startFade
-        mem<int32_t>(0x1ef3b0u + 0x1164u) = static_cast<int32_t>(rnd(state, 10000));
+        mem<int32_t>(sym::revSfxVarG + 0x1160u) = static_cast<int32_t>(rnd(state, 2)); // revSfxVarG.startFade
+        mem<int32_t>(sym::revSfxVarG + 0x1164u) = static_cast<int32_t>(rnd(state, 10000));
     }
     SET_GPR_S32(ctx, 18, static_cast<int32_t>(nextFuzz(state)));
     static const int32_t kFlags[] = {-1, 0, 0, 1};
@@ -556,7 +556,7 @@ void objectOvertaking(R5900Context *ctx, uint64_t &state, uint32_t)
         o.pVfxSarge = ptr32<_sVfx_Object>(chance(state, 30) ? 0u : guest_call<uint32_t>(kVfxAddNew, ptr32<uint8>(car), 0, 0, 0x19));
     mem<uint32_t>(o.pDef.address + 4u) = rnd(state, 40);
     if (chance(state, 10))
-        mem<int32_t>(0x1ece10u) = 1;
+        mem<int32_t>((sym::hudVarG + 0x70u)) = 1;
     if (chance(state, 5))
         G(objectVarG).noObjects = 0;
     SET_GPR_S32(ctx, 7, static_cast<int32_t>(objectAt(pickCar(state))));
@@ -607,12 +607,12 @@ void objectFrontEnd(R5900Context *ctx, uint64_t &state, uint32_t)
 {
     soundOff();
     const uint32_t segments = 1 + rnd(state, 5);
-    mem<uint32_t>(0x1ebaf0u + 0x1cu) = segments;
+    mem<uint32_t>(sym::carouselVarG + 0x1cu) = segments;
     for (uint32_t i = 0; i < segments; ++i)
     {
         const uint32_t car = objectAt(pickCar(state));
         varySounds(state, car);
-        mem<uint32_t>(0x1ebaf0u + 0x2cu + i * 0x34u) = car;
+        mem<uint32_t>(sym::carouselVarG + 0x2cu + i * 0x34u) = car;
     }
     setArg(ctx, 0, rnd(state, 6));
 }
@@ -696,7 +696,7 @@ void objectRender(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     if (chance(state, 30))
     {
         mem<int32_t>(kMainVars + 8u) = 1; // currentDo: the front end
-        mem<int32_t>(0x1f3730u) = static_cast<int32_t>(rnd(state, 2)); // visFxVarG.iResultTrigger
+        mem<int32_t>((sym::visFxVarG + 0x2730u)) = static_cast<int32_t>(rnd(state, 2)); // visFxVarG.iResultTrigger
     }
     if (chance(state, 30))
         mem<int32_t>(kMainVars + 0x378u) = static_cast<int32_t>(rnd(state, 2)); // iWhichSplitScreen
@@ -705,7 +705,7 @@ void objectRender(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     if (chance(state, 30))
         o.zDrawnDist = static_cast<uint16>(chance(state, 50) ? rnd(state, 2000) : nextFuzz(state));
     if (chance(state, 20))
-        mem<int32_t>(0x1e9fb0u + 0x5b8u * rnd(state, 2)) = static_cast<int32_t>(rnd(state, 3)); // camera mode
+        mem<int32_t>(sym::cameraVarG + 0x5b8u * rnd(state, 2)) = static_cast<int32_t>(rnd(state, 3)); // camera mode
     if (chance(state, 50))
         for (uint32_t i = 0; i < 4; ++i)
         {
@@ -714,13 +714,13 @@ void objectRender(R5900Context *ctx, uint64_t &state, uint32_t scratch)
         }
     if (chance(state, 40))
     {
-        mem<uint32_t>(0x327f28u) = rnd(state, 60); // ObjectBlurMaxVel
-        mem<uint32_t>(0x327f24u) = rnd(state, 30); // ObjectBlurMedVel
+        mem<uint32_t>(sym::ObjectBlurMaxVel) = rnd(state, 60); // ObjectBlurMaxVel
+        mem<uint32_t>(sym::ObjectBlurMedVel) = rnd(state, 30); // ObjectBlurMedVel
     }
     if (chance(state, 30)) // spins on the blur thresholds
         for (uint32_t i = 0; i < 4; ++i)
         {
-            const uint32_t edge = mem<uint32_t>(chance(state, 50) ? 0x327f28u : 0x327f24u) + rnd(state, 3) - 1;
+            const uint32_t edge = mem<uint32_t>(chance(state, 50) ? sym::ObjectBlurMaxVel : sym::ObjectBlurMedVel) + rnd(state, 3) - 1;
             mem<float>(physics + 0xe0u + i * 0x48u) = static_cast<float>(static_cast<int32_t>(edge)) * (chance(state, 50) ? 1.0f : -1.0f);
         }
     if (chance(state, 40))
@@ -733,7 +733,7 @@ void objectRender(R5900Context *ctx, uint64_t &state, uint32_t scratch)
         {
             const float side = chance(state, 50) ? 1.0f : -1.0f, dist = 5.0f + static_cast<float>(rnd(state, 60));
             const float spread = chance(state, 50) ? 0.02f : 0.3f;
-            float *cam = &mem<float>(0x1f40b8u + 0xbcu);
+            float *cam = &mem<float>(sym::rdrCameraG + 0xbcu);
             for (int k = 0; k < 3; ++k)
             {
                 const float c = k == 0 ? cx : k == 1 ? cy : cz;

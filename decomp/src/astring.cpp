@@ -14,7 +14,7 @@ int32_t AStringCentre(int32_t startX, int32_t width, ptr32<char> pText, int32_t 
 
 namespace {
 
-constexpr uint32_t kSpaceString = 0x327cc0; // " ", the string the space's width is measured on.
+constexpr uint32_t kSpaceString = (sym::sec_sdata + 0xc0u); // " ", the string the space's width is measured on.
 
 bool endsWord(char c) { return c == 0 || c == '\n' || c == '\r' || c == ' ' || c == '\t'; }
 
@@ -238,6 +238,6 @@ void astringCentreArgs(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 
 } // namespace rc::fuzz
 
-RC_DECOMP_FN_SETUP(AStringPrepareWrap, 0x110a60, rc::fuzz::astringPrepareArgs)
-RC_DECOMP_FN_SETUP_HEAP(AStringWrap, 0x110f68, rc::fuzz::astringWrapArgs)
-RC_DECOMP_FN_SETUP(AStringCentre, 0x1110e0, rc::fuzz::astringCentreArgs)
+RC_DECOMP_FN_SETUP(AStringPrepareWrap, rc::fuzz::astringPrepareArgs)
+RC_DECOMP_FN_SETUP_HEAP(AStringWrap, rc::fuzz::astringWrapArgs)
+RC_DECOMP_FN_SETUP(AStringCentre, rc::fuzz::astringCentreArgs)

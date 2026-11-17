@@ -16,17 +16,17 @@ void MemBlockFree(ptr32<memHandle> pHandle);
 
 namespace {
 
-constexpr uint32_t kFMPrepare = 0x1a0b70u, kFMUnPrepare = 0x1a0540u, kFMFileOpen = 0x1a0550u, kFMFileRead = 0x1a0838u,
-                   kFMFileClose = 0x1a0bf0u, kFMFileSeek = 0x1a0c10u, kFMFileLength = 0x1a0ca0u;
-constexpr uint32_t kSprintf = 0x1b8910u, kStrcat = 0x1b8af0u, kFlushCache = 0x1be9a0u;
-constexpr uint32_t kSetDefLoadImage = 0x1c4140u, kExecLoadImage = 0x1c4328u, kSyncPath = 0x1c3e28u, kSyncV = 0x1c3d90u;
-constexpr uint32_t kSifAllocIopHeap = 0x1c18c8u, kSifFreeIopHeap = 0x1c1938u, kSdTransToIOP = 0x1ca4d0u, kSdRemote = 0x1ca550u;
-constexpr uint32_t kDisplayInitHiRes = 0x182368u, kSwapBuffers = 0x18e988u, kInputSnapshot = 0x191810u, kInputHit = 0x191598u;
-constexpr uint32_t kMpegLoad = 0x1956a0u, kMpegPlay = 0x194b50u, kMpegTerm = 0x194ce0u, kMpegFinished = 0x195718u;
-constexpr uint32_t kSplashFolder = 0x322848u; // "\splash\"
-constexpr uint32_t kLegal = 0x3227c8u, kLeftVag = 0x3227d8u, kRightVag = 0x3227e8u, kAcclaimMovie = 0x3227f8u,
-                   kCarMovie = 0x322808u, kAscScreen = 0x322818u, kDbyScreen = 0x322828u, kLogoScreen = 0x322838u;
-constexpr uint32_t kGsLoadImage = 0x1e9ee0u, kErrorFn = 0x31e440u; // gs_limage, resVarG.pfLoadErrorFunction
+constexpr uint32_t kFMPrepare = sym::FMPrepare, kFMUnPrepare = sym::FMUnPrepare, kFMFileOpen = sym::FMFileOpen, kFMFileRead = sym::FMFileRead,
+                   kFMFileClose = sym::FMFileClose, kFMFileSeek = sym::FMFileSeek, kFMFileLength = sym::FMFileLength;
+constexpr uint32_t kSprintf = sym::sprintf, kStrcat = sym::strcat, kFlushCache = sym::FlushCache;
+constexpr uint32_t kSetDefLoadImage = sym::sceGsSetDefLoadImage, kExecLoadImage = sym::sceGsExecLoadImage, kSyncPath = sym::sceGsSyncPath, kSyncV = sym::sceGsSyncV;
+constexpr uint32_t kSifAllocIopHeap = sym::sceSifAllocIopHeap, kSifFreeIopHeap = sym::sceSifFreeIopHeap, kSdTransToIOP = sym::sceSdTransToIOP, kSdRemote = sym::sceSdRemote;
+constexpr uint32_t kDisplayInitHiRes = sym::DisplayInitHiRes, kSwapBuffers = sym::GfxP2_SwapBuffers, kInputSnapshot = sym::InputSnapshot, kInputHit = sym::InputHit;
+constexpr uint32_t kMpegLoad = sym::mpegOnInterruptLOAD, kMpegPlay = sym::mpegOnInterruptPLAY, kMpegTerm = sym::mpegOnInterruptTERM, kMpegFinished = sym::mpegOnInterruptFINISHED;
+constexpr uint32_t kSplashFolder = (sym::sec_rodata + 0x248u); // "\splash\"
+constexpr uint32_t kLegal = (sym::sec_rodata + 0x1c8u), kLeftVag = (sym::sec_rodata + 0x1d8u), kRightVag = (sym::sec_rodata + 0x1e8u), kAcclaimMovie = (sym::sec_rodata + 0x1f8u),
+                   kCarMovie = (sym::sec_rodata + 0x208u), kAscScreen = (sym::sec_rodata + 0x218u), kDbyScreen = (sym::sec_rodata + 0x228u), kLogoScreen = (sym::sec_rodata + 0x238u);
+constexpr uint32_t kGsLoadImage = sym::gs_limage, kErrorFn = (sym::resVarG + 0x3d0u); // gs_limage, resVarG.pfLoadErrorFunction
 constexpr uint32_t kWidth = 640u, kHalfHeight = 0x80u;
 // Pad keys InputHit takes: start and select end the sequence, cross and circle move to the next screen.
 constexpr uint32_t kKeyStart = 0x03u, kKeySelect = 0x13u, kKeyCross = 0x0eu, kKeyCircle = 0x1eu;
@@ -98,6 +98,7 @@ ptr32<void> BackdropLoadBMP24(ptr32<char> name)
 // (0xa00 when frameNumber & 1 == buffer, else 0).
 void BackdropDisplayBMP24(ptr32<void> pBmp, uint32 buffer)
 {
+    RC_DIVERT_IF_CHANGED(BackdropDisplayBMP24, pBmp, buffer);
     GuestFrame frame(0xf0);
     const uint32_t handle = frame.local<uint32_t>(0x50).address;
     store<uint32_t>(handle, 0);
@@ -245,13 +246,13 @@ void BackdropFadeDown() {}
 
 #include "res_fuzz.h"
 
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(BackdropDoInitialScreens, 0x111138, rc::fuzz::backdropScreens)
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(BackdropLoadBMP24, 0x111850, rc::fuzz::backdropBmp)
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(BackdropDisplayBMP24, 0x111a28, rc::fuzz::backdropDisplay)
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(BackdropLoadVAG, 0x111cf0, rc::fuzz::backdropVag)
-RC_DECOMP_FN_BLOCKING_SETUP(BackdropPlayVAG, 0x111f60, rc::fuzz::backdropPlay)
-RC_DECOMP_FN(BackdropInit, 0x112010)
-RC_DECOMP_FN(BackdropTerm, 0x112018)
-RC_DECOMP_FN(BackdropThrowUpBuffer, 0x112020)
-RC_DECOMP_FN(BackdropFadeUpBuffer, 0x112028)
-RC_DECOMP_FN(BackdropFadeDown, 0x112030)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(BackdropDoInitialScreens, rc::fuzz::backdropScreens)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(BackdropLoadBMP24, rc::fuzz::backdropBmp)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(BackdropDisplayBMP24, rc::fuzz::backdropDisplay)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(BackdropLoadVAG, rc::fuzz::backdropVag)
+RC_DECOMP_FN_BLOCKING_SETUP(BackdropPlayVAG, rc::fuzz::backdropPlay)
+RC_DECOMP_FN(BackdropInit)
+RC_DECOMP_FN(BackdropTerm)
+RC_DECOMP_FN(BackdropThrowUpBuffer)
+RC_DECOMP_FN(BackdropFadeUpBuffer)
+RC_DECOMP_FN(BackdropFadeDown)

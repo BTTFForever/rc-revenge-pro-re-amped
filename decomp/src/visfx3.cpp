@@ -29,7 +29,7 @@ constexpr uint32_t kParticles = 0x44;
 
 namespace {
 
-constexpr uint32_t kTaskSet = 0x1afad8, kTaskDelete = 0x1afc48, kTaskCachedInsert = 0x1afb68;
+constexpr uint32_t kTaskSet = sym::TaskSet, kTaskDelete = sym::TaskDelete, kTaskCachedInsert = sym::TaskCachedInsert;
 
 // The scenery instance's position in whole units, as shorts (the renderers keep it in a local).
 struct SceneryPos
@@ -62,15 +62,15 @@ void Vfx2TSFXLvlInit()
 {
     G(visFxVarG).vfxTSFXHeader = nullptr;
     G(visFxVarG).vfxTSFXFooter = nullptr;
-    guest_call(0x18ca50u, 0x16c638u);                                          // TSOPreProcess(Vfx2CallBack)
-    guest_call(kTaskSet, ptr32<uint8>(0x1f1018u), 0x16dca8u, 1, 0);            // TaskSet(&TSFXTask, Vfx2UpdateTSFX, 1, 0)
-    guest_call(kTaskCachedInsert, ptr32<uint8>(0x1f1018u));
+    guest_call(sym::TSOPreProcess, sym::Vfx2CallBack);                                          // TSOPreProcess(Vfx2CallBack)
+    guest_call(kTaskSet, ptr32<uint8>((sym::visFxVarG + 0x18u)), sym::Vfx2UpdateTSFX, 1, 0);            // TaskSet(&TSFXTask, Vfx2UpdateTSFX, 1, 0)
+    guest_call(kTaskCachedInsert, ptr32<uint8>((sym::visFxVarG + 0x18u)));
 }
 
 // Stops the task and frees every scenery effect.
 void Vfx2TSFXLvlTerm()
 {
-    guest_call(kTaskDelete, ptr32<uint8>(0x1f1018u));
+    guest_call(kTaskDelete, ptr32<uint8>((sym::visFxVarG + 0x18u)));
     vfx::freeList(G(visFxVarG).vfxTSFXHeader.address);
     G(visFxVarG).vfxTSFXFooter = nullptr;
     G(visFxVarG).vfxTSFXHeader = nullptr;
@@ -86,8 +86,8 @@ void Vfx2UpdateTSFX(ptr32<void>, int32 time)
             if (const uint32_t handler = at<uint32_t>(fx + 8))
                 guest_call(handler, ptr32<_sVfx_TSFX>(fx));
     }
-    at<int32_t>(0x1f1000u + 0x1c) = time + 0x19; // TSFXTask.time
-    guest_call(kTaskCachedInsert, ptr32<uint8>(0x1f1018u));
+    at<int32_t>(sym::visFxVarG + 0x1c) = time + 0x19; // TSFXTask.time
+    guest_call(kTaskCachedInsert, ptr32<uint8>((sym::visFxVarG + 0x18u)));
 }
 
 // Adds a scenery effect of the given type for a scenery instance. The effect is allocated at the end of the list: the
@@ -112,8 +112,8 @@ ptr32<_sVfx_TSFX> Vfx2AddTSFX(ptr32<_sTOBInst> pTOBInst, uint32 flags, uint32 iS
         case 0: // size 0x1a0
             alloc(0x1a0);
             put32(0x40, 15);
-            put32(0x8, 0x16dd30); // handler Vfx2Handler_CartoonTrainSmoke
-            put32(0xc, 0x16df28); // renderer Vfx2Renderer_CartoonTrainSmoke
+            put32(0x8, sym::Vfx2Handler_CartoonTrainSmoke); // handler Vfx2Handler_CartoonTrainSmoke
+            put32(0xc, sym::Vfx2Renderer_CartoonTrainSmoke); // renderer Vfx2Renderer_CartoonTrainSmoke
             put16(0x184, at<int32_t>(tob + 0x4) >> 8);
             put16(0x186, at<int32_t>(tob + 0x8) >> 8);
             put16(0x188, at<int32_t>(tob + 0xc) >> 8);
@@ -124,8 +124,8 @@ ptr32<_sVfx_TSFX> Vfx2AddTSFX(ptr32<_sTOBInst> pTOBInst, uint32 flags, uint32 iS
         case 1: // size 0x50
             alloc(0x50);
             put8(0x48, flags);
-            put32(0x8, 0x178fc8); // handler Vfx2Handler_Lights
-            put32(0xc, 0x16e130); // renderer Vfx2Renderer_LightGlow
+            put32(0x8, sym::Vfx2Handler_Lights); // handler Vfx2Handler_Lights
+            put32(0xc, sym::Vfx2Renderer_LightGlow); // renderer Vfx2Renderer_LightGlow
             put8(0x49, flags >> 8);
             r = vfx::random15();
             put8(0x4a, flags >> 16);
@@ -135,8 +135,8 @@ ptr32<_sVfx_TSFX> Vfx2AddTSFX(ptr32<_sTOBInst> pTOBInst, uint32 flags, uint32 iS
         case 2: // size 0x50
             alloc(0x50);
             put8(0x48, flags);
-            put32(0x8, 0x178fc8); // handler Vfx2Handler_Lights
-            put32(0xc, 0x16e428); // renderer Vfx2Renderer_LightFlicker
+            put32(0x8, sym::Vfx2Handler_Lights); // handler Vfx2Handler_Lights
+            put32(0xc, sym::Vfx2Renderer_LightFlicker); // renderer Vfx2Renderer_LightFlicker
             put8(0x49, flags >> 8);
             r = vfx::random15();
             put8(0x4a, flags >> 16);
@@ -145,15 +145,15 @@ ptr32<_sVfx_TSFX> Vfx2AddTSFX(ptr32<_sTOBInst> pTOBInst, uint32 flags, uint32 iS
             break;
         case 3: // size 0x190
             alloc(0x190);
-            put32(0x8, 0x16ebc8); // handler Vfx2Handler_Steaming
-            put32(0xc, 0x16ecf8); // renderer Vfx2Renderer_Steaming
+            put32(0x8, sym::Vfx2Handler_Steaming); // handler Vfx2Handler_Steaming
+            put32(0xc, sym::Vfx2Renderer_Steaming); // renderer Vfx2Renderer_Steaming
             put32(0x40, 15);
             break;
         case 4: // size 0x190
             alloc(0x190);
             put8(0x188, flags);
-            put32(0x8, 0x16ee98); // handler Vfx2Handler_PipeSteam
-            put32(0xc, 0x16f038); // renderer Vfx2Renderer_PipeSteam
+            put32(0x8, sym::Vfx2Handler_PipeSteam); // handler Vfx2Handler_PipeSteam
+            put32(0xc, sym::Vfx2Renderer_PipeSteam); // renderer Vfx2Renderer_PipeSteam
             put8(0x189, flags >> 8);
             put8(0x18a, flags >> 16);
             r = vfx::random15();
@@ -162,24 +162,24 @@ ptr32<_sVfx_TSFX> Vfx2AddTSFX(ptr32<_sTOBInst> pTOBInst, uint32 flags, uint32 iS
             break;
         case 5: // size 0x2d0
             alloc(0x2d0);
-            put32(0x8, 0x16f218); // handler Vfx2Handler_Bats
+            put32(0x8, sym::Vfx2Handler_Bats); // handler Vfx2Handler_Bats
             r = vfx::random15();
-            put32(0xc, 0x179018); // renderer Vfx2Renderer_Bats
+            put32(0xc, sym::Vfx2Renderer_Bats); // renderer Vfx2Renderer_Bats
             put32(0x40, 31);
             put16(0x2c6, ((r & 0xf) + 1));
             break;
         case 6: // size 0x190
             alloc(0x190);
-            put32(0x8, 0x16f508); // handler Vfx2Handler_Gulls
-            put32(0xc, 0x16f7f8); // renderer Vfx2Renderer_Gulls
+            put32(0x8, sym::Vfx2Handler_Gulls); // handler Vfx2Handler_Gulls
+            put32(0xc, sym::Vfx2Renderer_Gulls); // renderer Vfx2Renderer_Gulls
             put32(0x40, 15);
             put16(0x184, 0);
             break;
         case 7: // size 0x190
             alloc(0x190);
             put8(0x188, flags);
-            put32(0x8, 0x16f9a0); // handler Vfx2Handler_Smoking
-            put32(0xc, 0x16fb48); // renderer Vfx2Renderer_Smoking
+            put32(0x8, sym::Vfx2Handler_Smoking); // handler Vfx2Handler_Smoking
+            put32(0xc, sym::Vfx2Renderer_Smoking); // renderer Vfx2Renderer_Smoking
             put8(0x189, flags >> 8);
             put8(0x18a, flags >> 16);
             put8(0x18b, iSize);
@@ -188,8 +188,8 @@ ptr32<_sVfx_TSFX> Vfx2AddTSFX(ptr32<_sTOBInst> pTOBInst, uint32 flags, uint32 iS
         case 8: // size 0x190
             alloc(0x190);
             put8(0x188, flags);
-            put32(0x8, 0x16f9a0); // handler Vfx2Handler_Smoking
-            put32(0xc, 0x16fb48); // renderer Vfx2Renderer_Smoking
+            put32(0x8, sym::Vfx2Handler_Smoking); // handler Vfx2Handler_Smoking
+            put32(0xc, sym::Vfx2Renderer_Smoking); // renderer Vfx2Renderer_Smoking
             put8(0x189, flags >> 8);
             put8(0x18a, flags >> 16);
             put8(0x18b, 160);
@@ -198,8 +198,8 @@ ptr32<_sVfx_TSFX> Vfx2AddTSFX(ptr32<_sTOBInst> pTOBInst, uint32 flags, uint32 iS
         case 9: // size 0x350
             alloc(0x350);
             put8(0x348, flags);
-            put32(0x8, 0x16fd28); // handler Vfx2Handler_JungleFire
-            put32(0xc, 0x16fe80); // renderer Vfx2Renderer_JungleFire
+            put32(0x8, sym::Vfx2Handler_JungleFire); // handler Vfx2Handler_JungleFire
+            put32(0xc, sym::Vfx2Renderer_JungleFire); // renderer Vfx2Renderer_JungleFire
             put8(0x349, flags >> 8);
             put8(0x34a, flags >> 16);
             put8(0x34b, 245);
@@ -208,8 +208,8 @@ ptr32<_sVfx_TSFX> Vfx2AddTSFX(ptr32<_sTOBInst> pTOBInst, uint32 flags, uint32 iS
         case 10: // size 0x350
             alloc(0x350);
             put8(0x348, flags);
-            put32(0x8, 0x16fd28); // handler Vfx2Handler_JungleFire
-            put32(0xc, 0x16fe80); // renderer Vfx2Renderer_JungleFire
+            put32(0x8, sym::Vfx2Handler_JungleFire); // handler Vfx2Handler_JungleFire
+            put32(0xc, sym::Vfx2Renderer_JungleFire); // renderer Vfx2Renderer_JungleFire
             put8(0x349, flags >> 8);
             put8(0x34a, flags >> 16);
             put8(0x34b, 105);
@@ -218,8 +218,8 @@ ptr32<_sVfx_TSFX> Vfx2AddTSFX(ptr32<_sTOBInst> pTOBInst, uint32 flags, uint32 iS
         case 11: // size 0x60
             alloc(0x60);
             put8(0x54, flags);
-            put32(0x8, 0x179020); // handler Vfx2Handler_TumbleWeed
-            put32(0xc, 0x170178); // renderer Vfx2Renderer_TumbleWeed
+            put32(0x8, sym::Vfx2Handler_TumbleWeed); // handler Vfx2Handler_TumbleWeed
+            put32(0xc, sym::Vfx2Renderer_TumbleWeed); // renderer Vfx2Renderer_TumbleWeed
             put16(0x4a, 50);
             put16(0x40, 0);
             put16(0x42, 0);
@@ -233,8 +233,8 @@ ptr32<_sVfx_TSFX> Vfx2AddTSFX(ptr32<_sTOBInst> pTOBInst, uint32 flags, uint32 iS
         case 12: // size 0x190
             alloc(0x190);
             put8(0x188, flags);
-            put32(0x8, 0x1725d8); // handler Vfx2Handler_SciFiSteam
-            put32(0xc, 0x172890); // renderer Vfx2Renderer_SciFiSteam
+            put32(0x8, sym::Vfx2Handler_SciFiSteam); // handler Vfx2Handler_SciFiSteam
+            put32(0xc, sym::Vfx2Renderer_SciFiSteam); // renderer Vfx2Renderer_SciFiSteam
             put8(0x189, flags >> 8);
             put8(0x18a, flags >> 16);
             r = vfx::random15();
@@ -243,16 +243,16 @@ ptr32<_sVfx_TSFX> Vfx2AddTSFX(ptr32<_sTOBInst> pTOBInst, uint32 flags, uint32 iS
             break;
         case 13: // size 0x190
             alloc(0x190);
-            put32(0x8, 0x172a78); // handler Vfx2Handler_Feathers
-            put32(0xc, 0x172c70); // renderer Vfx2Renderer_Feathers
+            put32(0x8, sym::Vfx2Handler_Feathers); // handler Vfx2Handler_Feathers
+            put32(0xc, sym::Vfx2Renderer_Feathers); // renderer Vfx2Renderer_Feathers
             put32(0x40, 15);
             put16(0x184, 0);
             break;
         case 14: // size 0x50
             alloc(0x50);
             put8(0x48, flags);
-            put32(0x8, 0x178fc8); // handler Vfx2Handler_Lights
-            put32(0xc, 0x16e948); // renderer Vfx2Renderer_LightCandle
+            put32(0x8, sym::Vfx2Handler_Lights); // handler Vfx2Handler_Lights
+            put32(0xc, sym::Vfx2Renderer_LightCandle); // renderer Vfx2Renderer_LightCandle
             put8(0x49, flags >> 8);
             r = vfx::random15();
             put8(0x4a, flags >> 16);
@@ -261,8 +261,8 @@ ptr32<_sVfx_TSFX> Vfx2AddTSFX(ptr32<_sTOBInst> pTOBInst, uint32 flags, uint32 iS
         case 15: // size 0x350
             alloc(0x350);
             put8(0x344, flags);
-            put32(0x8, 0x172df8); // handler Vfx2Handler_Fountain
-            put32(0xc, 0x173078); // renderer Vfx2Renderer_Fountain
+            put32(0x8, sym::Vfx2Handler_Fountain); // handler Vfx2Handler_Fountain
+            put32(0xc, sym::Vfx2Renderer_Fountain); // renderer Vfx2Renderer_Fountain
             put8(0x345, flags >> 8);
             put8(0x346, flags >> 16);
             put32(0x40, 31);
@@ -270,8 +270,8 @@ ptr32<_sVfx_TSFX> Vfx2AddTSFX(ptr32<_sTOBInst> pTOBInst, uint32 flags, uint32 iS
         case 16: // size 0x50
             alloc(0x50);
             put8(0x48, flags);
-            put32(0x8, 0x178fc8); // handler Vfx2Handler_Lights
-            put32(0xc, 0x16e708); // renderer Vfx2Renderer_LightFlare
+            put32(0x8, sym::Vfx2Handler_Lights); // handler Vfx2Handler_Lights
+            put32(0xc, sym::Vfx2Renderer_LightFlare); // renderer Vfx2Renderer_LightFlare
             put8(0x49, flags >> 8);
             r = vfx::random15();
             put8(0x4a, flags >> 16);
@@ -281,8 +281,8 @@ ptr32<_sVfx_TSFX> Vfx2AddTSFX(ptr32<_sTOBInst> pTOBInst, uint32 flags, uint32 iS
         case 17: // size 0x350
             alloc(0x350);
             put8(0x348, flags);
-            put32(0x8, 0x173258); // handler Vfx2Handler_ScifiRocket
-            put32(0xc, 0x1733c0); // renderer Vfx2Renderer_ScifiRocket
+            put32(0x8, sym::Vfx2Handler_ScifiRocket); // handler Vfx2Handler_ScifiRocket
+            put32(0xc, sym::Vfx2Renderer_ScifiRocket); // renderer Vfx2Renderer_ScifiRocket
             put8(0x349, flags >> 8);
             put8(0x34a, flags >> 16);
             put8(0x34b, 255);
@@ -291,8 +291,8 @@ ptr32<_sVfx_TSFX> Vfx2AddTSFX(ptr32<_sTOBInst> pTOBInst, uint32 flags, uint32 iS
         case 18: // size 0x350
             alloc(0x350);
             put8(0x348, flags);
-            put32(0x8, 0x175218); // handler Vfx2Handler_LavaSpit
-            put32(0xc, 0x1755f8); // renderer Vfx2Renderer_LavaSpit
+            put32(0x8, sym::Vfx2Handler_LavaSpit); // handler Vfx2Handler_LavaSpit
+            put32(0xc, sym::Vfx2Renderer_LavaSpit); // renderer Vfx2Renderer_LavaSpit
             put8(0x349, flags >> 8);
             put8(0x34a, flags >> 16);
             put8(0x34b, iSize);
@@ -301,8 +301,8 @@ ptr32<_sVfx_TSFX> Vfx2AddTSFX(ptr32<_sTOBInst> pTOBInst, uint32 flags, uint32 iS
         case 19: // size 0x190
             alloc(0x190);
             put8(0x188, flags);
-            put32(0x8, 0x175820); // handler Vfx2Handler_Gargoyle
-            put32(0xc, 0x175a68); // renderer Vfx2Renderer_Gargoyle
+            put32(0x8, sym::Vfx2Handler_Gargoyle); // handler Vfx2Handler_Gargoyle
+            put32(0xc, sym::Vfx2Renderer_Gargoyle); // renderer Vfx2Renderer_Gargoyle
             put8(0x189, flags >> 8);
             put8(0x18a, flags >> 16);
             r = vfx::random15();
@@ -312,8 +312,8 @@ ptr32<_sVfx_TSFX> Vfx2AddTSFX(ptr32<_sTOBInst> pTOBInst, uint32 flags, uint32 iS
         case 20: // size 0x190
             alloc(0x190);
             put8(0x188, flags);
-            put32(0x8, 0x175c50); // handler Vfx2Handler_SciFiBubbles
-            put32(0xc, 0x175f68); // renderer Vfx2Renderer_SciFiBubbles
+            put32(0x8, sym::Vfx2Handler_SciFiBubbles); // handler Vfx2Handler_SciFiBubbles
+            put32(0xc, sym::Vfx2Renderer_SciFiBubbles); // renderer Vfx2Renderer_SciFiBubbles
             put8(0x189, flags >> 8);
             put8(0x18a, flags >> 16);
             r = vfx::random15();
@@ -322,22 +322,22 @@ ptr32<_sVfx_TSFX> Vfx2AddTSFX(ptr32<_sTOBInst> pTOBInst, uint32 flags, uint32 iS
             break;
         case 21: // size 0x550
             alloc(0x550);
-            put32(0x8, 0x176a10); // handler Vfx2Handler_Bees
-            put32(0xc, 0x176ce0); // renderer Vfx2Renderer_Bees
+            put32(0x8, sym::Vfx2Handler_Bees); // handler Vfx2Handler_Bees
+            put32(0xc, sym::Vfx2Renderer_Bees); // renderer Vfx2Renderer_Bees
             put32(0x40, 63);
             put16(0x544, 0);
             break;
         case 22: // size 0x2e0
             alloc(0x2e0);
-            put32(0x8, 0x176160); // handler Vfx2Handler_MonkeySmoke
-            put32(0xc, 0x176278); // renderer Vfx2Renderer_MonkeySmoke
+            put32(0x8, sym::Vfx2Handler_MonkeySmoke); // handler Vfx2Handler_MonkeySmoke
+            put32(0xc, sym::Vfx2Renderer_MonkeySmoke); // renderer Vfx2Renderer_MonkeySmoke
             put32(0x40, 15);
             break;
         case 23: // size 0x190
             alloc(0x190);
             put8(0x188, flags);
-            put32(0x8, 0x176448); // handler Vfx2Handler_BigVolcano
-            put32(0xc, 0x1765a0); // renderer Vfx2Renderer_BigVolcano
+            put32(0x8, sym::Vfx2Handler_BigVolcano); // handler Vfx2Handler_BigVolcano
+            put32(0xc, sym::Vfx2Renderer_BigVolcano); // renderer Vfx2Renderer_BigVolcano
             put8(0x189, flags >> 8);
             put8(0x18a, flags >> 16);
             put8(0x18b, iSize);
@@ -345,16 +345,16 @@ ptr32<_sVfx_TSFX> Vfx2AddTSFX(ptr32<_sTOBInst> pTOBInst, uint32 flags, uint32 iS
             break;
         case 24: // size 0x550
             alloc(0x550);
-            put32(0x8, 0x176ec0); // handler Vfx2Handler_Flies
-            put32(0xc, 0x177190); // renderer Vfx2Renderer_Flies
+            put32(0x8, sym::Vfx2Handler_Flies); // handler Vfx2Handler_Flies
+            put32(0xc, sym::Vfx2Renderer_Flies); // renderer Vfx2Renderer_Flies
             put32(0x40, 63);
             put16(0x544, 0);
             break;
         case 25: // size 0x190
             alloc(0x190);
             put8(0x188, flags);
-            put32(0x8, 0x177ad0); // handler Vfx2Handler_Cannon
-            put32(0xc, 0x177e10); // renderer Vfx2Renderer_Cannon
+            put32(0x8, sym::Vfx2Handler_Cannon); // handler Vfx2Handler_Cannon
+            put32(0xc, sym::Vfx2Renderer_Cannon); // renderer Vfx2Renderer_Cannon
             put8(0x189, flags >> 8);
             put8(0x18a, flags >> 16);
             r = vfx::random15();
@@ -364,8 +364,8 @@ ptr32<_sVfx_TSFX> Vfx2AddTSFX(ptr32<_sTOBInst> pTOBInst, uint32 flags, uint32 iS
         case 26: // size 0x650
             alloc(0x650);
             put8(0x648, flags);
-            put32(0x8, 0x178128); // handler Vfx2Handler_PirateLava
-            put32(0xc, 0x1784d0); // renderer Vfx2Renderer_PirateLava
+            put32(0x8, sym::Vfx2Handler_PirateLava); // handler Vfx2Handler_PirateLava
+            put32(0xc, sym::Vfx2Renderer_PirateLava); // renderer Vfx2Renderer_PirateLava
             put8(0x649, flags >> 8);
             put8(0x64a, flags >> 16);
             put8(0x64b, iSize);
@@ -374,8 +374,8 @@ ptr32<_sVfx_TSFX> Vfx2AddTSFX(ptr32<_sTOBInst> pTOBInst, uint32 flags, uint32 iS
         case 27: // size 0x350
             alloc(0x350);
             put8(0x344, flags);
-            put32(0x8, 0x178878); // handler Vfx2Handler_MobyDick
-            put32(0xc, 0x178b10); // renderer Vfx2Renderer_MobyDick
+            put32(0x8, sym::Vfx2Handler_MobyDick); // handler Vfx2Handler_MobyDick
+            put32(0xc, sym::Vfx2Renderer_MobyDick); // renderer Vfx2Renderer_MobyDick
             put8(0x345, flags >> 8);
             put8(0x346, flags >> 16);
             put32(0x40, 31);
@@ -383,8 +383,8 @@ ptr32<_sVfx_TSFX> Vfx2AddTSFX(ptr32<_sTOBInst> pTOBInst, uint32 flags, uint32 iS
         case 28: // size 0x350
             alloc(0x350);
             put8(0x348, flags);
-            put32(0x8, 0x173258); // handler Vfx2Handler_ScifiRocket
-            put32(0xc, 0x173618); // renderer Vfx2Renderer_ScifiRocketOld
+            put32(0x8, sym::Vfx2Handler_ScifiRocket); // handler Vfx2Handler_ScifiRocket
+            put32(0xc, sym::Vfx2Renderer_ScifiRocketOld); // renderer Vfx2Renderer_ScifiRocketOld
             put8(0x349, flags >> 8);
             put8(0x34a, flags >> 16);
             put8(0x34b, 255);
@@ -758,7 +758,7 @@ void Vfx2CloudCarouselCar(ptr32<_sObject> pObj)
     at<uint32_t>(sp + vfx::spr::kRgb) = 0x707070;
     at<uint16_t>(sp + vfx::spr::kAngle) = 0;
     VfxPS2SpriteRotated3D(-20.0f);
-    const ee_float angleScale = at<float>(0x3278bcu);
+    const ee_float angleScale = at<float>(sym::lit4_3278bc);
     const int32_t time = G(mainVarG).time;
     sp = vfx::sprite();
     at<uint32_t>(sp + vfx::spr::kTexture) = vfx::vfxTexture(0x15);
@@ -766,9 +766,9 @@ void Vfx2CloudCarouselCar(ptr32<_sObject> pObj)
     ee_float a = ee_itof((time >> 1) & 0xfff);
     // The game's own sinf is run (not ee_sinf) so that it leaves its frame on the stack as the original does: the sprite
     // drawn next reads a word of stack nobody wrote.
-    const ee_float spin = callOriginalFloat(0x1c85d0u, (a + a) * angleScale) * ee_float(4096.0f);
+    const ee_float spin = callOriginalFloat(sym::sinf, (a + a) * angleScale) * ee_float(4096.0f);
     a = ee_itof((((time >> 3) & 0xfff) * ee_ftoi(spin)) & 0xfff);
-    const ee_float tilt = callOriginalFloat(0x1c85d0u, (a + a) * angleScale) * ee_float(4096.0f);
+    const ee_float tilt = callOriginalFloat(sym::sinf, (a + a) * angleScale) * ee_float(4096.0f);
     sp = vfx::sprite();
     at<uint8_t>(sp + vfx::spr::kCode) = 2;
     at<uint32_t>(sp + vfx::spr::kRgb) = 0x606060;
@@ -807,8 +807,8 @@ void Vfx2Handler_SkullFart(ptr32<_sVfx_Object> mem)
     at<uint16_t>(m + kLifeSpan) = life;
     if (life >= 0x20 && at<uint8_t>(m + kRing + 1) < 0xf)
     {
-        guest_call(0x16a298u, car); // VfxCarVelocityPoi
-        const uint32_t matrix = guest_call<ptr32<MATRIX>>(0x16a198u, car).address; // VfxCarMatrixPoi
+        guest_call(sym::VfxCarVelocityPoi, car); // VfxCarVelocityPoi
+        const uint32_t matrix = guest_call<ptr32<MATRIX>>(sym::VfxCarMatrixPoi, car).address; // VfxCarMatrixPoi
         const uint32_t p = tailSlot(m, 0x18);
         at<uint16_t>(p) = static_cast<uint16_t>((vfx::random15() & 0x3f) - 0x20);
         at<uint16_t>(p + 2) = static_cast<uint16_t>((vfx::random15() & 0x3ff) - 0x200);
@@ -841,7 +841,7 @@ void Vfx2Renderer_SkullFart(ptr32<_sVfx_Object> mem)
     const ptr32<_sObject> car(at<uint32_t>(m + 0x1c4));
     if (VfxHasCarBeenRendered(car) >= 0x157c)
         return;
-    const uint32_t where = guest_call<ptr32<SVECTOR>>(0x169ff8u, car).address; // VfxCarPositionPoi
+    const uint32_t where = guest_call<ptr32<SVECTOR>>(sym::VfxCarPositionPoi, car).address; // VfxCarPositionPoi
     uint32_t sp = vfx::sprite();
     at<uint8_t>(sp + vfx::spr::kCode) = 2;
     at<uint32_t>(sp + vfx::spr::kTexture) = vfx::vfxTexture(0xe);
@@ -876,7 +876,7 @@ void Vfx2Handler_CarRight(ptr32<_sVfx_Object> mem)
         for (uint32_t i = 0; i < count; ++i)
         {
             const uint32_t p = m + kParticles + i * 0x18;
-            guest_call(0x16a298u, car); // VfxCarVelocityPoi
+            guest_call(sym::VfxCarVelocityPoi, car); // VfxCarVelocityPoi
             at<uint16_t>(p) = static_cast<uint16_t>((vfx::random15() & 0x7ff) - 0x400);
             at<uint16_t>(p + 2) = static_cast<uint16_t>((vfx::random15() & 0x3ff) - 0x364);
             const int16_t z = static_cast<int16_t>((vfx::random15() & 0x7ff) - 0x400);
@@ -961,9 +961,9 @@ void VfxRenderer_Spray(ptr32<_sVfx_Object> mem)
     where->vx = static_cast<int16>(position);
     where->vy = static_cast<int16>(position >> 16);
     where->vz = static_cast<int16>(position >> 32);
-    guest_call(0x16a198u, car); // VfxCarMatrixPoi
+    guest_call(sym::VfxCarMatrixPoi, car); // VfxCarMatrixPoi
     const uint32_t physics = car->pPhysics.address;
-    if (guest_call<int32>(0x16a330u, car) != 0) // VfxAreWeInCar: the wheel's height less the wheel's radius
+    if (guest_call<int32>(sym::VfxAreWeInCar, car) != 0) // VfxAreWeInCar: the wheel's height less the wheel's radius
     {
         const uint32_t data = at<uint32_t>(physics + 0x1e4);
         const ee_float wheel = ee_float(at<float>(physics + 0xb0)) * ee_float(0.00390625f);
@@ -1025,29 +1025,29 @@ void vfxOilCoveredRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 void vfxSprayRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 }
 
-RC_DECOMP_FN_SETUP_HEAP(Vfx2TSFXLvlInit, 0x16d080, rc::fuzz::vfxTSFXLvlInit)
-RC_DECOMP_FN_SETUP_HEAP(Vfx2TSFXLvlTerm, 0x179160, rc::fuzz::vfxTSFXLvlTerm)
-RC_DECOMP_FN_SETUP_HEAP(Vfx2AddTSFX, 0x16d0d8, rc::fuzz::vfxTSFXAdd)
-RC_DECOMP_FN_SETUP_HEAP(Vfx2UpdateTSFX, 0x16dca8, rc::fuzz::vfxTSFXUpdate)
-RC_DECOMP_FN_SETUP(Vfx2Handler_Steaming, 0x16ebc8, rc::fuzz::vfxSteamingHandler)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_Steaming, 0x16ecf8, rc::fuzz::vfxSteamingRenderer)
-RC_DECOMP_FN_SETUP(Vfx2Handler_PipeSteam, 0x16ee98, rc::fuzz::vfxPipeSteam)
-RC_DECOMP_FN_SETUP(Vfx2Handler_MonkeySmoke, 0x176160, rc::fuzz::vfxMonkeySmoke)
-RC_DECOMP_FN_SETUP(Vfx2Handler_BigVolcano, 0x176448, rc::fuzz::vfxBigVolcano)
-RC_DECOMP_FN_SETUP(Vfx2Handler_JungleFire, 0x16fd28, rc::fuzz::vfxJungleFire)
-RC_DECOMP_FN_SETUP(Vfx2Handler_ScifiRocket, 0x173258, rc::fuzz::vfxScifiRocket)
-RC_DECOMP_FN_SETUP(Vfx2Handler_Smoking, 0x16f9a0, rc::fuzz::vfxSmoking)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_Feathers, 0x172c70, rc::fuzz::vfxFeathers)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_Bees, 0x176ce0, rc::fuzz::vfxBees)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_Flies, 0x177190, rc::fuzz::vfxFlies)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_Gulls, 0x16f7f8, rc::fuzz::vfxGulls)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_TumbleWeed, 0x170178, rc::fuzz::vfxTumbleWeedRenderer)
+RC_DECOMP_FN_SETUP_HEAP(Vfx2TSFXLvlInit, rc::fuzz::vfxTSFXLvlInit)
+RC_DECOMP_FN_SETUP_HEAP(Vfx2TSFXLvlTerm, rc::fuzz::vfxTSFXLvlTerm)
+RC_DECOMP_FN_SETUP_HEAP(Vfx2AddTSFX, rc::fuzz::vfxTSFXAdd)
+RC_DECOMP_FN_SETUP_HEAP(Vfx2UpdateTSFX, rc::fuzz::vfxTSFXUpdate)
+RC_DECOMP_FN_SETUP(Vfx2Handler_Steaming, rc::fuzz::vfxSteamingHandler)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_Steaming, rc::fuzz::vfxSteamingRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Handler_PipeSteam, rc::fuzz::vfxPipeSteam)
+RC_DECOMP_FN_SETUP(Vfx2Handler_MonkeySmoke, rc::fuzz::vfxMonkeySmoke)
+RC_DECOMP_FN_SETUP(Vfx2Handler_BigVolcano, rc::fuzz::vfxBigVolcano)
+RC_DECOMP_FN_SETUP(Vfx2Handler_JungleFire, rc::fuzz::vfxJungleFire)
+RC_DECOMP_FN_SETUP(Vfx2Handler_ScifiRocket, rc::fuzz::vfxScifiRocket)
+RC_DECOMP_FN_SETUP(Vfx2Handler_Smoking, rc::fuzz::vfxSmoking)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_Feathers, rc::fuzz::vfxFeathers)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_Bees, rc::fuzz::vfxBees)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_Flies, rc::fuzz::vfxFlies)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_Gulls, rc::fuzz::vfxGulls)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_TumbleWeed, rc::fuzz::vfxTumbleWeedRenderer)
 // Vfx2CloudCarouselCar (0x170998) is not registered: the quad's fourth lane after its second sprite is a stack word that
 // sinf's callees left, and the random test cannot make the native one's frames leave the same ones (it matches only when
 // the stack below was already as the original leaves it). It stays recompiled.
-RC_DECOMP_FN_SETUP(Vfx2TargetCar, 0x170b30, rc::fuzz::vfxTargetCar)
-RC_DECOMP_FN_SETUP(Vfx2Handler_SkullFart, 0x1702b8, rc::fuzz::vfxSkullFartHandler)
-RC_DECOMP_FN_SETUP(Vfx2Renderer_SkullFart, 0x1704b8, rc::fuzz::vfxSkullFartRenderer)
-RC_DECOMP_FN_SETUP(Vfx2Handler_CarRight, 0x173860, rc::fuzz::vfxCarRight)
-RC_DECOMP_FN_SETUP(VfxRenderer_OilCovered, 0x174c88, rc::fuzz::vfxOilCoveredRenderer)
-RC_DECOMP_FN_SETUP(VfxRenderer_Spray, 0x177890, rc::fuzz::vfxSprayRenderer)
+RC_DECOMP_FN_SETUP(Vfx2TargetCar, rc::fuzz::vfxTargetCar)
+RC_DECOMP_FN_SETUP(Vfx2Handler_SkullFart, rc::fuzz::vfxSkullFartHandler)
+RC_DECOMP_FN_SETUP(Vfx2Renderer_SkullFart, rc::fuzz::vfxSkullFartRenderer)
+RC_DECOMP_FN_SETUP(Vfx2Handler_CarRight, rc::fuzz::vfxCarRight)
+RC_DECOMP_FN_SETUP(VfxRenderer_OilCovered, rc::fuzz::vfxOilCoveredRenderer)
+RC_DECOMP_FN_SETUP(VfxRenderer_Spray, rc::fuzz::vfxSprayRenderer)

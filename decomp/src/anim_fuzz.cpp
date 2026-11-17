@@ -9,7 +9,7 @@ namespace rc::fuzz {
 
 namespace {
 
-constexpr uint32_t kAnimVars = 0x1e99d0u, kTsoVars = 0x3281f0u, kRdrCamera = 0x1f40b8u;
+constexpr uint32_t kAnimVars = sym::animVarG, kTsoVars = sym::tsoVarG, kRdrCamera = sym::rdrCameraG;
 constexpr uint32_t kStride[4] = {0x64u, 0x50u, 0x5cu, 0x50u};
 constexpr uint32_t kBoneTags[5] = {0x10000365u, 0x10000364u, 0x10000368u, 0x10000367u, 0x10000366u};
 
@@ -220,7 +220,7 @@ void tsoCallback(R5900Context *ctx, uint64_t &state, uint32_t)
     for (uint32_t i = 0; i < n; ++i)
         if (chance(state, 10))
             mem<uint32_t>(tsoAt(i)) = chance(state, 50) ? 0u : nextFuzz(state);
-    setArg(ctx, 0, 0x18ccb0u); // TSOSetSFXCallBack: TSOCallBack ends as the last object's instance
+    setArg(ctx, 0, sym::TSOSetSFXCallBack); // TSOSetSFXCallBack: TSOCallBack ends as the last object's instance
 }
 
 void tsoViewCone(R5900Context *ctx, uint64_t &state, uint32_t scratch)

@@ -14,9 +14,9 @@ namespace rc::fuzz {
 
 namespace {
 
-constexpr uint32_t kSfx = 0x31e488u, kRev = 0x1ef3b0u, kMain = 0x1ed900u, kCamera = 0x1e9fb0u, kSbuff = 0x4c2a40u;
-constexpr uint32_t kSifCallRpc = 0x1c0968u, kSdTransToIOP = 0x1ca4d0u, kSdRemoteInit = 0x1ca408u, kSifAllocIopHeap = 0x1c18c8u,
-                   kSifFreeIopHeap = 0x1c1938u, kSifInitIopHeap = 0x1c1838u, kFlushCache = 0x1be9a0u, kPrintf = 0x12e9e8u;
+constexpr uint32_t kSfx = sym::sfxVarG, kRev = sym::revSfxVarG, kMain = sym::mainVarG, kCamera = sym::cameraVarG, kSbuff = sym::sbuff;
+constexpr uint32_t kSifCallRpc = sym::sceSifCallRpc, kSdTransToIOP = sym::sceSdTransToIOP, kSdRemoteInit = sym::sceSdRemoteInit, kSifAllocIopHeap = sym::sceSifAllocIopHeap,
+                   kSifFreeIopHeap = sym::sceSifFreeIopHeap, kSifInitIopHeap = sym::sceSifInitIopHeap, kFlushCache = sym::FlushCache, kPrintf = sym::printf;
 constexpr uint32_t kHardwareStore = 1u;
 
 // Control words of the fakes (in scratch, so each run starts from the same values and they are compared).
@@ -680,7 +680,7 @@ void revPlay3D(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     if (range == 0 || (range < 0 && chance(state, 50)))
         range = 0x1194;
     const uint32_t pos = scratch + 0x40u;
-    placeNear(state, pos, (flags & 1) != 0 ? 0x1ea568u : kCamera, range);
+    placeNear(state, pos, (flags & 1) != 0 ? (sym::cameraVarG + 0x5b8u) : kCamera, range);
     setArg(ctx, 0, static_cast<uint32_t>((flags & 4) != 0 ? between(state, 0, 0x8b) : static_cast<int32_t>(playIndex(state))));
     setArg(ctx, 1, static_cast<uint32_t>(static_cast<int32_t>(chance(state, 80) ? static_cast<int16>(between(state, 0, 0x100))
                                                                                  : static_cast<int16>(nextFuzz(state)))));

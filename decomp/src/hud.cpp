@@ -41,16 +41,16 @@ namespace {
 
 using weapon::at;
 
-constexpr uint32_t kHud = 0x1ecda0u; // hudVarG
+constexpr uint32_t kHud = sym::hudVarG; // hudVarG
 constexpr uint32_t kHudFlash = kHud + 0x1eu, kHudPress = kHud + 0x1fu, kHudSlide = kHud + 0x1cu;
-constexpr uint32_t kMainVars = 0x1ed900u, kMainTimer = kMainVars + 0x10u, kMainRaceType = kMainVars + 0x34cu;
+constexpr uint32_t kMainVars = sym::mainVarG, kMainTimer = kMainVars + 0x10u, kMainRaceType = kMainVars + 0x34cu;
 constexpr uint32_t kMainLevel = kMainVars + 0x34au, kMainPauseMenu = kMainVars + 0x366u, kMainSplit = kMainVars + 0x368u;
 constexpr uint32_t kMainTTBeaten = kMainVars + 0x36bu, kMainWhichSplit = kMainVars + 0x378u, kMainMirror = kMainVars + 0x398u;
-constexpr uint32_t kLevelPtr = 0x327e80u, kFontPtr = 0x328190u, kBuff = 0x1f3980u, kFrontEnd = 0x1eca58u;
-constexpr uint32_t kCameraPtr = 0x1eab20u, kCameraRSG = 0x1eab24u, kObjectList = 0x1ee390u, kNoObjects = 0x1ee500u;
-constexpr uint32_t kAINode = 0x1e9478u, kVsyncInc = 0x1f3c34u, kVfxSprite = 0x1f3720u, kVfxRes = 0x1f106cu;
-constexpr uint32_t kSprintf = 0x1b8910u, kTimerGet = 0x1b4188u, kReadyGoFade = 0x144178u, kInitialReverb = 0x1439a8u;
-constexpr uint32_t kAMenuDisplayPsxKey = 0x10eea0u, kTEditBestLap = 0x154688u, kResLoad = 0x1ab1b0u, kHudTask = 0x124490u;
+constexpr uint32_t kLevelPtr = sym::pLvlG, kFontPtr = sym::fontVarG, kBuff = sym::buff, kFrontEnd = sym::frontEndVarG;
+constexpr uint32_t kCameraPtr = (sym::cameraVarG + 0xb70u), kCameraRSG = (sym::cameraVarG + 0xb74u), kObjectList = sym::objectVarG, kNoObjects = (sym::objectVarG + 0x170u);
+constexpr uint32_t kAINode = sym::aiNodeVarG, kVsyncInc = (sym::displayVarG + 0x64u), kVfxSprite = (sym::visFxVarG + 0x2720u), kVfxRes = (sym::visFxVarG + 0x6cu);
+constexpr uint32_t kSprintf = sym::sprintf, kTimerGet = sym::TimerGet, kReadyGoFade = sym::RevSfxReadyGoFade, kInitialReverb = sym::RevSfxInitialReverb;
+constexpr uint32_t kAMenuDisplayPsxKey = sym::AMenuDisplayPsxKey, kTEditBestLap = sym::TEditGetBestLapTimeFromPermSaveBuffer, kResLoad = sym::ResLoad, kHudTask = sym::HudTask;
 constexpr uint32_t kTimeTrial = 0x100001feu;
 
 ee_float constant(uint32_t address) { return at<ee_float>(address); }
@@ -149,7 +149,7 @@ void formatTime(uint32_t buffer, int32_t lapTime)
         seconds = 59;
         tenths = 99;
     }
-    guest_call(kSprintf, buffer, 0x322e10u, minutes, seconds, tenths); // "%02d:%02d.%1d"
+    guest_call(kSprintf, buffer, (sym::sec_rodata + 0x810u), minutes, seconds, tenths); // "%02d:%02d.%1d"
 }
 
 } // namespace
@@ -160,14 +160,14 @@ void HudInit()
 {
     {
         GuestFrame frame(0x10);
-        ResTypeSetConstructDaemon(ptr32<char>(0x327df0u), 0, 4);
+        ResTypeSetConstructDaemon(ptr32<char>((sym::sec_sdata + 0x1f0u)), 0, 4);
     }
-    ResTypeSetConstructDaemon(ptr32<char>(0x327df8u), 0, 4);
+    ResTypeSetConstructDaemon(ptr32<char>((sym::sec_sdata + 0x1f8u)), 0, 4);
 }
 
 void HudTerm()
 {
-    ResTypeUnSetConstructDaemon(ptr32<char>(0x327df0u));
+    ResTypeUnSetConstructDaemon(ptr32<char>((sym::sec_sdata + 0x1f0u)));
 }
 
 void HudDelete()
@@ -221,6 +221,7 @@ void HudTask(ptr32<void>, tTime time)
 
 void HudCreate()
 {
+    RC_DIVERT_IF_CHANGED(HudCreate);
     GuestFrame frame(0x20);
     guest_call(weapon::kTaskSet, kHud, kHudTask, 1, 0);
     guest_call(weapon::kTaskCachedInsert, kHud);
@@ -255,6 +256,7 @@ void HudTopLeft(ptr32<_sObject>, int8, int8)
 // A sprite at (fX, fY): width doubled, height to 127, at the far depth.
 void HudSprite(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb)
 {
+    RC_DIVERT_IF_CHANGED(HudSprite, pSpr, fX, fY, rgb);
     const uint32_t width = (static_cast<uint32_t>(pSpr->width) << 1) & 0xffu, height = pSpr->height & 0x7fu;
     const ee_float x = fX + ee_float(1728.0f), y = fY + ee_float(1928.0f);
     GfxP2_TexFX(pSpr->pTextureHandle, rgb >> 24);
@@ -266,6 +268,7 @@ void HudSprite(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb)
 // As HudSprite, extending to the left (the mirrored map).
 void HudSpriteMirror(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb)
 {
+    RC_DIVERT_IF_CHANGED(HudSpriteMirror, pSpr, fX, fY, rgb);
     const uint32_t width = (static_cast<uint32_t>(pSpr->width) << 1) & 0xffu, height = pSpr->height & 0x7fu;
     const ee_float x = fX + ee_float(1728.0f), y = fY + ee_float(1928.0f);
     GfxP2_TexFX(pSpr->pTextureHandle, rgb >> 24);
@@ -277,10 +280,11 @@ void HudSpriteMirror(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb)
 // A sprite at full width and half height, at a depth.
 void HudSpriteHI(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb, ee_float otz)
 {
+    RC_DIVERT_IF_CHANGED(HudSpriteHI, pSpr, fX, fY, rgb, otz);
     const uint32_t height = pSpr->height, width = pSpr->width;
     const ee_float x = fX + ee_float(1728.0f);
     GfxP2_TexFX(pSpr->pTextureHandle, rgb >> 24);
-    const uint64_t z = depth(otz, 0x32765cu);
+    const uint64_t z = depth(otz, sym::lit4_32765c);
     const ee_float y = fY + ee_float(1928.0f);
     const uint64_t x0 = coord(x), y0 = coord(y);
     const uint64_t x1 = coord(x + ee_itof(static_cast<int32_t>(width))), y1 = coord(y + ee_itof(static_cast<int32_t>(height >> 1)));
@@ -291,9 +295,10 @@ void HudSpriteHI(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb, ee_
 // The corner vectors' z and w lanes are never set (stale stack): the rotation matrix's zeros multiply them.
 void HudRotSpriteHI(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb, ee_float otz, ee_float ang)
 {
+    RC_DIVERT_IF_CHANGED(HudRotSpriteHI, pSpr, fX, fY, rgb, otz, ang);
     GuestFrame frame(0x160);
     const uint32_t sp = frame.local<uint8_t>(0).address;
-    const ee_float minimum = at<ee_float>(0x327660u);
+    const ee_float minimum = at<ee_float>(sym::lit4_327660);
     const ee_float half(0.5f);
     const ee_float h = ee_itof(pSpr->height) * half;
     const ee_float w = ee_itof(pSpr->width) * half;
@@ -301,8 +306,8 @@ void HudRotSpriteHI(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb, 
     if (ang < minimum)
         ang = minimum;
     const uint32_t mat = sp + 0x40u;
-    guest_call(0x1c7ac8u, mat);                  // sceVu0UnitMatrix
-    guest_call(0x1c7b68u, mat, mat, ang);        // sceVu0RotMatrixZ
+    guest_call(sym::sceVu0UnitMatrix, mat);                  // sceVu0UnitMatrix
+    guest_call(sym::sceVu0RotMatrixZ, mat, mat, ang);        // sceVu0RotMatrixZ
     const ee_float x = fX + ee_float(1728.0f), y = fY + ee_float(1928.0f);
     at<ee_float>(sp + 0x34u) = h;
     at<ee_float>(sp + 0x20u) = -w;
@@ -322,7 +327,7 @@ void HudRotSpriteHI(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb, 
         at<ee_float>(v) = at<ee_float>(v) + cx;
     }
     GfxP2_TexFX(pSpr->pTextureHandle, rgb >> 24);
-    const uint64_t z = depth(otz, 0x327664u);
+    const uint64_t z = depth(otz, sym::lit4_327664);
     uint64_t corner[4];
     for (uint32_t i = 0; i < 4; ++i)
         corner[i] = xy(coord(at<ee_float>(sp + i * 16u)), coord(at<ee_float>(sp + i * 16u + 4u)));
@@ -332,6 +337,7 @@ void HudRotSpriteHI(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb, 
 // The wrong-way cross: a diamond of the level's cross texture about (iX, iY), half-height iD.
 void HudWrongWayX(int32 iX, int32 iY, int32 iD)
 {
+    RC_DIVERT_IF_CHANGED(HudWrongWayX, iX, iY, iD);
     const int32_t x = iX + 0x6c0, y = iY + 0x788;
     GfxP2_TexFX(ptr32<_sGfxTexture>(at<uint32_t>(hudRes() + 0xd0u)), 0);
     const Colour grey{0x8000000080ull, 0x8000000080ull};
@@ -342,6 +348,7 @@ void HudWrongWayX(int32 iX, int32 iY, int32 iD)
 // The "lost" sign: the level's lost texture over (iX, iY) +- (2 iD, iD).
 void HudLost(int32 iX, int32 iY, int32 iD)
 {
+    RC_DIVERT_IF_CHANGED(HudLost, iX, iY, iD);
     const int32_t x = iX + 0x6c0, y = iY + 0x788;
     GfxP2_TexFX(ptr32<_sGfxTexture>(at<uint32_t>(hudRes() + 0xd8u)), 0x20);
     const Colour grey{0x8000000080ull, 0x8000000080ull};
@@ -351,13 +358,14 @@ void HudLost(int32 iX, int32 iY, int32 iD)
 
 // A menu border sprite whose corners shimmer: each corner's red and green (equal) and blue follow a sine of its
 // position and the frame count.
-void HudMenuBorder(ptr32<_sSprite> pSpr, int32 iCX, int32 iCY, int32)
+void HudMenuBorder(ptr32<_sSprite> pSpr, int32 iCX, int32 iCY, int32 arg3)
 {
+    RC_DIVERT_IF_CHANGED(HudMenuBorder, pSpr, iCX, iCY, arg3);
     GuestFrame frame(0xd0);
     const uint32_t sp = frame.local<uint8_t>(0).address;
     const int32_t phase = static_cast<int32_t>(0u - at<uint32_t>(kVsyncInc)) << 1;
     const int32_t x = iCX + 0x6c0, y = iCY + 0x788;
-    const ee_float scale = at<ee_float>(0x327668u);
+    const ee_float scale = at<ee_float>(sym::lit4_327668);
     const uint32_t height = pSpr->height, width = pSpr->width;
     const uint32_t halfHeight = height >> 1;
     const auto shade = [&](int32_t sum, int32_t blueAdd, int32_t redAdd, uint32_t k)
@@ -389,7 +397,7 @@ void HudMenuBorder(ptr32<_sSprite> pSpr, int32 iCX, int32 iCY, int32)
         col[k] = colour(red, red, blue);
     }
     const uint64_t z = static_cast<uint64_t>(static_cast<int64_t>(
-        ee_ftoi((ee_float(1.0f) - at<ee_float>(0x32766cu)) * at<ee_float>(0x327670u))));
+        ee_ftoi((ee_float(1.0f) - at<ee_float>(sym::lit4_32766c)) * at<ee_float>(sym::lit4_327670))));
     const uint64_t x0 = coord(x), y0 = coord(y);
     const uint64_t x1 = coord(x + static_cast<int32_t>(width)), y1 = coord(y + static_cast<int32_t>(halfHeight));
     quad(xy(x0, y0), xy(x1, y0), xy(x0, y1), xy(x1, y1), col, z);
@@ -397,8 +405,9 @@ void HudMenuBorder(ptr32<_sSprite> pSpr, int32 iCX, int32 iCY, int32)
 
 // Position (unless a time trial), lap and lap time, best lap, and in a time trial the target time and whether it
 // has been beaten. The second player's panel is 0x70 lower.
-void HudTopRight(ptr32<_sObject> pObj, int8, int8 player)
+void HudTopRight(ptr32<_sObject> pObj, int8 arg1, int8 player)
 {
+    RC_DIVERT_IF_CHANGED(HudTopRight, pObj, arg1, player);
     const uint32_t car = pObj.address;
     const int32_t down = player == 0 ? 0 : 0x70;
     const uint32_t res = hudRes();
@@ -427,16 +436,16 @@ void HudTopRight(ptr32<_sObject> pObj, int8, int8 player)
         };
         if (laps >= 0 && at<int32_t>(car + 0xe8u) == 0)
         {
-            guest_call(kSprintf, kBuff, 0x327e00u, laps + 1); // "Lap %d"
+            guest_call(kSprintf, kBuff, (sym::sec_sdata + 0x200u), laps + 1); // "Lap %d"
             row(0x30, kBuff);
             HudFormatNumFont(ptr32<char>(kBuff), at<int32_t>(car + 0x140u));
             row(0x3a, kBuff);
         }
-        guest_call(kSprintf, kBuff, 0x322e20u); // "Best lap"
+        guest_call(kSprintf, kBuff, (sym::sec_rodata + 0x820u)); // "Best lap"
         row(0x46, kBuff);
         const int32_t best = at<int32_t>(car + 0x16cu);
         if (best == 0x10000000)
-            row(0x50, 0x327e08u); // "--:--.-"
+            row(0x50, (sym::sec_sdata + 0x208u)); // "--:--.-"
         else
         {
             HudFormatNumFont(ptr32<char>(kBuff), best);
@@ -444,7 +453,7 @@ void HudTopRight(ptr32<_sObject> pObj, int8, int8 player)
         }
         if (at<uint32_t>(kMainRaceType) == kTimeTrial)
         {
-            guest_call(kSprintf, kBuff, 0x327e10u); // "Target"
+            guest_call(kSprintf, kBuff, (sym::sec_sdata + 0x210u)); // "Target"
             row(0x5c, kBuff);
             int32_t target;
             if (at<uint32_t>(kFrontEnd + 0x29cu) == 0x1000006bu)
@@ -465,6 +474,7 @@ void HudTopRight(ptr32<_sObject> pObj, int8, int8 player)
 // screen gets only the digits.
 void HudBottomRight(ptr32<_sObject> pObj, int8 size, int8 player)
 {
+    RC_DIVERT_IF_CHANGED(HudBottomRight, pObj, size, player);
     const uint32_t res = hudRes();
     int32_t y = slide() + 0x98;
     uint32_t speedSpr0, speedSpr1;
@@ -482,14 +492,14 @@ void HudBottomRight(ptr32<_sObject> pObj, int8 size, int8 player)
         else
         {
             GfxP2_ZWriteEnable();
-            ee_float needle = at<ee_float>(at<uint32_t>(pObj.address + 0x20u) + 0x38u) * constant(0x327638u);
-            const ee_float most = constant(0x32763cu);
+            ee_float needle = at<ee_float>(at<uint32_t>(pObj.address + 0x20u) + 0x38u) * constant(sym::lit4_327638);
+            const ee_float most = constant(sym::lit4_32763c);
             if (most < needle)
                 needle = most;
             const ee_float fy = ee_itof(y);
-            HudRotSpriteHI(ptr32<_sSprite>(at<uint32_t>(res + 0x48u)), ee_itof(slide() + 0x1e4), fy, 0x2000000, constant(0x327640u), -needle);
-            HudSpriteHI(ptr32<_sSprite>(at<uint32_t>(res + 0x48u)), ee_itof(slide() + 0x1e4), fy, 0x808080, constant(0x327644u));
-            HudSpriteHI(ptr32<_sSprite>(at<uint32_t>(res + 0x44u)), ee_itof(slide() + 0x1e4), fy, 0x20808080, constant(0x327648u));
+            HudRotSpriteHI(ptr32<_sSprite>(at<uint32_t>(res + 0x48u)), ee_itof(slide() + 0x1e4), fy, 0x2000000, constant(sym::lit4_327640), -needle);
+            HudSpriteHI(ptr32<_sSprite>(at<uint32_t>(res + 0x48u)), ee_itof(slide() + 0x1e4), fy, 0x808080, constant(sym::lit4_327644));
+            HudSpriteHI(ptr32<_sSprite>(at<uint32_t>(res + 0x44u)), ee_itof(slide() + 0x1e4), fy, 0x20808080, constant(sym::lit4_327648));
         }
         const int32_t speed = ee_ftoi(at<ee_float>(at<uint32_t>(pObj.address + 0x20u) + 0x38u) * ee_float(float_from_bits(0x3b6a0000u)));
         const int32_t s = static_cast<int16_t>(at<uint16_t>(kHudSlide));
@@ -507,8 +517,9 @@ void HudBottomRight(ptr32<_sObject> pObj, int8 size, int8 player)
 
 // The map (mirrored in mirror mode) with a blip per car: the computer's cars green, others white, the players
 // flashing by their state at +0x48. The level's bounds scale the positions (level 'a' has fixed ones).
-void HudBottomLeft(ptr32<_sObject>, int8 size, int8 player)
+void HudBottomLeft(ptr32<_sObject> arg0, int8 size, int8 player)
 {
+    RC_DIVERT_IF_CHANGED(HudBottomLeft, arg0, size, player);
     const uint32_t res = hudRes();
     const int32_t dx = at<int32_t>(kAINode + 0x1cu) - at<int32_t>(kAINode + 0x14u);
     const int32_t dz = at<int32_t>(kAINode + 0x20u) - at<int32_t>(kAINode + 0x18u);
@@ -566,8 +577,9 @@ void HudBottomLeft(ptr32<_sObject>, int8 size, int8 player)
 }
 
 // The wrong-way and lost signs (flashing), and the weapon held: its count and its icon, which fades in from white.
-void HudMiddle(ptr32<_sObject> pObj, int8 size, int8)
+void HudMiddle(ptr32<_sObject> pObj, int8 size, int8 arg2)
 {
+    RC_DIVERT_IF_CHANGED(HudMiddle, pObj, size, arg2);
     const uint32_t car = pObj.address;
     const uint32_t res = hudRes();
     uint32_t sprite;
@@ -604,7 +616,7 @@ void HudMiddle(ptr32<_sObject> pObj, int8 size, int8)
         const uint32_t which = static_cast<uint32_t>(at<int32_t>(kMainWhichSplit)) * 4u;
         const int32_t py = at<int32_t>(kHud + 0x8cu + which), px = at<int32_t>(kHud + 0x84u + which);
         rgb = static_cast<uint32_t>(at<int32_t>(kHud + 0x7cu + which)) * 0x10101u | 0x80000000u;
-        guest_call(kSprintf, kBuff, 0x327e18u, static_cast<int32_t>(at<int8_t>(car + 0x194u))); // "%d"
+        guest_call(kSprintf, kBuff, (sym::sec_sdata + 0x218u), static_cast<int32_t>(at<int8_t>(car + 0x194u))); // "%d"
         print(px + 0xd, py + 0xc, kBuff);
         fx = ee_itof(px - 0x20);
         fy = ee_itof(py - 0x10);
@@ -615,23 +627,23 @@ void HudMiddle(ptr32<_sObject> pObj, int8 size, int8)
             if (type < 12)
             {
                 sprite = at<uint32_t>(res + 0x54u + static_cast<uint32_t>(type - 1) * 4u);
-                otz = constant(0x327658u);
+                otz = constant(sym::lit4_327658);
             }
             else
             {
                 sprite = at<uint32_t>(res + 0x84u);
-                otz = constant(0x327654u);
+                otz = constant(sym::lit4_327654);
             }
         }
         else if (next < 12)
         {
             sprite = at<uint32_t>(res + 0x54u + static_cast<uint32_t>(next - 1) * 4u);
-            otz = constant(0x327650u);
+            otz = constant(sym::lit4_327650);
         }
         else
         {
             sprite = at<uint32_t>(res + 0x84u);
-            otz = constant(0x32764cu);
+            otz = constant(sym::lit4_32764c);
         }
     }
     HudSpriteHI(ptr32<_sSprite>(sprite), fx, fy, rgb, otz); // a tail call
@@ -641,13 +653,14 @@ void HudMiddle(ptr32<_sObject> pObj, int8 size, int8)
 // "DEMO" instead.
 void HudPanel(ptr32<_sObject> pObj, int8 player)
 {
+    RC_DIVERT_IF_CHANGED(HudPanel, pObj, player);
     const uint32_t res = hudRes();
     {
         GuestFrame frame(0x90);
         uint32_t saved = at<uint32_t>(kFontPtr);
         FontSet(ptr32<font>(at<uint32_t>(res + 0x4cu)));
         FontSetColour(0x64, 0x64, 0x64);
-        print(-100, -100, 0x327e20u); // "."
+        print(-100, -100, (sym::sec_sdata + 0x220u)); // "."
         FontSet(ptr32<font>(saved));
         if (at<int32_t>(kMainVars) == 0x10)
         {
@@ -676,7 +689,7 @@ void HudPanel(ptr32<_sObject> pObj, int8 player)
             return;
         }
     }
-    FontCentre(0xcc, ptr32<char>(0x327e28u)); // "DEMO", a tail call
+    FontCentre(0xcc, ptr32<char>((sym::sec_sdata + 0x228u))); // "DEMO", a tail call
 }
 
 // The front end's locked tracks: at each locked track's camera a car shadow and a padlock.
@@ -742,26 +755,26 @@ void HudConstructDaemon(ptr32<memHandle> pHandle)
 
 } // namespace rc
 
-RC_DECOMP_FN(HudSetupClass, 0x128b68)
-RC_DECOMP_FN_SETUP_HEAP(HudInit, 0x124438, rc::fuzz::hudNone)
-RC_DECOMP_FN_SETUP_HEAP(HudTerm, 0x124470, rc::fuzz::hudNone)
-RC_DECOMP_FN_SETUP_HEAP(HudDelete, 0x124480, rc::fuzz::hudNone)
-RC_DECOMP_FN_SETUP_HEAP(HudTask, 0x124490, rc::fuzz::hudTask)
-RC_DECOMP_FN_SETUP_HEAP(HudCreate, 0x128aa8, rc::fuzz::hudNone)
-RC_DECOMP_FN_SETUP(HudFormatLapTime, 0x1245e8, rc::fuzz::hudTime)
-RC_DECOMP_FN_SETUP(HudFormatNumFont, 0x124660, rc::fuzz::hudTime)
-RC_DECOMP_FN_SETUP_HEAP(HudTopLeft, 0x1246d8, rc::fuzz::hudCar)
-RC_DECOMP_FN_SETUP_HEAP(HudSprite, 0x125b18, rc::fuzz::hudSprite)
-RC_DECOMP_FN_SETUP_HEAP(HudSpriteMirror, 0x126ef0, rc::fuzz::hudSprite)
-RC_DECOMP_FN_SETUP_HEAP(HudSpriteHI, 0x1260e8, rc::fuzz::hudSprite)
-RC_DECOMP_FN_SETUP_HEAP(HudRotSpriteHI, 0x126710, rc::fuzz::hudSprite)
-RC_DECOMP_FN_SETUP_HEAP(HudWrongWayX, 0x127db0, rc::fuzz::hudSign)
-RC_DECOMP_FN_SETUP_HEAP(HudLost, 0x128390, rc::fuzz::hudSign)
-RC_DECOMP_FN_SETUP_HEAP(HudMenuBorder, 0x1274c0, rc::fuzz::hudBorder)
-RC_DECOMP_FN_SETUP_HEAP(HudTopRight, 0x1246e8, rc::fuzz::hudCar)
-RC_DECOMP_FN_SETUP_HEAP(HudBottomRight, 0x124a90, rc::fuzz::hudCar)
-RC_DECOMP_FN_SETUP_HEAP(HudBottomLeft, 0x124d90, rc::fuzz::hudCar)
-RC_DECOMP_FN_SETUP_HEAP(HudMiddle, 0x1251b8, rc::fuzz::hudCar)
-RC_DECOMP_FN_SETUP_HEAP(HudPanel, 0x125550, rc::fuzz::hudPanel)
-RC_DECOMP_FN_SETUP_HEAP(HudDrawLockedTracks, 0x128930, rc::fuzz::hudLocked)
-RC_DECOMP_FN_SETUP_HEAP(HudConstructDaemon, 0x125720, rc::fuzz::hudDaemon)
+RC_DECOMP_FN(HudSetupClass)
+RC_DECOMP_FN_SETUP_HEAP(HudInit, rc::fuzz::hudNone)
+RC_DECOMP_FN_SETUP_HEAP(HudTerm, rc::fuzz::hudNone)
+RC_DECOMP_FN_SETUP_HEAP(HudDelete, rc::fuzz::hudNone)
+RC_DECOMP_FN_SETUP_HEAP(HudTask, rc::fuzz::hudTask)
+RC_DECOMP_FN_SETUP_HEAP(HudCreate, rc::fuzz::hudNone)
+RC_DECOMP_FN_SETUP(HudFormatLapTime, rc::fuzz::hudTime)
+RC_DECOMP_FN_SETUP(HudFormatNumFont, rc::fuzz::hudTime)
+RC_DECOMP_FN_SETUP_HEAP(HudTopLeft, rc::fuzz::hudCar)
+RC_DECOMP_FN_SETUP_HEAP(HudSprite, rc::fuzz::hudSprite)
+RC_DECOMP_FN_SETUP_HEAP(HudSpriteMirror, rc::fuzz::hudSprite)
+RC_DECOMP_FN_SETUP_HEAP(HudSpriteHI, rc::fuzz::hudSprite)
+RC_DECOMP_FN_SETUP_HEAP(HudRotSpriteHI, rc::fuzz::hudSprite)
+RC_DECOMP_FN_SETUP_HEAP(HudWrongWayX, rc::fuzz::hudSign)
+RC_DECOMP_FN_SETUP_HEAP(HudLost, rc::fuzz::hudSign)
+RC_DECOMP_FN_SETUP_HEAP(HudMenuBorder, rc::fuzz::hudBorder)
+RC_DECOMP_FN_SETUP_HEAP(HudTopRight, rc::fuzz::hudCar)
+RC_DECOMP_FN_SETUP_HEAP(HudBottomRight, rc::fuzz::hudCar)
+RC_DECOMP_FN_SETUP_HEAP(HudBottomLeft, rc::fuzz::hudCar)
+RC_DECOMP_FN_SETUP_HEAP(HudMiddle, rc::fuzz::hudCar)
+RC_DECOMP_FN_SETUP_HEAP(HudPanel, rc::fuzz::hudPanel)
+RC_DECOMP_FN_SETUP_HEAP(HudDrawLockedTracks, rc::fuzz::hudLocked)
+RC_DECOMP_FN_SETUP_HEAP(HudConstructDaemon, rc::fuzz::hudDaemon)

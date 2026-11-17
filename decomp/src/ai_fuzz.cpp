@@ -15,7 +15,7 @@ static_assert(sizeof(_sFPhysLibCar) <= kInteger - kPhysics);
 static_assert(sizeof(_sOPhysLibIntegerCarState) <= kTask - kInteger);
 static_assert(sizeof(_sTask) <= kPoint - kTask);
 
-constexpr uint32_t kAIControl = 0x1000c0u;
+constexpr uint32_t kAIControl = sym::AIControl;
 
 struct Rng
 {

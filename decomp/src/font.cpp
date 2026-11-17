@@ -15,7 +15,7 @@ int32_t FontSpecialCharacterOrColourChange(int16 x, int16 y, ptr32<char> pString
 
 namespace {
 
-const uint32_t kSpriteParams = 0x1ed4c0; // scratchPadG, used as the sprite parameters.
+const uint32_t kSpriteParams = sym::scratchPadG; // scratchPadG, used as the sprite parameters.
 
 _sSpriteParams &params() { return *static_cast<_sSpriteParams *>(guest_host(kSpriteParams)); }
 
@@ -140,7 +140,7 @@ void FontInit()
     font.pFont = nullptr;
     font.r = 0x7f;
     font.g = 0x7f;
-    ResTypeSetConstructDaemon(ptr32<char>(0x328188u), 0, 4);
+    ResTypeSetConstructDaemon(ptr32<char>((sym::sec_sdata + 0x588u)), 0, 4);
 }
 
 // Draws one line of a string at (x, y). Returns the start of the next line (after the carriage return), or null at
@@ -315,6 +315,7 @@ int32_t FontPrintFX(int16 x, int16 y, ptr32<char> pString, uint16 fx, uint16 fxV
 // "}" sequences: a button icon (0-9, A-Z, drawn by the game's callback, 32 wide) or a colour change.
 int32_t FontSpecialCharacterOrColourChange(int16 x, int16 y, ptr32<char> pString)
 {
+    RC_DIVERT_IF_CHANGED(FontSpecialCharacterOrColourChange, x, y, pString);
     GuestFrame frame(0x20);
     const int32_t c = static_cast<int8_t>(*pString);
     int32_t pen = x;
@@ -326,9 +327,9 @@ int32_t FontSpecialCharacterOrColourChange(int16 x, int16 y, ptr32<char> pString
             guest_call(G(pGfxFnG).address, static_cast<int32_t>(x), static_cast<int32_t>(y), icon);
             // AMenuDisplayPsxKey saves its return address (the instruction after the original's call here) at
             // 0x20 of its 0x30 frame, where a later slider's frame rectangle finds its flags.
-            if (G(pGfxFnG).address == 0x10eea0u)
+            if (G(pGfxFnG).address == sym::AMenuDisplayPsxKey)
             {
-                const uint64_t savedRa = 0x18a320u;
+                const uint64_t savedRa = (sym::FontSpecialCharacterOrColourChange + 0x78u);
                 std::memcpy(guest_host(frame.local<uint8_t>(0).address - 0x10u), &savedRa, 8);
             }
         }
@@ -429,14 +430,14 @@ void fontTextCentre(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 
 } // namespace rc::fuzz
 
-RC_DECOMP_FN_SETUP(FontLength, 0x189ca0, rc::fuzz::fontTextFirst)
-RC_DECOMP_FN(FontSet, 0x18a3c0)
-RC_DECOMP_FN(FontSetColour, 0x18a3c8)
-RC_DECOMP_FN(FontSetGraphicFn, 0x18a3e0)
-RC_DECOMP_FN_NOFUZZ(FontInit, 0x1897d8)
-RC_DECOMP_FN_SETUP_HEAP(FontPrint, 0x189808, rc::fuzz::fontText)
-RC_DECOMP_FN_SETUP_HEAP(FontPrintRight, 0x189bd8, rc::fuzz::fontText)
-RC_DECOMP_FN_SETUP_HEAP(FontCentre, 0x189c38, rc::fuzz::fontTextCentre)
-RC_DECOMP_FN_SETUP_HEAP(FontPrintFX, 0x189ea8, rc::fuzz::fontText)
-RC_DECOMP_FN_SETUP_HEAP(FontSpecialCharacterOrColourChange, 0x18a2a8, rc::fuzz::fontText)
-RC_DECOMP_FN_SETUP_HEAP(FontHandleSpecialCharacter, 0x18a3e8, rc::fuzz::fontText)
+RC_DECOMP_FN_SETUP(FontLength, rc::fuzz::fontTextFirst)
+RC_DECOMP_FN(FontSet)
+RC_DECOMP_FN(FontSetColour)
+RC_DECOMP_FN(FontSetGraphicFn)
+RC_DECOMP_FN_NOFUZZ(FontInit)
+RC_DECOMP_FN_SETUP_HEAP(FontPrint, rc::fuzz::fontText)
+RC_DECOMP_FN_SETUP_HEAP(FontPrintRight, rc::fuzz::fontText)
+RC_DECOMP_FN_SETUP_HEAP(FontCentre, rc::fuzz::fontTextCentre)
+RC_DECOMP_FN_SETUP_HEAP(FontPrintFX, rc::fuzz::fontText)
+RC_DECOMP_FN_SETUP_HEAP(FontSpecialCharacterOrColourChange, rc::fuzz::fontText)
+RC_DECOMP_FN_SETUP_HEAP(FontHandleSpecialCharacter, rc::fuzz::fontText)

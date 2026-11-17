@@ -22,11 +22,11 @@ namespace fuzz {
 
 namespace {
 
-constexpr uint32_t kMemVars = 0x1fa940u, kHeapVars = 0x1f4c50u, kTaskVars = 0x31ff58u, kWeaponVars = 0x1f3a80u;
-constexpr uint32_t kSfxInitOk = 0x31e488u;
+constexpr uint32_t kMemVars = sym::memVarG, kHeapVars = sym::heapVarsG, kTaskVars = sym::taskVarG, kWeaponVars = sym::weaponVarG;
+constexpr uint32_t kSfxInitOk = sym::sfxVarG;
 // Callbacks for scratch tasks.
-constexpr uint32_t kHeapFree = 0x1908c8u, kVSyncCallback = 0x19f260u, kMemOutOfMemory = 0x194a38u, kTaskDelete = 0x1afc48u,
-                   kTaskCachedInsert = 0x1afb68u, kTaskInsert = 0x1afaf0u;
+constexpr uint32_t kHeapFree = sym::HeapFree, kVSyncCallback = sym::VSyncCallback, kMemOutOfMemory = sym::MemOutOfMemory, kTaskDelete = sym::TaskDelete,
+                   kTaskCachedInsert = sym::TaskCachedInsert, kTaskInsert = sym::TaskInsert;
 // Scratch layout: the handle under test, a spare handle, a pool handle, fragment handles, tasks, a small heap, copies.
 constexpr uint32_t kHandle = 0x0u, kSpare = 0x10u, kPoolHandle = 0x20u, kTasks = 0x400u, kTaskSize = 0x18u, kFakeHeap = 0x1000u,
                    kCopy = 0x2000u;

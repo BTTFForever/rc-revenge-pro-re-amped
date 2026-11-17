@@ -20,13 +20,13 @@ angle ArcTan(int32 x, int32 y); // maths.cpp
 
 namespace {
 
-constexpr uint32_t kResAlloc = 0x1ab828u;
+constexpr uint32_t kResAlloc = sym::ResAlloc;
 // The resource type names ("VTX", "VAL", "VAI"; "RSO", "RSA", "RSK", "RSN", "RSH", "RSR"; "SVF") and their daemons.
-constexpr uint32_t kVertAnimTypes[3] = {0x3281c0u, 0x3281c8u, 0x3281d0u};
-constexpr uint32_t kSkinTypes[6] = {0x328340u, 0x328348u, 0x328350u, 0x328358u, 0x328360u, 0x328368u};
-constexpr uint32_t kSvfType = 0x328150u;
-constexpr uint32_t kVertAnimConstruct = 0x18af70u, kVAIConstruct = 0x18af80u, kRSNConstructDaemon = 0x1a4540u,
-                   kRSRConstructDaemon = 0x1a4548u, kSvfConstructDaemon = 0x183dc0u;
+constexpr uint32_t kVertAnimTypes[3] = {(sym::sec_sdata + 0x5c0u), (sym::sec_sdata + 0x5c8u), (sym::sec_sdata + 0x5d0u)};
+constexpr uint32_t kSkinTypes[6] = {(sym::sec_sdata + 0x740u), (sym::sec_sdata + 0x748u), (sym::sec_sdata + 0x750u), (sym::sec_sdata + 0x758u), (sym::sec_sdata + 0x760u), (sym::sec_sdata + 0x768u)};
+constexpr uint32_t kSvfType = (sym::sec_sdata + 0x550u);
+constexpr uint32_t kVertAnimConstruct = sym::VertAnimConstruct, kVAIConstruct = sym::VAIConstruct, kRSNConstructDaemon = sym::RSNConstructDaemon,
+                   kRSRConstructDaemon = sym::RSRConstructDaemon, kSvfConstructDaemon = sym::SvfConstructDaemon;
 
 template <typename T>
 T &mem(uint32_t address) { return *static_cast<T *>(guest_host(address)); }
@@ -270,6 +270,7 @@ void SvfRenderPoints() {}
 // The table's vectors are stored at four times their scale.
 void SvfConstructDaemon(ptr32<memHandle> pHandle)
 {
+    RC_DIVERT_IF_CHANGED(SvfConstructDaemon, pHandle);
     const uint32_t header = mem<uint32_t>(pHandle.address);
     const uint16_t count = mem<uint16_t>(header);
     G(svfVarG).pSvf = ptr32<svfHeader>(header);
@@ -290,22 +291,22 @@ void SvfConstructDaemon(ptr32<memHandle> pHandle)
 
 } // namespace rc
 
-RC_DECOMP_FN_SETUP_HEAP(VertAnimTerm, 0x18af38, rc::fuzz::resDaemons)
-RC_DECOMP_FN_SETUP(VertAnimConstruct, 0x18af70, rc::fuzz::vuShape)
-RC_DECOMP_FN_SETUP(VAIConstruct, 0x18af80, rc::fuzz::vaInstance)
-RC_DECOMP_FN_SETUP_HEAP(VertAnimInit, 0x18afa8, rc::fuzz::resDaemons)
-RC_DECOMP_FN(VertAnimFrameUpdate, 0x18b008)
-RC_DECOMP_FN(VertAnimRender, 0x18b010)
-RC_DECOMP_FN_SETUP(MxAnim_SetRate, 0x1a4a58, rc::fuzz::mxCtrl)
-RC_DECOMP_FN_SETUP(MxAnim_Construct, 0x1a46b0, rc::fuzz::mxCtrl)
-RC_DECOMP_FN_SETUP(MxAnim_OutputFlatFrame, 0x1a46d8, rc::fuzz::mxOutput)
-RC_DECOMP_FN_SETUP_HEAP(SkinAnimTerm, 0x1a44d0, rc::fuzz::resDaemons)
-RC_DECOMP_FN_SETUP_HEAP(SkinAnimRdr, 0x1a4528, rc::fuzz::skinRef)
-RC_DECOMP_FN_SETUP_HEAP(RSNConstructDaemon, 0x1a4540, rc::fuzz::vuSkin)
-RC_DECOMP_FN_SETUP_HEAP(RSRConstructDaemon, 0x1a4548, rc::fuzz::skinInstance)
-RC_DECOMP_FN_SETUP_HEAP(SkinAnimInit, 0x1a49c0, rc::fuzz::resDaemons)
-RC_DECOMP_FN_SETUP_HEAP(SvfInit, 0x183ca0, rc::fuzz::resDaemons)
-RC_DECOMP_FN_SETUP(SVFConvertNormal, 0x183cb8, rc::fuzz::svfNormal)
-RC_DECOMP_FN(SvfRender, 0x183db0)
-RC_DECOMP_FN(SvfRenderPoints, 0x183db8)
-RC_DECOMP_FN_SETUP(SvfConstructDaemon, 0x183dc0, rc::fuzz::svfTable)
+RC_DECOMP_FN_SETUP_HEAP(VertAnimTerm, rc::fuzz::resDaemons)
+RC_DECOMP_FN_SETUP(VertAnimConstruct, rc::fuzz::vuShape)
+RC_DECOMP_FN_SETUP(VAIConstruct, rc::fuzz::vaInstance)
+RC_DECOMP_FN_SETUP_HEAP(VertAnimInit, rc::fuzz::resDaemons)
+RC_DECOMP_FN(VertAnimFrameUpdate)
+RC_DECOMP_FN(VertAnimRender)
+RC_DECOMP_FN_SETUP(MxAnim_SetRate, rc::fuzz::mxCtrl)
+RC_DECOMP_FN_SETUP(MxAnim_Construct, rc::fuzz::mxCtrl)
+RC_DECOMP_FN_SETUP(MxAnim_OutputFlatFrame, rc::fuzz::mxOutput)
+RC_DECOMP_FN_SETUP_HEAP(SkinAnimTerm, rc::fuzz::resDaemons)
+RC_DECOMP_FN_SETUP_HEAP(SkinAnimRdr, rc::fuzz::skinRef)
+RC_DECOMP_FN_SETUP_HEAP(RSNConstructDaemon, rc::fuzz::vuSkin)
+RC_DECOMP_FN_SETUP_HEAP(RSRConstructDaemon, rc::fuzz::skinInstance)
+RC_DECOMP_FN_SETUP_HEAP(SkinAnimInit, rc::fuzz::resDaemons)
+RC_DECOMP_FN_SETUP_HEAP(SvfInit, rc::fuzz::resDaemons)
+RC_DECOMP_FN_SETUP(SVFConvertNormal, rc::fuzz::svfNormal)
+RC_DECOMP_FN(SvfRender)
+RC_DECOMP_FN(SvfRenderPoints)
+RC_DECOMP_FN_SETUP(SvfConstructDaemon, rc::fuzz::svfTable)

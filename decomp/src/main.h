@@ -45,12 +45,12 @@ template <typename T>
 T &at(uint32_t address) { return *static_cast<T *>(guest_host(address)); }
 
 // Globals.
-constexpr uint32_t kMain = 0x1ed900u, kFrontEnd = 0x1eca58u, kAi = 0x1e9400u, kRaceOrder = 0x1e9404u, kCarList = 0x1eb7a0u;
-constexpr uint32_t kCamera = 0x1e9fb0u, kMusic = 0x1ee8c0u, kRevSfx = 0x1ef3b0u, kObjectList = 0x1ee390u;
-constexpr uint32_t kResultTrigger = 0x1f3730u, kRacePoints = 0x1ed460u, kPauseLinks = 0x1ed468u, kRacePointsText = 0x327f00u;
-constexpr uint32_t kResultsMenu = 0x327ec0u, kRankingMenu = 0x327ec4u, kPauseOptions = 0x327ec8u, kPauseOptions2 = 0x327eccu;
-constexpr uint32_t kPadMenu1 = 0x327ed0u, kPadMenu2 = 0x327ed4u, kPauseDelay = 0x327ee8u, kPauseMenu = 0x327c20u;
-constexpr uint32_t kTimerResumed = 0x327e90u, kPadFlags = 0x327d68u, kLevel = 0x327e80u;
+constexpr uint32_t kMain = sym::mainVarG, kFrontEnd = sym::frontEndVarG, kAi = sym::aiVarG, kRaceOrder = (sym::aiVarG + 0x4u), kCarList = sym::carListVarG;
+constexpr uint32_t kCamera = sym::cameraVarG, kMusic = sym::rcmusicVarG, kRevSfx = sym::revSfxVarG, kObjectList = sym::objectVarG;
+constexpr uint32_t kResultTrigger = (sym::visFxVarG + 0x2730u), kRacePoints = sym::racePointsG, kPauseLinks = sym::links_600, kRacePointsText = (sym::sec_sdata + 0x300u);
+constexpr uint32_t kResultsMenu = sym::pResultsMenuG, kRankingMenu = sym::pRankingMenuG, kPauseOptions = sym::pXContMenuG, kPauseOptions2 = sym::pXContMenuPlusG;
+constexpr uint32_t kPadMenu1 = sym::pP1ContMissingG, kPadMenu2 = sym::pP2ContMissingG, kPauseDelay = sym::rePauseCountG, kPauseMenu = sym::pMenuSystemG;
+constexpr uint32_t kTimerResumed = sym::iDrawDownG, kPadFlags = sym::pauseReasonG, kLevel = sym::pLvlG;
 
 // mainVarG fields by offset.
 inline uint32_t &status() { return at<uint32_t>(kMain); }
@@ -75,19 +75,19 @@ inline uint32_t carType(uint32_t car)
 inline uint32_t glen(uint32_t text) { return static_cast<uint32_t>(std::strlen(static_cast<const char *>(guest_host(text)))); }
 
 // Guest functions still recompiled (and native ones reached the same way from the frame loops).
-constexpr uint32_t kPrintf = 0x12e9e8u, kAMenuGetText = 0x10ddf0u, kGetCarText = 0x10df30u, kAMenuDisplay = 0x104f80u;
-constexpr uint32_t kAMenuDisplayAll = 0x103f08u, kAMenuDisplayOptions = 0x108cd8u, kAMenuGetMIT = 0x10dc80u, kAMenuProcessAll = 0x108ef8u;
-constexpr uint32_t kMenuItemDisabler = 0x122c00u, kTagToCar = 0x11dc30u, kCheckCarAvailability = 0x122ec0u;
-constexpr uint32_t kInputHit = 0x191598u, kInputPadPresent = 0x1918f8u, kInputResetAllHit = 0x1916c8u, kInputResetHit = 0x1917b8u;
-constexpr uint32_t kInputReset = 0x191600u, kInputSnapshot = 0x191810u, kInputTestAnyKeyHeld = 0x191c78u;
-constexpr uint32_t kInputClearVibrationVals = 0x191c40u, kInputSetVibrationFlags = 0x191c20u, kInputSetPadMode = 0x191c00u;
-constexpr uint32_t kTimerGet = 0x1b4188u, kTimerPause = 0x1b4068u, kTimerResume = 0x1b40e8u, kTimerSetup = 0x1b4038u;
-constexpr uint32_t kRevSfxPauseFade = 0x142e20u, kRevSfxStopAll = 0x141fc8u, kRevSfxStopPauseSfx = 0x144150u;
-constexpr uint32_t kRevSfxModifyVolume = 0x144098u, kRevSfxUpdateAmbient = 0x1423b0u, kRevSfxInitAmbient = 0x143d50u;
-constexpr uint32_t kRCMusicPause = 0x141790u, kRCMusicResume = 0x140e20u, kRCMusicSetVol = 0x1414e0u, kRCMusicStop = 0x1415b8u;
-constexpr uint32_t kRCMusicModifyVolume = 0x1413f0u, kRCMusicPlayLevel = 0x1415d0u, kRCMusicPlayTrackEdit = 0x140cf8u;
-constexpr uint32_t kRCMusicFadeControl = 0x141080u, kSfxDoSfx = 0x1ac9e0u, kSceGsSyncV = 0x1c3d90u, kTaskDelete = 0x1afc48u;
-constexpr uint32_t kRand = 0x1b8818u;
+constexpr uint32_t kPrintf = sym::printf, kAMenuGetText = sym::AMenuGetText, kGetCarText = sym::GetCarText, kAMenuDisplay = sym::AMenuDisplay;
+constexpr uint32_t kAMenuDisplayAll = sym::AMenuDisplayAll, kAMenuDisplayOptions = sym::AMenuDisplayOptions, kAMenuGetMIT = sym::AMenuGetMIT, kAMenuProcessAll = sym::AMenuProcessAll;
+constexpr uint32_t kMenuItemDisabler = sym::MenuItemDisabler, kTagToCar = sym::TagToCar, kCheckCarAvailability = sym::CheckCarAvailability;
+constexpr uint32_t kInputHit = sym::InputHit, kInputPadPresent = sym::InputPadPresent, kInputResetAllHit = sym::InputResetAllHit, kInputResetHit = sym::InputResetHit;
+constexpr uint32_t kInputReset = sym::InputReset, kInputSnapshot = sym::InputSnapshot, kInputTestAnyKeyHeld = sym::InputTestAnyKeyHeld;
+constexpr uint32_t kInputClearVibrationVals = sym::InputClearVibrationVals, kInputSetVibrationFlags = sym::InputSetVibrationFlags, kInputSetPadMode = sym::InputSetPadMode;
+constexpr uint32_t kTimerGet = sym::TimerGet, kTimerPause = sym::TimerPause, kTimerResume = sym::TimerResume, kTimerSetup = sym::TimerSetup;
+constexpr uint32_t kRevSfxPauseFade = sym::RevSfxPauseFade, kRevSfxStopAll = sym::RevSfxStopAll, kRevSfxStopPauseSfx = sym::RevSfxStopPauseSfx;
+constexpr uint32_t kRevSfxModifyVolume = sym::RevSfxModifyVolume, kRevSfxUpdateAmbient = sym::RevSfxUpdateAmbient, kRevSfxInitAmbient = sym::RevSfxInitAmbient;
+constexpr uint32_t kRCMusicPause = sym::RCMusicPause, kRCMusicResume = sym::RCMusicResume, kRCMusicSetVol = sym::RCMusicSetVol, kRCMusicStop = sym::RCMusicStop;
+constexpr uint32_t kRCMusicModifyVolume = sym::RCMusicModifyVolume, kRCMusicPlayLevel = sym::RCMusicPlayLevel, kRCMusicPlayTrackEdit = sym::RCMusicPlayTrackEdit;
+constexpr uint32_t kRCMusicFadeControl = sym::RCMusicFadeControl, kSfxDoSfx = sym::SfxDoSfx, kSceGsSyncV = sym::sceGsSyncV, kTaskDelete = sym::TaskDelete;
+constexpr uint32_t kRand = sym::rand;
 
 inline uint32_t menuText(uint32_t item) { return guest_call<uint32_t>(kAMenuGetText, at<uint32_t>(item)); }
 

@@ -39,14 +39,37 @@ add_subdirectory(third_party/ico_platform EXCLUDE_FROM_ALL)
 target_link_libraries(ps2_runtime PUBLIC rc_ico_platform)
 target_compile_definitions(ps2_runtime PUBLIC PS2X_EE_FIBERS=1)
 
-file(GLOB GAME_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/output/*.cpp")
+# Which executable the build is for: usa (SLUS_201.53, ../disc) or eu (SLES_500.77, ../disc_eu). Each version has its own
+# recompiled code (output/, output_eu/) and its own address headers (decomp/generated/<version>/, tools/gen_addrs.py);
+# the native code is the same source, compiled against them. See NOTES.md, "Europe version".
+set(RC_VERSION "usa" CACHE STRING "Game version: usa or eu")
+set_property(CACHE RC_VERSION PROPERTY STRINGS usa eu)
+if(RC_VERSION STREQUAL "usa")
+    set(RC_OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/output")
+    set(RC_ELF_NAME "SLUS_201.53")
+    set(RC_VERSION_EU 0)
+elseif(RC_VERSION STREQUAL "eu")
+    set(RC_OUTPUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/output_eu")
+    set(RC_ELF_NAME "SLES_500.77")
+    set(RC_VERSION_EU 1)
+else()
+    message(FATAL_ERROR "RC_VERSION must be usa or eu, not ${RC_VERSION}")
+endif()
+set(RC_GENERATED_VERSION_DIR "${CMAKE_CURRENT_SOURCE_DIR}/decomp/generated/${RC_VERSION}")
+foreach(f rc_addrs.h rc_fns.h rc_globals.h)
+    if(NOT EXISTS "${RC_GENERATED_VERSION_DIR}/${f}")
+        message(FATAL_ERROR "${RC_GENERATED_VERSION_DIR}/${f} is missing: generate it (NOTES.md, Rebuilding)")
+    endif()
+endforeach()
+
+file(GLOB GAME_SOURCES CONFIGURE_DEPENDS "${RC_OUTPUT_DIR}/*.cpp")
 
 add_executable(rc_revenge_pro
     ${GAME_SOURCES}
     "${PS2RECOMP_DIR}/ps2xRuntime/src/main.cpp"
     "${PS2RECOMP_DIR}/ps2xRuntime/src/lib/ps2_debug_panel.cpp"
 )
-target_include_directories(rc_revenge_pro PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/output")
+target_include_directories(rc_revenge_pro PRIVATE "${RC_OUTPUT_DIR}")
 target_link_libraries(rc_revenge_pro PRIVATE ps2_runtime rlImGui imgui)
 target_compile_definitions(rc_revenge_pro PRIVATE PS2X_ENABLE_DEBUG_UI=1)
 set_target_properties(rc_revenge_pro PROPERTIES UNITY_BUILD ON UNITY_BUILD_BATCH_SIZE 32)
@@ -59,7 +82,8 @@ target_compile_options(rc_revenge_pro PRIVATE ${RC_GAME_OPT_LIST})
 
 file(GLOB OVERRIDE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/overrides/*.cpp")
 target_sources(rc_revenge_pro PRIVATE ${OVERRIDE_SOURCES})
-set_source_files_properties(${OVERRIDE_SOURCES} PROPERTIES SKIP_UNITY_BUILD_INCLUSION TRUE)
+set_source_files_properties(${OVERRIDE_SOURCES} PROPERTIES SKIP_UNITY_BUILD_INCLUSION TRUE
+    INCLUDE_DIRECTORIES "${RC_GENERATED_VERSION_DIR}")
 
 # Decompiled game code. Its headers are generated from the game's debug data: see tools/stabs2c.py.
 file(GLOB DECOMP_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/decomp/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1/*.cpp")
@@ -67,7 +91,11 @@ list(APPEND DECOMP_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/decomp/generated/rc_layo
 target_sources(rc_revenge_pro PRIVATE ${DECOMP_SOURCES})
 set_source_files_properties(${DECOMP_SOURCES} PROPERTIES SKIP_UNITY_BUILD_INCLUSION TRUE
     COMPILE_OPTIONS "-O2;-fwrapv;-fno-strict-aliasing"
-    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/decomp;${CMAKE_CURRENT_SOURCE_DIR}/decomp/generated;${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1;${PS2RECOMP_DIR}/ps2xRuntime/src/lib/vu")
+    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/decomp;${RC_GENERATED_VERSION_DIR};${CMAKE_CURRENT_SOURCE_DIR}/decomp/generated;${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1;${PS2RECOMP_DIR}/ps2xRuntime/src/lib/vu")
+
+# The version defines reach only the hand-written code (the recompiled code is per version already).
+set_property(SOURCE ${OVERRIDE_SOURCES} ${DECOMP_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/decomp/oracle/rc_oracle.cpp"
+    APPEND PROPERTY COMPILE_DEFINITIONS RC_VERSION_EU=${RC_VERSION_EU} RC_ELF_NAME="${RC_ELF_NAME}")
 
 # The track shader is compiled into the game from the same file tools/shader_check.cpp tests.
 set(RC_TRACK_SHADER "${CMAKE_CURRENT_SOURCE_DIR}/decomp/shaders/trdr_shape.vert")
@@ -105,7 +133,7 @@ if(RC_PGO STREQUAL "generate")
         target_compile_options(${t} PRIVATE -fprofile-generate -fprofile-update=prefer-atomic)
     endforeach()
     target_link_options(rc_revenge_pro PRIVATE -fprofile-generate)
-    set_source_files_properties(${OVERRIDE_SOURCES} PROPERTIES COMPILE_DEFINITIONS RC_PGO_GEN=1)
+    set_property(SOURCE ${OVERRIDE_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS RC_PGO_GEN=1)
 elseif(RC_PGO STREQUAL "use")
     foreach(t ${RC_PGO_TARGETS})
         target_compile_options(${t} PRIVATE -fprofile-use -fprofile-correction
@@ -125,13 +153,13 @@ endif()
 set(RC_ORACLE_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/decomp/oracle/rc_oracle.cpp")
 add_executable(rc_oracle EXCLUDE_FROM_ALL ${GAME_SOURCES} ${OVERRIDE_SOURCES} ${DECOMP_SOURCES} "${RC_ORACLE_SOURCE}"
     third_party/port_engine/rc_backend.cpp)
-target_include_directories(rc_oracle PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/output")
+target_include_directories(rc_oracle PRIVATE "${RC_OUTPUT_DIR}")
 target_link_libraries(rc_oracle PRIVATE ps2_runtime rc_port_engine)
 set_target_properties(rc_oracle PROPERTIES UNITY_BUILD ON UNITY_BUILD_BATCH_SIZE 32)
 target_compile_options(rc_oracle PRIVATE ${RC_GAME_OPT_LIST})
 set_source_files_properties("${RC_ORACLE_SOURCE}" PROPERTIES SKIP_UNITY_BUILD_INCLUSION TRUE
     COMPILE_OPTIONS "-O2;-fwrapv;-fno-strict-aliasing"
-    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/decomp;${CMAKE_CURRENT_SOURCE_DIR}/decomp/generated;${CMAKE_CURRENT_SOURCE_DIR}/decomp/oracle")
+    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/decomp;${RC_GENERATED_VERSION_DIR};${CMAKE_CURRENT_SOURCE_DIR}/decomp/generated;${CMAKE_CURRENT_SOURCE_DIR}/decomp/oracle")
 if(TARGET rc_vu1_code)
     target_link_libraries(rc_oracle PRIVATE -Wl,--whole-archive rc_vu1_code -Wl,--no-whole-archive)
 endif()

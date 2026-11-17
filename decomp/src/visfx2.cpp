@@ -216,8 +216,8 @@ void Vfx2FinishText(int16 pos, ptr32<char> t)
         uint32_t address;
         uint32_t length; // bytes copied, including the terminator and the padding after it
     };
-    static constexpr Message kExcellent{0x3245b0u, 11}, kCongratulations{0x3245c0u, 17}, kWellDone{0x3245d8u, 11},
-        kRecord{0x3245e8u, 19}, kBetterLuck{0x324600u, 23};
+    static constexpr Message kExcellent{(sym::sec_rodata + 0x1fb0u), 11}, kCongratulations{(sym::sec_rodata + 0x1fc0u), 17}, kWellDone{(sym::sec_rodata + 0x1fd8u), 11},
+        kRecord{(sym::sec_rodata + 0x1fe8u), 19}, kBetterLuck{(sym::sec_rodata + 0x2000u), 23};
     int32_t place = 0x15;
     if (G(mainVarG).timeTrialBeaten == 0)
         place = pos;
@@ -377,8 +377,8 @@ void addToTable(uint32_t table, ptr32<_sTOBInst> pTOB)
     at<uint32_t>(table + 4 * i) = pTOB.address;
 }
 
-constexpr uint32_t kRainTable = 0x1f1e64u, kGlintTable = 0x1f36b0u;
-constexpr uint32_t kCamTrans = 0x1f1160u, kCamMatrix = 0x1f1120u;
+constexpr uint32_t kRainTable = (sym::visFxVarG + 0xe64u), kGlintTable = (sym::visFxVarG + 0x26b0u);
+constexpr uint32_t kCamTrans = (sym::visFxVarG + 0x160u), kCamMatrix = (sym::visFxVarG + 0x120u);
 
 void clearParticles(uint32_t first, uint32_t count)
 {
@@ -396,18 +396,18 @@ void Vfx3AddGlint(ptr32<_sTOBInst> pTOB) { addToTable(kGlintTable, pTOB); }
 // Empties the rain and glint particle tables and remembers the camera they were last drawn from.
 void Vfx3RainInit()
 {
-    clearParticles(0x1f1000u + 0x1c0u + 0x10u, 64);
+    clearParticles(sym::visFxVarG + 0x1c0u + 0x10u, 64);
     for (uint32_t i = 0; i < 16; ++i)
         at<uint32_t>(kRainTable + 4 * i) = 0;
-    copyVector(0x1f1dc0u, kCamTrans);
-    std::memcpy(guest_host(0x1f1de0u), guest_host(kCamMatrix), 64);
-    copyVector(0x1f1dd0u, kCamTrans);
-    std::memcpy(guest_host(0x1f1e20u), guest_host(kCamMatrix), 64);
-    clearParticles(0x1f1000u + 0xeb0u + 0x10u, 128);
+    copyVector((sym::visFxVarG + 0xdc0u), kCamTrans);
+    std::memcpy(guest_host((sym::visFxVarG + 0xde0u)), guest_host(kCamMatrix), 64);
+    copyVector((sym::visFxVarG + 0xdd0u), kCamTrans);
+    std::memcpy(guest_host((sym::visFxVarG + 0xe20u)), guest_host(kCamMatrix), 64);
+    clearParticles(sym::visFxVarG + 0xeb0u + 0x10u, 128);
     for (uint32_t i = 0; i < 16; ++i)
         at<uint32_t>(kGlintTable + 4 * i) = 0;
-    copyVector(0x1f36f0u, kCamTrans);
-    copyVector(0x1f3700u, kCamTrans);
+    copyVector((sym::visFxVarG + 0x26f0u), kCamTrans);
+    copyVector((sym::visFxVarG + 0x2700u), kCamTrans);
 }
 
 
@@ -430,21 +430,21 @@ void vfxRainTable(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxGlintTable(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 }
 
-RC_DECOMP_FN(Vfx3PolyWheel, 0x178cf8)
-RC_DECOMP_FN(Vfx2Renderer_Bats, 0x179018)
-RC_DECOMP_FN_SETUP(Vfx2Handler_RouteFinder, 0x176768, rc::fuzz::vfxRouteFinder)
-RC_DECOMP_FN_SETUP(Vfx2Handler_UFOBurner, 0x171940, rc::fuzz::vfxUfoBurner)
-RC_DECOMP_FN(VfxSortPosTS, 0x1790d8)
-RC_DECOMP_FN(VfxVecSortPosTS, 0x179118)
-RC_DECOMP_FN_SETUP(Vfx2Handler_Lights, 0x178fc8, rc::fuzz::vfxLights)
-RC_DECOMP_FN_SETUP(VfxHandler_OilCovered, 0x178d98, rc::fuzz::vfxOilCovered)
-RC_DECOMP_FN_SETUP(VfxHandler_BargeOil, 0x178d00, rc::fuzz::vfxBargeOil)
-RC_DECOMP_FN(Vfx2Handler_TumbleWeed, 0x179020)
-RC_DECOMP_FN_SETUP(Vfx2FinishText, 0x178e28, rc::fuzz::vfxFinishText)
-RC_DECOMP_FN_SETUP(Vfx2Handler_Gargoyle, 0x175820, rc::fuzz::vfxGargoyle)
-RC_DECOMP_FN_SETUP(Vfx2Handler_Fountain, 0x172df8, rc::fuzz::vfxFountain)
-RC_DECOMP_FN_SETUP(Vfx2Handler_MobyDick, 0x178878, rc::fuzz::vfxMobyDick)
-RC_DECOMP_FN_SETUP(Vfx2Handler_SciFiSteam, 0x1725d8, rc::fuzz::vfxSciFiSteam)
-RC_DECOMP_FN_SETUP(Vfx3AddRain, 0x17a4b8, rc::fuzz::vfxRainTable)
-RC_DECOMP_FN_SETUP(Vfx3AddGlint, 0x17a5b8, rc::fuzz::vfxGlintTable)
-RC_DECOMP_FN(Vfx3RainInit, 0x1791e0)
+RC_DECOMP_FN(Vfx3PolyWheel)
+RC_DECOMP_FN(Vfx2Renderer_Bats)
+RC_DECOMP_FN_SETUP(Vfx2Handler_RouteFinder, rc::fuzz::vfxRouteFinder)
+RC_DECOMP_FN_SETUP(Vfx2Handler_UFOBurner, rc::fuzz::vfxUfoBurner)
+RC_DECOMP_FN(VfxSortPosTS)
+RC_DECOMP_FN(VfxVecSortPosTS)
+RC_DECOMP_FN_SETUP(Vfx2Handler_Lights, rc::fuzz::vfxLights)
+RC_DECOMP_FN_SETUP(VfxHandler_OilCovered, rc::fuzz::vfxOilCovered)
+RC_DECOMP_FN_SETUP(VfxHandler_BargeOil, rc::fuzz::vfxBargeOil)
+RC_DECOMP_FN(Vfx2Handler_TumbleWeed)
+RC_DECOMP_FN_SETUP(Vfx2FinishText, rc::fuzz::vfxFinishText)
+RC_DECOMP_FN_SETUP(Vfx2Handler_Gargoyle, rc::fuzz::vfxGargoyle)
+RC_DECOMP_FN_SETUP(Vfx2Handler_Fountain, rc::fuzz::vfxFountain)
+RC_DECOMP_FN_SETUP(Vfx2Handler_MobyDick, rc::fuzz::vfxMobyDick)
+RC_DECOMP_FN_SETUP(Vfx2Handler_SciFiSteam, rc::fuzz::vfxSciFiSteam)
+RC_DECOMP_FN_SETUP(Vfx3AddRain, rc::fuzz::vfxRainTable)
+RC_DECOMP_FN_SETUP(Vfx3AddGlint, rc::fuzz::vfxGlintTable)
+RC_DECOMP_FN(Vfx3RainInit)

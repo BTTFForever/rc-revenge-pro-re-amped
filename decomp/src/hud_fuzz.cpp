@@ -8,10 +8,10 @@ namespace rc::fuzz {
 
 namespace {
 
-constexpr uint32_t kHud = 0x1ecda0u, kMainVars = 0x1ed900u, kFrontEnd = 0x1eca58u, kLevelPtr = 0x327e80u;
-constexpr uint32_t kObjectList = 0x1ee390u, kNoObjects = 0x1ee500u, kGfx = 0x1f4b30u, kVsyncInc = 0x1f3c34u;
-constexpr uint32_t kCameraRSG = 0x1eab24u, kVfxSprite = 0x1f3720u, kVfxRes = 0x1f106cu, kSfxInitOk = 0x31e488u;
-constexpr uint32_t kRandom = 0x328318u;
+constexpr uint32_t kHud = sym::hudVarG, kMainVars = sym::mainVarG, kFrontEnd = sym::frontEndVarG, kLevelPtr = sym::pLvlG;
+constexpr uint32_t kObjectList = sym::objectVarG, kNoObjects = (sym::objectVarG + 0x170u), kGfx = sym::gGfxP2, kVsyncInc = (sym::displayVarG + 0x64u);
+constexpr uint32_t kCameraRSG = (sym::cameraVarG + 0xb74u), kVfxSprite = (sym::visFxVarG + 0x2720u), kVfxRes = (sym::visFxVarG + 0x6cu), kSfxInitOk = sym::sfxVarG;
+constexpr uint32_t kRandom = sym::randomVarG;
 
 // Scratch layout.
 constexpr uint32_t kSprite = 0x0000u, kText = 0x0100u, kFELevel = 0x0200u, kCams = 0x0300u, kRes = 0x0800u, kHandle = 0x0a00u;
@@ -234,8 +234,8 @@ void hudTask(R5900Context *ctx, uint64_t &state, uint32_t)
     mem<int32_t>(kHud + 0x70u) = rng.chance(20) ? 0 : rng.between(-1, 6);
     // mainVarG's timer, paused (TimerGet then returns its time as it is) or running from the dump's tick.
     if (rng.chance(70))
-        mem<uint32_t>(0x1ed910u) |= 1u;
-    const uint32_t now = mem<uint32_t>(0x1ed918u);
+        mem<uint32_t>((sym::mainVarG + 0x10u)) |= 1u;
+    const uint32_t now = mem<uint32_t>((sym::mainVarG + 0x18u));
     if (rng.chance(50))
         mem<int32_t>(kHud + 0x74u) = 0;
     else

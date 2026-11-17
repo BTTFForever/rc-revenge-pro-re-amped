@@ -8,13 +8,13 @@ namespace rc::fuzz {
 
 namespace {
 
-constexpr uint32_t kPickupVars = 0x1ee738u, kPickups = kPickupVars + 0x40u, kPickupPos = kPickupVars + 0x44u;
+constexpr uint32_t kPickupVars = sym::pickupVarG, kPickups = kPickupVars + 0x40u, kPickupPos = kPickupVars + 0x44u;
 constexpr uint32_t kNumPickups = kPickupVars + 0x48u, kLastUpdated = kPickupVars + 0x4cu, kUltimates = kPickupVars + 0x50u;
-constexpr uint32_t kMainVars = 0x1ed900u, kMainTime = kMainVars + 0x1cu, kMainLevel = kMainVars + 0x34au;
+constexpr uint32_t kMainVars = sym::mainVarG, kMainTime = kMainVars + 0x1cu, kMainLevel = kMainVars + 0x34au;
 constexpr uint32_t kPauseMenu = kMainVars + 0x366u, kPickupsOnOff = kMainVars + 0x3a8u;
-constexpr uint32_t kVisMask0 = 0x1f48d8u, kVisMask1 = 0x1f48dcu, kCameraPtr = 0x1eab20u;
-constexpr uint32_t kObjectList = 0x1ee390u, kNoObjects = 0x1ee500u, kRaceOrder = 0x1e9404u, kLevelPtr = 0x327e80u;
-constexpr uint32_t kRandom = 0x328318u, kSfxInitOk = 0x31e488u;
+constexpr uint32_t kVisMask0 = (sym::visVarG + 0x8u), kVisMask1 = (sym::visVarG + 0xcu), kCameraPtr = (sym::cameraVarG + 0xb70u);
+constexpr uint32_t kObjectList = sym::objectVarG, kNoObjects = (sym::objectVarG + 0x170u), kRaceOrder = (sym::aiVarG + 0x4u), kLevelPtr = sym::pLvlG;
+constexpr uint32_t kRandom = sym::randomVarG, kSfxInitOk = sym::sfxVarG;
 
 // Scratch layout.
 constexpr uint32_t kPositions = 0x0000u, kPickup = 0x1000u, kTables = 0x1200u, kLevelTable = 0x1800u;

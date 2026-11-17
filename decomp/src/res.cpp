@@ -36,18 +36,18 @@ void ResTypeSetConstructDaemon(ptr32<char> pType, uint32 constructDaemon, int16 
 
 namespace {
 
-constexpr uint32_t kRes = 0x31e070u; // resVarG
+constexpr uint32_t kRes = sym::resVarG; // resVarG
 // Offsets in resVarG used by address.
 constexpr uint32_t kNamePathCopy = 0x8u, kResNames = 0x48u, kCatHeader = 0x88u, kConcatOffsets = 0x90u,
                    kBinaryHeader = 0xa8u, kSelectionPath = 0x308u, kLookupHeader = 0x388u, kTypePtrs = 0x398u,
                    kTypeList = 0x39cu, kDaemons = 0x3a0u, kHandles = 0x3a4u, kBlockListHeader = 0x3a8u;
 // Strings: "\" (between path and name), "STB", "\CAT\rds.cat", "%s\CAT\RDS.CAT".
-constexpr uint32_t kBackslash = 0x3283c8u, kStbType = 0x3283c0u, kCatName = 0x324d10u, kCatFormat = 0x324d20u;
-constexpr uint32_t kStrcpy = 0x1b8d60u, kStrcat = 0x1b8af0u, kStrcmp = 0x1b8c1cu, kStrrchr = 0x1b9328u, kSprintf = 0x1b8910u,
-                   kQsort = 0x1b7de0u;
-constexpr uint32_t kFMFileOpen = 0x1a0550u, kFMFileRead = 0x1a0838u, kFMFileClose = 0x1a0bf0u, kFMFileSeek = 0x1a0c10u,
-                   kFMFileLength = 0x1a0ca0u;
-constexpr uint32_t kResCompType = 0x1abc80u, kResSTBConstructDaemon = 0x1abca0u;
+constexpr uint32_t kBackslash = (sym::sec_sdata + 0x7c8u), kStbType = (sym::sec_sdata + 0x7c0u), kCatName = (sym::sec_rodata + 0x2710u), kCatFormat = (sym::sec_rodata + 0x2720u);
+constexpr uint32_t kStrcpy = sym::strcpy, kStrcat = sym::strcat, kStrcmp = sym::strcmp, kStrrchr = sym::strrchr, kSprintf = sym::sprintf,
+                   kQsort = sym::qsort;
+constexpr uint32_t kFMFileOpen = sym::FMFileOpen, kFMFileRead = sym::FMFileRead, kFMFileClose = sym::FMFileClose, kFMFileSeek = sym::FMFileSeek,
+                   kFMFileLength = sym::FMFileLength;
+constexpr uint32_t kResCompType = sym::ResCompType, kResSTBConstructDaemon = sym::ResSTBConstructDaemon;
 
 template <typename T>
 T load(uint32_t address)
@@ -668,35 +668,35 @@ ptr32<_sTSO> TSOFindByTag(uint32 tag)
 
 #include "res_fuzz.h"
 
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(ResInit, 0x1aa708, rc::fuzz::resInit)
-RC_DECOMP_FN_SETUP_HEAP(ResLoadInit, 0x1aa8b0, rc::fuzz::resHandles)
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(ResLoadTemporaryHandles, 0x1aa910, rc::fuzz::resTemporaryHandles)
-RC_DECOMP_FN_SETUP_HEAP(ResFreeTemporaryHandles, 0x1aad90, rc::fuzz::resHandles)
-RC_DECOMP_FN_SETUP_HEAP(ResTerm, 0x1aadb8, rc::fuzz::resTerm)
-RC_DECOMP_FN_SETUP_HEAP(ResLoadTerm, 0x1aade0, rc::fuzz::resHandles)
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(ResReadTypeList, 0x1aade8, rc::fuzz::resTypeList)
-RC_DECOMP_FN_SETUP_HEAP(ResFreeTypeList, 0x1ab0c0, rc::fuzz::resTerm)
-RC_DECOMP_FN_BLOCKING_SETUP(ResOpenDB, 0x1ab0f8, rc::fuzz::resOpen)
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(ResLoad, 0x1ab1b0, rc::fuzz::resLoad)
-RC_DECOMP_FN_SETUP_HEAP(ResFreeBlock, 0x1ab2c8, rc::fuzz::resFreeBlock)
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(ResLoadImage, 0x1ab2d0, rc::fuzz::resLoadImage)
-RC_DECOMP_FN_SETUP(ResBinaryCrc, 0x1ab590, rc::fuzz::resCrc)
-RC_DECOMP_FN_SETUP(ResAlloc, 0x1ab828, rc::fuzz::resArea)
-RC_DECOMP_FN_SETUP(ResReAlloc, 0x1ab850, rc::fuzz::resArea)
-RC_DECOMP_FN_SETUP(ResReadAlloc, 0x1ab860, rc::fuzz::resArea)
-RC_DECOMP_FN_NOFUZZ(ResTypeSetConstructDaemon, 0x1ab878)
-RC_DECOMP_FN_NOFUZZ(ResTypeUnSetConstructDaemon, 0x1ab8d8)
-RC_DECOMP_FN_NOFUZZ(ResFindType, 0x1ab920)
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(ResLoadBlock, 0x1ab980, rc::fuzz::resLoadBlock)
-RC_DECOMP_FN_SETUP(ResGetHandle, 0x1aba98, rc::fuzz::resGetHandle)
-RC_DECOMP_FN(ResSetReadErrorFn, 0x1abab0)
-RC_DECOMP_FN_SETUP(ResBinaryChecksum, 0x1abac0, rc::fuzz::resChecksum)
-RC_DECOMP_FN_SETUP(ResCloseDB, 0x1abb60, rc::fuzz::resClose)
-RC_DECOMP_FN_SETUP(ResGetNames, 0x1abbb8, rc::fuzz::resNames)
-RC_DECOMP_FN_SETUP(ResCompType, 0x1abc80, rc::fuzz::resCompType)
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(ResSTBConstructDaemon, 0x1abca0, rc::fuzz::resSTB)
-RC_DECOMP_FN_BLOCKING_SETUP(ResInitLoading, 0x1abd70, rc::fuzz::resInitLoading)
-RC_DECOMP_FN_SETUP(ResAutoRelocateR, 0x1abea8, rc::fuzz::resRelocate)
-RC_DECOMP_FN_BLOCKING_SETUP_HEAP(ResAutoLoadR, 0x1abfa8, rc::fuzz::resAutoLoad)
-RC_DECOMP_FN_SETUP(ResCalcResourceFootPrint, 0x1ac190, rc::fuzz::resArea)
-RC_DECOMP_FN_NOFUZZ(TSOFindByTag, 0x18cb78)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(ResInit, rc::fuzz::resInit)
+RC_DECOMP_FN_SETUP_HEAP(ResLoadInit, rc::fuzz::resHandles)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(ResLoadTemporaryHandles, rc::fuzz::resTemporaryHandles)
+RC_DECOMP_FN_SETUP_HEAP(ResFreeTemporaryHandles, rc::fuzz::resHandles)
+RC_DECOMP_FN_SETUP_HEAP(ResTerm, rc::fuzz::resTerm)
+RC_DECOMP_FN_SETUP_HEAP(ResLoadTerm, rc::fuzz::resHandles)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(ResReadTypeList, rc::fuzz::resTypeList)
+RC_DECOMP_FN_SETUP_HEAP(ResFreeTypeList, rc::fuzz::resTerm)
+RC_DECOMP_FN_BLOCKING_SETUP(ResOpenDB, rc::fuzz::resOpen)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(ResLoad, rc::fuzz::resLoad)
+RC_DECOMP_FN_SETUP_HEAP(ResFreeBlock, rc::fuzz::resFreeBlock)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(ResLoadImage, rc::fuzz::resLoadImage)
+RC_DECOMP_FN_SETUP(ResBinaryCrc, rc::fuzz::resCrc)
+RC_DECOMP_FN_SETUP(ResAlloc, rc::fuzz::resArea)
+RC_DECOMP_FN_SETUP(ResReAlloc, rc::fuzz::resArea)
+RC_DECOMP_FN_SETUP(ResReadAlloc, rc::fuzz::resArea)
+RC_DECOMP_FN_NOFUZZ(ResTypeSetConstructDaemon)
+RC_DECOMP_FN_NOFUZZ(ResTypeUnSetConstructDaemon)
+RC_DECOMP_FN_NOFUZZ(ResFindType)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(ResLoadBlock, rc::fuzz::resLoadBlock)
+RC_DECOMP_FN_SETUP(ResGetHandle, rc::fuzz::resGetHandle)
+RC_DECOMP_FN(ResSetReadErrorFn)
+RC_DECOMP_FN_SETUP(ResBinaryChecksum, rc::fuzz::resChecksum)
+RC_DECOMP_FN_SETUP(ResCloseDB, rc::fuzz::resClose)
+RC_DECOMP_FN_SETUP(ResGetNames, rc::fuzz::resNames)
+RC_DECOMP_FN_SETUP(ResCompType, rc::fuzz::resCompType)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(ResSTBConstructDaemon, rc::fuzz::resSTB)
+RC_DECOMP_FN_BLOCKING_SETUP(ResInitLoading, rc::fuzz::resInitLoading)
+RC_DECOMP_FN_SETUP(ResAutoRelocateR, rc::fuzz::resRelocate)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(ResAutoLoadR, rc::fuzz::resAutoLoad)
+RC_DECOMP_FN_SETUP(ResCalcResourceFootPrint, rc::fuzz::resArea)
+RC_DECOMP_FN_NOFUZZ(TSOFindByTag)

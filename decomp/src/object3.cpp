@@ -22,10 +22,10 @@ using namespace object;
 
 namespace {
 
-constexpr uint32_t kGameTaskShadowCalc = 0x123d98u, kOldRotMatrix = 0x19e268u;
-constexpr uint32_t kCameraVars = 0x1e9fb0u, kVfxRes = 0x1f106cu, kSplitScreen = 0x1edc78u, kWheel = 0x328580u;
-constexpr uint32_t kRdrCamera = 0x1f40b8u, kCurrentDo = 0x1ed908u, kResultTrigger = 0x1f3730u;
-constexpr uint32_t kDumperRockHead = 0x1ee50cu, kSledOffset = 0x323938u, kRockOffset = 0x323948u, kSledTrig = 0x32769cu;
+constexpr uint32_t kGameTaskShadowCalc = sym::GameTaskShadowCalc, kOldRotMatrix = sym::OldRotMatrix;
+constexpr uint32_t kCameraVars = sym::cameraVarG, kVfxRes = (sym::visFxVarG + 0x6cu), kSplitScreen = (sym::mainVarG + 0x378u), kWheel = sym::wheel_573;
+constexpr uint32_t kRdrCamera = sym::rdrCameraG, kCurrentDo = (sym::mainVarG + 0x8u), kResultTrigger = (sym::visFxVarG + 0x2730u);
+constexpr uint32_t kDumperRockHead = (sym::objectVarG + 0x17cu), kSledOffset = (sym::sec_rodata + 0x1338u), kRockOffset = (sym::sec_rodata + 0x1348u), kSledTrig = sym::lit4_32769c;
 
 void copyBytes(uint32_t to, uint32_t from, uint32_t size) { std::memmove(guest_host(to), guest_host(from), size); }
 
@@ -444,6 +444,6 @@ void ObjectRenderLights(ptr32<_sObject> pObject)
 
 } // namespace rc
 
-RC_DECOMP_FN_SETUP_HEAP(ObjectRender, 0x1357e0, rc::fuzz::objectRender)
-RC_DECOMP_FN_SETUP_HEAP(ObjectRenderLights, 0x1343f0, rc::fuzz::objectRender)
-RC_DECOMP_FN_SETUP_HEAP(ObjectDumptugSled, 0x1387a8, rc::fuzz::objectRender)
+RC_DECOMP_FN_SETUP_HEAP(ObjectRender, rc::fuzz::objectRender)
+RC_DECOMP_FN_SETUP_HEAP(ObjectRenderLights, rc::fuzz::objectRender)
+RC_DECOMP_FN_SETUP_HEAP(ObjectDumptugSled, rc::fuzz::objectRender)

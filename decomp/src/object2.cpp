@@ -18,8 +18,8 @@ namespace {
 
 const ee_float k128 = 128.0f, k30 = 30.0f, k70 = 70.0f, k40 = 40.0f;
 inline ee_float constAt(uint32_t address) { return at<ee_float>(address); }
-constexpr uint32_t kAiVolumeScale = 0x32768c, kVolumeScale = 0x327690, kBoatVolumeScale = 0x327694, kMaterialVolumeScale = 0x327698;
-constexpr uint32_t kRocketVolumeScale = 0x327684;
+constexpr uint32_t kAiVolumeScale = sym::lit4_32768c, kVolumeScale = sym::lit4_327690, kBoatVolumeScale = sym::lit4_327694, kMaterialVolumeScale = sym::lit4_327698;
+constexpr uint32_t kRocketVolumeScale = sym::lit4_327684;
 
 // min.s: a plain comparison of the operands in the instruction's order.
 ee_float ee_min(ee_float a, ee_float b) { return std::min(a.v, b.v); }
@@ -59,11 +59,11 @@ void ObjectEngineSFXParms(ptr32<_sObject> pObject, int32 flags)
             volume = 0x6e;
     }
     const revsfxClass &rev = G(revSfxVarG);
-    if (at<int32_t>(0x1ef3b0u + 0x1160u) != 0)
-        volume = ee_div(volume * at<int32_t>(0x1ef3b0u + 0x1164u), 10000);
+    if (at<int32_t>(sym::revSfxVarG + 0x1160u) != 0)
+        volume = ee_div(volume * at<int32_t>(sym::revSfxVarG + 0x1164u), 10000);
     (void)rev;
     const ptr32<_sObjectDef> def = pObject->pDef;
-    if (at<int32_t>(0x1ece10u) == 0) // hudVarG.iReadySteadyGo
+    if (at<int32_t>((sym::hudVarG + 0x70u)) == 0) // hudVarG.iReadySteadyGo
     {
         if (static_cast<uint32_t>(def->type) >= 0x14u)
         {
@@ -246,7 +246,7 @@ void endOil(ptr32<_sObject> pObject)
 
 void ObjectUpdateSkid(ptr32<_sObject> pObject, int32, tTime time)
 {
-    if (at<int32_t>(0x1ece10u) != 0) // hudVarG.iReadySteadyGo
+    if (at<int32_t>((sym::hudVarG + 0x70u)) != 0) // hudVarG.iReadySteadyGo
         return;
     const uint32_t type = static_cast<uint32_t>(pObject->pDef->type);
     if (isUfoOrRocket(type))
@@ -377,7 +377,7 @@ void ObjectUpdateScrape(ptr32<_sObject> pObject, int32)
             if (pObject->playerType != 2)
             {
                 const ee_float depth = at<ee_float>(sphere + 0xacu + static_cast<uint32_t>(c) * 16u);
-                const ee_float loud = ee_min(depth * at<ee_float>(0x327688u) + ee_float(128.0f), k255);
+                const ee_float loud = ee_min(depth * at<ee_float>(sym::lit4_327688) + ee_float(128.0f), k255);
                 const int32_t volume = static_cast<int16_t>(ee_ftoi(loud));
                 _sObjSound &scrape = pObject->pSounds->scrape[0];
                 int32_t number, kind;
@@ -427,7 +427,7 @@ void ObjectSfxFrontEnd(int32 which)
 {
     GuestFrame frame(0x70);
     const ptr32<vec32> pos = frame.local<vec32>(0);
-    constexpr uint32_t kCarousel = 0x1ebaf0u;
+    constexpr uint32_t kCarousel = sym::carouselVarG;
     const HeldS2 s2(kCarousel); // ObjectEngineSFXParms keeps it as a boat's material
     for (uint32_t i = 0; i < at<uint32_t>(kCarousel + 0x1cu); ++i)
     {
@@ -467,7 +467,7 @@ void ObjectSfxFrontEnd(int32 which)
             continue;
         _sObjSound &r = o->pSounds->rocket[0];
         r.pitch = 0x100;
-        const int32_t v = ee_ftoi(o->pPhysics->speed * constAt(0x3276ccu) + k40);
+        const int32_t v = ee_ftoi(o->pPhysics->speed * constAt(sym::lit4_3276cc) + k40);
         r.volume = static_cast<int16>(v);
         int32_t number, kind;
         if (r.handle != -1)
@@ -486,7 +486,7 @@ void ObjectSfxFrontEnd(int32 which)
 void ObjectUpdateOvertaking(ptr32<_sObject> pObject, int32, tTime time)
 {
     const uint32_t incomingA3 = getRegU32(&g_runtime->eeScheduler().runningContext(), 7);
-    if (at<int32_t>(0x1ece10u) != 0) // hudVarG.iReadySteadyGo
+    if (at<int32_t>((sym::hudVarG + 0x70u)) != 0) // hudVarG.iReadySteadyGo
         return;
     GuestFrame frame(0x40);
     _sObject &o = *pObject;
@@ -711,10 +711,10 @@ void ObjectInitLights(ptr32<_sObject> pObject, ptr32<_sObjectDef> pDef)
 
 } // namespace rc
 
-RC_DECOMP_FN_SETUP_HEAP(ObjectEngineSFXParms, 0x136d38, rc::fuzz::objectCar)
-RC_DECOMP_FN_SETUP_HEAP(ObjectUpdateEngine, 0x135f28, rc::fuzz::objectCar)
-RC_DECOMP_FN_SETUP_HEAP(ObjectUpdateSkid, 0x136250, rc::fuzz::objectCar)
-RC_DECOMP_FN_SETUP(ObjectInitLights, 0x133ef0, rc::fuzz::objectScratchDef)
-RC_DECOMP_FN_SETUP_HEAP(ObjectUpdateOvertaking, 0x137c40, rc::fuzz::objectOvertaking)
-RC_DECOMP_FN_SETUP_HEAP(ObjectSfxFrontEnd, 0x1390d0, rc::fuzz::objectFrontEnd)
-RC_DECOMP_FN_SETUP_HEAP(ObjectUpdateScrape, 0x136578, rc::fuzz::objectScrape)
+RC_DECOMP_FN_SETUP_HEAP(ObjectEngineSFXParms, rc::fuzz::objectCar)
+RC_DECOMP_FN_SETUP_HEAP(ObjectUpdateEngine, rc::fuzz::objectCar)
+RC_DECOMP_FN_SETUP_HEAP(ObjectUpdateSkid, rc::fuzz::objectCar)
+RC_DECOMP_FN_SETUP(ObjectInitLights, rc::fuzz::objectScratchDef)
+RC_DECOMP_FN_SETUP_HEAP(ObjectUpdateOvertaking, rc::fuzz::objectOvertaking)
+RC_DECOMP_FN_SETUP_HEAP(ObjectSfxFrontEnd, rc::fuzz::objectFrontEnd)
+RC_DECOMP_FN_SETUP_HEAP(ObjectUpdateScrape, rc::fuzz::objectScrape)

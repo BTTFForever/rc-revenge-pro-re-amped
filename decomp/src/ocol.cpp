@@ -24,8 +24,8 @@ void OColReorderCarCollisionLists();
 
 namespace {
 
-const uint32_t kWeaponRemove = 0x17ad48, kWeaponHitCar = 0x17c238, kWeaponOilCollide = 0x17c958, kCarHitPickup = 0x13f228;
-const uint32_t kOColCollideTable = 0x1ee510;
+const uint32_t kWeaponRemove = sym::WeaponRemove, kWeaponHitCar = sym::WeaponHitCar, kWeaponOilCollide = sym::WeaponOilCollide, kCarHitPickup = sym::CarHitPickup;
+const uint32_t kOColCollideTable = sym::OColCollide;
 
 const ee_float k256 = 256.0f, kEighth = 0.00390625f /* 1/256 */, kQuarter = 0.25f;
 const ee_float kSquareScale = 1.5258789e-05f; // 2^-16: the reach is compared in units of 256.
@@ -141,7 +141,7 @@ void OColInitObj(ptr32<_sOColObj> pObj, ptr32<_sColCellVecPSX> pPos, ptr32<ee_fl
         pObj->interestType = type;
         pObj->nonMover = nonMover ? 1 : 0;
     }
-    const ptr32<_sOColObj> headAddress(0x327f44u); // &oColG.pHead
+    const ptr32<_sOColObj> headAddress((sym::oColG + 0x4u)); // &oColG.pHead
     pObj->pUpdNext = nullptr;
     pObj->pUpdPrev = headAddress;
     pObj->pNext = nullptr;
@@ -171,7 +171,7 @@ namespace {
 // Takes an object out of the update list (oColG.pHead's address stands for the list's start).
 void unlinkUpdate(ptr32<_sOColObj> pObj, ptr32<_sOColObj> prev, ptr32<_sOColObj> next)
 {
-    const ptr32<_sOColObj> headAddress(0x327f44u);
+    const ptr32<_sOColObj> headAddress((sym::oColG + 0x4u));
     ptr32<_sOColObj> head = G(oColG).pHead;
     if (prev)
     {
@@ -245,7 +245,7 @@ void OColAddObjToCell(ptr32<_sOColObj> pObj)
 
 void OColAddObjectHead(ptr32<_sOColObj> pObj)
 {
-    pObj->pUpdPrev = ptr32<_sOColObj>(0x327f44u);
+    pObj->pUpdPrev = ptr32<_sOColObj>((sym::oColG + 0x4u));
     pObj->pUpdNext = G(oColG).pHead;
     if (G(oColG).pHead)
         G(oColG).pHead->pUpdPrev = pObj;
@@ -774,57 +774,57 @@ bool_ WeaponHitTornado(ptr32<_sOColObj>, ptr32<_sOColObj>) { return 0; }
 } // namespace rc
 
 
-RC_DECOMP_FN(OColInit, 0x13b890)
-RC_DECOMP_FN(OColTerm, 0x13b898)
-RC_DECOMP_FN(OColLvlInit, 0x13b8a0)
-RC_DECOMP_FN(OColLvlTerm, 0x13b8b0)
-RC_DECOMP_FN(OColRender, 0x13ba48)
-RC_DECOMP_FN_SETUP(OColInitObj, 0x13b8c0, rc::fuzz::ocolInitObject)
-RC_DECOMP_FN_SETUP(OColDeleteObject, 0x13b9b8, rc::fuzz::ocolObject)
-RC_DECOMP_FN_SETUP(OColDeleteObjFromCell, 0x13ba50, rc::fuzz::ocolObject)
-RC_DECOMP_FN_SETUP(OColAddObjToCell, 0x13bad0, rc::fuzz::ocolObject)
-RC_DECOMP_FN_SETUP(OColAddObjectHead, 0x13bb40, rc::fuzz::ocolObject)
-RC_DECOMP_FN_SETUP(OColDeleteObjectUpdList, 0x13be60, rc::fuzz::ocolObject)
-RC_DECOMP_FN_SETUP(OColReorderCarCollisionLists, 0x13b138, rc::fuzz::ocolReorder)
-RC_DECOMP_FN_SETUP(OColProcess, 0x13b418, rc::fuzz::ocolList)
+RC_DECOMP_FN(OColInit)
+RC_DECOMP_FN(OColTerm)
+RC_DECOMP_FN(OColLvlInit)
+RC_DECOMP_FN(OColLvlTerm)
+RC_DECOMP_FN(OColRender)
+RC_DECOMP_FN_SETUP(OColInitObj, rc::fuzz::ocolInitObject)
+RC_DECOMP_FN_SETUP(OColDeleteObject, rc::fuzz::ocolObject)
+RC_DECOMP_FN_SETUP(OColDeleteObjFromCell, rc::fuzz::ocolObject)
+RC_DECOMP_FN_SETUP(OColAddObjToCell, rc::fuzz::ocolObject)
+RC_DECOMP_FN_SETUP(OColAddObjectHead, rc::fuzz::ocolObject)
+RC_DECOMP_FN_SETUP(OColDeleteObjectUpdList, rc::fuzz::ocolObject)
+RC_DECOMP_FN_SETUP(OColReorderCarCollisionLists, rc::fuzz::ocolReorder)
+RC_DECOMP_FN_SETUP(OColProcess, rc::fuzz::ocolList)
 
-RC_DECOMP_FN_SETUP(CarHitAnimDefault, 0x13a480, rc::fuzz::ocolCarAnim)
-RC_DECOMP_FN_SETUP(CarHitAnim, 0x13a998, rc::fuzz::ocolCarAnim)
-RC_DECOMP_FN_SETUP(CarHitWeaponRock, 0x13ab88, rc::fuzz::ocolCarRock)
-RC_DECOMP_FN_SETUP(OColCar_Car_Collide, 0x139d88, rc::fuzz::ocolCarCar)
-RC_DECOMP_FN_SETUP(OColCar_Anim_Collide, 0x13afa0, rc::fuzz::ocolCarAnim)
-RC_DECOMP_FN_SETUP(OColAnim_Car_Collide, 0x13bdf8, rc::fuzz::ocolAnimCar)
-RC_DECOMP_FN_SETUP(CarHitSharkFin, 0x13be90, rc::fuzz::ocolCarAnim)
-RC_DECOMP_FN_SETUP(CarHitRat, 0x13beb0, rc::fuzz::ocolCarAnim)
-RC_DECOMP_FN_SETUP(CarHitCrab, 0x13bed0, rc::fuzz::ocolCarAnim)
-RC_DECOMP_FN_SETUP(CarHitBottle, 0x13bef0, rc::fuzz::ocolCarAnim)
-RC_DECOMP_FN_SETUP(CarHitTentacles, 0x13bf10, rc::fuzz::ocolCarAnim)
-RC_DECOMP_FN_SETUP(CarHitTornado, 0x13bf30, rc::fuzz::ocolCarAnim)
-RC_DECOMP_FN_SETUP_HEAP(OColWeapon_Anim_Collide, 0x13b0b8, rc::fuzz::ocolWeaponAnim)
-RC_DECOMP_FN_SETUP_HEAP(OColAnim_Weapon_Collide, 0x13be30, rc::fuzz::ocolAnimWeapon)
-RC_DECOMP_FN_SETUP_HEAP(WeaponHitSharkFin, 0x13bfd8, rc::fuzz::ocolWeaponAnim)
-RC_DECOMP_FN_SETUP_HEAP(WeaponHitRat, 0x13c028, rc::fuzz::ocolWeaponAnim)
-RC_DECOMP_FN_SETUP_HEAP(WeaponHitCrab, 0x13c078, rc::fuzz::ocolWeaponAnim)
-RC_DECOMP_FN_SETUP_HEAP(WeaponHitBottle, 0x13c0c8, rc::fuzz::ocolWeaponAnim)
-RC_DECOMP_FN_SETUP_HEAP(WeaponHitTentacles, 0x13c118, rc::fuzz::ocolWeaponAnim)
-RC_DECOMP_FN(WeaponHitTornado, 0x13c168)
-RC_DECOMP_FN_SETUP(OColCar_Pickup_Collide, 0x13bb70, rc::fuzz::ocolCarPickup)
-RC_DECOMP_FN_SETUP(OColPickup_Car_Collide, 0x13bc88, rc::fuzz::ocolPickupCar)
-RC_DECOMP_FN_SETUP(OColCar_OilSlick_Collide, 0x13bbb0, rc::fuzz::ocolCarOil)
-RC_DECOMP_FN_SETUP(OColOilSlick_Car_Collide, 0x13bce8, rc::fuzz::ocolOilCar)
-RC_DECOMP_FN_SETUP_HEAP(OColCar_Weapon_Collide, 0x13bbd8, rc::fuzz::ocolCarWeapon)
-RC_DECOMP_FN_SETUP_HEAP(OColWeapon_Car_Collide, 0x13bd30, rc::fuzz::ocolWeaponCar)
-RC_DECOMP_FN(OColPickup_Pickup_Collide, 0x13bcc8)
-RC_DECOMP_FN(OColPickup_OilSlick_Collide, 0x13bcd0)
-RC_DECOMP_FN(OColPickup_Weapon_Collide, 0x13bcd8)
-RC_DECOMP_FN(OColPickup_Anim_Collide, 0x13bce0)
-RC_DECOMP_FN(OColOilSlick_Pickup_Collide, 0x13bd10)
-RC_DECOMP_FN(OColOilSlick_OilSlick_Collide, 0x13bd18)
-RC_DECOMP_FN(OColOilSlick_Weapon_Collide, 0x13bd20)
-RC_DECOMP_FN(OColOilSlick_Anim_Collide, 0x13bd28)
-RC_DECOMP_FN(OColWeapon_Pickup_Collide, 0x13bde0)
-RC_DECOMP_FN(OColWeapon_OilSlick_Collide, 0x13bde8)
-RC_DECOMP_FN(OColWeapon_Weapon_Collide, 0x13bdf0)
-RC_DECOMP_FN(OColAnim_Pickup_Collide, 0x13be20)
-RC_DECOMP_FN(OColAnim_OilSlick_Collide, 0x13be28)
-RC_DECOMP_FN(OColAnim_Anim_Collide, 0x13be58)
+RC_DECOMP_FN_SETUP(CarHitAnimDefault, rc::fuzz::ocolCarAnim)
+RC_DECOMP_FN_SETUP(CarHitAnim, rc::fuzz::ocolCarAnim)
+RC_DECOMP_FN_SETUP(CarHitWeaponRock, rc::fuzz::ocolCarRock)
+RC_DECOMP_FN_SETUP(OColCar_Car_Collide, rc::fuzz::ocolCarCar)
+RC_DECOMP_FN_SETUP(OColCar_Anim_Collide, rc::fuzz::ocolCarAnim)
+RC_DECOMP_FN_SETUP(OColAnim_Car_Collide, rc::fuzz::ocolAnimCar)
+RC_DECOMP_FN_SETUP(CarHitSharkFin, rc::fuzz::ocolCarAnim)
+RC_DECOMP_FN_SETUP(CarHitRat, rc::fuzz::ocolCarAnim)
+RC_DECOMP_FN_SETUP(CarHitCrab, rc::fuzz::ocolCarAnim)
+RC_DECOMP_FN_SETUP(CarHitBottle, rc::fuzz::ocolCarAnim)
+RC_DECOMP_FN_SETUP(CarHitTentacles, rc::fuzz::ocolCarAnim)
+RC_DECOMP_FN_SETUP(CarHitTornado, rc::fuzz::ocolCarAnim)
+RC_DECOMP_FN_SETUP_HEAP(OColWeapon_Anim_Collide, rc::fuzz::ocolWeaponAnim)
+RC_DECOMP_FN_SETUP_HEAP(OColAnim_Weapon_Collide, rc::fuzz::ocolAnimWeapon)
+RC_DECOMP_FN_SETUP_HEAP(WeaponHitSharkFin, rc::fuzz::ocolWeaponAnim)
+RC_DECOMP_FN_SETUP_HEAP(WeaponHitRat, rc::fuzz::ocolWeaponAnim)
+RC_DECOMP_FN_SETUP_HEAP(WeaponHitCrab, rc::fuzz::ocolWeaponAnim)
+RC_DECOMP_FN_SETUP_HEAP(WeaponHitBottle, rc::fuzz::ocolWeaponAnim)
+RC_DECOMP_FN_SETUP_HEAP(WeaponHitTentacles, rc::fuzz::ocolWeaponAnim)
+RC_DECOMP_FN(WeaponHitTornado)
+RC_DECOMP_FN_SETUP(OColCar_Pickup_Collide, rc::fuzz::ocolCarPickup)
+RC_DECOMP_FN_SETUP(OColPickup_Car_Collide, rc::fuzz::ocolPickupCar)
+RC_DECOMP_FN_SETUP(OColCar_OilSlick_Collide, rc::fuzz::ocolCarOil)
+RC_DECOMP_FN_SETUP(OColOilSlick_Car_Collide, rc::fuzz::ocolOilCar)
+RC_DECOMP_FN_SETUP_HEAP(OColCar_Weapon_Collide, rc::fuzz::ocolCarWeapon)
+RC_DECOMP_FN_SETUP_HEAP(OColWeapon_Car_Collide, rc::fuzz::ocolWeaponCar)
+RC_DECOMP_FN(OColPickup_Pickup_Collide)
+RC_DECOMP_FN(OColPickup_OilSlick_Collide)
+RC_DECOMP_FN(OColPickup_Weapon_Collide)
+RC_DECOMP_FN(OColPickup_Anim_Collide)
+RC_DECOMP_FN(OColOilSlick_Pickup_Collide)
+RC_DECOMP_FN(OColOilSlick_OilSlick_Collide)
+RC_DECOMP_FN(OColOilSlick_Weapon_Collide)
+RC_DECOMP_FN(OColOilSlick_Anim_Collide)
+RC_DECOMP_FN(OColWeapon_Pickup_Collide)
+RC_DECOMP_FN(OColWeapon_OilSlick_Collide)
+RC_DECOMP_FN(OColWeapon_Weapon_Collide)
+RC_DECOMP_FN(OColAnim_Pickup_Collide)
+RC_DECOMP_FN(OColAnim_OilSlick_Collide)
+RC_DECOMP_FN(OColAnim_Anim_Collide)

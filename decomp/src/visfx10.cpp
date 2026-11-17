@@ -31,13 +31,13 @@ namespace {
 using vfx::at;
 
 constexpr uint32_t kRing = 0x40;          // the ring header: mask, count, head, tail
-constexpr uint32_t kMainVar = 0x1ed900;   // mainVarG (its first word is the status)
-constexpr uint32_t kPlayerStates = 0x1f37e0; // u8PlayerStates: per player a word, sNew (+0) and sOld (+2)
-constexpr uint32_t kMaterials = 0x1edce8; // mtlG.mtl: 0x18 bytes each, the wheel-mark bits at +4
-constexpr uint32_t kObjects = 0x1ee390;   // objectVarG: the object list, the count at +0x170
+constexpr uint32_t kMainVar = sym::mainVarG;   // mainVarG (its first word is the status)
+constexpr uint32_t kPlayerStates = sym::u8PlayerStates; // u8PlayerStates: per player a word, sNew (+0) and sOld (+2)
+constexpr uint32_t kMaterials = sym::mtlG; // mtlG.mtl: 0x18 bytes each, the wheel-mark bits at +4
+constexpr uint32_t kObjects = sym::objectVarG;   // objectVarG: the object list, the count at +0x170
 
-constexpr uint32_t kVfxAddNew = 0x157c50, kRevSfxPlay3D = 0x1418a8, kObjectWeaponAffectRemove = 0x137800, kNodeCalcWorldPos = 0x1339d0;
-constexpr uint32_t kAtan2f = 0x1c87d0, kUnitMatrix = 0x1c7ac8, kRotMatrixX = 0x1c7c10, kRotMatrixZ = 0x1c7b68, kMulMatrix = 0x1c77d8;
+constexpr uint32_t kVfxAddNew = sym::VfxAddNew, kRevSfxPlay3D = sym::RevSfxPlay3D, kObjectWeaponAffectRemove = sym::ObjectWeaponAffectRemove, kNodeCalcWorldPos = sym::NodeCalcWorldPos;
+constexpr uint32_t kAtan2f = sym::atan2f, kUnitMatrix = sym::sceVu0UnitMatrix, kRotMatrixX = sym::sceVu0RotMatrixX, kRotMatrixZ = sym::sceVu0RotMatrixZ, kMulMatrix = sym::sceVu0MulMatrix;
 
 inline uint8_t &ringMask(uint32_t m) { return at<uint8_t>(m + kRing); }
 inline uint8_t &ringCount(uint32_t m) { return at<uint8_t>(m + kRing + 1); }
@@ -188,7 +188,7 @@ void VfxHandler_Quake(ptr32<_sVfx_Object> mem)
         at<float>(obj + 0x1e0) = ny;
         at<float>(obj + 0x1dc) = nx;
         at<float>(obj + 0x1e4) = nz;
-        const ee_float step(at<float>(0x327830u)); // 2 pi / 32
+        const ee_float step(at<float>(sym::lit4_327830)); // 2 pi / 32
         guest_call(kRotMatrixX, ptr32<float>(mat), ptr32<float>(mat), guest_call<ee_float>(kAtan2f, ee_float(at<float>(obj + 0x1e4)), ee_float(at<float>(obj + 0x1e0))));
         const ee_float tilt = guest_call<ee_float>(kAtan2f, ee_float(at<float>(obj + 0x1dc)), ee_float(at<float>(obj + 0x1e0)));
         guest_call(kRotMatrixZ, ptr32<float>(mat), ptr32<float>(mat), -tilt);
@@ -239,7 +239,7 @@ void VfxHandler_Quake2(ptr32<_sVfx_Object> mem)
             at<float>(normal + 4) = ny;
             at<float>(normal + 8) = nz;
             guest_call(kRotMatrixX, ptr32<float>(mat), ptr32<float>(mat), guest_call<ee_float>(kAtan2f, nz, ny));
-            const ee_float step(at<float>(0x327878u)); // 2 pi / 32
+            const ee_float step(at<float>(sym::lit4_327878)); // 2 pi / 32
             const ee_float tilt = guest_call<ee_float>(kAtan2f, ee_float(at<float>(normal)), ee_float(at<float>(normal + 4)));
             guest_call(kRotMatrixZ, ptr32<float>(mat), ptr32<float>(mat), -tilt);
             at<uint16_t>(m + 0x65c) = 0;
@@ -436,7 +436,7 @@ void VfxHandler_CarSkidMark(ptr32<_sVfx_Object> mem)
                 }
             }
             if (rnd(0x1f) == 0 && (playerState(car, 0) & 8) != 0 &&
-                ee_float(at<float>(0x3277d0u)) < ee_float(at<float>(at<uint32_t>(car + 0x20) + 0x38)))
+                ee_float(at<float>(sym::lit4_3277d0)) < ee_float(at<float>(at<uint32_t>(car + 0x20) + 0x38)))
                 addEffect(at<uint32_t>(m + 0x184), static_cast<int32_t>(wheel), static_cast<int32_t>(material), 8);
         }
         for (uint32_t index = ringHeadU(m); index != ringTail(m); index = (index + 1) & ringMask(m))
@@ -682,7 +682,7 @@ void VfxHandler_Aerial(ptr32<_sVfx_Object> mem)
     }
     else
     {
-        const ee_float follow(at<float>(0x3277f0u)), gain(at<float>(0x3277f4u)), damp(at<float>(0x3277f8u)), spring(at<float>(0x3277fcu));
+        const ee_float follow(at<float>(sym::lit4_3277f0)), gain(at<float>(sym::lit4_3277f4)), damp(at<float>(sym::lit4_3277f8)), spring(at<float>(sym::lit4_3277fc));
         const uint32_t velocity = carState(car) + 0x1c;
         const ee_float bendX(at<float>(m + 0xc0)), bendY(at<float>(m + 0xc4)), bendZ(at<float>(m + 0xc8));
         for (uint32_t axis = 0; axis < 3; ++axis)
@@ -725,7 +725,7 @@ void VfxHandler_Aerial(ptr32<_sVfx_Object> mem)
             sz = high;
         }
         at<float>(m + 0xc0) = bendX + sx;
-        at<float>(m + 0xc8) = bendZ + (sz + sy * ee_float(at<float>(0x327800u)));
+        at<float>(m + 0xc8) = bendZ + (sz + sy * ee_float(at<float>(sym::lit4_327800)));
     }
     const uint32_t state = carState(car);
     if (at<uint32_t>(m + 0xb4) != 0)
@@ -736,7 +736,7 @@ void VfxHandler_Aerial(ptr32<_sVfx_Object> mem)
         at<float>(m + 0xc0) = ee_itof(sh16(state + 0x28 + 4) >> 3);
     }
     const uint32_t carMatrix = VfxPSXToVUMatrix(ptr32<MATRIX>(carState(car) + 0x28)).address;
-    const ee_float bendScale(at<float>(0x327804u)), stepScale(at<float>(0x327808u));
+    const ee_float bendScale(at<float>(sym::lit4_327804)), stepScale(at<float>(sym::lit4_327808));
     const uint32_t mat = frame.local<float>(0x40).address, step = frame.local<float>(0x80).address;
     guest_call(kUnitMatrix, ptr32<float>(mat));
     guest_call(kRotMatrixX, ptr32<float>(mat), ptr32<float>(mat), -ee_float(at<float>(m + 0xc8)) * bendScale);
@@ -1112,16 +1112,16 @@ void vfxSprayHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxGiveTerrorHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 }
 
-RC_DECOMP_FN_SETUP(VfxHandler_Quake, 0x162638, rc::fuzz::vfxQuakeHandler)
-RC_DECOMP_FN_SETUP(VfxHandler_Quake2, 0x168540, rc::fuzz::vfxQuakeHandler)
-RC_DECOMP_FN_SETUP(VfxHandler_OilDump, 0x15a1a0, rc::fuzz::vfxOilDumpHandler)
-RC_DECOMP_FN_SETUP(VfxHandler_WaterSploosh, 0x15cde8, rc::fuzz::vfxWaterSplooshHandler)
-RC_DECOMP_FN_SETUP(VfxHandler_CarSplash, 0x170be0, rc::fuzz::vfxCarSplashHandler)
-RC_DECOMP_FN_SETUP(VfxHandler_Aerial, 0x15e970, rc::fuzz::vfxAerialHandler)
-RC_DECOMP_FN_SETUP(VfxHandler_CarRespawn, 0x16be48, rc::fuzz::vfxCarRespawnHandler)
-RC_DECOMP_FN_SETUP(VfxHandler_Spray, 0x177370, rc::fuzz::vfxSprayHandler)
+RC_DECOMP_FN_SETUP(VfxHandler_Quake, rc::fuzz::vfxQuakeHandler)
+RC_DECOMP_FN_SETUP(VfxHandler_Quake2, rc::fuzz::vfxQuakeHandler)
+RC_DECOMP_FN_SETUP(VfxHandler_OilDump, rc::fuzz::vfxOilDumpHandler)
+RC_DECOMP_FN_SETUP(VfxHandler_WaterSploosh, rc::fuzz::vfxWaterSplooshHandler)
+RC_DECOMP_FN_SETUP(VfxHandler_CarSplash, rc::fuzz::vfxCarSplashHandler)
+RC_DECOMP_FN_SETUP(VfxHandler_Aerial, rc::fuzz::vfxAerialHandler)
+RC_DECOMP_FN_SETUP(VfxHandler_CarRespawn, rc::fuzz::vfxCarRespawnHandler)
+RC_DECOMP_FN_SETUP(VfxHandler_Spray, rc::fuzz::vfxSprayHandler)
 // These add effects (VfxAddNew), play sounds or change other cars: their random inputs compare and restore all of RAM.
-RC_DECOMP_FN_SETUP_HEAP(VfxHandler_CarSkidMark, 0x15b010, rc::fuzz::vfxCarSkidMarkHandler)
-RC_DECOMP_FN_SETUP_HEAP(VfxHandler_BoatWake, 0x15d610, rc::fuzz::vfxBoatWakeHandler)
-RC_DECOMP_FN_SETUP_HEAP(VfxHandler_SpinPickup, 0x160e80, rc::fuzz::vfxSpinPickupHandler)
-RC_DECOMP_FN_SETUP_HEAP(VfxHandler_GiveTerror, 0x15fc28, rc::fuzz::vfxGiveTerrorHandler)
+RC_DECOMP_FN_SETUP_HEAP(VfxHandler_CarSkidMark, rc::fuzz::vfxCarSkidMarkHandler)
+RC_DECOMP_FN_SETUP_HEAP(VfxHandler_BoatWake, rc::fuzz::vfxBoatWakeHandler)
+RC_DECOMP_FN_SETUP_HEAP(VfxHandler_SpinPickup, rc::fuzz::vfxSpinPickupHandler)
+RC_DECOMP_FN_SETUP_HEAP(VfxHandler_GiveTerror, rc::fuzz::vfxGiveTerrorHandler)

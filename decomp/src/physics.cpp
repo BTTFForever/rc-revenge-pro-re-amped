@@ -1276,7 +1276,7 @@ void FCalcWaterForces(ptr32<_sFPhysLibCar> pCar)
 
     // A small bob up and down, from a table of 32 sine values in the game's data.
     const int32_t ticks = G(FPhysLib).ticks;
-    const ee_float *const table = static_cast<const ee_float *>(guest_host(0x324AF8u));
+    const ee_float *const table = static_cast<const ee_float *>(guest_host((sym::sec_rodata + 0x24f8u)));
     const ee_float bob = table[(static_cast<uint32_t>(ticks - (ticks >> 31)) & 0x3Eu) / 2u] * G(perturbScaleG);
 
     for (int i = 0; i < 5; ++i, ++sphere)
@@ -1387,26 +1387,26 @@ void FCalcCarBodyForces(ptr32<_sFPhysLibCar> pCar)
 } // namespace rc
 
 // Random angles can exceed the range of the ported sine and cosine.
-RC_DECOMP_FN_NOFUZZ(FMatRotateY, 0x1992c8)
-RC_DECOMP_FN_NOFUZZ(FUpdateOrientationFromAngVel, 0x198a60)
-RC_DECOMP_FN(FPhysLibInit, 0x196b98)
-RC_DECOMP_FN_SETUP(FPhysLibInitTESTCarData, 0x196400, rc::fuzz::physicsCarCopy)
-RC_DECOMP_FN_SETUP(FPhysLibInitTESTCarSpheres, 0x196790, rc::fuzz::physicsCarCopy)
-RC_DECOMP_FN(FPhysLibTerm, 0x196c00)
+RC_DECOMP_FN_NOFUZZ(FMatRotateY)
+RC_DECOMP_FN_NOFUZZ(FUpdateOrientationFromAngVel)
+RC_DECOMP_FN(FPhysLibInit)
+RC_DECOMP_FN_SETUP(FPhysLibInitTESTCarData, rc::fuzz::physicsCarCopy)
+RC_DECOMP_FN_SETUP(FPhysLibInitTESTCarSpheres, rc::fuzz::physicsCarCopy)
+RC_DECOMP_FN(FPhysLibTerm)
 // These follow pointers held inside the car, so random inputs would only produce meaningless addresses.
-RC_DECOMP_FN_NOFUZZ(FPhysLibSphereInitFixup, 0x1962a8)
-RC_DECOMP_FN_NOFUZZ(FInitialiseCar, 0x195fa0)
-RC_DECOMP_FN_SETUP_HEAP(FPhysLibCollisionReponse, 0x196c10, rc::fuzz::physicsRace)
-RC_DECOMP_FN_NOFUZZ(FPhysLibAddCar, 0x196df0)
-RC_DECOMP_FN_NOFUZZ(FPhysLibDeleteCar, 0x196e38)
-RC_DECOMP_FN_SETUP(FPhysLibSimulation, 0x196a60, rc::fuzz::physicsCars)
-RC_DECOMP_FN_SETUP_HEAP(FCollisionResponse, 0x196f68, rc::fuzz::physicsResponse)
-RC_DECOMP_FN_SETUP_HEAP(FCollisionResponseOther, 0x197b50, rc::fuzz::physicsResponse)
-RC_DECOMP_FN_SETUP_HEAP(FCollisionResponseCarCar, 0x197e40, rc::fuzz::physicsResponse)
-RC_DECOMP_FN_NOFUZZ(FPhysLibUpdateCarSpheres, 0x198268)
-RC_DECOMP_FN_NOFUZZ(FUpdateCarWheels, 0x198740)
-RC_DECOMP_FN_NOFUZZ(FUpdateCarBody, 0x198c68)
-RC_DECOMP_FN_NOFUZZ(FCalcCarWheelForces, 0x1999e0)
-RC_DECOMP_FN_NOFUZZ(FCalcBoatMotorForces, 0x19a1b0)
-RC_DECOMP_FN_NOFUZZ(FCalcWaterForces, 0x19a4f8)
-RC_DECOMP_FN_NOFUZZ(FCalcCarBodyForces, 0x199698)
+RC_DECOMP_FN_NOFUZZ(FPhysLibSphereInitFixup)
+RC_DECOMP_FN_NOFUZZ(FInitialiseCar)
+RC_DECOMP_FN_SETUP_HEAP(FPhysLibCollisionReponse, rc::fuzz::physicsRace)
+RC_DECOMP_FN_NOFUZZ(FPhysLibAddCar)
+RC_DECOMP_FN_NOFUZZ(FPhysLibDeleteCar)
+RC_DECOMP_FN_SETUP(FPhysLibSimulation, rc::fuzz::physicsCars)
+RC_DECOMP_FN_SETUP_HEAP(FCollisionResponse, rc::fuzz::physicsResponse)
+RC_DECOMP_FN_SETUP_HEAP(FCollisionResponseOther, rc::fuzz::physicsResponse)
+RC_DECOMP_FN_SETUP_HEAP(FCollisionResponseCarCar, rc::fuzz::physicsResponse)
+RC_DECOMP_FN_NOFUZZ(FPhysLibUpdateCarSpheres)
+RC_DECOMP_FN_NOFUZZ(FUpdateCarWheels)
+RC_DECOMP_FN_NOFUZZ(FUpdateCarBody)
+RC_DECOMP_FN_NOFUZZ(FCalcCarWheelForces)
+RC_DECOMP_FN_NOFUZZ(FCalcBoatMotorForces)
+RC_DECOMP_FN_NOFUZZ(FCalcWaterForces)
+RC_DECOMP_FN_NOFUZZ(FCalcCarBodyForces)

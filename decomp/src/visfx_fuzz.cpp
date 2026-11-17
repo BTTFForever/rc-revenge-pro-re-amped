@@ -233,7 +233,7 @@ void vfxEffectOnCar(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 void vfxQuad(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 {
     restoreGlobals();
-    g_quad.set(0x1f1030u, scratch + kEffect); // visFxVarG.pGT4
+    g_quad.set((sym::visFxVarG + 0x30u), scratch + kEffect); // visFxVarG.pGT4
     for (int i = 0; i < 4; ++i)
         setArg(ctx, i, nextFuzz(state));
     for (int i = 0; i < 2; ++i)
@@ -308,7 +308,7 @@ void vfxRouteFinder(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     if (!buildCar(ctx, state, scratch))
         return;
     mem<uint32_t>(scratch + kEffect + 0x40) = scratch;
-    g_trackHints.set(0x1ecbf0u, rnd(state, 2) ? 1u : 0u); // frontEndVarG.gameStateData.gameConfig.trackDirHints
+    g_trackHints.set((sym::frontEndVarG + 0x198u), rnd(state, 2) ? 1u : 0u); // frontEndVarG.gameStateData.gameConfig.trackDirHints
     setArg(ctx, 0, scratch + kEffect);
 }
 
@@ -435,8 +435,8 @@ void tableSetup(R5900Context *ctx, uint64_t &state, uint32_t scratch, Claim<Tabl
 
 } // namespace
 
-void vfxRainTable(R5900Context *ctx, uint64_t &state, uint32_t scratch) { tableSetup(ctx, state, scratch, g_rain, 0x1f1e64u); }
-void vfxGlintTable(R5900Context *ctx, uint64_t &state, uint32_t scratch) { tableSetup(ctx, state, scratch, g_glint, 0x1f36b0u); }
+void vfxRainTable(R5900Context *ctx, uint64_t &state, uint32_t scratch) { tableSetup(ctx, state, scratch, g_rain, (sym::visFxVarG + 0xe64u)); }
+void vfxGlintTable(R5900Context *ctx, uint64_t &state, uint32_t scratch) { tableSetup(ctx, state, scratch, g_glint, (sym::visFxVarG + 0x26b0u)); }
 
 // a0 a milk float: the car at +0x40 whose two wheel objects (flag bytes at +0x18b) and player number it flags.
 void vfxMilk(R5900Context *ctx, uint64_t &state, uint32_t scratch)
@@ -561,7 +561,7 @@ void buildEnds(uint64_t &state, uint32_t scratch)
 void vfxRibbon(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 {
     restoreGlobals();
-    g_quad.set(0x1f1030u, scratch + kEffect);
+    g_quad.set((sym::visFxVarG + 0x30u), scratch + kEffect);
     buildEnds(state, scratch);
     const uint32_t a = rnd(state, 4), b = rnd(state, 4);
     setArg(ctx, 0, scratch + kVectors + 16 * a);
@@ -585,7 +585,7 @@ void vfxRibbonShorts(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 void vfxFourEnds(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 {
     restoreGlobals();
-    g_quad.set(0x1f1030u, scratch + kEffect);
+    g_quad.set((sym::visFxVarG + 0x30u), scratch + kEffect);
     buildEnds(state, scratch);
     for (int i = 0; i < 4; ++i)
         setArg(ctx, i, scratch + kVectors + 0x80 + 8 * rnd(state, 4));
@@ -594,8 +594,8 @@ void vfxFourEnds(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 // The camera-facing sprite: the current sprite is a record in scratch (scale, position, texture, flags, angle, colour).
 void buildSprite(uint64_t &state, uint32_t scratch)
 {
-    g_quad.set(0x1f1030u, scratch + kQuad);
-    g_sprite.set(0x1f3720u, scratch + kSprite); // visFxVarG.sprite
+    g_quad.set((sym::visFxVarG + 0x30u), scratch + kQuad);
+    g_sprite.set((sym::visFxVarG + 0x2720u), scratch + kSprite); // visFxVarG.sprite
     const uint32_t sprite = scratch + kSprite;
     mem<float>(sprite) = rnd(state, 8) ? frnd(state, 40.0f) : 0.0f;
     for (uint32_t axis = 0; axis < 3; ++axis)
@@ -640,7 +640,7 @@ constexpr uint32_t kHandle = 0x7f00u; // a handle word for heap allocations
 void renderState(uint64_t &state, uint32_t scratch)
 {
     buildSprite(state, scratch);
-    g_res.set(0x1f106cu, scratch + kRes);
+    g_res.set((sym::visFxVarG + 0x6cu), scratch + kRes);
     for (uint32_t i = 0; i < 0x1c; ++i)
         mem<uint32_t>(scratch + kRes + 4 * i) = scratch + kTexture + 16 * rnd(state, 8);
 }
@@ -1101,7 +1101,7 @@ void vfxTSFXLvlInit(R5900Context *, uint64_t &state, uint32_t scratch) { vfxTSFX
 void vfxTSFXUpdate(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 {
     restoreGlobals();
-    const uint32_t handler = rnd(state, 3) ? 0x179020u : 0u;
+    const uint32_t handler = rnd(state, 3) ? sym::Vfx2Handler_TumbleWeed : 0u;
     const FxList list = buildFxList(state, scratch, 1 + rnd(state, 3), 0x60, handler, false);
     G(visFxVarG).vfxTSFXHeader = ptr32<_sVfx_TSFX>(list.head);
     G(visFxVarG).vfxTSFXFooter = ptr32<_sVfx_TSFX>(list.foot);
@@ -1529,7 +1529,7 @@ void vfxUfoBurnerRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
         return;
     nearCar(state, scratch);
     renderState(state, scratch);
-    g_level.set(0x1edc4au, rnd(state, 2) ? 0x62 : 0x10);
+    g_level.set((sym::mainVarG + 0x34au), rnd(state, 2) ? 0x62 : 0x10);
     const uint32_t effect = scratch + kEffect;
     mem<uint32_t>(effect + 0x650) = scratch;
     mem<uint32_t>(effect + 0x654) = nextFuzz(state);
@@ -1559,8 +1559,8 @@ void vfxRouteFinderRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch
     if (!buildCar(ctx, state, scratch))
         return;
     renderState(state, scratch);
-    g_trackHints.set(0x1ecbf0u, rnd(state, 8) ? 1u : 0u);
-    g_camera.set(0x1eab20u, scratch + kAuxA);
+    g_trackHints.set((sym::frontEndVarG + 0x198u), rnd(state, 8) ? 1u : 0u);
+    g_camera.set((sym::cameraVarG + 0xb70u), scratch + kAuxA);
     mem<uint32_t>(scratch + kAuxA + 0xac) = rnd(state, 8) ? scratch : scratch + 0x40;
     const uint32_t effect = scratch + kEffect;
     mem<uint32_t>(effect + 0x40) = scratch;
@@ -1591,7 +1591,7 @@ void vfxTTclockHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 {
     if (!buildCar(ctx, state, scratch))
         return;
-    g_camera.set(0x1eab20u, scratch + kAuxA);
+    g_camera.set((sym::cameraVarG + 0xb70u), scratch + kAuxA);
     mem<uint32_t>(scratch + kAuxA + 0xac) = rnd(state, 2) ? scratch : scratch + 0x40;
     ttClock(state, scratch);
     setArg(ctx, 0, scratch + kEffect);
@@ -1604,7 +1604,7 @@ void vfxTTclockRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     nearCar(state, scratch);
     renderState(state, scratch);
     mem<uint8_t>(scratch + 0x44) = static_cast<uint8_t>(rnd(state, 4) ? rnd(state, 2) : 2); // playerType: 2 skips the clock
-    g_levelRecord.set(0x327e80u, scratch + kAuxC);
+    g_levelRecord.set(sym::pLvlG, scratch + kAuxC);
     mem<uint32_t>(scratch + kAuxC + 0x40) = scratch + kAuxB;
     mem<uint32_t>(scratch + kAuxB + 0xd4) = scratch + kTexture + 16 * rnd(state, 8);
     ttClock(state, scratch);
@@ -1638,7 +1638,7 @@ void vfxRocketCar(R5900Context *ctx, uint64_t &state, uint32_t scratch)
         return;
     nearCar(state, scratch);
     renderState(state, scratch);
-    g_level.set(0x1edc4au, rnd(state, 2) ? 0x62 : 0x10);
+    g_level.set((sym::mainVarG + 0x34au), rnd(state, 2) ? 0x62 : 0x10);
     const uint32_t effect = scratch + kEffect;
     mem<uint32_t>(effect + 0x350) = scratch;
     buildRing(state, effect, 15, effect + 0x50, 0x30, 0x10, 2);
@@ -1873,7 +1873,7 @@ uint32_t someTexture(uint64_t &state, uint32_t scratch) { return scratch + kText
 // record whose first word is its texture) and the countdown's textures from +0x88.
 void hudResource(uint64_t &state, uint32_t scratch)
 {
-    g_levelRecord.set(0x327e80u, scratch + kAuxC);
+    g_levelRecord.set(sym::pLvlG, scratch + kAuxC);
     mem<uint32_t>(scratch + kAuxC + 0x40) = scratch + kAuxB;
     mem<uint32_t>(scratch + kAuxB + 0x80) = scratch + kAuxA;
     mem<uint32_t>(scratch + kAuxA) = someTexture(state, scratch);
@@ -1892,8 +1892,8 @@ void vfxCameraMatrix(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     (void)scratch;
     if (rnd(state, 2))
     {
-        g_split.set(0x1edc68u, 1);
-        g_screen.set(0x1edc78u, rnd(state, 4) ? 0 : 1);
+        g_split.set((sym::mainVarG + 0x368u), 1);
+        g_screen.set((sym::mainVarG + 0x378u), rnd(state, 4) ? 0 : 1);
     }
 }
 
@@ -1951,7 +1951,7 @@ void vfxAerialRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     aerialCar(state, scratch);
     nearCar(state, scratch);
     renderState(state, scratch);
-    g_level.set(0x1edc4au, rnd(state, 2) ? 0x62 : 0x10);
+    g_level.set((sym::mainVarG + 0x34au), rnd(state, 2) ? 0x62 : 0x10);
     const uint32_t effect = scratch + kEffect;
     mem<uint32_t>(effect + 0xb0) = scratch;
     for (uint32_t i = 0; i < 24; ++i)
@@ -1971,8 +1971,8 @@ void vfxSpinPickup(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     mem<uint32_t>(effect + 0x44) = scratch;
     mem<uint8_t>(scratch + 0x44) = static_cast<uint8_t>(rnd(state, 4) ? rnd(state, 2) : 2);
     mem<uint8_t>(scratch + 0x45) = static_cast<uint8_t>(rnd(state, 2));
-    g_split.set(0x1edc68u, static_cast<uint8_t>(rnd(state, 2)));
-    g_screen.set(0x1edc78u, rnd(state, 2));
+    g_split.set((sym::mainVarG + 0x368u), static_cast<uint8_t>(rnd(state, 2)));
+    g_screen.set((sym::mainVarG + 0x378u), rnd(state, 2));
     hudResource(state, scratch);
     for (uint32_t i = 0; i < 3; ++i)
         mem<int16_t>(effect + 0xe8 + 2 * i) = static_cast<int16_t>(static_cast<int32_t>(rnd(state, 6000)) - 3000);
@@ -2049,8 +2049,8 @@ void vfxWaterBallRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 void vfxReadySteadyGo(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 {
     const uint32_t effect = ringEffect(state, scratch, 15, 0x48, 0x14, 0x10, 0x20);
-    g_split.set(0x1edc68u, static_cast<uint8_t>(rnd(state, 2)));
-    g_screen.set(0x1edc78u, rnd(state, 2));
+    g_split.set((sym::mainVarG + 0x368u), static_cast<uint8_t>(rnd(state, 2)));
+    g_screen.set((sym::mainVarG + 0x378u), rnd(state, 2));
     hudResource(state, scratch);
     for (uint32_t i = 0; i < 3; ++i)
         mem<int16_t>(effect + 0x188 + 2 * i) = static_cast<int16_t>(static_cast<int32_t>(rnd(state, 600)) - 300);
@@ -2106,7 +2106,7 @@ void nearTheCamera(uint64_t &state, uint32_t scratch, uint32_t range)
 {
     for (uint32_t axis = 0; axis < 3; ++axis)
     {
-        const int32_t camera = mem<int16_t>(0x1f1108u + 2 * axis);
+        const int32_t camera = mem<int16_t>((sym::visFxVarG + 0x108u) + 2 * axis);
         const int32_t where = rnd(state, 8) ? camera + static_cast<int32_t>(rnd(state, 2 * range)) - static_cast<int32_t>(range)
                                             : static_cast<int32_t>(rnd(state, 16000)) - 8000;
         mem<int32_t>(scratch + kTobInst + 4 + 4 * axis) = where * 256 + static_cast<int32_t>(rnd(state, 256));
@@ -2168,7 +2168,7 @@ void vfxButterflies(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     }
     for (uint32_t axis = 0; axis < 3; ++axis)
     {
-        const int32_t camera = mem<int16_t>(0x1f1108u + 2 * axis);
+        const int32_t camera = mem<int16_t>((sym::visFxVarG + 0x108u) + 2 * axis);
         const int32_t where = rnd(state, 8) ? camera + static_cast<int32_t>(rnd(state, 16000)) - 8000 : static_cast<int32_t>(nextFuzz(state));
         mem<int16_t>(effect + 0x750 + 2 * axis) = static_cast<int16_t>(where);
     }
@@ -2222,21 +2222,21 @@ void vfxGlint(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     camera.v[1] = static_cast<float>(pos.y >> 8) + frnd(state, 50.0f);
     camera.v[2] = static_cast<float>(pos.z >> 8) + frnd(state, 50.0f);
     camera.v[3] = frnd(state, 10.0f);
-    g_cameraVector.set(0x1f1160u, camera);
-    g_screen.set(0x1edc78u, rnd(state, 4) ? 0 : 1);
+    g_cameraVector.set((sym::visFxVarG + 0x160u), camera);
+    g_screen.set((sym::mainVarG + 0x378u), rnd(state, 4) ? 0 : 1);
     const uint32_t grid = G(acolG).pGrid.address;
     const bool haveGrid = grid >= 0x100000u && grid < 0x1ffff00u;
     EightFloats spots;
     for (uint32_t screen = 0; screen < 2; ++screen)
         for (uint32_t axis = 0; axis < 4; ++axis)
             spots.v[4 * screen + axis] = (!haveGrid || rnd(state, 2)) ? camera.v[axis] + frnd(state, 150.0f) : camera.v[axis] + frnd(state, 1000.0f);
-    g_lastSpots.set(0x1f36f0u, spots);
+    g_lastSpots.set((sym::visFxVarG + 0x26f0u), spots);
     GlintBlock block;
     std::memset(&block, 0, sizeof(block));
-    g_glints.set(0x1f1eb0u, block);
+    g_glints.set((sym::visFxVarG + 0xeb0u), block);
     for (uint32_t i = 0; i < 0x80; ++i)
     {
-        const uint32_t glint = 0x1f1eb0u + i * 0x30;
+        const uint32_t glint = (sym::visFxVarG + 0xeb0u) + i * 0x30;
         for (uint32_t axis = 0; axis < 4; ++axis)
             mem<float>(glint + 4 * axis) = camera.v[axis] + frnd(state, 3500.0f);
         const uint32_t kind = rnd(state, 4);
@@ -2433,7 +2433,7 @@ void vfxCarWaterBallRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratc
 void vfxReadySteadyGoHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 {
     const uint32_t effect = ringEffect(state, scratch, 15, 0x48, 0x14, 0x10, 0x20);
-    g_split.set(0x1edc68u, static_cast<uint8_t>(rnd(state, 2)));
+    g_split.set((sym::mainVarG + 0x368u), static_cast<uint8_t>(rnd(state, 2)));
     for (uint32_t offset = 0x188; offset < 0x1a4; offset += 2)
         mem<uint16_t>(effect + offset) = static_cast<uint16_t>(rnd(state, 2) ? rnd(state, 0x400) : nextFuzz(state));
     mem<int32_t>(effect + 0x1a4) = static_cast<int32_t>(rnd(state, 8) ? rnd(state, 4) : nextFuzz(state));
@@ -2483,7 +2483,7 @@ void vfxBombRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     const uint32_t effect = scratch + kEffect;
     for (uint32_t axis = 0; axis < 3; ++axis)
     {
-        const int32_t camera = mem<int32_t>(0x1f10fcu + 4 * axis) >> 8;
+        const int32_t camera = mem<int32_t>((sym::visFxVarG + 0xfcu) + 4 * axis) >> 8;
         if (rnd(state, 4))
             mem<int16_t>(effect + 0x14 + 2 * axis) = static_cast<int16_t>(camera + static_cast<int32_t>(rnd(state, 16000)) - 8000);
         mem<int16_t>(effect + 0x2c8 + 2 * axis) = static_cast<int16_t>(mem<int16_t>(effect + 0x14 + 2 * axis) + static_cast<int32_t>(rnd(state, 2000)) - 1000);
@@ -2521,7 +2521,7 @@ void vfxBoatWake(R5900Context *ctx, uint64_t &state, uint32_t scratch)
         mem<uint8_t>(p + 0x18) = static_cast<uint8_t>(rnd(state, 4) ? 1 : 0);
     }
     for (uint32_t axis = 0; axis < 4; ++axis)
-        mem<float>(effect + 0x20 + 4 * axis) = mem<float>(0x1f1160u + 4 * axis) + frnd(state, 3000.0f);
+        mem<float>(effect + 0x20 + 4 * axis) = mem<float>((sym::visFxVarG + 0x160u) + 4 * axis) + frnd(state, 3000.0f);
     setArg(ctx, 0, effect);
 }
 
@@ -2578,7 +2578,7 @@ void playerState(uint64_t &state, uint32_t scratch)
 {
     const uint32_t player = rnd(state, 4);
     mem<uint8_t>(scratch + 0x45) = static_cast<uint8_t>(player);
-    g_playerState.set(0x1f37e0u + 4 * player, nextFuzz(state));
+    g_playerState.set(sym::u8PlayerStates + 4 * player, nextFuzz(state));
 }
 
 // A car or boat (types below 0x14, now and then 0xf, 0x11 or 0x1a, or a boat from 0x14), its wheel flags random and its
@@ -2875,7 +2875,7 @@ void vfxCarHeatRayBlast(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     const uint32_t rendObj = scratch + kAuxB;
     for (uint32_t offset = 0x18; offset < 0x2a; offset += 2)
         mem<int16_t>(rendObj + offset) = static_cast<int16_t>(static_cast<int32_t>(rnd(state, 0x2001)) - 0x1000);
-    g_camera.set(0x1eab20u, scratch + kCameraRecord);
+    g_camera.set((sym::cameraVarG + 0xb70u), scratch + kCameraRecord);
     for (uint32_t axis = 0; axis < 3; ++axis)
         mem<int32_t>(scratch + kCameraRecord + 0xc + 4 * axis) =
             mem<int32_t>(rendObj + 4 + 4 * axis) + (rnd(state, 2) ? static_cast<int32_t>(rnd(state, 0x100000)) - 0x80000 : static_cast<int32_t>(nextFuzz(state) >> 4));
@@ -2937,13 +2937,13 @@ void vfxFinishPositionRenderer(R5900Context *ctx, uint64_t &state, uint32_t scra
     restoreGlobals();
     nearCar(state, scratch);
     renderState(state, scratch);
-    g_levelRecord.set(0x327e80u, scratch + kAuxC);
+    g_levelRecord.set(sym::pLvlG, scratch + kAuxC);
     mem<uint32_t>(scratch + kAuxC + 0x40) = scratch + kAuxB;
     for (uint32_t i = 0; i < 6; ++i)
         mem<uint32_t>(scratch + kAuxB + 0x20 + 4 * i) = scratch + kAuxA + 0x10 * i;
     for (uint32_t i = 0; i < 6; ++i)
         mem<uint32_t>(scratch + kAuxA + 0x10 * i) = someTexture(state, scratch);
-    g_camera.set(0x1eab20u, scratch + kCameraRecord);
+    g_camera.set((sym::cameraVarG + 0xb70u), scratch + kCameraRecord);
     mem<uint32_t>(scratch + kCameraRecord + 0xac) = rnd(state, 2) ? 0 : 1 + rnd(state, 4);
     mem<int32_t>(effect + 0x1a4) = rnd(state, 8) ? static_cast<int32_t>(rnd(state, 5)) : -1;
     setArg(ctx, 0, effect);
@@ -2957,8 +2957,8 @@ void vfxFinishPositionRenderer(R5900Context *ctx, uint64_t &state, uint32_t scra
 
 namespace {
 
-constexpr uint32_t kFxHeaderAddr = 0x1f3710u, kTsfxHeaderAddr = 0x1f3718u;
-constexpr uint32_t kSkyTerrorAddr = 0x1f3728u, kResultTriggerAddr = 0x1f3730u;
+constexpr uint32_t kFxHeaderAddr = (sym::visFxVarG + 0x2710u), kTsfxHeaderAddr = (sym::visFxVarG + 0x2718u);
+constexpr uint32_t kSkyTerrorAddr = (sym::visFxVarG + 0x2728u), kResultTriggerAddr = (sym::visFxVarG + 0x2730u);
 
 // Walks a real effect list (Next at +0) and gives about one effect in `oneIn` a life of zero (VfxUpdate frees those,
 // the renderers skip them). At most 400 effects are visited, in case a list is damaged.
@@ -2976,7 +2976,7 @@ void nudgeCamera(uint64_t &state, float range)
     if (rnd(state, 2))
         return;
     for (uint32_t axis = 0; axis < 3; ++axis)
-        mem<float>(0x1f1160u + 4 * axis) += frnd(state, range);
+        mem<float>((sym::visFxVarG + 0x160u) + 4 * axis) += frnd(state, range);
 }
 
 // A random real object slot (0 to the object count, now and then one past it).
@@ -3029,10 +3029,10 @@ void vfxUpdate(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     const bool reattach = rnd(state, 2) == 0; // otherwise the list's footer is an old effect, which may be freed
     for (uint32_t i = 0; i < G(objectVarG).noObjects && i < 0x5c; ++i)
     {
-        const uint32_t obj = mem<uint32_t>(0x1ee390u + 4 * i);
+        const uint32_t obj = mem<uint32_t>(sym::objectVarG + 4 * i);
         if (reattach && obj && obj < 0x2000000u && rnd(state, 3) == 0)
             mem<uint8_t>(obj + 0x177) = 0;
-        mem<int16_t>(0x1f37e2u + 4 * i) = static_cast<int16_t>(rnd(state, 2) ? 0 : nextFuzz(state));
+        mem<int16_t>((sym::u8PlayerStates + 0x2u) + 4 * i) = static_cast<int16_t>(rnd(state, 2) ? 0 : nextFuzz(state));
     }
     if (rnd(state, 4) == 0)
         G(frontEndVarG).active = 5;
@@ -3102,9 +3102,9 @@ void vfxPodiumPlay(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     const int32_t trigger = kind == 0 ? static_cast<int32_t>(0x102 + rnd(state, 0xf00)) : kMoments[rnd(state, std::size(kMoments))];
     mem<int32_t>(kResultTriggerAddr) = trigger;
     for (uint32_t slot = 0x13; slot <= 0x17; ++slot)
-        mem<uint32_t>(0x1ee390u + 4 * slot) = rnd(state, 3) ? scratch : 0u;
+        mem<uint32_t>(sym::objectVarG + 4 * slot) = rnd(state, 3) ? scratch : 0u;
     mem<uint8_t>(scratch + 0x1000 + 0x1cd) = static_cast<uint8_t>(nextFuzz(state));
-    mem<int32_t>(0x328108u) = rnd(state, 2) ? static_cast<int32_t>(rnd(state, 0x22)) : static_cast<int32_t>(nextFuzz(state));
+    mem<int32_t>(sym::crackle_528) = rnd(state, 2) ? static_cast<int32_t>(rnd(state, 0x22)) : static_cast<int32_t>(nextFuzz(state));
 }
 
 // The rain: up to three rain areas (scenery instances near the camera with a radius) or none, every drop in some state
@@ -3117,22 +3117,22 @@ void vfxRain(R5900Context *, uint64_t &state, uint32_t scratch)
     for (uint32_t i = 0x1c; i < 0x20; ++i)
         mem<uint32_t>(scratch + kRes + 4 * i) = scratch + kTexture + 16 * rnd(state, 8);
     const uint32_t areas = rnd(state, 5) ? 1 + rnd(state, 3) : 0;
-    const int32_t cam[3] = {mem<int16_t>(0x1f1108u), mem<int16_t>(0x1f110au), mem<int16_t>(0x1f110cu)};
+    const int32_t cam[3] = {mem<int16_t>((sym::visFxVarG + 0x108u)), mem<int16_t>((sym::visFxVarG + 0x10au)), mem<int16_t>((sym::visFxVarG + 0x10cu))};
     for (uint32_t i = 0; i < 17; ++i)
     {
         const uint32_t tob = scratch + kTobInst + 0x40 * i;
-        mem<uint32_t>(0x1f1e64u + 4 * i) = i < areas ? tob : 0u;
+        mem<uint32_t>((sym::visFxVarG + 0xe64u) + 4 * i) = i < areas ? tob : 0u;
         if (i >= areas)
             continue;
         for (uint32_t axis = 0; axis < 3; ++axis)
             mem<int32_t>(tob + 4 + 4 * axis) = (cam[axis] + static_cast<int32_t>(rnd(state, 6001)) - 3000) * 256;
         mem<uint16_t>(tob + 0x2c) = static_cast<uint16_t>(rnd(state, 4000));
     }
-    mem<int32_t>(0x1edc78u) = rnd(state, 4) ? 0 : 1;
-    const float camera[3] = {mem<float>(0x1f1160u), mem<float>(0x1f1164u), mem<float>(0x1f1168u)};
+    mem<int32_t>((sym::mainVarG + 0x378u)) = rnd(state, 4) ? 0 : 1;
+    const float camera[3] = {mem<float>((sym::visFxVarG + 0x160u)), mem<float>((sym::visFxVarG + 0x164u)), mem<float>((sym::visFxVarG + 0x168u))};
     for (uint32_t i = 0; i < 64; ++i)
     {
-        const uint32_t p = 0x1f11c0u + 0x30 * i;
+        const uint32_t p = (sym::visFxVarG + 0x1c0u) + 0x30 * i;
         const uint32_t life = rnd(state, 4);
         mem<int16_t>(p + 0x10) = static_cast<int16_t>(life == 0 ? 0 : life == 1 ? 1 + rnd(state, 12) : rnd(state, 3) ? rnd(state, 60) : nextFuzz(state));
         mem<int16_t>(p + 0x12) = static_cast<int16_t>(rnd(state, 0x60));
@@ -3170,13 +3170,13 @@ void vfxSkyChange(R5900Context *, uint64_t &state, uint32_t scratch)
     if (font == 0 && trigger >= 0x100)
         trigger = 0x80;
     mem<int32_t>(kResultTriggerAddr) = trigger;
-    mem<uint16_t>(0x1f48e4u) = static_cast<uint16_t>(rnd(state, 3) ? 1 : 0);
-    mem<uint32_t>(0x1eca58u) = scratch + kAuxB;
+    mem<uint16_t>((sym::visVarG + 0x14u)) = static_cast<uint16_t>(rnd(state, 3) ? 1 : 0);
+    mem<uint32_t>(sym::frontEndVarG) = scratch + kAuxB;
     mem<uint32_t>(scratch + kAuxB + 0x1c) = font;
-    mem<uint16_t>(0x1e9464u) = static_cast<uint16_t>(rnd(state, 6));
-    mem<uint16_t>(0x1e9466u) = static_cast<uint16_t>(rnd(state, 2) ? 0 : rnd(state, 6));
-    mem<uint16_t>(0x1e9468u) = static_cast<uint16_t>(objectSlot(state));
-    mem<uint16_t>(0x1e946au) = static_cast<uint16_t>(objectSlot(state));
+    mem<uint16_t>((sym::aiVarG + 0x64u)) = static_cast<uint16_t>(rnd(state, 6));
+    mem<uint16_t>((sym::aiVarG + 0x66u)) = static_cast<uint16_t>(rnd(state, 2) ? 0 : rnd(state, 6));
+    mem<uint16_t>((sym::aiVarG + 0x68u)) = static_cast<uint16_t>(objectSlot(state));
+    mem<uint16_t>((sym::aiVarG + 0x6au)) = static_cast<uint16_t>(objectSlot(state));
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -3210,7 +3210,7 @@ Claim<uint8_t> g_sfxInit;                         // sfxVarG.bInitOk
 // recompiled, so nothing native is left out.
 void soundOff()
 {
-    g_sfxInit.set(0x31e488u, 0);
+    g_sfxInit.set(sym::sfxVarG, 0);
 }
 
 template <typename T>
@@ -3236,11 +3236,11 @@ void randomPads(uint64_t &state, uint32_t scratch)
     {
         portsOpen = true;
         for (int32_t port = 0; port < 2; ++port)
-            guest_call<int32_t>(0x1c6718u, port, 0, 0); // scePadPortOpen(port, slot 0, no DMA buffer)
+            guest_call<int32_t>(sym::scePadPortOpen, port, 0, 0); // scePadPortOpen(port, slot 0, no DMA buffer)
     }
-    claimCopy(g_players, 0x1ee7e0u);
-    claimCopy(g_input, 0x1f4c80u);
-    claimCopy(g_mirror, 0x328148u);
+    claimCopy(g_players, sym::playerVarG);
+    claimCopy(g_input, sym::inputVarG);
+    claimCopy(g_mirror, sym::mirrorVarG);
     claimCopy(g_playerConfigs, guest_addr(&G(frontEndVarG).gameStateData.playerConfig[0]));
     sPlayerClass &players = G(playerVarG);
     for (sPlayer &p : players.player)
@@ -3445,7 +3445,7 @@ void aiFinishDistance(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 void aiNodeRender(R5900Context *, uint64_t &state, uint32_t)
 {
     restoreGlobals();
-    claimCopy(g_ppp, 0x327c18u);
+    claimCopy(g_ppp, sym::ppp);
     G(ppp) = static_cast<int32>(nextFuzz(state));
     // The computer cars' stuck nodes (none in most dumps): their current node, another node, or none. Offline only:
     // these are the race's own cars.
@@ -3483,7 +3483,7 @@ void physicsCarCopy(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 void physicsCars(R5900Context *, uint64_t &state, uint32_t scratch)
 {
     restoreGlobals();
-    claimCopy(g_physics, 0x1faa30u);
+    claimCopy(g_physics, sym::FPhysLib);
     FPhysLibGlobals &phys = G(FPhysLib);
     const int32_t real = std::min(phys.numCars, 24);
     if (real <= 0)
@@ -3534,8 +3534,8 @@ void carColObjects(R5900Context *, uint64_t &state, uint32_t scratch)
 {
     constexpr uint32_t kBlock = 0x1720u, kPolys = 0x5d00u, kNumPolys = 24u, kDefs = 0x6600u;
     restoreGlobals();
-    claimCopy(g_objects, 0x1ee390u);
-    claimCopy(g_carCol, 0x1eb698u);
+    claimCopy(g_objects, sym::objectVarG);
+    claimCopy(g_carCol, sym::carColG);
     claimCopy(g_levelLeftover, mainField(offsetof(mainClass, level)));
     soundOff();
     sObjectClass &objects = G(objectVarG);

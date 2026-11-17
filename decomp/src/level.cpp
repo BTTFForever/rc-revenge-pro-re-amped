@@ -26,34 +26,34 @@ namespace {
 
 using weapon::at;
 
-constexpr uint32_t kLevelPtr = 0x327e80u, kMenuSystemPtr = 0x327c20u, kLsVars = 0x1f3c38u, kVisVars = 0x1f48d0u;
-constexpr uint32_t kSvf = 0x328158u, kTso = 0x3281f0u, kAColGrid = 0x328200u, kMainVars = 0x1ed900u;
-constexpr uint32_t kResVars = 0x31e070u, kNextTexAddr = 0x328260u, kFrontEnd = 0x1eca58u, kCarList = 0x1eb7a0u;
-constexpr uint32_t kVfxRes = 0x1f106cu, kTEditVars = 0x1f0900u;
+constexpr uint32_t kLevelPtr = sym::pLvlG, kMenuSystemPtr = sym::pMenuSystemG, kLsVars = sym::lsVarG, kVisVars = sym::visVarG;
+constexpr uint32_t kSvf = sym::svfVarG, kTso = sym::tsoVarG, kAColGrid = sym::acolG, kMainVars = sym::mainVarG;
+constexpr uint32_t kResVars = sym::resVarG, kNextTexAddr = sym::nextTexAddr, kFrontEnd = sym::frontEndVarG, kCarList = sym::carListVarG;
+constexpr uint32_t kVfxRes = (sym::visFxVarG + 0x6cu), kTEditVars = sym::tEditVarG;
 // The level's resource types (strings at 0x327e30 to 0x327e78, eight bytes apart).
-constexpr uint32_t kLevelTypes = 0x327e30u;
+constexpr uint32_t kLevelTypes = (sym::sec_sdata + 0x230u);
 
 // Guest functions still recompiled (or reached through the dispatcher).
-constexpr uint32_t kResTypeSetConstructDaemon = 0x1ab878u, kResTypeUnSetConstructDaemon = 0x1ab8d8u;
-constexpr uint32_t kVertAnimInit = 0x18afa8u, kVertAnimTerm = 0x18af38u, kGfxTexReset = 0x190688u;
-constexpr uint32_t kRenderFreeBuffers = 0x183c98u, kRenderAllocateBuffers = 0x183c80u, kHeapTerm = 0x190848u;
-constexpr uint32_t kHeapInit = 0x1907d0u, kDisplayDisable = 0x1820a0u, kDisplayEnable = 0x182098u;
-constexpr uint32_t kMemBlockAllocHi = 0x1942d0u, kMemBlockCompress = 0x193fd0u, kMemGetFree = 0x194960u;
-constexpr uint32_t kFMPrepare = 0x1a0bb0u, kFMPrepareHi = 0x1a0b70u, kFMUnPrepare = 0x1a0540u, kFMSetCacheMode = 0x1a0500u;
-constexpr uint32_t kResLoadInit = 0x1aa8b0u, kResLoadTerm = 0x1aade0u, kResLoad = 0x1ab1b0u, kTexReset = 0x183e60u;
-constexpr uint32_t kTexFreeIntermediate = 0x183ee8u, kRevSfxReset = 0x144048u, kRCMenuMVarLinkup = 0x140850u;
-constexpr uint32_t kLoadingTerm = 0x129630u, kPrintf = 0x12e9e8u, kBBLoad = 0x112038u;
-constexpr uint32_t kVfxSetup = 0x16a0b0u, kAnimSetupClass = 0x110a48u, kFrontSetupClass = 0x11c080u;
-constexpr uint32_t kSFXSetupClass = 0x143508u, kPickupSetupClass = 0x13f308u, kHudSetupClass = 0x128b68u;
-constexpr uint32_t kAINodeSetupClass = 0x103bb8u;
-constexpr uint32_t kTEditSetupTELvLClass = 0x1465e0u, kTEditLevelInit = 0x146558u, kTEditSetupTCLvLClass = 0x154200u;
-constexpr uint32_t kTEditGenerateTCol = 0x152c28u, kTEditSetupTALvLClass = 0x154258u, kTEditGenerateTrackAINodes = 0x152938u;
-constexpr uint32_t kTEditGenerateHudMap = 0x153af0u, kTEditConvertTrackToALF = 0x1534f8u, kTEditGetThemeType = 0x154558u;
-constexpr uint32_t kTEditSetTileList = 0x1546a8u, kTEditUpdatePickups = 0x153350u, kTEditUpdateStartGrid = 0x152f28u;
-constexpr uint32_t kTEditStartGridCameraPaths = 0x154578u, kTEditCopyHudMap = 0x154608u;
+constexpr uint32_t kResTypeSetConstructDaemon = sym::ResTypeSetConstructDaemon, kResTypeUnSetConstructDaemon = sym::ResTypeUnSetConstructDaemon;
+constexpr uint32_t kVertAnimInit = sym::VertAnimInit, kVertAnimTerm = sym::VertAnimTerm, kGfxTexReset = sym::GfxTex_Reset;
+constexpr uint32_t kRenderFreeBuffers = sym::RenderFreeBuffers, kRenderAllocateBuffers = sym::RenderAllocateBuffers, kHeapTerm = sym::HeapTerm;
+constexpr uint32_t kHeapInit = sym::HeapInit, kDisplayDisable = sym::DisplayDisable, kDisplayEnable = sym::DisplayEnable;
+constexpr uint32_t kMemBlockAllocHi = sym::MemBlockAllocHi, kMemBlockCompress = sym::MemBlockCompress, kMemGetFree = sym::MemGetFree;
+constexpr uint32_t kFMPrepare = sym::FMPrepareHi, kFMPrepareHi = sym::FMPrepare, kFMUnPrepare = sym::FMUnPrepare, kFMSetCacheMode = sym::FMSetCacheMode;
+constexpr uint32_t kResLoadInit = sym::ResLoadInit, kResLoadTerm = sym::ResLoadTerm, kResLoad = sym::ResLoad, kTexReset = sym::TexReset;
+constexpr uint32_t kTexFreeIntermediate = sym::TexFreeIntermediateResData, kRevSfxReset = sym::RevSfxReset, kRCMenuMVarLinkup = sym::RCMenuMVarLinkup;
+constexpr uint32_t kLoadingTerm = sym::LoadingTerm, kPrintf = sym::printf, kBBLoad = sym::BBLoad;
+constexpr uint32_t kVfxSetup = sym::VfxSetup, kAnimSetupClass = sym::AnimSetupClass, kFrontSetupClass = sym::FrontSetupClass;
+constexpr uint32_t kSFXSetupClass = sym::SFXSetupClass, kPickupSetupClass = sym::PickupSetupClass, kHudSetupClass = sym::HudSetupClass;
+constexpr uint32_t kAINodeSetupClass = sym::AINodeSetupClass;
+constexpr uint32_t kTEditSetupTELvLClass = sym::TEditSetupTELvLClass, kTEditLevelInit = sym::TEditLevelInit, kTEditSetupTCLvLClass = sym::TEditSetupTCLvLClass;
+constexpr uint32_t kTEditGenerateTCol = sym::TEditGenerateTCol, kTEditSetupTALvLClass = sym::TEditSetupTALvLClass, kTEditGenerateTrackAINodes = sym::TEditGenerateTrackAINodes;
+constexpr uint32_t kTEditGenerateHudMap = sym::TEditGenerateHudMapForTrackLevel, kTEditConvertTrackToALF = sym::TEditConvertTrackToALF, kTEditGetThemeType = sym::TEditGetThemeTypeForTrack;
+constexpr uint32_t kTEditSetTileList = sym::TEditSetTileListForThemeType, kTEditUpdatePickups = sym::TEditUpdatePickupNumAndPositions, kTEditUpdateStartGrid = sym::TEditUpdateStartGridPositions;
+constexpr uint32_t kTEditStartGridCameraPaths = sym::TEditConstructStartGridCameraPaths, kTEditCopyHudMap = sym::TEditCopyHudMapForTrackLevelToVRAM;
 // printf formats.
-constexpr uint32_t kTexOverflow = 0x322fd8u, kGpuBuffers = 0x323000u, kBBLoadStarted = 0x323048u;
-constexpr uint32_t kBBLoadCompleted = 0x323058u, kDynamicStarted = 0x323070u, kDynamicCompleted = 0x323088u;
+constexpr uint32_t kTexOverflow = (sym::sec_rodata + 0x9d8u), kGpuBuffers = (sym::sec_rodata + 0xa00u), kBBLoadStarted = (sym::sec_rodata + 0xa48u);
+constexpr uint32_t kBBLoadCompleted = (sym::sec_rodata + 0xa58u), kDynamicStarted = (sym::sec_rodata + 0xa70u), kDynamicCompleted = (sym::sec_rodata + 0xa88u);
 
 constexpr int32_t kTrackLevel = 0x61, kFrontEndLevel = 0x62, kTrackEditor = 0x63;
 
@@ -228,6 +228,7 @@ void LevelLoadTrackEditor()
 
 void LevelLoadGameLevel(int32_t levelNum)
 {
+    RC_DIVERT_IF_CHANGED(LevelLoadGameLevel, levelNum);
     GuestFrame frame(0x20);
     guest_call(kFMSetCacheMode, 0);
     guest_call(kPrintf, kBBLoadStarted);
@@ -302,16 +303,16 @@ void LevelLoadTrackLevel()
     menuGraphics(group);
 }
 
-RC_DECOMP_FN_SETUP(LevelA3DSetupClass, 0x129368, rc::fuzz::levelData)
-RC_DECOMP_FN_SETUP(LevelA3DSetupTrackLevelClass, 0x1293c0, rc::fuzz::levelData)
-RC_DECOMP_FN_SETUP(LevelAColSetupClass, 0x1293f8, rc::fuzz::levelData)
-RC_DECOMP_FN_SETUP(LevelPauseMenuSetupClass, 0x129408, rc::fuzz::levelData)
-RC_DECOMP_FN_SETUP_HEAP(LevelInit, 0x128b70, rc::fuzz::levelInitTerm)
-RC_DECOMP_FN_SETUP_HEAP(LevelTerm, 0x128c58, rc::fuzz::levelInitTerm)
-RC_DECOMP_FN_BLOCKING(LevelLoad, 0x128cf8)
-RC_DECOMP_FN_BLOCKING(LevelLoadFrontEnd, 0x128f18)
-RC_DECOMP_FN_BLOCKING(LevelLoadTrackEditor, 0x129030)
-RC_DECOMP_FN_BLOCKING(LevelLoadGameLevel, 0x129098)
-RC_DECOMP_FN_BLOCKING(LevelLoadTrackLevel, 0x1291b0)
+RC_DECOMP_FN_SETUP(LevelA3DSetupClass, rc::fuzz::levelData)
+RC_DECOMP_FN_SETUP(LevelA3DSetupTrackLevelClass, rc::fuzz::levelData)
+RC_DECOMP_FN_SETUP(LevelAColSetupClass, rc::fuzz::levelData)
+RC_DECOMP_FN_SETUP(LevelPauseMenuSetupClass, rc::fuzz::levelData)
+RC_DECOMP_FN_SETUP_HEAP(LevelInit, rc::fuzz::levelInitTerm)
+RC_DECOMP_FN_SETUP_HEAP(LevelTerm, rc::fuzz::levelInitTerm)
+RC_DECOMP_FN_BLOCKING(LevelLoad)
+RC_DECOMP_FN_BLOCKING(LevelLoadFrontEnd)
+RC_DECOMP_FN_BLOCKING(LevelLoadTrackEditor)
+RC_DECOMP_FN_BLOCKING(LevelLoadGameLevel)
+RC_DECOMP_FN_BLOCKING(LevelLoadTrackLevel)
 
 } // namespace rc

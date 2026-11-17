@@ -9,8 +9,8 @@ namespace rc::fuzz {
 
 namespace {
 
-constexpr uint32_t kDetails = 0x1ee578u, kBuilt = kDetails + 0x24u, kBuiltTags = kDetails + 0x2cu;
-constexpr uint32_t kFrontEnd = 0x1eca58u, kPathLinks = 0x1ebef0u, kCameraPtr = 0x1eab20u, kLevelPtr = 0x327e80u;
+constexpr uint32_t kDetails = sym::pathDetailsG, kBuilt = kDetails + 0x24u, kBuiltTags = kDetails + 0x2cu;
+constexpr uint32_t kFrontEnd = sym::frontEndVarG, kPathLinks = sym::pathLinks, kCameraPtr = (sym::cameraVarG + 0xb70u), kLevelPtr = sym::pLvlG;
 
 // Scratch layout: the front-end level data, its camera list, path list and paths, a camera, a handle.
 constexpr uint32_t kFELevel = 0x0000u, kCams = 0x0100u, kList = 0x0500u, kPaths = 0x0600u, kPathStride = 0x60u;

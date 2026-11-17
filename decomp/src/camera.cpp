@@ -41,10 +41,10 @@ namespace {
 
 void tagToPathNode(ptr32<sCameraPath> pPath, int32 pathPos, ptr32<_sCameraPathNode> pNode, ptr32<_sCamera> pCamera, uint32_t ra);
 
-const uint32_t kMat3nBuild = 0x19e710, kMat3nBuildXYZ = 0x19e768, kVec32Normalise = 0x19fb78, kVec32Length = 0x19fae8;
-const uint32_t kInputHit = 0x191598, kGetCameraFromTag = 0x13ca18, kFpToUi = 0x1b6d50;
-const uint32_t kEndOfStartGridPathCallBack = 0x117cf8, kStartGridHitFirstNodeCallBack = 0x112f70;
-const uint32_t kObjectList = 0x1ee390u, kCopyCam = 0x1eab28u, kCameras = 0x1e9fb0u, kOrbitAngles = 0x327d08u;
+const uint32_t kMat3nBuild = sym::Mat3nBuild, kMat3nBuildXYZ = sym::Mat3nBuildXYZ, kVec32Normalise = sym::_Vec32Normalise, kVec32Length = sym::_Vec32Length;
+const uint32_t kInputHit = sym::InputHit, kGetCameraFromTag = sym::GetCameraFromTag, kFpToUi = sym::fptoui;
+const uint32_t kEndOfStartGridPathCallBack = sym::CameraEndOfStartGridPathCallBack, kStartGridHitFirstNodeCallBack = sym::CameraStartGridHitFirstNodeCallBack;
+const uint32_t kObjectList = sym::objectVarG, kCopyCam = sym::copyCamG, kCameras = sym::cameraVarG, kOrbitAngles = (sym::sec_sdata + 0x108u);
 const uint32_t kCameraSize = 0x5b8u;
 
 const ee_float kHeldStep = float_from_bits(0x3dcccccdu);    // 0.1, the six constants at 0x3275e0
@@ -673,24 +673,24 @@ void CameraStartGridHitFirstNodeCallBack(ptr32<_sCamera> pCamera, uint32 nodeNum
     };
     {
         GuestFrame frame(0x40);
-        call(0, 0x112fb4);
-        call(1, 0x112fdc);
-        call(2, 0x113004);
+        call(0, (sym::CameraStartGridHitFirstNodeCallBack + 0x44u));
+        call(1, (sym::CameraStartGridHitFirstNodeCallBack + 0x6cu));
+        call(2, (sym::CameraStartGridHitFirstNodeCallBack + 0x94u));
     }
     call(3, ra); // a tail call, from the caller's frame
 }
 
 void CameraSetNewPath(ptr32<_sCamera> pCamera, uint32 fp, uint32 fpNode, ptr32<sCameraPath> pPath)
 {
-    static const uint32_t kLoopReturns[4] = {0x11643c, 0x11646c, 0x11649c, 0x1164cc};
-    static const uint32_t kEndReturns[3] = {0x116508, 0x116530, 0x116558};
+    static const uint32_t kLoopReturns[4] = {(sym::CameraSetNewPath + 0x7cu), (sym::CameraSetNewPath + 0xacu), (sym::CameraSetNewPath + 0xdcu), (sym::CameraSetNewPath + 0x10cu)};
+    static const uint32_t kEndReturns[3] = {(sym::CameraSetNewPath + 0x148u), (sym::CameraSetNewPath + 0x170u), (sym::CameraSetNewPath + 0x198u)};
     _sCamera &camera = *pCamera;
     GuestFrame frame(0x50);
     camera.feFunctionCallBack.address = fp;
     camera.feFunctionCallBackNode.address = fpNode;
     camera.path.curNodeOnPath = 0;
     camera.path.numNodesOnPath = pPath->pathLength + 3;
-    tagToPathNode(pPath, 0, camera.path.pNodes, pCamera, 0x116410);
+    tagToPathNode(pPath, 0, camera.path.pNodes, pCamera, (sym::CameraSetNewPath + 0x50u));
     uint32_t length = pPath->pathLength;
     for (int32_t i = 0; i < static_cast<int32_t>(length); ++i)
     {
@@ -870,6 +870,7 @@ void CameraSpin(ptr32<_sCamera> pCamera)
 // The debug fly camera: the right stick and the d-pad turn it (faster the longer a key is held), the other keys move it.
 void CameraFree(ptr32<_sCamera> pCamera)
 {
+    RC_DIVERT_IF_CHANGED(CameraFree, pCamera);
     GuestFrame frame(0x80);
     _sCamera &camera = *pCamera;
     vec32_ &direction = *frame.local<vec32_>(0);
@@ -889,28 +890,28 @@ void CameraFree(ptr32<_sCamera> pCamera)
         if (InputHeld(0x14))
         {
             angleChanged = true;
-            camera.freeangles.pitch = turn(camera.freeangles.pitch, grow(0x327cecu), true);
+            camera.freeangles.pitch = turn(camera.freeangles.pitch, grow(sym::lengthHeld1_555), true);
         }
         else
             G(lengthHeld1) = F(0.0);
         if (InputHeld(0x16))
         {
             angleChanged = true;
-            camera.freeangles.pitch = turn(camera.freeangles.pitch, grow(0x327cf0u), false);
+            camera.freeangles.pitch = turn(camera.freeangles.pitch, grow(sym::lengthHeld2_556), false);
         }
         else
             G(lengthHeld2) = F(0.0);
         if (InputHeld(0x17))
         {
             angleChanged = true;
-            camera.freeangles.head = turn(camera.freeangles.head, grow(0x327cf4u), true);
+            camera.freeangles.head = turn(camera.freeangles.head, grow(sym::lengthHeld3_557), true);
         }
         else
             G(lengthHeld3) = F(0.0);
         if (InputHeld(0x15))
         {
             angleChanged = true;
-            camera.freeangles.head = turn(camera.freeangles.head, grow(0x327cf8u), false);
+            camera.freeangles.head = turn(camera.freeangles.head, grow(sym::lengthHeld4_558), false);
         }
         else
             G(lengthHeld4) = F(0.0);
@@ -937,7 +938,7 @@ void CameraFree(ptr32<_sCamera> pCamera)
     }
     if (InputHeld(0x1e))
     {
-        ee_float &length = grow(0x327d00u);
+        ee_float &length = grow(sym::lengthHeld6_560);
         const ee_float step = (length + G(lengthHeld5)) * F(2560.0);
         direction.z = ee_ftoi(ee_itof(direction.z) + step);
         positionChanged = true;
@@ -1175,8 +1176,8 @@ void CameraProcess(int32 time, int32 split)
 
 namespace {
 
-const uint32_t kPointInPolyTable = 0x1f48e8u; // AColPointInPoly_NCLIP_DWO: one point-in-poly test per poly axis (ma)
-const uint32_t kRand = 0x1b8818u;
+const uint32_t kPointInPolyTable = sym::AColPointInPoly_NCLIP_DWO; // AColPointInPoly_NCLIP_DWO: one point-in-poly test per poly axis (ma)
+const uint32_t kRand = sym::rand;
 const ee_float kSpinLimit = float_from_bits(0x453b8000u);    // 3000.0 at 0x3275d4: |angular velocity| of a spin
 const ee_float kThirdSplit = float_from_bits(0x3eaa7efau);    // 0.333 at 0x3275d8: look-at scale, split screen, near
 const ee_float kTwoThirdsSplit = float_from_bits(0x3f2a7efau); // 0.666 at 0x3275dc: the same for the far settings
@@ -1792,45 +1793,45 @@ bool_ CameraGeneralRayCast(ptr32<_sColCellVecPSX> pS, ptr32<_sColCellVecPSX> pE,
 
 } // namespace rc
 
-RC_DECOMP_FN(CameraInit, 0x117b88)
-RC_DECOMP_FN(CameraTerm, 0x117b90)
-RC_DECOMP_FN(CameraLvlTerm, 0x117cc0)
-RC_DECOMP_FN(CameraDebugInfo, 0x117cc8)
-RC_DECOMP_FN_SETUP(CameraTerminatePath, 0x117cd0, rc::fuzz::cameraOne)
-RC_DECOMP_FN_SETUP(CameraSetTunnelMode, 0x117ce0, rc::fuzz::cameraOne)
-RC_DECOMP_FN_SETUP(CameraUnSetTunnelMode, 0x117cf0, rc::fuzz::cameraOne)
-RC_DECOMP_FN_SETUP(CameraReset, 0x118450, rc::fuzz::cameraOne)
-RC_DECOMP_FN_SETUP(CameraModeDefaultsFollowPlayer, 0x117e28, rc::fuzz::cameraOne)
-RC_DECOMP_FN(Linear_Interpolate, 0x117fa0)
-RC_DECOMP_FN(Cosine_Interpolate, 0x117fe0)
-RC_DECOMP_FN_SETUP(CameraSetZoomMode, 0x118098, rc::fuzz::cameraZoom)
-RC_DECOMP_FN(CameraDampingProcess, 0x1180e0)
-RC_DECOMP_FN_SETUP(CameraSetOffsetForTwoPlayerMode, 0x118130, rc::fuzz::cameraOne)
-RC_DECOMP_FN_SETUP(CameraHandleTunnels, 0x118178, rc::fuzz::cameraOne)
-RC_DECOMP_FN_SETUP(CameraDecelerateInterp, 0x1182e8, rc::fuzz::cameraDecelerate)
-RC_DECOMP_FN_SETUP(CameraSetOffsets, 0x1183b8, rc::fuzz::cameraOffsets)
-RC_DECOMP_FN_SETUP(CameraSetNear, 0x117350, rc::fuzz::cameraOne)
-RC_DECOMP_FN_SETUP(CameraCalcDesiredGoto, 0x118218, rc::fuzz::cameraWithMatrix)
-RC_DECOMP_FN_SETUP(CameraSetMatrixFromLookAt, 0x117e78, rc::fuzz::cameraLookAt)
-RC_DECOMP_FN_SETUP(CameraPlaceAtAINode, 0x117888, rc::fuzz::cameraAINode)
-RC_DECOMP_FN_SETUP(CameraSetModeDefaults, 0x117530, rc::fuzz::cameraOne)
-RC_DECOMP_FN_SETUP(CameraSetMode, 0x117518, rc::fuzz::cameraMode)
-RC_DECOMP_FN_SETUP(CameraNextMode, 0x117480, rc::fuzz::cameraOne)
-RC_DECOMP_FN_SETUP(CameraLvlInitCamera, 0x117130, rc::fuzz::cameraLvlInit)
-RC_DECOMP_FN_SETUP_HEAP(CameraLvlInit, 0x117b98, rc::fuzz::cameraLevel)
-RC_DECOMP_FN_SETUP(CameraEndOfStartGridPathCallBack, 0x117cf8, rc::fuzz::cameraOne)
-RC_DECOMP_FN_SETUP(CameraStartGridHitFirstNodeCallBack, 0x112f70, rc::fuzz::cameraPath)
-RC_DECOMP_FN_SETUP(CameraSetNewPath, 0x1163c0, rc::fuzz::cameraNewPath)
-RC_DECOMP_FN_SETUP(CameraSetStartGridPath, 0x113040, rc::fuzz::cameraPath)
-RC_DECOMP_FN_SETUP(CameraStartGrid, 0x1131a8, rc::fuzz::cameraPath)
-RC_DECOMP_FN_SETUP(CameraTagToPathNode, 0x1161e8, rc::fuzz::cameraTag)
-RC_DECOMP_FN_SETUP(SplinePoint, 0x116580, rc::fuzz::cameraSpline)
-RC_DECOMP_FN_SETUP(ComputeCoeffs, 0x1167c8, rc::fuzz::cameraCoeffs)
-RC_DECOMP_FN_SETUP(CameraFollowPath, 0x117010, rc::fuzz::cameraPath)
-RC_DECOMP_FN_SETUP(CameraSpin, 0x115b20, rc::fuzz::cameraOne)
-RC_DECOMP_FN_SETUP(CameraFree, 0x115448, rc::fuzz::cameraPad)
-RC_DECOMP_FN_SETUP(CameraOrbit, 0x115940, rc::fuzz::cameraPad)
-RC_DECOMP_FN_SETUP_HEAP(CameraProcess, 0x115b60, rc::fuzz::cameraProcess)
-RC_DECOMP_FN_SETUP(CameraCellCastCell, 0x113560, rc::fuzz::cameraCell)
-RC_DECOMP_FN_SETUP(CameraGeneralRayCast, 0x113218, rc::fuzz::cameraRay)
-RC_DECOMP_FN_SETUP(CameraFollowPlayer, 0x113818, rc::fuzz::cameraFollow)
+RC_DECOMP_FN(CameraInit)
+RC_DECOMP_FN(CameraTerm)
+RC_DECOMP_FN(CameraLvlTerm)
+RC_DECOMP_FN(CameraDebugInfo)
+RC_DECOMP_FN_SETUP(CameraTerminatePath, rc::fuzz::cameraOne)
+RC_DECOMP_FN_SETUP(CameraSetTunnelMode, rc::fuzz::cameraOne)
+RC_DECOMP_FN_SETUP(CameraUnSetTunnelMode, rc::fuzz::cameraOne)
+RC_DECOMP_FN_SETUP(CameraReset, rc::fuzz::cameraOne)
+RC_DECOMP_FN_SETUP(CameraModeDefaultsFollowPlayer, rc::fuzz::cameraOne)
+RC_DECOMP_FN(Linear_Interpolate)
+RC_DECOMP_FN(Cosine_Interpolate)
+RC_DECOMP_FN_SETUP(CameraSetZoomMode, rc::fuzz::cameraZoom)
+RC_DECOMP_FN(CameraDampingProcess)
+RC_DECOMP_FN_SETUP(CameraSetOffsetForTwoPlayerMode, rc::fuzz::cameraOne)
+RC_DECOMP_FN_SETUP(CameraHandleTunnels, rc::fuzz::cameraOne)
+RC_DECOMP_FN_SETUP(CameraDecelerateInterp, rc::fuzz::cameraDecelerate)
+RC_DECOMP_FN_SETUP(CameraSetOffsets, rc::fuzz::cameraOffsets)
+RC_DECOMP_FN_SETUP(CameraSetNear, rc::fuzz::cameraOne)
+RC_DECOMP_FN_SETUP(CameraCalcDesiredGoto, rc::fuzz::cameraWithMatrix)
+RC_DECOMP_FN_SETUP(CameraSetMatrixFromLookAt, rc::fuzz::cameraLookAt)
+RC_DECOMP_FN_SETUP(CameraPlaceAtAINode, rc::fuzz::cameraAINode)
+RC_DECOMP_FN_SETUP(CameraSetModeDefaults, rc::fuzz::cameraOne)
+RC_DECOMP_FN_SETUP(CameraSetMode, rc::fuzz::cameraMode)
+RC_DECOMP_FN_SETUP(CameraNextMode, rc::fuzz::cameraOne)
+RC_DECOMP_FN_SETUP(CameraLvlInitCamera, rc::fuzz::cameraLvlInit)
+RC_DECOMP_FN_SETUP_HEAP(CameraLvlInit, rc::fuzz::cameraLevel)
+RC_DECOMP_FN_SETUP(CameraEndOfStartGridPathCallBack, rc::fuzz::cameraOne)
+RC_DECOMP_FN_SETUP(CameraStartGridHitFirstNodeCallBack, rc::fuzz::cameraPath)
+RC_DECOMP_FN_SETUP(CameraSetNewPath, rc::fuzz::cameraNewPath)
+RC_DECOMP_FN_SETUP(CameraSetStartGridPath, rc::fuzz::cameraPath)
+RC_DECOMP_FN_SETUP(CameraStartGrid, rc::fuzz::cameraPath)
+RC_DECOMP_FN_SETUP(CameraTagToPathNode, rc::fuzz::cameraTag)
+RC_DECOMP_FN_SETUP(SplinePoint, rc::fuzz::cameraSpline)
+RC_DECOMP_FN_SETUP(ComputeCoeffs, rc::fuzz::cameraCoeffs)
+RC_DECOMP_FN_SETUP(CameraFollowPath, rc::fuzz::cameraPath)
+RC_DECOMP_FN_SETUP(CameraSpin, rc::fuzz::cameraOne)
+RC_DECOMP_FN_SETUP(CameraFree, rc::fuzz::cameraPad)
+RC_DECOMP_FN_SETUP(CameraOrbit, rc::fuzz::cameraPad)
+RC_DECOMP_FN_SETUP_HEAP(CameraProcess, rc::fuzz::cameraProcess)
+RC_DECOMP_FN_SETUP(CameraCellCastCell, rc::fuzz::cameraCell)
+RC_DECOMP_FN_SETUP(CameraGeneralRayCast, rc::fuzz::cameraRay)
+RC_DECOMP_FN_SETUP(CameraFollowPlayer, rc::fuzz::cameraFollow)

@@ -19,17 +19,17 @@ namespace rc {
 namespace {
 
 // libpad (the runtime's stubs) and printf.
-constexpr uint32_t kScePadInit = 0x1c64f0u, kScePadEnd = 0x1c6698u, kScePadPortOpen = 0x1c6718u, kScePadPortClose = 0x1c6870u;
-constexpr uint32_t kScePadRead = 0x1c6968u, kScePadGetState = 0x1c69f8u, kScePadInfoMode = 0x1c6dd8u;
-constexpr uint32_t kScePadSetMainMode = 0x1c6ee0u, kScePadSetActDirect = 0x1c6f90u, kScePadSetActAlign = 0x1c7028u;
-constexpr uint32_t kScePadInfoPressMode = 0x1c7218u, kScePadEnterPressMode = 0x1c7248u, kScePadExitPressMode = 0x1c7268u;
-constexpr uint32_t kPrintf = 0x12e9e8u;
+constexpr uint32_t kScePadInit = sym::scePadInit, kScePadEnd = sym::scePadEnd, kScePadPortOpen = sym::scePadPortOpen, kScePadPortClose = sym::scePadPortClose;
+constexpr uint32_t kScePadRead = sym::scePadRead, kScePadGetState = sym::scePadGetState, kScePadInfoMode = sym::scePadInfoMode;
+constexpr uint32_t kScePadSetMainMode = sym::scePadSetMainMode, kScePadSetActDirect = sym::scePadSetActDirect, kScePadSetActAlign = sym::scePadSetActAlign;
+constexpr uint32_t kScePadInfoPressMode = sym::scePadInfoPressMode, kScePadEnterPressMode = sym::scePadEnterPressMode, kScePadExitPressMode = sym::scePadExitPressMode;
+constexpr uint32_t kPrintf = sym::printf;
 // printf formats: "scePadInit() failed\n" and the next five, the port open and close messages.
-constexpr uint32_t kPadInitFailed = 0x3248f8u, kPort0OpenFailed = 0x324910u, kPort1OpenFailed = 0x324930u;
-constexpr uint32_t kPort0CloseFailed = 0x324950u, kPort1CloseFailed = 0x324970u, kPadEndFailed = 0x324990u;
+constexpr uint32_t kPadInitFailed = (sym::sec_rodata + 0x22f8u), kPort0OpenFailed = (sym::sec_rodata + 0x2310u), kPort1OpenFailed = (sym::sec_rodata + 0x2330u);
+constexpr uint32_t kPort0CloseFailed = (sym::sec_rodata + 0x2350u), kPort1CloseFailed = (sym::sec_rodata + 0x2370u), kPadEndFailed = (sym::sec_rodata + 0x2390u);
 // The pads' DMA buffers, and the port tables: int32[2] (vibration), uint16[2] (main mode), int32[8] (by eInputPad).
-constexpr uint32_t kPadDma0 = 0x1f4dc0u, kPadDma1 = 0x1f4ec0u;
-constexpr uint32_t kVibratePorts = 0x328268u, kModePorts = 0x328270u, kPadPorts = 0x3249a8u;
+constexpr uint32_t kPadDma0 = sym::padDmaBuf1G, kPadDma1 = sym::padDmaBuf2G;
+constexpr uint32_t kVibratePorts = (sym::sec_sdata + 0x668u), kModePorts = (sym::sec_sdata + 0x670u), kPadPorts = (sym::sec_rodata + 0x23a8u);
 
 constexpr int32_t kPadStable = 6, kPadFindCtp1 = 2;
 
@@ -484,23 +484,23 @@ using rc::fuzz::inputController;
 using rc::fuzz::inputKeys;
 using rc::fuzz::inputPad;
 
-RC_DECOMP_FN_SETUP(InputInit, 0x190908, inputPad)
-RC_DECOMP_FN_SETUP(InputTerm, 0x190a88, inputPad)
-RC_DECOMP_FN_SETUP(InputHandler, 0x190af8, inputPad)
-RC_DECOMP_FN_SETUP(InputSetVibrateMode, 0x191268, inputController)
-RC_DECOMP_FN_SETUP(InputSetPadMainMode, 0x1913c0, inputController)
-RC_DECOMP_FN_SETUP(InputLatched, 0x191550, inputKeys)
-RC_DECOMP_FN_SETUP(InputHit, 0x191598, inputKeys)
-RC_DECOMP_FN_SETUP(InputReset, 0x191600, inputKeys)
-RC_DECOMP_FN_SETUP(InputResetAllHit, 0x1916c8, inputKeys)
-RC_DECOMP_FN_SETUP(InputResetHit, 0x1917b8, inputKeys)
-RC_DECOMP_FN_SETUP(InputSnapshot, 0x191810, inputPad)
-RC_DECOMP_FN_SETUP(InputPadPresent, 0x1918f8, inputPad)
-RC_DECOMP_FN_SETUP(InputDualShockPresent, 0x191938, inputPad)
-RC_DECOMP_FN_SETUP(InputPressureModePadPresent, 0x1919f0, inputPad)
-RC_DECOMP_FN_SETUP(InputPadEnterPressureMode, 0x191aa0, inputPad)
-RC_DECOMP_FN_SETUP(InputPadExitPressureMode, 0x191b50, inputPad)
-RC_DECOMP_FN_SETUP(InputSetPadMode, 0x191c00, inputPad)
-RC_DECOMP_FN_SETUP(InputClearVibrationVals, 0x191c40, inputKeys)
-RC_DECOMP_FN_SETUP(InputTestAnyKeyHeld, 0x191c78, inputKeys)
-RC_DECOMP_FN_SETUP(InputGetPadID, 0x191d30, inputPad)
+RC_DECOMP_FN_SETUP(InputInit, inputPad)
+RC_DECOMP_FN_SETUP(InputTerm, inputPad)
+RC_DECOMP_FN_SETUP(InputHandler, inputPad)
+RC_DECOMP_FN_SETUP(InputSetVibrateMode, inputController)
+RC_DECOMP_FN_SETUP(InputSetPadMainMode, inputController)
+RC_DECOMP_FN_SETUP(InputLatched, inputKeys)
+RC_DECOMP_FN_SETUP(InputHit, inputKeys)
+RC_DECOMP_FN_SETUP(InputReset, inputKeys)
+RC_DECOMP_FN_SETUP(InputResetAllHit, inputKeys)
+RC_DECOMP_FN_SETUP(InputResetHit, inputKeys)
+RC_DECOMP_FN_SETUP(InputSnapshot, inputPad)
+RC_DECOMP_FN_SETUP(InputPadPresent, inputPad)
+RC_DECOMP_FN_SETUP(InputDualShockPresent, inputPad)
+RC_DECOMP_FN_SETUP(InputPressureModePadPresent, inputPad)
+RC_DECOMP_FN_SETUP(InputPadEnterPressureMode, inputPad)
+RC_DECOMP_FN_SETUP(InputPadExitPressureMode, inputPad)
+RC_DECOMP_FN_SETUP(InputSetPadMode, inputPad)
+RC_DECOMP_FN_SETUP(InputClearVibrationVals, inputKeys)
+RC_DECOMP_FN_SETUP(InputTestAnyKeyHeld, inputKeys)
+RC_DECOMP_FN_SETUP(InputGetPadID, inputPad)

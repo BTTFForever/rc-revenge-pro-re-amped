@@ -20,8 +20,8 @@ void ResTypeSetConstructDaemon(ptr32<char> pType, uint32 constructDaemon, int16 
 namespace {
 
 // Microprograms: the shape renderer's and the track renderer's. The state packets start whichever is loaded.
-const uint32_t kShapeProgram = 0x1d9840;     // _dma_48
-const uint32_t kTrackProgramEnd = 0x1dc8a0;  // gTRdr_EndShapeData
+const uint32_t kShapeProgram = sym::TRdr_VUShapeProg;     // _dma_48
+const uint32_t kTrackProgramEnd = sym::EnvRdr_VUShapeProg;  // gTRdr_EndShapeData
 const uint32_t kStateBlocks = 0x100;         // Packets in the state packet ring.
 
 // GS register numbers.
@@ -86,9 +86,9 @@ void GfxTex_Update(); // gfxtex.cpp
 
 namespace {
 
-constexpr uint32_t kAngleToRadians = 0x327bd0u, kCameraMinZ = 0x327bd4u, kCameraMaxZ = 0x327bd8u, kAspect = 0x327bdcu;
-constexpr uint32_t kScreenLimit = 0x327be0u, kLineDepth1 = 0x327be4u, kLineDepth2 = 0x327be8u;
-constexpr uint32_t kGfxP2_SwapBuffers = 0x18e988u, kSceGsSyncPath = 0x1c3e28u, kFlushCache = 0x1be9a0u;
+constexpr uint32_t kAngleToRadians = sym::lit4_327bd0, kCameraMinZ = sym::lit4_327bd4, kCameraMaxZ = sym::lit4_327bd8, kAspect = sym::lit4_327bdc;
+constexpr uint32_t kScreenLimit = sym::lit4_327be0, kLineDepth1 = sym::lit4_327be4, kLineDepth2 = sym::lit4_327be8;
+constexpr uint32_t kGfxP2_SwapBuffers = sym::GfxP2_SwapBuffers, kSceGsSyncPath = sym::sceGsSyncPath, kFlushCache = sym::FlushCache;
 // Hardware registers: VIF1's error mask, DMA channel 1 (VIF1) and the DMA controller's status.
 constexpr uint32_t kVif1Err = 0x10003c20u, kD1Chcr = 0x10009000u, kD1Qwc = 0x10009020u, kD1Tadr = 0x10009030u,
                    kDStat = 0x1000e010u;
@@ -463,6 +463,7 @@ void gifRegisters(uint64_t *q, int32_t first, std::initializer_list<uint64_t> va
 // Sets the GS for a sprite texture unless it is already set: TEX1 (no mipmaps), TEXA, then TEX0.
 void GfxP2_Tex(ptr32<_sGfxTexture> pTex)
 {
+    RC_DIVERT_IF_CHANGED(GfxP2_Tex, pTex);
     if (pTex == G(gLastTex))
         return;
     sGfxP2 &gfx = G(gGfxP2);
@@ -478,6 +479,7 @@ void GfxP2_Tex(ptr32<_sGfxTexture> pTex)
 // As GfxP2_Tex, with filtering (attrib 1: bilinear, 2: blended) and the blend for an alpha type.
 void GfxP2_TexExt(ptr32<_sGfxTexture> pTex, s32 attrib, s32 alphaType)
 {
+    RC_DIVERT_IF_CHANGED(GfxP2_TexExt, pTex, attrib, alphaType);
     if (pTex == G(gLastTex))
         return;
     sGfxP2 &gfx = G(gGfxP2);
@@ -507,6 +509,7 @@ void GfxP2_TexExt(ptr32<_sGfxTexture> pTex, s32 attrib, s32 alphaType)
 // blending.
 void GfxP2_TexFX(ptr32<_sGfxTexture> pTex, u32 attrib)
 {
+    RC_DIVERT_IF_CHANGED(GfxP2_TexFX, pTex, attrib);
     if (pTex == G(gLastTex))
         return;
     sGfxP2 &gfx = G(gGfxP2);
@@ -581,6 +584,7 @@ void RdrState_SetPixelAlphaBlendControlEnable(ptr32<sRdrStateBlock> block, u32 e
 
 void RdrState_SetStateBlockToDefaults(ptr32<sRdrStateBlock> block)
 {
+    RC_DIVERT_IF_CHANGED(RdrState_SetStateBlockToDefaults, block);
     block->alpha = 0x44;
     block->pabe = 1;
     block->clamp = 5;
@@ -638,6 +642,7 @@ void RdrState_ApplyDefaultStateBlock()
 // Allocates the ring of 256 state packets and fills in the parts that never change: the DMA, VIF and GIF headers.
 void RdrState_Init()
 {
+    RC_DIVERT_IF_CHANGED(RdrState_Init);
     MemBlockAllocLo(ptr32<memHandle>(guest_addr(&G(g_RdrStateDmaBlocks))), 0x9000);
     sRdrStateBlock &hardware = G(g_RdrStateOfHardware);
     hardware.pabe = ~0ull;
@@ -727,7 +732,7 @@ uint64_t gsTex0(const _sGfxTexture *tex);
 
 namespace {
 
-const uint32_t kPolyOne = 0x32839c, kTriOne = 0x3283a4; // Each holds the vertex w (1.0) the packets carry.
+const uint32_t kPolyOne = (sym::fConst_450 + 0x4u), kTriOne = (sym::fConst_454 + 0x4u); // Each holds the vertex w (1.0) the packets carry.
 
 int32_t polyChannel(int32_t channel)
 {
@@ -951,7 +956,7 @@ void RdrZedsWriteOn(int32_t channel)
 void RdrPolyInit()
 {
     sRdrPolyClass &polys = G(gRdrPolyClass);
-    polys.dmaVIF1 = ptr32<anon_0db2ace9>(guest_call<uint32_t>(0x1c4900u, 1)); // sceDmaGetChan(1)
+    polys.dmaVIF1 = ptr32<anon_0db2ace9>(guest_call<uint32_t>(sym::sceDmaGetChan, 1)); // sceDmaGetChan(1)
     for (int32_t i = 0; i < 4; ++i)
     {
         sRdrPolyChannel &c = polys.channels[i];
@@ -974,6 +979,7 @@ void RdrPolyInit()
 // Adds the packet that sets the shape microprogram's camera for a channel, from the shape packet ring.
 void RdrPolyInitCamera(int32_t channel)
 {
+    RC_DIVERT_IF_CHANGED(RdrPolyInitCamera, channel);
     sRdr &rdr = G(gRdr);
     const int32_t index = rdr.currShapeData;
     rdr.currShapeData = rdr.currShapeData + 1;
@@ -984,7 +990,7 @@ void RdrPolyInitCamera(int32_t channel)
     const auto put = [p](uint32_t offset, uint32_t value) { std::memcpy(p + offset, &value, 4); };
     const auto putf = [p](uint32_t offset, ee_float value) { std::memcpy(p + offset, &value, 4); };
     const sRdrPolyChannel &c = channelAt(channel);
-    put(0xcc, *static_cast<uint32_t *>(guest_host(0x327bf4u)));
+    put(0xcc, *static_cast<uint32_t *>(guest_host(sym::lit4_327bf4)));
     std::memset(p + 0xc0, 0, 12);
     putf(0xf0, c.cameraMatrix[0][2]);
     putf(0xf4, c.cameraMatrix[1][2]);
@@ -1008,7 +1014,7 @@ void RdrPolyInitCamera(int32_t channel)
     putf(0x168, eye[2]);
     put(0x16c, 0x3f800000); // 1.0
     const int32_t player = G(gRdrPolyPlayer);
-    put(0x114, player == 1 ? 0x44f90000u : player == 2 ? *static_cast<uint32_t *>(guest_host(0x327bf8u)) : 0x45000000u);
+    put(0x114, player == 1 ? 0x44f90000u : player == 2 ? *static_cast<uint32_t *>(guest_host(sym::lit4_327bf8)) : 0x45000000u);
     Rdr_UploadProg(ptr32<u32>(kShapeProgram));
     Rdr_AddDmaCall(packet.cast<void>());
 }
@@ -1066,60 +1072,60 @@ void RdrPolyFlush(int32_t channel)
 
 } // namespace rc
 
-RC_DECOMP_FN(Rdr_WhichProg, 0x1a73a8)
-RC_DECOMP_FN(Rdr_AddDmaCall, 0x1a4498)
-RC_DECOMP_FN(Rdr_UploadProg, 0x1a74d0)
-RC_DECOMP_FN(Rdr_UseCamera, 0x1a4400)
-RC_DECOMP_FN(Rdr_DrawPoint, 0x1a4410)
-RC_DECOMP_FN(Rdr_DrawTri, 0x1a4418)
-RC_DECOMP_FN(Rdr_DrawQuad, 0x1a4420)
-RC_DECOMP_FN_NOFUZZ(Rdr_Term, 0x1a3628)
-RC_DECOMP_FN_SETUP_HEAP(Rdr_Init, 0x1a35b0, rc::fuzz::rdrInit)
-RC_DECOMP_FN_BLOCKING_SETUP(Rdr_EndFrame, 0x1a38b8, rc::fuzz::rdrEndFrame)
-RC_DECOMP_FN_SETUP(Rdr_SetupCamera, 0x1a39f0, rc::fuzz::rdrCamera)
-RC_DECOMP_FN_SETUP(Rdr_DrawLine, 0x1a3ea0, rc::fuzz::rdrLine)
-RC_DECOMP_FN_BLOCKING_SETUP(Rdr_Vif1Send, 0x1a4428, rc::fuzz::hardwareArg)
-RC_DECOMP_FN(GfxP2_BeginScene, 0x18fc88)
-RC_DECOMP_FN(GfxP2_EndScene, 0x18fc90)
-RC_DECOMP_FN(GfxP2_RenderDmaSend, 0x18fcd0)
-RC_DECOMP_FN(GfxP2_Tex, 0x18ea98)
-RC_DECOMP_FN(GfxP2_TexExt, 0x18f018)
-RC_DECOMP_FN(GfxP2_TexFX, 0x18f658)
-RC_DECOMP_FN(GfxP2_DefRenderState, 0x18fe40)
-RC_DECOMP_FN(GfxP2_Scissor, 0x18fee8)
-RC_DECOMP_FN(GfxP2_ZWriteEnable, 0x190058)
-RC_DECOMP_FN(GfxP2_ZWriteDisable, 0x1900c0)
-RC_DECOMP_FN(Rdr_StartFrame, 0x1a3638)
-RC_DECOMP_FN(RdrState_SetAlphaBlending, 0x1a13b8)
-RC_DECOMP_FN(RdrState_SetAlphaTestEnable, 0x1a13f0)
-RC_DECOMP_FN(RdrState_SetZTestEnable, 0x1a1448)
-RC_DECOMP_FN(RdrState_SetTextureClamp, 0x1a1498)
-RC_DECOMP_FN(RdrState_SetScissor, 0x1a14a8)
-RC_DECOMP_FN(RdrState_SetZBufferWriteEnable, 0x1a1500)
-RC_DECOMP_FN(RdrState_SetPixelAlphaBlendControlEnable, 0x1a1540)
-RC_DECOMP_FN(RdrState_SetStateBlockToDefaults, 0x1a1550)
-RC_DECOMP_FN(RdrState_ForceApplyStateBlock, 0x1a1058)
-RC_DECOMP_FN(RdrState_ApplyStateBlock, 0x1a1050)
-RC_DECOMP_FN(RdrState_ApplyDefaultStateBlock, 0x1a1040)
-RC_DECOMP_FN_NOFUZZ(RdrState_Init, 0x1a1268)
-RC_DECOMP_FN(RenderFrameInit, 0x183c38)
-RC_DECOMP_FN_BLOCKING(RenderInit, 0x183c10) // Once, at start-up: only a whole-game check.
-RC_DECOMP_FN(RenderAllocateBuffers, 0x183c80)
-RC_DECOMP_FN(RenderFreeBuffers, 0x183c98)
-RC_DECOMP_FN(RenderTerm, 0x183c30)
-RC_DECOMP_FN(TexFreeIntermediateResData, 0x183ee8)
-RC_DECOMP_FN(RdrState_PkForceApplyStateBlock, 0x1a1178)
-RC_DECOMP_FN(RdrPolyCamera, 0x1a9168)
-RC_DECOMP_FN(sceVif1UnpackSize, 0x1a92e8)
-RC_DECOMP_FN(RdrPolyTexture, 0x1a7880)
-RC_DECOMP_FN_NOFUZZ(RdrPolyTerm, 0x1a90e0)
-RC_DECOMP_FN(RdrZedsWriteOff, 0x1a9208)
-RC_DECOMP_FN(RdrZedsWriteOn, 0x1a9278)
-RC_DECOMP_FN_NOFUZZ(RdrPolyInit, 0x1a7518)
-RC_DECOMP_FN_NOFUZZ(RdrPolyInitCamera, 0x1a7648)
-RC_DECOMP_FN_NOFUZZ(RdrPoly, 0x1a7ad8)
-RC_DECOMP_FN_NOFUZZ(RdrTri, 0x1a8638)
-RC_DECOMP_FN_NOFUZZ(RdrPolyFlush, 0x1a8fa0)
+RC_DECOMP_FN(Rdr_WhichProg)
+RC_DECOMP_FN(Rdr_AddDmaCall)
+RC_DECOMP_FN(Rdr_UploadProg)
+RC_DECOMP_FN(Rdr_UseCamera)
+RC_DECOMP_FN(Rdr_DrawPoint)
+RC_DECOMP_FN(Rdr_DrawTri)
+RC_DECOMP_FN(Rdr_DrawQuad)
+RC_DECOMP_FN_NOFUZZ(Rdr_Term)
+RC_DECOMP_FN_SETUP_HEAP(Rdr_Init, rc::fuzz::rdrInit)
+RC_DECOMP_FN_BLOCKING_SETUP(Rdr_EndFrame, rc::fuzz::rdrEndFrame)
+RC_DECOMP_FN_SETUP(Rdr_SetupCamera, rc::fuzz::rdrCamera)
+RC_DECOMP_FN_SETUP(Rdr_DrawLine, rc::fuzz::rdrLine)
+RC_DECOMP_FN_BLOCKING_SETUP(Rdr_Vif1Send, rc::fuzz::hardwareArg)
+RC_DECOMP_FN(GfxP2_BeginScene)
+RC_DECOMP_FN(GfxP2_EndScene)
+RC_DECOMP_FN(GfxP2_RenderDmaSend)
+RC_DECOMP_FN(GfxP2_Tex)
+RC_DECOMP_FN(GfxP2_TexExt)
+RC_DECOMP_FN(GfxP2_TexFX)
+RC_DECOMP_FN(GfxP2_DefRenderState)
+RC_DECOMP_FN(GfxP2_Scissor)
+RC_DECOMP_FN(GfxP2_ZWriteEnable)
+RC_DECOMP_FN(GfxP2_ZWriteDisable)
+RC_DECOMP_FN(Rdr_StartFrame)
+RC_DECOMP_FN(RdrState_SetAlphaBlending)
+RC_DECOMP_FN(RdrState_SetAlphaTestEnable)
+RC_DECOMP_FN(RdrState_SetZTestEnable)
+RC_DECOMP_FN(RdrState_SetTextureClamp)
+RC_DECOMP_FN(RdrState_SetScissor)
+RC_DECOMP_FN(RdrState_SetZBufferWriteEnable)
+RC_DECOMP_FN(RdrState_SetPixelAlphaBlendControlEnable)
+RC_DECOMP_FN(RdrState_SetStateBlockToDefaults)
+RC_DECOMP_FN(RdrState_ForceApplyStateBlock)
+RC_DECOMP_FN(RdrState_ApplyStateBlock)
+RC_DECOMP_FN(RdrState_ApplyDefaultStateBlock)
+RC_DECOMP_FN_NOFUZZ(RdrState_Init)
+RC_DECOMP_FN(RenderFrameInit)
+RC_DECOMP_FN_BLOCKING(RenderInit) // Once, at start-up: only a whole-game check.
+RC_DECOMP_FN(RenderAllocateBuffers)
+RC_DECOMP_FN(RenderFreeBuffers)
+RC_DECOMP_FN(RenderTerm)
+RC_DECOMP_FN(TexFreeIntermediateResData)
+RC_DECOMP_FN(RdrState_PkForceApplyStateBlock)
+RC_DECOMP_FN(RdrPolyCamera)
+RC_DECOMP_FN(sceVif1UnpackSize)
+RC_DECOMP_FN(RdrPolyTexture)
+RC_DECOMP_FN_NOFUZZ(RdrPolyTerm)
+RC_DECOMP_FN(RdrZedsWriteOff)
+RC_DECOMP_FN(RdrZedsWriteOn)
+RC_DECOMP_FN_NOFUZZ(RdrPolyInit)
+RC_DECOMP_FN_NOFUZZ(RdrPolyInitCamera)
+RC_DECOMP_FN_NOFUZZ(RdrPoly)
+RC_DECOMP_FN_NOFUZZ(RdrTri)
+RC_DECOMP_FN_NOFUZZ(RdrPolyFlush)
 
 namespace {
 

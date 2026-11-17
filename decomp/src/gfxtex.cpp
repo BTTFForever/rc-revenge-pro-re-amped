@@ -11,8 +11,8 @@ void ResTypeSetConstructDaemon(ptr32<char> pType, uint32 constructDaemon, int16 
 
 namespace {
 
-const uint32_t kPrintf = 0x12e9e8, kLoadTexMip = 0x18fd70, kSetDefLoadImage = 0x1c4140, kExecLoadImage = 0x1c4328;
-const uint32_t kResReadAlloc = 0x1ab860, kResReAlloc = 0x1ab850;
+const uint32_t kPrintf = sym::printf, kLoadTexMip = sym::GfxP2_LoadTexMip, kSetDefLoadImage = sym::sceGsSetDefLoadImage, kExecLoadImage = sym::sceGsExecLoadImage;
+const uint32_t kResReadAlloc = sym::ResReadAlloc, kResReAlloc = sym::ResReAlloc;
 const uint32_t kFirstTexAddr = 0x1e0000, kLastTexAddr = 0x400000;
 
 // The GS memory a level of the given (padded) size takes, in units of 256 bytes, by format.
@@ -83,6 +83,7 @@ void GfxTex_Term() {}
 // the smaller side stays above 4), padded to sizes the GS accepts, then its palette.
 void GfxTex_ManageTexture(ptr32<_sGfxTexture> pTexture)
 {
+    RC_DIVERT_IF_CHANGED(GfxTex_ManageTexture, pTexture);
     GuestFrame frame(0x150);
     _sGfxTexture &tex = *pTexture;
     uint32_t levels = (tex.flags & 0x1c) >> 2;
@@ -138,7 +139,7 @@ void GfxTex_ManageTexture(ptr32<_sGfxTexture> pTexture)
                 tex.fmt = 10;
             else
             {
-                guest_call(kPrintf, 0x3248b8u, level); // "Storing MIPMAP Level %d, 32x64 as 64x64\n"
+                guest_call(kPrintf, (sym::sec_rodata + 0x22b8u), level); // "Storing MIPMAP Level %d, 32x64 as 64x64\n"
                 w = 0x40;
             }
         }
@@ -155,7 +156,7 @@ void GfxTex_ManageTexture(ptr32<_sGfxTexture> pTexture)
     }
     if (levels != 0)
     {
-        guest_call(kPrintf, 0x3248e8u, levels); // "MIP Levels %d\n"
+        guest_call(kPrintf, (sym::sec_rodata + 0x22e8u), levels); // "MIP Levels %d\n"
         const uint64_t mip1 = mipBase(tex, 1);
         tex.miptbp1L = static_cast<u32>(mip1);
         tex.miptbp1H = static_cast<u32>(mip1 >> 32);
@@ -190,6 +191,7 @@ void GfxTex_ManageTexture(ptr32<_sGfxTexture> pTexture)
 // Re-uploads every animated texture's levels with the frame for this point in time (a new frame every 3).
 void GfxTex_Update()
 {
+    RC_DIVERT_IF_CHANGED(GfxTex_Update);
     GuestFrame frame(0x80);
     G(framecount) = G(framecount) + 1;
     for (int32_t i = 0; i < G(gNumAnimTextures); ++i)
@@ -214,7 +216,7 @@ void TexReset()
 void TexInit()
 {
     GfxTex_Init();
-    ResTypeSetConstructDaemon(ptr32<char>(0x328160u), 0x183e68u, 2);
+    ResTypeSetConstructDaemon(ptr32<char>((sym::sec_sdata + 0x560u)), sym::TextureConstructDaemon, 2);
 }
 
 // Places a loaded texture in GS memory. One that is a single frame and not flagged otherwise is then moved: its
@@ -239,11 +241,11 @@ void TextureConstructDaemon(ptr32<memHandle> pHandle)
 
 } // namespace rc
 
-RC_DECOMP_FN(GfxTex_Init, 0x190670)
-RC_DECOMP_FN(GfxTex_Reset, 0x190688)
-RC_DECOMP_FN(GfxTex_Term, 0x1906c0)
-RC_DECOMP_FN_NOFUZZ(GfxTex_ManageTexture, 0x190130) // Uploads to the GS.
-RC_DECOMP_FN_NOFUZZ(GfxTex_Update, 0x1906c8)
-RC_DECOMP_FN(TexReset, 0x183e60)
-RC_DECOMP_FN_NOFUZZ(TexInit, 0x183e30)
-RC_DECOMP_FN_NOFUZZ(TextureConstructDaemon, 0x183e68) // Uploads to the GS.
+RC_DECOMP_FN(GfxTex_Init)
+RC_DECOMP_FN(GfxTex_Reset)
+RC_DECOMP_FN(GfxTex_Term)
+RC_DECOMP_FN_NOFUZZ(GfxTex_ManageTexture) // Uploads to the GS.
+RC_DECOMP_FN_NOFUZZ(GfxTex_Update)
+RC_DECOMP_FN(TexReset)
+RC_DECOMP_FN_NOFUZZ(TexInit)
+RC_DECOMP_FN_NOFUZZ(TextureConstructDaemon) // Uploads to the GS.

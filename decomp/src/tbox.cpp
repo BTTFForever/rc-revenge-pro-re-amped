@@ -24,10 +24,10 @@ namespace {
 
 using weapon::at;
 
-constexpr uint32_t kTBoxVars = 0x1f05f8u, kFns = kTBoxVars + 4u, kScratch = 0x1ed4c0u, kLsParent = 0x1f3c38u;
-constexpr uint32_t kCameras = 0x1e9fb0u, kCameraSize = 0x5b8u, kMainVars = 0x1ed900u, kObjectList = 0x1ee390u;
-constexpr uint32_t kRaceOrder = 0x1e9404u, kRevSfx = 0x1ef3b0u, kReadySteadyGo = 0x1ece10u, kLevelPtr = 0x327e80u;
-constexpr uint32_t kSfxSetReverbDepth = 0x1ac6a8u, kRevSfxTrigger = 0x1436d0u;
+constexpr uint32_t kTBoxVars = sym::tBoxVarG, kFns = kTBoxVars + 4u, kScratch = sym::scratchPadG, kLsParent = sym::lsVarG;
+constexpr uint32_t kCameras = sym::cameraVarG, kCameraSize = 0x5b8u, kMainVars = sym::mainVarG, kObjectList = sym::objectVarG;
+constexpr uint32_t kRaceOrder = (sym::aiVarG + 0x4u), kRevSfx = sym::revSfxVarG, kReadySteadyGo = (sym::hudVarG + 0x70u), kLevelPtr = sym::pLvlG;
+constexpr uint32_t kSfxSetReverbDepth = sym::SfxSetReverbDepth, kRevSfxTrigger = sym::RevSfxTrigger;
 
 uint32_t boxData(uint32_t box) { return box + 0x16u + at<uint16_t>(box + 0x16u); }
 
@@ -192,17 +192,17 @@ void TBoxTunnelCallback(ptr32<_sTBox>, ptr32<void> pData)
 
 void TBoxInit()
 {
-    at<uint32_t>(kFns + 0x28u) = 0x144d60u; // TBoxColCallback
-    at<uint32_t>(kFns + 0x00u) = 0x144790u; // TBoxReverbCallback
-    at<uint32_t>(kFns + 0x04u) = 0x144d88u; // TBoxEnvCallback
-    at<uint32_t>(kFns + 0x08u) = 0x144878u; // TBoxSfxCallback
-    at<uint32_t>(kFns + 0x0cu) = 0x144db8u; // TBoxVfxCallback
-    at<uint32_t>(kFns + 0x10u) = 0x144890u; // TBoxCamCallback
-    at<uint32_t>(kFns + 0x14u) = 0x144a50u; // TBoxAnimCallback
-    at<uint32_t>(kFns + 0x18u) = 0x144dc0u; // TBoxTintCallback
-    at<uint32_t>(kFns + 0x1cu) = 0x144e78u; // TBoxAmbCallback
-    at<uint32_t>(kFns + 0x20u) = 0x144e80u; // TBoxXACallback
-    at<uint32_t>(kFns + 0x24u) = 0x144bd8u; // TBoxTunnelCallback
+    at<uint32_t>(kFns + 0x28u) = sym::TBoxColCallback; // TBoxColCallback
+    at<uint32_t>(kFns + 0x00u) = sym::TBoxReverbCallback; // TBoxReverbCallback
+    at<uint32_t>(kFns + 0x04u) = sym::TBoxEnvCallback; // TBoxEnvCallback
+    at<uint32_t>(kFns + 0x08u) = sym::TBoxSfxCallback; // TBoxSfxCallback
+    at<uint32_t>(kFns + 0x0cu) = sym::TBoxVfxCallback; // TBoxVfxCallback
+    at<uint32_t>(kFns + 0x10u) = sym::TBoxCamCallback; // TBoxCamCallback
+    at<uint32_t>(kFns + 0x14u) = sym::TBoxAnimCallback; // TBoxAnimCallback
+    at<uint32_t>(kFns + 0x18u) = sym::TBoxTintCallback; // TBoxTintCallback
+    at<uint32_t>(kFns + 0x1cu) = sym::TBoxAmbCallback; // TBoxAmbCallback
+    at<uint32_t>(kFns + 0x20u) = sym::TBoxXACallback; // TBoxXACallback
+    at<uint32_t>(kFns + 0x24u) = sym::TBoxTunnelCallback; // TBoxTunnelCallback
 }
 
 void TBoxTerm() {}
@@ -353,22 +353,22 @@ void TBoxUpdate(ptr32<vec32> pPos, uint32 mask, ptr32<void> pData)
     }
 }
 
-RC_DECOMP_FN_SETUP_HEAP(TBoxProcess, 0x1443d0, rc::fuzz::tboxRace)
-RC_DECOMP_FN_SETUP_HEAP(TBoxUpdate, 0x144510, rc::fuzz::tboxUpdate)
-RC_DECOMP_FN_SETUP_HEAP(TBoxReverbCallback, 0x144790, rc::fuzz::tboxReverb)
-RC_DECOMP_FN_SETUP_HEAP(TBoxSfxCallback, 0x144878, rc::fuzz::tboxSfx)
-RC_DECOMP_FN_SETUP_HEAP(TBoxCamCallback, 0x144890, rc::fuzz::tboxCam)
-RC_DECOMP_FN_SETUP_HEAP(TBoxAnimCallback, 0x144a50, rc::fuzz::tboxAnim)
-RC_DECOMP_FN_SETUP_HEAP(TBoxTunnelCallback, 0x144bd8, rc::fuzz::tboxTunnel)
-RC_DECOMP_FN(TBoxInit, 0x144c00)
-RC_DECOMP_FN(TBoxTerm, 0x144c90)
-RC_DECOMP_FN_SETUP_HEAP(TBoxSetupClass, 0x144c98, rc::fuzz::tboxRace)
-RC_DECOMP_FN_SETUP_HEAP(TBoxColCallback, 0x144d60, rc::fuzz::tboxCol)
-RC_DECOMP_FN_SETUP_HEAP(TBoxEnvCallback, 0x144d88, rc::fuzz::tboxEnv)
-RC_DECOMP_FN(TBoxVfxCallback, 0x144db8)
-RC_DECOMP_FN_SETUP_HEAP(TBoxTintCallback, 0x144dc0, rc::fuzz::tboxTint)
-RC_DECOMP_FN(TBoxAmbCallback, 0x144e78)
-RC_DECOMP_FN(TBoxXACallback, 0x144e80)
-RC_DECOMP_FN_SETUP_HEAP(TBoxPreProcess, 0x144e88, rc::fuzz::tboxRace)
+RC_DECOMP_FN_SETUP_HEAP(TBoxProcess, rc::fuzz::tboxRace)
+RC_DECOMP_FN_SETUP_HEAP(TBoxUpdate, rc::fuzz::tboxUpdate)
+RC_DECOMP_FN_SETUP_HEAP(TBoxReverbCallback, rc::fuzz::tboxReverb)
+RC_DECOMP_FN_SETUP_HEAP(TBoxSfxCallback, rc::fuzz::tboxSfx)
+RC_DECOMP_FN_SETUP_HEAP(TBoxCamCallback, rc::fuzz::tboxCam)
+RC_DECOMP_FN_SETUP_HEAP(TBoxAnimCallback, rc::fuzz::tboxAnim)
+RC_DECOMP_FN_SETUP_HEAP(TBoxTunnelCallback, rc::fuzz::tboxTunnel)
+RC_DECOMP_FN(TBoxInit)
+RC_DECOMP_FN(TBoxTerm)
+RC_DECOMP_FN_SETUP_HEAP(TBoxSetupClass, rc::fuzz::tboxRace)
+RC_DECOMP_FN_SETUP_HEAP(TBoxColCallback, rc::fuzz::tboxCol)
+RC_DECOMP_FN_SETUP_HEAP(TBoxEnvCallback, rc::fuzz::tboxEnv)
+RC_DECOMP_FN(TBoxVfxCallback)
+RC_DECOMP_FN_SETUP_HEAP(TBoxTintCallback, rc::fuzz::tboxTint)
+RC_DECOMP_FN(TBoxAmbCallback)
+RC_DECOMP_FN(TBoxXACallback)
+RC_DECOMP_FN_SETUP_HEAP(TBoxPreProcess, rc::fuzz::tboxRace)
 
 } // namespace rc

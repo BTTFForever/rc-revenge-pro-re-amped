@@ -14,9 +14,9 @@ namespace rc::fuzz {
 
 namespace {
 
-constexpr uint32_t kObjectList = 0x1ee390u, kWeaponVars = 0x1f3a80u, kSfxInitOk = 0x31e488u, kMainTime = 0x1ed91cu;
-constexpr uint32_t kWeaponSpawn = 0x17a8d0u, kTaskDelete = 0x1afc48u, kVfxAddNew = 0x157c50u;
-constexpr uint32_t kTriggerState = 0x1eb778u;
+constexpr uint32_t kObjectList = sym::objectVarG, kWeaponVars = sym::weaponVarG, kSfxInitOk = sym::sfxVarG, kMainTime = (sym::mainVarG + 0x1cu);
+constexpr uint32_t kWeaponSpawn = sym::WeaponSpawn, kTaskDelete = sym::TaskDelete, kVfxAddNew = sym::VfxAddNew;
+constexpr uint32_t kTriggerState = (sym::carColG + 0xe0u);
 
 // Scratch layout.
 constexpr uint32_t kWeapon = 0x0000u, kDef = 0x0200u, kPos = 0x0240u, kNormal = 0x0260u;
@@ -366,7 +366,7 @@ void weaponCreate(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     buildDef(state, scratch, no == 6 ? 7 : no, owner); // oil comes through WeaponSpawn's squirt, not here
     mem<_sObject>(objectAt(static_cast<uint32_t>(owner))).weaponsHeld = static_cast<int8>(rnd(state, 3));
     if (chance(state, 20))
-        mem<uint8_t>(0x1ed900u + 0x369u) = static_cast<uint8_t>(rnd(state, 3)); // mainVarG.noHuman
+        mem<uint8_t>(sym::mainVarG + 0x369u) = static_cast<uint8_t>(rnd(state, 3)); // mainVarG.noHuman
     setArg(ctx, 0, scratch + kPos);
     setArg(ctx, 1, static_cast<uint32_t>(timeNear(state)));
     setArg(ctx, 2, scratch + kDef);
@@ -403,7 +403,7 @@ void weaponRender(R5900Context *ctx, uint64_t &state, uint32_t scratch)
         if (no == 15)
             weapon.status = static_cast<int32>(rnd(state, 4));
     }
-    mem<uint16_t>(0x1ed900u + 0x366u) = static_cast<uint16_t>(chance(state, 30) ? 1 : 0); // mainVarG.pauseMenu
+    mem<uint16_t>(sym::mainVarG + 0x366u) = static_cast<uint16_t>(chance(state, 30) ? 1 : 0); // mainVarG.pauseMenu
     setArg(ctx, 0, chance(state, 50) ? 0u : 1u);
 }
 
@@ -486,7 +486,7 @@ void weaponAcol(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     }
     for (uint32_t i = 0; i < 9; ++i)
         mem<uint32_t>(kTriggerState + 4u * i) = chance(state, 30) ? 1u : chance(state, 50) ? triggers[i] : 0u;
-    const uint32_t grid = mem<uint32_t>(0x328200u);
+    const uint32_t grid = mem<uint32_t>(sym::acolG);
     _sWeapon &w = mem<_sWeapon>(scratch + kWeapon);
     w.oColrad = chance(state, 10) ? frnd(state, 5.0f) : static_cast<float>(5 + rnd(state, 80));
     const uint32_t polys = mem<uint32_t>(grid + 0x30u);
@@ -553,7 +553,7 @@ void nearGround(uint64_t &state, uint32_t weapon)
 // Puts a weapon next to a random poly of the level (within its radius or so, either side), as it is about to hit it.
 void nearPoly(uint64_t &state, uint32_t weapon)
 {
-    const uint32_t grid = mem<uint32_t>(0x328200u);
+    const uint32_t grid = mem<uint32_t>(sym::acolG);
     if (!inRam(grid) || mem<uint32_t>(grid + 0x30u) == 0)
         return;
     const _sColPolyPSX &p = mem<_sColPolyPSX>(mem<uint32_t>(grid + 0x4cu) + rnd(state, mem<uint32_t>(grid + 0x30u)) * 0x60u);
@@ -685,7 +685,7 @@ void weaponLive(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     if (No == 14 && chance(state, 60))
     {
         weapon.misc = 1;
-        weapon.pVfx = ptr32<_sVfx_Object>(guest_call<uint32_t>(0x16a158u, ee_ftoi(weapon.pos16.x), ee_ftoi(weapon.pos16.y), ee_ftoi(weapon.pos16.z), 0x2f));
+        weapon.pVfx = ptr32<_sVfx_Object>(guest_call<uint32_t>(sym::VfxAddNewPlace, ee_ftoi(weapon.pos16.x), ee_ftoi(weapon.pos16.y), ee_ftoi(weapon.pos16.z), 0x2f));
     }
     if ((No == 4 || No == 13 || No == 14) && chance(state, 70))
         ringOverCars(state, w, now);

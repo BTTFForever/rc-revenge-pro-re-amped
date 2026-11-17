@@ -20,11 +20,11 @@ void TERdr_VUShape(ptr32<sRdrVUShape> pShape, ptr32<_sRdrCamera> pCamera, u32 ti
 
 namespace {
 
-constexpr uint32_t kTile = 0x1f46f0u, kView3d = 0x1f4808u, kLightVecs = 0x1f45a0u, kLightVals = 0x1f45d0u;
-constexpr uint32_t kTeLightVecs = 0x29dc18u, kTeLightVals = 0x29dc48u, kRdrCamera = 0x1f40b8u;
+constexpr uint32_t kTile = sym::tileVarG, kView3d = sym::view3dVarG, kLightVecs = sym::lightVecsG, kLightVals = sym::lightValsG;
+constexpr uint32_t kTeLightVecs = sym::rdr_TELightVecsG, kTeLightVals = sym::rdr_TELightValsG, kRdrCamera = sym::rdrCameraG;
 // Resource types: the tile list's (no daemon) and the tiles' (TileConstructDaemon).
-constexpr uint32_t kTileListType = 0x328168u, kTileType = 0x328170u, kTileConstructDaemon = 0x184a98u;
-constexpr uint32_t kCellRenderInit = 0x181ea0u, kMat3nBuild = 0x19e710u, kResLoad = 0x1ab1b0u;
+constexpr uint32_t kTileListType = (sym::sec_sdata + 0x568u), kTileType = (sym::sec_sdata + 0x570u), kTileConstructDaemon = sym::TileConstructDaemon;
+constexpr uint32_t kCellRenderInit = sym::CellRenderInit, kMat3nBuild = sym::Mat3nBuild, kResLoad = sym::ResLoad;
 // view3dVarG: the transposed view matrix (in use, and the one the tiles start from) and the view matrix's translation.
 constexpr uint32_t kPsxTViewMatrixPtr = kView3d + 0x8u, kPsxTViewMatrix = kView3d + 0x4cu, kViewTrans = kView3d + 0x20u;
 
@@ -200,14 +200,14 @@ using rc::fuzz::tileNone;
 using rc::fuzz::tileRender;
 using rc::fuzz::tileYStart;
 
-RC_DECOMP_FN_SETUP_HEAP(TileTerm, 0x183ef0, tileNone)
-RC_DECOMP_FN_SETUP(TileFrameInit, 0x183f20, tileNone)
+RC_DECOMP_FN_SETUP_HEAP(TileTerm, tileNone)
+RC_DECOMP_FN_SETUP(TileFrameInit, tileNone)
 // These draw through the shape renderers' packet rings and the DMA chain, on the heap.
-RC_DECOMP_FN_SETUP_HEAP(TileRender, 0x184000, tileEditor)
-RC_DECOMP_FN_SETUP_HEAP(TileRenderGameROB, 0x1844e8, tileRender)
-RC_DECOMP_FN_SETUP_HEAP(TileInit, 0x1849c0, tileNone)
-RC_DECOMP_FN_SETUP(TileGetYStart, 0x184a68, tileYStart)
-RC_DECOMP_FN(TileGetSize, 0x184a88)
-RC_DECOMP_FN(TileConstructALFCell, 0x184a90)
-RC_DECOMP_FN(TileConstructDaemon, 0x184a98)
-RC_DECOMP_FN_SETUP(TileResourceConstructDaemon, 0x184aa0, tileDaemon)
+RC_DECOMP_FN_SETUP_HEAP(TileRender, tileEditor)
+RC_DECOMP_FN_SETUP_HEAP(TileRenderGameROB, tileRender)
+RC_DECOMP_FN_SETUP_HEAP(TileInit, tileNone)
+RC_DECOMP_FN_SETUP(TileGetYStart, tileYStart)
+RC_DECOMP_FN(TileGetSize)
+RC_DECOMP_FN(TileConstructALFCell)
+RC_DECOMP_FN(TileConstructDaemon)
+RC_DECOMP_FN_SETUP(TileResourceConstructDaemon, tileDaemon)

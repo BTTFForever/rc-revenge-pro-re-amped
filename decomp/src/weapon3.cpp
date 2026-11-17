@@ -14,8 +14,8 @@ using namespace weapon;
 namespace {
 
 const ee_float k256 = 256.0f, k50 = 50.0f, k20 = 20.0f, kZero = 0.0f, kHalf = 0.5f, k4096 = 4096.0f;
-constexpr uint32_t kPointInPolyTable = 0x1f48e8u; // AColPointInPoly_NCLIP_DWO[major axis]
-constexpr uint32_t kTriggerState = 0x1eb778u;     // carColG.triggerState[9]
+constexpr uint32_t kPointInPolyTable = sym::AColPointInPoly_NCLIP_DWO; // AColPointInPoly_NCLIP_DWO[major axis]
+constexpr uint32_t kTriggerState = (sym::carColG + 0xe0u);     // carColG.triggerState[9]
 
 int32_t toFixed(ee_float v) { return ee_ftoi(v * k256); }
 int32_t scale12(int16_t c, int32_t k) { return (static_cast<int32_t>(c) * k) / 4096; }
@@ -719,10 +719,10 @@ void WeaponBouncyUpdate(ptr32<_sWeapon> pWeapon, tTime time)
 
 } // namespace rc
 
-RC_DECOMP_FN_SETUP(WeaponTestAcol, 0x1807e8, rc::fuzz::weaponAcol)
-RC_DECOMP_FN_SETUP_HEAP(WeaponFakeUpdate, 0x180ca8, rc::fuzz::weaponLive<3>)
-RC_DECOMP_FN_SETUP_HEAP(WeaponDumptugUpdate, 0x1801c0, rc::fuzz::weaponLive<15>)
-RC_DECOMP_FN_SETUP_HEAP(WeaponArmouredUpdate, 0x17f9f8, rc::fuzz::weaponLive<14>)
-RC_DECOMP_FN_SETUP_HEAP(WeaponHeatrayUpdate, 0x17e1c0, rc::fuzz::weaponLive<8>)
-RC_DECOMP_FN_SETUP_HEAP(WeaponRocketUpdate, 0x17b850, rc::fuzz::weaponLive<1>)
-RC_DECOMP_FN_SETUP_HEAP(WeaponBouncyUpdate, 0x17eae8, rc::fuzz::weaponLive<11>)
+RC_DECOMP_FN_SETUP(WeaponTestAcol, rc::fuzz::weaponAcol)
+RC_DECOMP_FN_SETUP_HEAP(WeaponFakeUpdate, rc::fuzz::weaponLive<3>)
+RC_DECOMP_FN_SETUP_HEAP(WeaponDumptugUpdate, rc::fuzz::weaponLive<15>)
+RC_DECOMP_FN_SETUP_HEAP(WeaponArmouredUpdate, rc::fuzz::weaponLive<14>)
+RC_DECOMP_FN_SETUP_HEAP(WeaponHeatrayUpdate, rc::fuzz::weaponLive<8>)
+RC_DECOMP_FN_SETUP_HEAP(WeaponRocketUpdate, rc::fuzz::weaponLive<1>)
+RC_DECOMP_FN_SETUP_HEAP(WeaponBouncyUpdate, rc::fuzz::weaponLive<11>)
