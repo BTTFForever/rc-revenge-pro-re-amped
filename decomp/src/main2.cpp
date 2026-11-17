@@ -141,7 +141,10 @@ void SortRanking()
     GuestFrame frame(0x90);
     const uint32_t sp = frame.local<uint8_t>(0).address; // swapOrder
     const int32_t n = carCount();
-    const uint32_t p1 = guest_call<uint32_t>(kTagToCar, at<uint32_t>((sym::frontEndVarG + 0x280u)));
+    // $a1 holds the computer cars' count at the call, as in the original: TagToCar returns it for an unknown tag (0 in
+    // a demo race), which then decides ties.
+    const uint32_t p1 = guest_call<uint32_t>(kTagToCar, at<uint32_t>((sym::frontEndVarG + 0x280u)),
+                                             static_cast<uint32_t>(at<uint8_t>(sym::mainVarG + 0x36au)));
     bool change;
     do
     {
