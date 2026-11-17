@@ -5,11 +5,13 @@
 #   tools/capture_dumps.sh [level|menu ...]     default: 5 17 18 20
 # RC_RAMDUMP_FRAME (default 600) is the frame after the level started (after boot for the menu, default 1500).
 # Uses build-oracle/rc_revenge_pro (ninja -C build-oracle rc_revenge_pro), so the build-decomp game is left alone.
+# RC_VERSION=eu: the Europe version, build-oracle-eu (see tools/version.sh).
 set -u
 root="$(cd "$(dirname "$0")/.." && pwd)"
-game="${CAPTURE_BINARY:-$root/build-oracle/rc_revenge_pro}"
-out="$root/build-oracle/dumps"; sandbox="$root/build-oracle/capture"
-[ -x "$game" ] || { echo "no $game: ninja -C build-oracle rc_revenge_pro" >&2; exit 2; }
+source "$root/tools/version.sh"
+game="${CAPTURE_BINARY:-$RC_ORACLE_BUILD/rc_revenge_pro}"
+out="$RC_ORACLE_BUILD/dumps"; sandbox="$RC_ORACLE_BUILD/capture"
+[ -x "$game" ] || { echo "no $game: ninja -C $RC_ORACLE_BUILD rc_revenge_pro" >&2; exit 2; }
 mkdir -p "$out"
 [ $# -gt 0 ] || set -- 5 17 18 20
 if nvidia-smi -L >/dev/null 2>&1; then
@@ -22,11 +24,7 @@ for what in "$@"; do
     if pgrep -f 'rc_revenge_pro ' >/dev/null; then
         echo "a game is already running (pgrep -fa rc_revenge_pro); not starting another" >&2; exit 2
     fi
-    rm -rf "$sandbox"; mkdir -p "$sandbox/disc/mc0" "$sandbox/disc/mc1"
-    for entry in "$root/../disc"/*; do
-        case "$(basename "$entry")" in mc0|mc1) ;; *) ln -s "$entry" "$sandbox/disc/" ;; esac
-    done
-    ln -s "$root/../RC Revenge Pro (USA).iso" "$sandbox/"
+    rc_make_sandbox "$sandbox"
     if [ "$what" = menu ]; then
         name=menu; level=(); frame="${RC_RAMDUMP_FRAME:-1500}"
     else
@@ -36,7 +34,7 @@ for what in "$@"; do
     (cd "$root" && env PS2X_DEBUG_PANEL=0 PS2X_GS_GPU=1 PS2X_GS_THREAD=1 PS2X_MTVU=1 PS2X_VU1_TIMING=0 PS2X_EE_HOST_PACING=1 \
         PS2X_GS_SHADER_PRELOAD=0 PS2X_GS_SHADER_CACHE=1 PS2X_GS_SHADER_CACHE_DIR="$root/build-decomp/shader-cache" \
         "${level[@]}" RC_RAMDUMP="$out/$name.bin" RC_RAMDUMP_FRAME="$frame" \
-        timeout 150 "$game" "$sandbox/disc/SLUS_201.53" > "$out/$name.log" 2>&1)
+        timeout 150 "$game" "$sandbox/disc/$RC_ELF" > "$out/$name.log" 2>&1)
     if [ -s "$out/$name.bin" ]; then
         grep -a 'RAM dump written' "$out/$name.log" | tail -1
     else

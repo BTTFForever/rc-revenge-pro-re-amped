@@ -192,7 +192,7 @@ index b9933d5..18d9a35 100644
      unsigned int m_memoryAddress = 0x00100000u;
      unsigned int m_memoryBytes = 0x100u;
 diff --git a/ps2xRuntime/include/runtime/ee_scheduler.h b/ps2xRuntime/include/runtime/ee_scheduler.h
-index a9d47b1..7c3883c 100644
+index a9d47b1..0383e0f 100644
 --- a/ps2xRuntime/include/runtime/ee_scheduler.h
 +++ b/ps2xRuntime/include/runtime/ee_scheduler.h
 @@ -8,6 +8,7 @@
@@ -248,7 +248,22 @@ index a9d47b1..7c3883c 100644
      [[nodiscard]] bool transferPending() const noexcept
      {
          return m_transferPending;
-@@ -471,6 +496,26 @@ private:
+@@ -414,6 +439,14 @@ public:
+ 
+     [[nodiscard]] EeKernelSnapshot snapshot() const;
+     void setVBlankPeriodMicroseconds(uint32_t microseconds) noexcept;
++    // The display's field rate as a fraction of fields per second, from the video mode the game last set (GsSetCrt):
++    // 50/1 for PAL, 60000/1001 otherwise. For code that converts between fields and seconds (CD streaming, MPEG).
++    struct FieldRate
++    {
++        uint64_t numerator;
++        uint64_t denominator;
++    };
++    [[nodiscard]] static FieldRate fieldRate() noexcept;
+     [[nodiscard]] std::chrono::microseconds vblankPeriod() const noexcept;
+     [[nodiscard]] uint64_t vblankPeriodCycles() const noexcept;
+     void publishSnapshot();
+@@ -471,6 +504,26 @@ private:
      uint8_t *m_rdram = nullptr;
      std::array<std::deque<int>, kPriorityCount> m_readyQueues{};
      std::unordered_map<int, GuestThread> m_threads;
@@ -275,7 +290,7 @@ index a9d47b1..7c3883c 100644
      std::unordered_map<int, EeSemaphore> m_semaphores;
      std::unordered_map<int, EeEventFlag> m_eventFlags;
      std::unordered_map<int, EeAlarm> m_alarms;
-@@ -494,6 +539,7 @@ private:
+@@ -494,6 +547,7 @@ private:
      mutable GuestThread *m_currentThread = nullptr;
      bool m_rescheduleRequested = false;
      bool m_unwinding = false;
@@ -626,7 +641,7 @@ index e671f2f..b9da579 100644
  	u32 ReadZ32(u8* data, u32 bp, u32 bw, u32 x, u32 y);
  
 diff --git a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
-index 6784aca..bc22603 100644
+index 6784aca..2c9925b 100644
 --- a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
 +++ b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
 @@ -1,5 +1,11 @@
@@ -875,7 +890,28 @@ index 6784aca..bc22603 100644
  
      if (m_checkpointPending.load(std::memory_order_acquire) ||
          m_stopRequested.load(std::memory_order_acquire))
-@@ -1915,6 +2111,9 @@ void EeScheduler::makeDormant(GuestThread &item)
+@@ -1499,9 +1695,20 @@ void EeScheduler::setVSyncFlag(uint32_t flagAddress, uint32_t tickAddress)
+     }
+ }
+ 
++namespace
++{
++    std::atomic<bool> s_palFieldRate{false};
++}
++
+ void EeScheduler::setVBlankPeriodMicroseconds(uint32_t microseconds) noexcept
+ {
+     m_vblankPeriodMicroseconds.store(microseconds, std::memory_order_relaxed);
++    s_palFieldRate.store(microseconds == 20000u, std::memory_order_relaxed);
++}
++
++EeScheduler::FieldRate EeScheduler::fieldRate() noexcept
++{
++    return s_palFieldRate.load(std::memory_order_relaxed) ? FieldRate{50u, 1u} : FieldRate{60000u, 1001u};
+ }
+ 
+ std::chrono::microseconds EeScheduler::vblankPeriod() const noexcept
+@@ -1915,6 +2122,9 @@ void EeScheduler::makeDormant(GuestThread &item)
  {
      removeReady(item);
      removeFromWaitObject(item);
@@ -885,6 +921,68 @@ index 6784aca..bc22603 100644
      item.status = EeThreadStatus::Dormant;
      item.wait = {};
      item.resumeCompletion = {};
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/CD.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/CD.cpp
+index 5210d1e..806fd9f 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/CD.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/CD.cpp
+@@ -11,8 +11,6 @@ namespace ps2_stubs
+         constexpr uint32_t kCdStreamBlocking = 1u;
+         constexpr uint32_t kDvdSectorsPerSecondX1 = 675u;
+         constexpr uint32_t kDvdSectorsPerSecondX4 = kDvdSectorsPerSecondX1 * 4u;
+-        constexpr uint64_t kNtScFieldsPerSecondNumerator = 60000u;
+-        constexpr uint64_t kNtScFieldsPerSecondDenominator = 1001u;
+ 
+         struct CdStreamTimingState
+         {
+@@ -89,11 +87,12 @@ namespace ps2_stubs
+             const uint64_t elapsedTicks = tick - g_cdStreamTiming.lastVSyncTick;
+             g_cdStreamTiming.lastVSyncTick = tick;
+ 
+-            // 59.94 Hz field clock: sectors = fields * sectors/s * 1001 / 60000.
+-            const uint64_t unitsPerTick = static_cast<uint64_t>(g_cdStreamTiming.sectorsPerSecond) * kNtScFieldsPerSecondDenominator;
++            // Field clock (59.94 Hz NTSC, 50 Hz PAL): sectors = fields * sectors/s * denominator / numerator.
++            const EeScheduler::FieldRate rate = EeScheduler::fieldRate();
++            const uint64_t unitsPerTick = static_cast<uint64_t>(g_cdStreamTiming.sectorsPerSecond) * rate.denominator;
+             const uint64_t accumulated = g_cdStreamTiming.productionRemainder + elapsedTicks * unitsPerTick;
+-            const uint64_t elapsedProduction = accumulated / kNtScFieldsPerSecondNumerator;
+-            g_cdStreamTiming.productionRemainder = accumulated % kNtScFieldsPerSecondNumerator;
++            const uint64_t elapsedProduction = accumulated / rate.numerator;
++            g_cdStreamTiming.productionRemainder = accumulated % rate.numerator;
+             if (elapsedProduction == 0u)
+             {
+                 return;
+@@ -153,11 +152,12 @@ namespace ps2_stubs
+                 return now;
+             }
+ 
+-            const uint64_t requiredUnits = static_cast<uint64_t>(sectorsNeeded) * kNtScFieldsPerSecondNumerator;
++            const EeScheduler::FieldRate rate = EeScheduler::fieldRate();
++            const uint64_t requiredUnits = static_cast<uint64_t>(sectorsNeeded) * rate.numerator;
+             const uint64_t remainingUnits = requiredUnits > g_cdStreamTiming.productionRemainder
+                                                 ? requiredUnits - g_cdStreamTiming.productionRemainder
+                                                 : 0u;
+-            const uint64_t unitsPerTick = static_cast<uint64_t>(g_cdStreamTiming.sectorsPerSecond) * kNtScFieldsPerSecondDenominator;
++            const uint64_t unitsPerTick = static_cast<uint64_t>(g_cdStreamTiming.sectorsPerSecond) * rate.denominator;
+             const uint64_t ticks = std::max<uint64_t>(1u, (remainingUnits + unitsPerTick - 1u) / unitsPerTick);
+             return now + ticks;
+         }
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+index 44eaef4..219b28b 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+@@ -601,8 +601,10 @@ namespace ps2_stubs
+ 
+             const uint64_t extensionNumerator = static_cast<uint64_t>(frameRateExtensionN) + 1u;
+             const uint64_t extensionDenominator = static_cast<uint64_t>(frameRateExtensionD) + 1u;
+-            const uint64_t denominator = 1001u * frameRateNumerator * extensionNumerator;
+-            const uint64_t numerator = (60000u * frameRateDenominator * extensionDenominator) << 32u;
++            // Fields per picture = field rate / picture rate (59.94 Hz NTSC, 50 Hz PAL).
++            const EeScheduler::FieldRate rate = EeScheduler::fieldRate();
++            const uint64_t denominator = rate.denominator * frameRateNumerator * extensionNumerator;
++            const uint64_t numerator = (rate.numerator * frameRateDenominator * extensionDenominator) << 32u;
+             return std::max(kPictureClockOne, (numerator + denominator / 2u) / denominator);
+         }
+ 
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_gl.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_gl.cpp
 index 5e04125..4ac7a78 100644
 --- a/ps2xRuntime/src/lib/gs/gpu/gs_gl.cpp
