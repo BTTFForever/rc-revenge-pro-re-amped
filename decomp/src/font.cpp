@@ -148,6 +148,8 @@ void FontInit()
 ptr32<char> FontPrint(int16 x, int16 y, ptr32<char> pString)
 {
     GuestFrame frame(0xb0);
+    const uint32_t frameSp = frame.local<uint8_t>(0).address;
+    static const uint64_t kSavedS4 = kSpriteParams;
     const ptr32<font> fontPtr = G(fontVarG).pFont;
     const font &f = *fontPtr;
     _sSpriteParams &p = params();
@@ -191,6 +193,11 @@ ptr32<char> FontPrint(int16 x, int16 y, ptr32<char> pString)
                     p.width = charWidth(f, fontPtr.address, index);
                 p.x = pen;
                 SpriteRenderFont(sprite, ptr32<_sSpriteParams>(kSpriteParams), 0.0f);
+                // What the original's SpriteRenderFont leaves in its frame: this function's $s4 and $s5, saved at
+                // 0x70 and 0x80. AMenuDisplayMIT's slider reads the first as its frame rectangle's flags.
+                std::memcpy(guest_host(frameSp - 0x30u), &kSavedS4, 8);
+                const uint64_t savedS5 = fontPtr.address + 0xcu;
+                std::memcpy(guest_host(frameSp - 0x20u), &savedS5, 8);
                 if (f.type == 0)
                     pen = add16(pen, fontPtr->chWidth);
                 else
@@ -317,6 +324,13 @@ int32_t FontSpecialCharacterOrColourChange(int16 x, int16 y, ptr32<char> pString
         {
             const int32_t icon = static_cast<uint8_t>(*pString - 0x30) < 10u ? c - 0x30 : c - 0x37;
             guest_call(G(pGfxFnG).address, static_cast<int32_t>(x), static_cast<int32_t>(y), icon);
+            // AMenuDisplayPsxKey saves its return address (the instruction after the original's call here) at
+            // 0x20 of its 0x30 frame, where a later slider's frame rectangle finds its flags.
+            if (G(pGfxFnG).address == 0x10eea0u)
+            {
+                const uint64_t savedRa = 0x18a320u;
+                std::memcpy(guest_host(frame.local<uint8_t>(0).address - 0x10u), &savedRa, 8);
+            }
         }
         pen = static_cast<int16_t>(x + 0x20);
         GfxP2_RenderDmaSend();

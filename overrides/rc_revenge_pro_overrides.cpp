@@ -250,9 +250,12 @@ namespace
         ctx->pc = getRegU32(ctx, 31);
     }
 
+    // RC_SKIP_INTRO=1 goes straight to the front end: no legal screen, publisher movie or Dolby screen (about 90 s),
+    // for tests of the menus.
     void bootSkipIntro(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
-        if (bootLevel() <= 0)
+        static const bool skipIntro = std::getenv("RC_SKIP_INTRO") != nullptr;
+        if (bootLevel() <= 0 && !skipIntro)
         {
             static const auto initialScreens = rc::decompOr(0x111138u, &BackdropDoInitialScreens_0x111138);
             initialScreens(rdram, ctx, runtime);

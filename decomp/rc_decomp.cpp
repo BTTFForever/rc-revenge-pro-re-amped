@@ -272,6 +272,10 @@ FuzzCaseResult fuzzCase(Entry &entry, uint8_t *rdram, const R5900Context &live, 
     static std::unique_ptr<uint8_t[]> scratchStart(new uint8_t[kScratchSize]), globalsStart(new uint8_t[kDataEnd - kDataStart]);
     static std::unique_ptr<uint8_t[]> scratchAfter(new uint8_t[kScratchSize]), globalsAfter(new uint8_t[kDataEnd - kDataStart]);
     static std::unique_ptr<uint8_t[]> stackStart(new uint8_t[kStackScratch]);
+    // The page at address 0: a function that follows a null pointer reads and writes it, so it is an input and a
+    // result like the scratch area (restored between the two runs, compared, and put back afterwards).
+    constexpr uint32_t kLowPage = 0x1000u;
+    static uint8_t lowStart[kLowPage], lowAfter[kLowPage];
     const bool wasComparing = g_comparing;
     g_comparing = true; // Calls nested in either run reach the recompiled originals, as in shadowCall.
     FuzzCaseResult result;
@@ -293,6 +297,7 @@ FuzzCaseResult fuzzCase(Entry &entry, uint8_t *rdram, const R5900Context &live, 
     std::memcpy(globalsStart.get(), rdram + kDataStart, kDataEnd - kDataStart);
     if (entry.fuzzWholeRam)
         std::memcpy(g_before.get(), rdram, PS2_RAM_SIZE);
+    std::memcpy(lowStart, rdram, kLowPage);
 
     // The dead stack below $sp as the original finds it: some functions read stack words they never wrote, and the
     // native run must find the same ones, not what the original's run left there.
@@ -313,6 +318,7 @@ FuzzCaseResult fuzzCase(Entry &entry, uint8_t *rdram, const R5900Context &live, 
     {
         // Cut short by a scheduling point: the caller decides whether to try the input again.
         std::memcpy(rdram + kScratch, scratchStart.get(), kScratchSize);
+        std::memcpy(rdram, lowStart, kLowPage);
         std::memcpy(rdram + kDataStart, globalsStart.get(), kDataEnd - kDataStart);
         result.cutShort = true;
         g_comparing = wasComparing;
@@ -320,6 +326,8 @@ FuzzCaseResult fuzzCase(Entry &entry, uint8_t *rdram, const R5900Context &live, 
     }
     const uint8_t *after = entry.fuzzWholeRam ? g_expected.get() : rdram;
     std::memcpy(scratchAfter.get(), after + kScratch, kScratchSize);
+    std::memcpy(lowAfter, after, kLowPage);
+    std::memcpy(rdram, lowStart, kLowPage);
     // The globals (3 MB) by 4 KB blocks, since a function changes few of them: globalsAfter holds the original's result
     // in the blocks it changed, and the start elsewhere once completeAfter() has run.
     constexpr uint32_t kDataSize = kDataEnd - kDataStart, kBlock = 4096u, kBlocks = (kDataSize + kBlock - 1u) / kBlock;
@@ -358,6 +366,12 @@ FuzzCaseResult fuzzCase(Entry &entry, uint8_t *rdram, const R5900Context &live, 
                           (entry.returns == ReturnKind::Gpr ? GPR_U64((&nativeCtx), 2) == GPR_U64((&originalCtx), 2)
                                                             : std::memcmp(&nativeCtx.f[0], &originalCtx.f[0], 4u) == 0);
     const bool scratchSame = std::memcmp(rdram + kScratch, scratchAfter.get(), kScratchSize) == 0;
+    const bool lowSame = std::memcmp(rdram, lowAfter, kLowPage) == 0;
+    if (!lowSame && mismatchesSoFar < 4u)
+    {
+        const uint32_t at = firstDifference(rdram, lowAfter, 0u, kLowPage);
+        std::fprintf(stderr, "[decomp] FUZZ DETAIL %s: low memory 0x%x original=%02x decompiled=%02x\n", entry.name, at, lowAfter[at], rdram[at]);
+    }
     bool globalsSame = true;
     for (uint32_t block = 0; block < kBlocks && globalsSame; ++block)
     {
@@ -408,10 +422,30 @@ FuzzCaseResult fuzzCase(Entry &entry, uint8_t *rdram, const R5900Context &live, 
                 std::fprintf(stderr, "[decomp] FUZZ DETAIL %s: ram 0x%x original=%02x decompiled=%02x\n", entry.name, difference,
                              g_expected[difference], rdram[difference]);
             ramSame = ramSame && difference == end;
+            if (difference != end && std::getenv("RC_SHADOW_DIFFS") != nullptr)
+            {
+                // RC_SHADOW_DIFFS=1: the first differing bytes of RAM, each with its 16-byte row in both runs.
+                int shown = 0;
+                for (uint32_t i = difference; i < end && shown < 12; ++i)
+                    if (rdram[i] != g_expected[i])
+                    {
+                        const uint32_t row = i & ~15u;
+                        std::fprintf(stderr, "[decomp] FUZZ RAM %s 0x%x original=%02x decompiled=%02x | row", entry.name, i, g_expected[i], rdram[i]);
+                        for (uint32_t k = 0; k < 16; ++k)
+                            std::fprintf(stderr, " %02x", g_expected[row + k]);
+                        std::fprintf(stderr, " /");
+                        for (uint32_t k = 0; k < 16; ++k)
+                            std::fprintf(stderr, " %02x", rdram[row + k]);
+                        std::fprintf(stderr, "\n");
+                        ++shown;
+                    }
+            }
         }
         revertWrites(rdram, ramBackup, 0u, PS2_RAM_SIZE); // The heap as it was, for the next input.
     }
-    result.same = regsSame && scratchSame && globalsSame && ramSame && padSame;
+    if (!entry.fuzzWholeRam)
+        std::memcpy(rdram, lowStart, kLowPage); // (a whole-RAM input has put all of RAM back)
+    result.same = regsSame && scratchSame && globalsSame && ramSame && padSame && lowSame;
     if (!result.same)
     {
         if (mismatchesSoFar < 4u && !scratchSame)
@@ -648,7 +682,15 @@ void shadowCall(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, Entry &e
         return "," + std::string(names ? names : "") + ",";
     }();
     const bool compareAlways = always.find("," + std::string(entry.name) + ",") != std::string::npos;
-    if (!compareAlways && !sampleThisCall(callIndex))
+    // RC_SHADOW_LIVE_ONLY=name,name: only these functions' calls are sampled, so a unit under test gets the whole
+    // comparison rate. Names in RC_SHADOW_ALWAYS are still compared.
+    static const std::string liveOnly = []
+    {
+        const char *names = std::getenv("RC_SHADOW_LIVE_ONLY");
+        return names ? "," + std::string(names) + "," : std::string();
+    }();
+    const bool sampled = liveOnly.empty() || liveOnly.find("," + std::string(entry.name) + ",") != std::string::npos;
+    if (!compareAlways && (!sampled || !sampleThisCall(callIndex)))
     {
         entry.native(rdram, ctx, runtime);
         return;
