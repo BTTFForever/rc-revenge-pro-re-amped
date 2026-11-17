@@ -15,3 +15,7 @@ imgui.ini
 dump_*.txt
 __pycache__/
 /decomp/recordings/*_memcard/
+build-eu/
+build-oracle-eu/
+output_eu/
+functions_eu.csv
