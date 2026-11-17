@@ -54,6 +54,15 @@ uint8_t charWidth(const font &f, uint32_t fontAddress, uint32_t index)
 
 int16_t add16(int32_t a, int32_t b) { return static_cast<int16_t>(a + b); }
 
+// A byte of a string as the recompiled code reads it: an address outside RAM (a wild text pointer) goes to the
+// runtime's hardware path (0 where nothing is mapped: an empty string) instead of wrapping into RAM.
+uint8_t guestByte(uint32_t address)
+{
+    if (PS2Runtime::isSpecialAddress(address)) [[unlikely]]
+        return g_runtime->Load8(g_rdram, &g_runtime->eeScheduler().runningContext(), address);
+    return *static_cast<const uint8_t *>(guest_host(address));
+}
+
 } // namespace
 
 // The width of the longest line of a string, in pixels.
@@ -64,7 +73,7 @@ uint32 FontLength(ptr32<char> pString)
     uint32_t line = 0, longest = 0;
     const uint8_t *s = reinterpret_cast<const uint8_t *>(pString.get());
     uint32_t at = pString.address;
-    const auto ch = [&](uint32_t offset) { return *static_cast<const uint8_t *>(guest_host(at + offset)); };
+    const auto ch = [&](uint32_t offset) { return guestByte(at + offset); };
     (void)s;
     if (f.type == 0)
     {
@@ -164,7 +173,10 @@ ptr32<char> FontPrint(int16 x, int16 y, ptr32<char> pString)
         p.width = f.chWidth;
     int16_t pen = x;
     uint32_t at = pString.address;
-    const auto ch = [](uint32_t address) { return *static_cast<const uint8_t *>(guest_host(address)); };
+    const auto ch = [](uint32_t address) { return guestByte(address); };
+    // The proportional font's width table, found once (as the original keeps it in a register): a junk sprite's
+    // texture can be written over the font's header while the string is drawn.
+    const uint32_t widths = fontPtr.address + 0xcu + f.numSprites * 4u;
     for (;;)
     {
         const uint8_t c = ch(at);
@@ -190,7 +202,7 @@ ptr32<char> FontPrint(int16 x, int16 y, ptr32<char> pString)
                         p.xOffset = static_cast<uint16>((p.xOffset + 4) & 0xff);
                 }
                 else
-                    p.width = charWidth(f, fontPtr.address, index);
+                    p.width = ch(widths + index);
                 p.x = pen;
                 SpriteRenderFont(sprite, ptr32<_sSpriteParams>(kSpriteParams), 0.0f);
                 // What the original's SpriteRenderFont leaves in its frame: this function's $s4 and $s5, saved at
@@ -202,7 +214,7 @@ ptr32<char> FontPrint(int16 x, int16 y, ptr32<char> pString)
                     pen = add16(pen, fontPtr->chWidth);
                 else
                 {
-                    pen = add16(pen, charWidth(f, fontPtr.address, index));
+                    pen = add16(pen, ch(widths + index)); // the width read again after the sprite is drawn
                     if ((fontPtr->flags & 1) != 0)
                         pen = add16(pen, -1);
                 }
@@ -261,7 +273,7 @@ int32_t FontPrintFX(int16 x, int16 y, ptr32<char> pString, uint16 fx, uint16 fxV
     p.y = y;
     int16_t pen = x;
     uint32_t at = pString.address;
-    const auto ch = [](uint32_t address) { return *static_cast<const uint8_t *>(guest_host(address)); };
+    const auto ch = [](uint32_t address) { return guestByte(address); };
     if (f.type == 0)
     {
         p.width = f.chWidth;
@@ -285,6 +297,7 @@ int32_t FontPrintFX(int16 x, int16 y, ptr32<char> pString, uint16 fx, uint16 fxV
     }
     else if (f.type == 1)
     {
+        const uint32_t widths = fontPtr.address + 0xcu + f.numSprites * 4u; // found once, as in FontPrint
         for (; ch(at) != 0; ++at)
         {
             const uint8_t c = ch(at);
@@ -298,12 +311,12 @@ int32_t FontPrintFX(int16 x, int16 y, ptr32<char> pString, uint16 fx, uint16 fxV
             else
             {
                 const uint32_t index = glyphIndex(f, c);
-                p.width = charWidth(f, fontPtr.address, index);
+                p.width = ch(widths + index);
                 ptr32<_sSprite> sprite;
                 placeGlyph(f, fontPtr.address, index, raise, sprite);
                 p.x = pen;
                 SpriteRenderScaled(sprite, ptr32<_sSpriteParams>(kSpriteParams), 0.0f);
-                pen = add16(pen, charWidth(f, fontPtr.address, index));
+                pen = add16(pen, ch(widths + index));
                 if ((fontPtr->flags & 1) != 0)
                     pen = add16(pen, -1);
             }

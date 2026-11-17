@@ -236,20 +236,33 @@ uint32 CarouselRender(tTime time)
         angle += separation;
         const uint32_t rend = pRend.address;
         guest_call<void>(sym::Mat3nBuildXYZ, rend + 0x18u, rend + 0x10u);
-        // The physics' copy of the matrix: the integer one as it is, the float one transposed.
-        const uint32_t integer = at<uint32_t>(phys + 0x1e8u);
-        std::memmove(guest_host(integer + 0x28u), guest_host(rend + 0x18u), 0x14);
+        // The physics' copy of the matrix: the integer one as it is, the float one transposed. The loads and stores
+        // keep the original's order (the integer matrix pointer read again after the copy, the position read before
+        // the transposed stores, the last of those after the position stores): it shows when the render object, the
+        // physics and its matrix overlap.
+        std::memmove(guest_host(at<uint32_t>(phys + 0x1e8u) + 0x28u), guest_host(rend + 0x18u), 0x14);
         static const uint32_t kTransposed[9] = {0x18, 0x1e, 0x24, 0x1a, 0x20, 0x26, 0x1c, 0x22, 0x28};
+        const int16_t first = at<int16_t>(rend + kTransposed[0]);
+        const ee_float posZ = ee_itof(at<int32_t>(rend + 0xcu));
+        const int32_t posX = at<int32_t>(rend + 4u);
+        const uint32_t integer = at<uint32_t>(phys + 0x1e8u);
+        const ee_float posXf = ee_itof(posX);
         const ee_float renderY = at<ee_float>(phys + 0xcu);
-        for (int32_t k = 0; k < 9; ++k)
+        at<ee_float>(phys + 0x4cu) = ee_itof(first);
+        for (int32_t k = 1; k < 8; ++k)
             at<ee_float>(phys + 0x4cu + 4u * k) = ee_itof(at<int16_t>(rend + kTransposed[k]));
-        at<int32_t>(integer + 4u) = pRend->pos.x;
-        at<ee_float>(phys + 0x8u) = ee_itof(pRend->pos.x);
-        at<ee_float>(phys + 0x10u) = ee_itof(pRend->pos.z);
-        at<int32_t>(integer + 0xcu) = pRend->pos.z;
-        at<ee_float>(phys + 0x14u) = ee_itof(pRend->pos.x);
-        at<ee_float>(phys + 0x1cu) = ee_itof(pRend->pos.z);
-        pRend->pos.y = ee_ftoi(renderY);
+        const int16_t last = at<int16_t>(rend + kTransposed[8]);
+        at<int32_t>(integer + 4u) = posX;
+        at<ee_float>(phys + 0x8u) = posXf;
+        const int32_t posZi = at<int32_t>(rend + 0xcu);
+        at<ee_float>(phys + 0x10u) = posZ;
+        at<int32_t>(integer + 0xcu) = posZi;
+        at<ee_float>(phys + 0x6cu) = ee_itof(last);
+        const ee_float x2 = ee_itof(at<int32_t>(rend + 4u));
+        const ee_float z2 = ee_itof(at<int32_t>(rend + 0xcu));
+        at<ee_float>(phys + 0x14u) = x2;
+        at<ee_float>(phys + 0x1cu) = z2;
+        at<int32_t>(rend + 8u) = ee_ftoi(renderY); // pos.y
     }
     return 0;
 }
