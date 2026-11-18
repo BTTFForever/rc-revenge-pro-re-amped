@@ -314,12 +314,81 @@ void physicsObject(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     setArg(ctx, 0, car);
 }
 
+// The car-car contacts of a car's spheres, so that every dump reaches both FCollisionResponseCarCar paths: none at
+// depth 0 or more (its best sphere stays -1: the normal is a stale stack word and the other car a stale $t6, both made
+// up here too), or new and varied ones (contacts are inserted before the sphere's others, which keep their order).
+static void varyCarContacts(R5900Context *ctx, uint64_t &state, uint32_t phys)
+{
+    const uint32_t spheres = mem<uint32_t>(phys + 0x1e0u);
+    const int32_t numSpheres = mem<int8_t>(phys + 0x1ccu);
+    const auto otherCar = [&]
+    {
+        const uint32_t car = pickCar(state);
+        return chance(state, 10) ? phys : mem<uint32_t>(car + 0x20u);
+    };
+    switch (rnd(state, 3))
+    {
+    case 0: // as the dump left them
+        break;
+    case 1: // none at depth 0 or more
+        for (int32_t i = 0; i < numSpheres; ++i)
+        {
+            const uint32_t s = spheres + static_cast<uint32_t>(i) * 0x190u;
+            for (int32_t c = 0; c < std::min<int32_t>(mem<int8_t>(s + 0x64u), 12); ++c)
+                mem<float>(s + 0xacu + 16u * c) = -1.0f - std::fabs(frnd(state, 300.0f));
+        }
+        break;
+    default: // contacts on one to three spheres
+        for (uint32_t n = 1 + rnd(state, 3); n > 0 && numSpheres > 0; --n)
+        {
+            const uint32_t s = spheres + rnd(state, static_cast<uint32_t>(numSpheres)) * 0x190u;
+            const int32_t total = mem<int8_t>(s + 0x67u), cars = mem<int8_t>(s + 0x64u);
+            if (total < 0 || total > 12 || cars < 0 || cars > total)
+                continue;
+            const int32_t add = std::min<int32_t>(static_cast<int32_t>(rnd(state, 3)), 12 - total);
+            if (add > 0)
+            {
+                std::memmove(guest_host(s + 0x94u + add), guest_host(s + 0x94u), static_cast<size_t>(total));
+                std::memmove(guest_host(s + 0xa0u + 16u * add), guest_host(s + 0xa0u), 16u * total);
+                std::memmove(guest_host(s + 0x160u + 4u * add), guest_host(s + 0x160u), 4u * total);
+                mem<int8_t>(s + 0x64u) = static_cast<int8_t>(cars + add);
+                mem<int8_t>(s + 0x67u) = static_cast<int8_t>(total + add);
+            }
+            for (int32_t c = 0; c < cars + add; ++c)
+            {
+                if (c >= add && chance(state, 50))
+                    continue; // a contact from the dump kept
+                mem<int8_t>(s + 0x94u + c) = 0;
+                for (uint32_t k = 0; k < 3; ++k)
+                    mem<float>(s + 0xa0u + 16u * c + 4u * k) = frnd(state, 4096.0f);
+                mem<float>(s + 0xacu + 16u * c) = chance(state, 15) ? -std::fabs(frnd(state, 300.0f)) : std::fabs(frnd(state, 300.0f));
+                mem<uint32_t>(s + 0x160u + 4u * c) = otherCar();
+            }
+        }
+        break;
+    }
+    // The original's uninitialised normal (sp+0 of its 0x50 frame) and other car ($t6).
+    if (chance(state, 50))
+    {
+        const uint32_t frame = getRegU32(ctx, 29) - 0x50u;
+        for (uint32_t k = 0; k < 3; ++k)
+            mem<float>(frame + 4u * k) = chance(state, 20) ? 0.0f : frnd(state, 4096.0f);
+    }
+    if (chance(state, 50))
+    {
+        const uint32_t pick = rnd(state, 3);
+        SET_GPR_S32(ctx, 14, static_cast<int32_t>(pick == 0 ? 0u : pick == 1 ? otherCar() : (nextFuzz(state) % 0x1fff000u) & ~3u));
+    }
+}
+
 void physicsResponse(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 {
     varyRace(state, scratch);
     const uint32_t car = pickCar(state);
     varyCar(state, car, scratch);
-    setArg(ctx, 0, mem<uint32_t>(car + 0x20u));
+    const uint32_t phys = mem<uint32_t>(car + 0x20u);
+    varyCarContacts(ctx, state, phys);
+    setArg(ctx, 0, phys);
 }
 
 void physicsAddCar(R5900Context *ctx, uint64_t &state, uint32_t scratch)

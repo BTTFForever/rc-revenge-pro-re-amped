@@ -673,8 +673,13 @@ void FCollisionResponseCarCar(ptr32<_sFPhysLibCar> pCar)
     _sFPhysLibCar &car = *pCar;
     const _sFPhysLibColSphere *const spheres = car.pSphere.get();
     const _sFPhysLibCarData &data = *car.pData;
-    sFVec normal{};
-    ptr32<_sFPhysLibCar> other(0u);
+    // With no car contact at depth 0 or more (bestSphere stays -1), the original never sets these: normal is the stale
+    // stack local at sp+0 of its 0x50 frame and the other car is whatever its caller left in $t6.
+    sFVec normal;
+    normal.x = stale_stack<ee_float>(0x50, 0);
+    normal.y = stale_stack<ee_float>(0x50, 4);
+    normal.z = stale_stack<ee_float>(0x50, 8);
+    ptr32<_sFPhysLibCar> other(getRegU32(&g_runtime->eeScheduler().runningContext(), 14));
     int32_t bestSphere = -1;
     ee_float best = -1.0f;
     const sFVec startPos = car.pos;

@@ -76,8 +76,22 @@ Second clean clone (2026-11-19, both versions): `tools/setup.sh --oracle -j 8` f
 **1 FAIL: FCollisionResponseCarCar**, every input on all four fresh Europe dumps. Crossing builds and dumps shows the
 cause is the dumps, not the build: the working-tree oracle fails on the fresh dumps and the clean-clone oracle passes on
 the old ones. Original and native differ on the fresh dumps (car field at +0x94 written 0x67 by the original, 0 by
-the native). Likely the degenerate path where no sphere has a car-car contact (bestSphere -1, other car null), which
-the old dumps never produced. The fresh dumps are kept in `build-oracle-eu/dumps_cleanclone/` for the fix.
+the native).
+
+Cause and fix (2026-11-19): not a Europe difference (the function is identical in both executables). When no car-car
+contact is at depth 0 or more, the original's best sphere stays -1 and it never sets two locals: the normal is read
+from its stack frame (sp+0 of 0x50) and the other car pointer is whatever its caller left in `$t6`. The native started
+them at zero and null. The old dumps happened to hold zeros there, so both agreed; the fresh dumps held other values
+there (the impulse at +0x94 came out 0x67 in the original). The native now reads them as the original does
+(`stale_stack`, the running context's `$t6`). The setup (`varyCarContacts` in `physics_fuzz.cpp`, used by all three
+FCollisionResponse functions) no longer depends on what the dump captured. A third of the inputs keep the dump's
+contacts, a third make every car-car contact shallower than 0, and a third insert one to three contacts (other car,
+the car itself or garbage) before a sphere's others. It also varies the stale normal and `$t6`. With this setup the
+old native fails on the old dumps too (11 of 40 on level 5), and contact-path mutations fail on every fresh dump.
+`FCollisionResponseOther` already read its stale normal; no other native uses this pattern. Afterwards `--all` gave
+USA 1629 ok, 0 FAIL; Europe 1560 ok, 0 FAIL on both the old and the fresh dumps. The fresh dumps are now also in
+`build-oracle-eu/dumps/` as `level<n>_cc.bin` (oracle.sh runs every `level*.bin`, so `--all` uses all eight;
+`--level N` picks only the old one).
 
 ## The runtime (vendored, 2026-11-19)
 PS2Recomp lives in `third_party/ps2recomp/` (see its `VENDORED.md`): ps2xRecomp, ps2xRuntime and ps2xIOP from the SotC fork
