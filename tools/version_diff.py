@@ -2,7 +2,7 @@
 """Compares the game's functions and data between two versions of the executable, by symbol.
 
 Usage: version_diff.py <usa elf> <other elf> <out dir>
-       e.g. tools/version_diff.py ../disc/SLUS_201.53 ../disc_eu/SLES_500.77 decomp/generated/eu
+       e.g. tools/version_diff.py game/usa/disc/SLUS_201.53 game/eu/disc/SLES_500.77 decomp/generated/eu
 
 Method (exact; see NOTES.md, "Europe version"):
  1. The symbol tables must list the same symbols in the same order (keys from rcelf.py).

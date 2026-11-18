@@ -45,7 +45,7 @@ add_subdirectory(third_party/ico_platform EXCLUDE_FROM_ALL)
 target_link_libraries(ps2_runtime PUBLIC rc_ico_platform)
 target_compile_definitions(ps2_runtime PUBLIC PS2X_EE_FIBERS=1)
 
-# Which executable the build is for: usa (SLUS_201.53, ../disc) or eu (SLES_500.77, ../disc_eu). Each version has its own
+# Which executable the build is for: usa (SLUS_201.53, game/usa) or eu (SLES_500.77, game/eu). Each version has its own
 # recompiled code (output/, output_eu/) and its own address headers (decomp/generated/<version>/, tools/gen_addrs.py);
 # the native code is the same source, compiled against them. See NOTES.md, "Europe version".
 set(RC_VERSION "usa" CACHE STRING "Game version: usa or eu")
@@ -62,9 +62,9 @@ else()
     message(FATAL_ERROR "RC_VERSION must be usa or eu, not ${RC_VERSION}")
 endif()
 set(RC_GENERATED_VERSION_DIR "${CMAKE_CURRENT_SOURCE_DIR}/decomp/generated/${RC_VERSION}")
-foreach(f rc_addrs.h rc_fns.h rc_globals.h)
+foreach(f rc_addrs.h rc_fns.h rc_globals.h rc_types.h rc_layout_check.cpp)
     if(NOT EXISTS "${RC_GENERATED_VERSION_DIR}/${f}")
-        message(FATAL_ERROR "${RC_GENERATED_VERSION_DIR}/${f} is missing: generate it (NOTES.md, Rebuilding)")
+        message(FATAL_ERROR "${RC_GENERATED_VERSION_DIR}/${f} is missing: run tools/setup.sh (README.md)")
     endif()
 endforeach()
 
@@ -93,7 +93,7 @@ set_source_files_properties(${OVERRIDE_SOURCES} PROPERTIES SKIP_UNITY_BUILD_INCL
 
 # Decompiled game code. Its headers are generated from the game's debug data: see tools/stabs2c.py.
 file(GLOB DECOMP_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/decomp/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/decomp/src/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1/*.cpp")
-list(APPEND DECOMP_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/decomp/generated/rc_layout_check.cpp")
+list(APPEND DECOMP_SOURCES "${RC_GENERATED_VERSION_DIR}/rc_layout_check.cpp")
 target_sources(rc_revenge_pro PRIVATE ${DECOMP_SOURCES})
 set_source_files_properties(${DECOMP_SOURCES} PROPERTIES SKIP_UNITY_BUILD_INCLUSION TRUE
     COMPILE_OPTIONS "-O2;-fwrapv;-fno-strict-aliasing"

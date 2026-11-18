@@ -37,10 +37,10 @@ import gen_addrs  # noqa: E402
 import rcelf  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-USA = os.path.join(ROOT, '..', 'disc', 'SLUS_201.53')
-OTHERS = [os.path.join(ROOT, '..', 'disc_eu', 'SLES_500.77')]
+USA = rcelf.game_elf('usa')
+OTHERS = [rcelf.game_elf('eu')]
 REVIEW = os.path.join(ROOT, 'tools', 'addr_review.txt')
-CHANGED = {os.path.join(ROOT, '..', 'disc_eu', 'SLES_500.77'): os.path.join(ROOT, 'decomp', 'generated', 'eu', 'changed_functions.txt')}
+CHANGED = {rcelf.game_elf('eu'): os.path.join(ROOT, 'decomp', 'generated', 'eu', 'changed_functions.txt')}
 
 LITERAL = re.compile(r'(?<![\w.])0[xX]([0-9a-fA-F]+)([uUlL]*)(?![\w.])')
 REG = re.compile(r'(RC_DECOMP_FN\w*)\(\s*(\w+)\s*,\s*0[xX][0-9a-fA-F]+[uU]?\s*(,|\))')

@@ -1,21 +1,27 @@
-# Generated, or derived from the game disc. Regenerate with the steps in NOTES.md.
-build/
-build-decomp/
-build-oracle/
-decomp/generated/
-output/
+# Generated, or derived from the game disc: never commit these. tools/setup.sh recreates them from your own disc.
+# The disc: extracted files and the image (tools/setup.sh)
+/game/
+# Recompiled code, VU1 microcode and its recompiled code
+/output/
+/output_eu/
 /vu1/
-vu1_images/
+/vu1_images/
+# Build folders (build, build-decomp, build-eu, build-oracle, build-oracle-eu, build-tools, ...)
+/build*/
+# Headers and listings generated from the executables (tools/stabs2c.py, tools/gen_addrs.py, ...), except the
+# hand-reviewed or version-mapping text files below
+/decomp/generated/*
+!/decomp/generated/asm_warnings.txt
+!/decomp/generated/eu/
+/decomp/generated/eu/*
+!/decomp/generated/eu/changed_functions.txt
+!/decomp/generated/eu/lit4_map.txt
+# Memory cards, shader caches, run output
+/mc0/
+/mc1/
+/decomp/recordings/*_memcard/
 gs_shaders/
-functions_filtered.csv
-mc0/
-mc1/
 imgui.ini
 *.log
 dump_*.txt
 __pycache__/
-/decomp/recordings/*_memcard/
-build-eu/
-build-oracle-eu/
-output_eu/
-functions_eu.csv

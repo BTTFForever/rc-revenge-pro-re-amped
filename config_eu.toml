@@ -8,7 +8,7 @@
 # - no SCE symbol database is used by this Ghidra script
 
 [general]
-input = "../disc_eu/SLES_500.77"
+input = "game/eu/disc/SLES_500.77"
 output = "output_eu"
 ghidra_output = "functions_eu.csv"
 single_file_output = false

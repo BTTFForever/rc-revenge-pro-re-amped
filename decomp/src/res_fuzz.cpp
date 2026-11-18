@@ -146,7 +146,12 @@ const Iso &iso()
     {
         Iso result;
         const char *path = std::getenv("RC_ISO");
-        result.fd = open(path ? path : "../RC Revenge Pro (USA).iso", O_RDONLY);
+#if RC_VERSION_EU
+        constexpr const char *kDefault = "game/eu/RC Revenge Pro (Europe).iso"; // tools/setup.sh; run from the repository
+#else
+        constexpr const char *kDefault = "game/usa/RC Revenge Pro (USA).iso";
+#endif
+        result.fd = open(path ? path : kDefault, O_RDONLY);
         if (result.fd < 0)
         {
             std::fprintf(stderr, "[res_fuzz] no disc image (set RC_ISO)\n");

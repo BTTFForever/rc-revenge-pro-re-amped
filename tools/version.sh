@@ -1,14 +1,16 @@
 # Sourced by the run scripts (play.sh, shadow.sh, capture_dumps.sh, oracle.sh): the paths of the game version chosen by
-# RC_VERSION, usa (SLUS-20153, the default) or eu (SLES-50077). Expects $root (this folder's parent).
+# RC_VERSION, usa (SLUS-20153, the default) or eu (SLES-50077). Expects $root (the repository folder).
 #   RC_DISC        extracted disc files            RC_ELF     the executable's file name
 #   RC_ISO         the disc image the game reads   RC_GAME_BUILD / RC_ORACLE_BUILD   the build folders
+# tools/setup.sh puts the disc files in game/<version>/ (disc/ and the image, named as the game code expects).
 case "${RC_VERSION:-usa}" in
-    usa) RC_DISC="$root/../disc"; RC_ELF=SLUS_201.53; RC_ISO="$root/../RC Revenge Pro (USA).iso"
+    usa) RC_DISC="$root/game/usa/disc"; RC_ELF=SLUS_201.53; RC_ISO="$root/game/usa/RC Revenge Pro (USA).iso"
          RC_GAME_BUILD="$root/build-decomp"; RC_ORACLE_BUILD="$root/build-oracle" ;;
-    eu)  RC_DISC="$root/../disc_eu"; RC_ELF=SLES_500.77; RC_ISO="$root/../RC Revenge Pro (Europe).iso"
+    eu)  RC_DISC="$root/game/eu/disc"; RC_ELF=SLES_500.77; RC_ISO="$root/game/eu/RC Revenge Pro (Europe).iso"
          RC_GAME_BUILD="$root/build-eu"; RC_ORACLE_BUILD="$root/build-oracle-eu" ;;
     *) echo "RC_VERSION must be usa or eu, not ${RC_VERSION}" >&2; exit 2 ;;
 esac
+[ -e "$RC_DISC/$RC_ELF" ] || echo "warning: no $RC_DISC/$RC_ELF: run tools/setup.sh with your ${RC_VERSION:-usa} disc image" >&2
 
 # Makes a sandbox disc folder (links to the extracted files, empty memory cards) and links the disc image beside it.
 rc_make_sandbox() {

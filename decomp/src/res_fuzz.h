@@ -2,7 +2,7 @@
 // RC_DECOMP_FN_SETUP expects.
 //
 // Offline the disc and the hardware are replaced (quietLoader in the .cpp): FMFileOpen and FMFileRead serve the real
-// bytes of the disc image (../RC Revenge Pro (USA).iso, or RC_ISO) through the game's own file table, so the original
+// bytes of the disc image (game/<version>/RC Revenge Pro (<version>).iso, or RC_ISO) through the game's own file table, so the original
 // and the native function read the same data, and a scratch word can make chosen reads fail (short, corrupt or
 // empty, the position kept) to drive the retry and error paths. The interrupt handler calls, the IOP (sceSifCallRpc
 // under sceSdRemote, the IOP heap, transfers), the MPEG player, the GS uploads and waits, the buffer swap, the pad

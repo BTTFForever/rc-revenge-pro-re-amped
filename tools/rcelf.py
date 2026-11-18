@@ -8,9 +8,18 @@ only the standard library. Symbols are keyed so that the same symbol can be foun
     sources and linker script, and their symbol tables list the same 5,525 entries in the same order (checked by
     version_diff.py), so the n-th occurrence is the same symbol in both.
 """
+import os
 import struct
 from bisect import bisect_right
 from collections import Counter
+
+ELF_NAMES = {'usa': 'SLUS_201.53', 'eu': 'SLES_500.77'}
+
+
+def game_elf(version):
+    """The executable tools/setup.sh extracted for a version: game/<version>/disc/<name>."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(root, 'game', version, 'disc', ELF_NAMES[version])
 
 SHT_NOBITS = 8
 STT_NAMES = {0: 'NOTYPE', 1: 'OBJECT', 2: 'FUNC', 3: 'SECTION', 4: 'FILE'}

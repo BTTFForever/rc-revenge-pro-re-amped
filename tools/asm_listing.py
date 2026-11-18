@@ -19,7 +19,7 @@ import rcelf  # noqa: E402
 
 def run(name, ver):
     out = {'usa': 'output', 'eu': 'output_eu'}[ver]
-    elf = rcelf.Elf({'usa': '../disc/SLUS_201.53', 'eu': '../disc_eu/SLES_500.77'}[ver])
+    elf = rcelf.Elf(rcelf.game_elf(ver))
     GP = {'usa': 0x32f570, 'eu': 0x32f7f0}[ver]
     syms = {}
     for m in re.finditer(r'inline constexpr uint32_t (\w+) = (0x[0-9a-f]+)u;', open(f'decomp/generated/{ver}/rc_addrs.h').read()):
