@@ -18,7 +18,7 @@ Open decisions and work:
 `main` holds the decompilation. It still contains the whole recompilation, which it runs beside the C as its
 reference and which fills in every function not decompiled. The old recompilation-only `main` (it ended at c94065e,
 "Add level boot and sweep tools, speed up heavy levels on the God of War renderer", an ancestor of the decompilation
-branch) was deleted on 2026-11-19, when the `decomp` branch was renamed `main` and pushed to the private GitHub repo.
+branch) was deleted on 2026-11-19, when the `decomp` branch was renamed `main` and pushed to the private GitHub repo. Before that push every commit was rewritten (author identity, and old home-folder paths in early `config*.toml`), so commit hashes quoted in older notes and logs no longer exist; the pre-rewrite history is in a local backup bundle.
 The runtime is built with
 `PS2X_EE_FIBERS=1` (each EE thread on a fiber).
 
