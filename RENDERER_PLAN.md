@@ -124,6 +124,30 @@ Track Editor pieces -> VISFX -> backdrops, HUD map. Textures: decode BBK GS memo
 Resolution scaling, widescreen (projection and HUD anchors: ps2-port-engine `docs/GPU.md`), frame pacing at 60, MSAA
 or SMAA, and dropping the VU1 path from the frame. The GS backend stays as the reference and the oracle's target.
 
+## Beyond graphics (added 2026-11-18)
+ico-pc also replaces the PS2's other hardware layers and has a full settings menu (`../ico-pc/docs/OPTIONS.md`,
+`docs/port/AUDIO.md`, `FMV.md`, `INPUT.md`, `UI.md`, `CONFIG.md`). The same direction for RC, in rough order:
+1. **Platform: SDL3 window, input and audio** (with the Vulkan window, P0 step 3): a window without a GL context,
+   SDL3 gamepads and keyboard behind a binding layer that presents a virtual DualShock 2 to the game's pad code,
+   remapping, and the audio device. Replaces raylib in the Vulkan build.
+2. **Settings menu** built on the game's own menus (AMENU is native; ico-pc extends the game's layout tables so the
+   port's screens are drawn, navigated and faded by the game's code), saved to a `config.toml`. Early rows: window
+   mode, resolution scale, aspect ratio, vsync, frame-rate cap, anti-aliasing, volumes, controls; later rows as the
+   features below land.
+3. **Frame rate above the original.** RC's game speed follows the frame rate today, so higher rates need the game to
+   keep its own tick while the presenter draws extra frames by interpolating between the last two ticks (ico-pc:
+   `docs/port/ARCHITECTURE.md` "interpolation", `DISPLAY.md`). Needs the native renderer (P3); the hardest feature on
+   this list.
+4. **Picture options from the native renderer** (P3): resolution 1x and up, widescreen with HUD anchors, MSAA/SMAA,
+   upscaling (FSR), texture filtering, per-effect switches (fog, glow, motion trails) where the game has them.
+5. **Sound**: a host replacement for the IOP sound driver the game's music and effect RPCs talk to, driving a
+   software SPU2 (ico-pc `AUDIO.md`), in place of the IOP/SPU2 emulation. Gives volume/output options and removes
+   the IOP from the frame.
+6. **Movies**: a host movie player with the game's entry points (PSS demux + libmpeg2, ico-pc `FMV.md`) in place of
+   the MPEG/IPU emulation; movies drawn by the presenter at any resolution.
+7. **Saves**: the card already works; later, PCSX2-layout folders and an importer for real PS2 saves.
+The Fable study (`ICO_RENDER_STUDY.md`) covers how ico-pc did each of these and what RC would need.
+
 ## Delegation
 P0 ico-pc study: Fable (it decides the architecture). P0 survey and captures: Opus. P0 window spike and Vulkan scaffolding: Opus. P1 interface design: Fable (the
 architecture decisions are the hardest part and shape everything after), implementation in batches by Opus with the
