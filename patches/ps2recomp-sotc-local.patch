@@ -641,7 +641,7 @@ index e671f2f..b9da579 100644
  	u32 ReadZ32(u8* data, u32 bp, u32 bw, u32 x, u32 y);
  
 diff --git a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
-index 6784aca..2c9925b 100644
+index 6784aca..870d87b 100644
 --- a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
 +++ b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
 @@ -1,5 +1,11 @@
@@ -890,7 +890,27 @@ index 6784aca..2c9925b 100644
  
      if (m_checkpointPending.load(std::memory_order_acquire) ||
          m_stopRequested.load(std::memory_order_acquire))
-@@ -1499,9 +1695,20 @@ void EeScheduler::setVSyncFlag(uint32_t flagAddress, uint32_t tickAddress)
+@@ -1452,6 +1648,19 @@ void EeScheduler::dispatchIrq(bool dmac, uint32_t cause)
+               { return left.order < right.order; });
+     for (const EeIrqHandler &handler : matching)
+     {
++        // An interrupt cause is a latch: one already raised and not yet serviced is not raised twice. Events that
++        // arrive while the scheduler can't run (a held stretch of native code) would otherwise queue one handler run
++        // each, and every queued run preempts the one before on a fresh dispatcher thread and invocation stack.
++        const bool alreadyPending = std::any_of(m_pendingInvocations.begin(), m_pendingInvocations.end(),
++            [&](const GuestInvocation &queued)
++            {
++                return queued.kind == GuestInvocationKind::Interrupt && queued.context.pc == handler.handler &&
++                       getRegU32(&queued.context, 4) == cause && getRegU32(&queued.context, 5) == handler.argument;
++            });
++        if (alreadyPending)
++        {
++            continue;
++        }
+         GuestInvocation invocation{};
+         invocation.kind = GuestInvocationKind::Interrupt;
+         invocation.context.pc = handler.handler;
+@@ -1499,9 +1708,20 @@ void EeScheduler::setVSyncFlag(uint32_t flagAddress, uint32_t tickAddress)
      }
  }
  
@@ -911,7 +931,7 @@ index 6784aca..2c9925b 100644
  }
  
  std::chrono::microseconds EeScheduler::vblankPeriod() const noexcept
-@@ -1915,6 +2122,9 @@ void EeScheduler::makeDormant(GuestThread &item)
+@@ -1915,6 +2135,9 @@ void EeScheduler::makeDormant(GuestThread &item)
  {
      removeReady(item);
      removeFromWaitObject(item);
