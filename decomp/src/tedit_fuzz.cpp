@@ -397,6 +397,26 @@ public:
         setEnv(eArenaHi, s + kHudBits);
     }
 
+    // Every slope row of the edit menu offers at least one module, as in the game. (With none, the edit menu's
+    // selection ends on column 7 or -1, TEditSetNewCursorModule takes the cell past the row for a module and the
+    // pieces to its "slope" come from registers TEditBuildTransitionCursorModules never set.)
+    void openRows()
+    {
+        for (int r = 0; r < 5; ++r)
+        {
+            sEditGridSlopeInstance &g = te().editMenuGridSlopes[r];
+            bool open = false;
+            for (int j = 0; j < 7; ++j)
+                open = open || (g.avail[j] != 0 && g.restrictAvail[j] == 0);
+            if (!open)
+            {
+                const uint32_t j = rng.below(7);
+                g.avail[j] = 1;
+                g.restrictAvail[j] = 0;
+            }
+        }
+    }
+
     int16_t position() { return static_cast<int16_t>(walk ? rng.between(4, 11) : rng.chance(85) ? rng.below(16) : rng.between(-2, 18)); }
     uint32_t walkLength(uint32_t longest) { return walk ? rng.below(4) : longest; }
 
@@ -806,6 +826,7 @@ void teditGridControl(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     // cursor's slope, and the pieces to an unknown slope are taken from registers in turn.)
     if (!w.te().cursor.pCursorModuleList)
         w.te().trackIsComplete = 1;
+    w.openRows();
     w.te().input.analog1LastInput = rng.chance(70) ? rng.pick({0u, 1u, 2u, 4u, 8u, 5u, 10u}) : rng.next();
     setArg(ctx, 0, rng.next());
 }
@@ -1020,6 +1041,7 @@ void menuProcessBreak(uint8_t *, R5900Context *ctx, PS2Runtime *)
 void searchWorld(World &w)
 {
     fillMenu(w);
+    w.openRows();
     sTEditClass &t = w.te();
     t.trackDesc.startOrientation = static_cast<eDirection>(w.rng.below(4));
     if (w.rng.chance(60))
@@ -1323,6 +1345,7 @@ void teditKeys(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     Rng rng{state};
     World w(ctx, rng, scratch, true);
     fillMenu(w);
+    w.openRows();
     leftovers(ctx, rng);
     sTEditClass &t = w.te();
     if (!t.trackDesc.pTrackModuleList)
@@ -1354,6 +1377,7 @@ void teditStartGrid(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     Rng rng{state};
     World w(ctx, rng, scratch);
     fillMenu(w);
+    w.openRows();
     sTEditClass &t = w.te();
     const auto place = [&] { return static_cast<int16_t>(rng.chance(70) ? rng.pick({0, 1, 14, 15, 0, 15}) : rng.chance(90) ? rng.below(16) : rng.between(-2, 18)); };
     t.cursor.xPos = place();

@@ -6,6 +6,8 @@
 # native (default): the named functions native and compared. skip: the same walk with them in RC_DECOMP_SKIP and no
 # comparisons, for the screenshots to set beside the native ones.
 # TEDIT_CARD=<dir>: memory card 1 starts as a copy of that folder (mc0).
+# TEDIT_SKIP=<names>: in native mode, functions left recompiled (the native callers of the ones under test: natives call
+# each other directly, so a function is compared only when a recompiled caller reaches it through the function table).
 # TEDIT_SCRIPT=<tokens>: a scripted session in place of the random edit (see tools/tedit_walk.py).
 # TEDIT_FIELDS=<list>: the screenshot fields (default every 600 from 600 to 7200).
 # Results in $RC_GAME_BUILD/teditlive/<mode>-<seed>/: walk.pad, game.log, shadow.txt, shots/. RC_VERSION=eu for Europe.
@@ -27,7 +29,7 @@ fields="${TEDIT_FIELDS:-$(seq -s, 600 600 7200)}"
 if [ "$mode" = skip ]; then
     check=(RC_DECOMP_SKIP="$names")
 else
-    check=(RC_SHADOW=1 RC_SHADOW_FUZZ=0 RC_SHADOW_LIVE_ONLY="$names" RC_SHADOW_LOG="$out/shadow.txt")
+    check=(RC_SHADOW=1 RC_SHADOW_FUZZ=0 RC_SHADOW_LIVE_ONLY="$names" RC_SHADOW_LOG="$out/shadow.txt" ${TEDIT_SKIP:+RC_DECOMP_SKIP="$TEDIT_SKIP"})
 fi
 cd "$root"
 env PS2X_DEBUG_PANEL=0 PS2X_GS_GPU=1 PS2X_GS_THREAD=1 PS2X_MTVU=1 PS2X_VU1_TIMING=0 PS2X_EE_HOST_PACING=1 \

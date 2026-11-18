@@ -6,8 +6,8 @@ turned and placed, then a random edit: pieces chosen (arrows) and added (cross),
 a wait. Europe (eu) first picks the language (the first). The editor's keys are the pad's bits: InputHit(k) is bit k.
 SCRIPT replaces the random edit (after the start grid is placed): tokens separated by commas, each a key (u d l r x o
 t q st sel l1 l2 r1 r2) with an optional *N (pressed N times) and :G (G frames after each press, default 30), or wN
-(wait N frames). The editor's menu (st) is: Load Track, Save Track, New Track, Play Track, Complete Track, Random
-Track, Options, Help Screen, Quit (see NOTES.md, TEDIT part 2, for the walks used)."""
+(wait N frames). The editor's menu (st) is: New Track, Load Track, Save Track, Play Track, Help Screen, Options (Complete
+Track, Random Track, Track Theme, Soundtrack), Quit (see NOTES.md, TEDIT part 2, for the walks used)."""
 import random, sys
 seed, frames = int(sys.argv[1]), int(sys.argv[2])
 args = sys.argv[3:]
