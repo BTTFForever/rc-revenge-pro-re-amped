@@ -157,7 +157,7 @@ native. What is still emulated, and what replaces it:
 | EE kernel: threads, semaphores, interrupts, vblank, timers | runtime EeScheduler (fibers) | a small host kernel layer as ico-pc's `port/platform` (likely the last to change; it is HLE already, not hardware emulation) |
 | Memory card, pad | runtime HLE stubs | host libmc/libpad over folders and SDL3 (items 1 and 7) |
 | SDK libraries (libgraph, libdma, libvu0, libc internals) | recompiled code | native where reached (SDK plan), stubs where the renderer/host layers make them dead |
-| EE recompiled code | PS2Recomp output | native decompiled code (1,710 of 2,486 now; game code nearly complete) |
+| EE recompiled code | PS2Recomp output | native decompiled code (1,730 of 2,486: all game code since 2026-11-19; SDK and libc remain) |
 
 When every row is done the recompiled output and the runtime's emulation can be dropped from the build; the
 oracle/shadow tooling stays available against the recompiled reference as a separate test build.

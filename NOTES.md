@@ -14,9 +14,13 @@ Open decisions and work:
 4. Dynamic resolution and widescreen are still to do. Vulkan (`PS2X_GS_VK=1`) renders correctly but is slow.
 5. A faster VU1 generator without the cycle-accurate timing might gain 20-30%.
 
-## The two branches
-`main` is the static recompilation, a playable build and the fallback. `decomp` is the decompilation. It still contains the whole recompilation, which it runs beside the C as its reference and which fills in every function not decompiled yet.
-They share the runtime checkout in `~/PS2Recomp-sotc`. `decomp` turns on the fibers with `PS2X_EE_FIBERS=1`; without that define the runtime behaves as `main` expects. `main`'s patch file is older than `decomp`'s and `decomp`'s includes everything in it. Switch with `git switch main` or `git switch decomp`, then rebuild. Each branch's `NOTES.md` says what that branch does.
+## Branches
+`decomp` holds the decompilation. It still contains the whole recompilation, which it runs beside the C as its
+reference and which fills in every function not decompiled. `main` is the old recompilation-only build (the fallback);
+it ends at c94065e ("Add level boot and sweep tools, speed up heavy levels on the God of War renderer"), an ancestor of
+`decomp` (`git log decomp..main` is empty), so `decomp` contains all of it. Planned before publishing (see
+`GITHUB_PREP_STATUS.md`): delete the old `main` and rename `decomp` to `main`. The runtime is built with
+`PS2X_EE_FIBERS=1` (each EE thread on a fiber).
 
 ## Decompilation (started 2026-11-10)
 The goal is a full behaviour-matching decompilation in the style of ico-pc (`../ico-pc`): native C with no recompiled code left. Decompiled functions replace recompiled ones one at a time in the running game.
@@ -57,6 +61,16 @@ The goal is a full behaviour-matching decompilation in the style of ico-pc (`../
 | `gs_shaders/`, `<build>/shader-cache` | Compiled shader cache | Regenerates as you play |
 
 Nothing outside this folder is needed apart from the disc image. The first configure fetches the runtime's and recompiler's dependencies (raylib, imgui, rlImGui, ELFIO, toml11, fmt, libdwarf, rabbitizer, Vulkan-Headers, volk) with CMake's FetchContent; `-DRC_FETCH_CACHE=<folder of <name>-src checkouts>` builds offline. Before 2026-11-19 the discs lived beside this folder (`../disc`, `../disc_eu`, `../RC Revenge Pro (USA).iso`) and the Ghidra project in `../ghidra`; earlier notes below still name those paths.
+
+### Clean-clone check (2026-11-19, USA)
+A fresh `git clone` of the repository, then `tools/setup.sh --oracle -j 6 "<USA .cue>"` (the raw .bin path): exit 0 in
+about 19 minutes, all FetchContent dependencies downloaded from their repositories. The ISO it converted from the .bin
+has the same SHA-1 as the ISO made earlier by hand; `output/`, `vu1/` and `decomp/generated/usa/{rc_addrs,rc_fns,
+rc_globals,rc_types}.h` are byte-identical to the ones in the working tree. `build-decomp/rc_revenge_pro` and
+`build-oracle/rc_oracle` built. `tools/play.sh replay playtest2` booted the game (113 files indexed from the image), went
+through the menus into a race (screenshot at field 4000: level, HUD, car correct) and ran at 50-59 fps on the RTX 2060
+over 2 minutes, while the oracle was still compiling. Not yet done in a clean clone: the Europe setup (from the .iso,
+the symlink path), `tools/capture_dumps.sh` + `tools/oracle.sh --all`. See `GITHUB_PREP_STATUS.md`.
 
 ## The runtime (vendored, 2026-11-19)
 PS2Recomp lives in `third_party/ps2recomp/` (see its `VENDORED.md`): ps2xRecomp, ps2xRuntime and ps2xIOP from the SotC fork
