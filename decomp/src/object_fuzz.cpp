@@ -247,6 +247,38 @@ void objectCreate(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     setArg(ctx, 2, rnd(state, 8));
 }
 
+// Vfx2PodiumInitialise (VISFX2.c): the front end's car definitions (frontEndVarG's first word: a table whose models from
+// +0x38 are the dump's cars' definitions), the race's places and order (car numbers 1-0x26, types 0-7), the players'
+// places (some out of the top three), with or without the level's start positions; $s1 a model the original might reuse.
+void vfxPodium(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    soundOff();
+    if (noObjects() > 30)
+        G(objectVarG).noObjects = 8;
+    const uint32_t table = scratch + 0x6000u;
+    mem<uint32_t>(sym::frontEndVarG) = table;
+    for (uint32_t n = 0; n < 0x30u; ++n)
+        mem<uint32_t>(table + 0x38u + 4u * n) = mem<_sObject>(objectAt(pickCar(state))).pDef.address;
+    const uint32_t ai = sym::aiVarG;
+    for (uint32_t i = 0; i < 8; ++i)
+    {
+        mem<uint8_t>(ai + i * 12u + 8u) = static_cast<uint8_t>(chance(state, 70) ? 1u + rnd(state, 0x13) : 1u + rnd(state, 0x26));
+        mem<uint8_t>(ai + i * 12u + 9u) = static_cast<uint8_t>(rnd(state, 8));
+    }
+    mem<uint16_t>(ai + 0x64u) = static_cast<uint16_t>(chance(state, 90) ? 1u + rnd(state, 8) : rnd(state, 10));
+    mem<uint16_t>(ai + 0x66u) = static_cast<uint16_t>(chance(state, 90) ? 1u + rnd(state, 8) : rnd(state, 10));
+    mem<uint16_t>(ai + 0x68u) = static_cast<uint16_t>(nextFuzz(state));
+    mem<uint16_t>(ai + 0x6au) = static_cast<uint16_t>(nextFuzz(state));
+    mem<uint8_t>(kMainVars + 0x369u) = static_cast<uint8_t>(rnd(state, 3));
+    mem<uint8_t>(kMainVars + 0x36au) = static_cast<uint8_t>(rnd(state, 6));
+    const uint32_t level = mem<uint32_t>(sym::pLvlG);
+    if (level != 0 && chance(state, 30))
+        mem<uint32_t>(level + 0x30u) = 0; // no start positions: a row of the podium's own
+    if (chance(state, 30))
+        mem<uint32_t>(sym::pMenuSystemG) = scratch + 0x7000u;
+    SET_GPR_S32(ctx, 17, static_cast<int32_t>(rnd(state, 0x13)));
+}
+
 void objectDelete(R5900Context *ctx, uint64_t &state, uint32_t)
 {
     soundOff();

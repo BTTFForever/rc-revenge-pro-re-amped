@@ -306,7 +306,8 @@ namespace
     void mainOnTopOfRamStack(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         SET_GPR_U32(ctx, 29, kMainStackTop);
-        rc::fns::ps2_main.original(rdram, ctx, runtime);
+        static const auto mainFn = rc::decompOr(rc::fns::ps2_main);
+        mainFn(rdram, ctx, runtime);
     }
 
     // The game passes whole .M2V files to sceMpegAddBs at once. The runtime's stub trims

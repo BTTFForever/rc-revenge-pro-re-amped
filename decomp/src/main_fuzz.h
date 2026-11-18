@@ -15,5 +15,13 @@ void mainPads(R5900Context *ctx, uint64_t &state, uint32_t scratch);        // a
 void mainCars(R5900Context *ctx, uint64_t &state, uint32_t scratch);        // a0 car set 0-4; players, cup list, carousel
 void mainScreen(R5900Context *ctx, uint64_t &state, uint32_t scratch);      // a0 0, 1 or random
 void mainFrameWindow(R5900Context *ctx, uint64_t &state, uint32_t scratch); // a0 window 0-3 (or random), a1 a time
+// Offline only, with the callees scripted fakes (see the .cpp): mode, status and the polled answers from a script.
+void mainBoot(R5900Context *ctx, uint64_t &state, uint32_t scratch);           // main: the IOP's reboot polled, MainLoop a fake
+void mainLoop(R5900Context *ctx, uint64_t &state, uint32_t scratch);           // MainLoop: modes 1-4 and statuses scripted
+void mainTrackEdInit(R5900Context *ctx, uint64_t &state, uint32_t scratch);    // RdrAlphaInit (a tail jump) real (whole RAM)
+void mainTrackEdProcess(R5900Context *ctx, uint64_t &state, uint32_t scratch); // frames until the status changes; the fade
+void mainTrackEdTerm(R5900Context *ctx, uint64_t &state, uint32_t scratch);    // MemBlockFree (a tail jump) real (whole RAM)
+void mainTerm(R5900Context *ctx, uint64_t &state, uint32_t scratch);           // printf (a tail jump) real
+void mainPrintf(R5900Context *ctx, uint64_t &state, uint32_t scratch);         // a0-t3, f12-f19 random; $sp in scratch
 
 } // namespace rc::fuzz

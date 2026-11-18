@@ -51,4 +51,9 @@ void revModifyVolume(R5900Context *ctx, uint64_t &state, uint32_t scratch);  // 
 void revReadyGo(R5900Context *ctx, uint64_t &state, uint32_t scratch);       // a0 frames, a1 a percentage
 void revDolby(R5900Context *ctx, uint64_t &state, uint32_t scratch);         // a0 a mode, a1 flags
 
+// For other units' setups (TSO, ANIM): the IOP scripted as above, the sound globals, voices, effects and ambient sounds
+// varied, the game running; and how many ambient sounds the list holds (their ids are what the scenery's sounds name).
+void soundScripted(uint64_t &state);
+int32_t ambientCount();
+
 } // namespace rc::fuzz

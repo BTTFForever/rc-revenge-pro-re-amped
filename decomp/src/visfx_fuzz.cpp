@@ -982,6 +982,25 @@ void vfxTargetCar(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     vfxCloudCarousel(ctx, state, scratch);
 }
 
+// As vfxCloudCarousel, with the sprite record and the quad where the game keeps them, in the scratchpad (0x70000000 and
+// 0x70000030): the comparison leaves out the quad's w lanes there, which the second sprite fills from a stack word
+// sinf's callees left (see the harness's Scratchpad), and nothing reads.
+void vfxCloudCarouselPad(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    vfxCloudCarousel(ctx, state, scratch);
+    constexpr uint32_t kPadSprite = 0x70000000u, kPadQuad = 0x70000030u;
+    g_quad.set((sym::visFxVarG + 0x30u), kPadQuad);
+    g_sprite.set((sym::visFxVarG + 0x2720u), kPadSprite);
+    mem<float>(kPadSprite) = rnd(state, 8) ? frnd(state, 40.0f) : 0.0f;
+    for (uint32_t axis = 0; axis < 3; ++axis)
+        mem<float>(kPadSprite + 0x10 + 4 * axis) = frnd(state, 500.0f);
+    mem<uint32_t>(kPadSprite + 0x20) = scratch + kTexture + 16 * rnd(state, 8);
+    mem<uint8_t>(kPadSprite + 0x24) = static_cast<uint8_t>(nextFuzz(state));
+    mem<uint8_t>(kPadSprite + 0x25) = static_cast<uint8_t>(rnd(state, 2));
+    mem<int16_t>(kPadSprite + 0x26) = static_cast<int16_t>(nextFuzz(state));
+    mem<uint32_t>(kPadSprite + 0x28) = nextFuzz(state);
+}
+
 // The skull's fart: the car at +0x1c4, a ring of 16 particles of 0x18 bytes, a life mostly above 0x1f.
 void vfxSkullFartHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 {

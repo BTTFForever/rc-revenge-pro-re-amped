@@ -641,6 +641,61 @@ void hardwareArg(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     setArg(ctx, 0, chance(state, 70) ? scratch + 16u * rnd(state, 0x400) : nextFuzz(state));
 }
 
+// GFX_P2.c: the GS set-up and the packet's send, offline only (the GS library's hardware stores and waits logged).
+
+// a0, a1 the screen's size (the game's, or odd ones); the background colour.
+void gfxInit(R5900Context *ctx, uint64_t &state, uint32_t)
+{
+    quietHardware();
+    static const int32_t kWidths[] = {640, 512, 320, 0, -2}, kHeights[] = {224, 240, 256, 448, 480, 0, -1};
+    setArg(ctx, 0, static_cast<uint32_t>(chance(state, 85) ? kWidths[rnd(state, 5)] : static_cast<int32_t>(nextFuzz(state) >> rnd(state, 32))));
+    setArg(ctx, 1, static_cast<uint32_t>(chance(state, 85) ? kHeights[rnd(state, 7)] : static_cast<int32_t>(nextFuzz(state) >> rnd(state, 32))));
+    G(gR) = static_cast<u8>(nextFuzz(state));
+    G(gG) = static_cast<u8>(nextFuzz(state));
+    G(gB) = static_cast<u8>(nextFuzz(state));
+    bytes(state, sym::gGfxP2, sizeof(sGfxP2));
+}
+
+// The two packets and the texture buffer: null, the dump's, or scratch (free ignores what it did not hand out).
+void gfxTerm(R5900Context *, uint64_t &state, uint32_t scratch)
+{
+    const auto pick = [&](uint32_t current) { return chance(state, 30) ? 0u : chance(state, 50) ? current : scratch + 16u * rnd(state, 0x400); };
+    G(gpGfx_DmaBuff0).address = pick(G(gpGfx_DmaBuff0).address);
+    G(gpGfx_DmaBuff1).address = pick(G(gpGfx_DmaBuff1).address);
+    G(gGfxP2).pTexBuff.address = pick(G(gGfxP2).pTexBuff.address);
+}
+
+// The two packets in scratch, the one being filled either (or neither), its last GIF tag anywhere or none (-1), and a
+// quadword count either side of the 6 that sends it.
+void gfxDmaSend(R5900Context *, uint64_t &state, uint32_t scratch)
+{
+    quietHardware();
+    const uint32_t buff0 = scratch + 0x1000u, buff1 = scratch + 0x3000u;
+    bytes(state, buff0, 0x400);
+    bytes(state, buff1, 0x400);
+    G(gpGfx_DmaBuff0).address = buff0;
+    G(gpGfx_DmaBuff1).address = buff1;
+    sGfxP2 &gfx = G(gGfxP2);
+    gfx.pDmaBuff.address = chance(state, 45) ? buff0 : chance(state, 90) ? buff1 : scratch + 0x5000u;
+    gfx.gifTagIdx = chance(state, 30) ? -1 : static_cast<s32>(rnd(state, 0x40));
+    gfx.buffIdx = chance(state, 80) ? static_cast<s32>(rnd(state, 12)) : static_cast<s32>(nextFuzz(state));
+    G(gLastTex).address = nextFuzz(state);
+}
+
+// a0 a texture address (its GS block in bits 8-23), a1 a texture in scratch with its bitmap list, a2 a mip level, a3 a frame.
+void gfxLoadTex(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    quietHardware();
+    const uint32_t tex = scratch + 0x200u;
+    texture(state, tex);
+    for (uint32_t i = 0; i < 28; ++i)
+        mem<uint32_t>(tex + 0x48u + 4u * i) = scratch + 0x1000u + 0x100u * i;
+    setArg(ctx, 0, chance(state, 70) ? (0x1e0000u + 0x4000u * rnd(state, 0x40)) : nextFuzz(state));
+    setArg(ctx, 1, tex);
+    setArg(ctx, 2, chance(state, 85) ? rnd(state, 7) : rnd(state, 32)); // the shifts use 5 bits; a bigger level would index past RAM
+    setArg(ctx, 3, chance(state, 85) ? rnd(state, 4) : rnd(state, 0x40));
+}
+
 // LDIMAGE.c
 
 namespace {

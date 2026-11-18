@@ -12,6 +12,10 @@ void animTag(R5900Context *ctx, uint64_t &state, uint32_t scratch);     // a0 a 
 void tsoLevel(R5900Context *ctx, uint64_t &state, uint32_t scratch);    // no arguments; the objects varied
 void tsoObject(R5900Context *ctx, uint64_t &state, uint32_t scratch);   // a0 a real object, its flags and angles varied
 void tsoCallback(R5900Context *ctx, uint64_t &state, uint32_t scratch); // a0 TSOSetSFXCallBack (it keeps its a0)
+void animUpdate(R5900Context *ctx, uint64_t &state, uint32_t scratch);  // no arguments; entries near their ends; sound scripted
+void tsoRender(R5900Context *ctx, uint64_t &state, uint32_t scratch);   // a0 a time; objects and animations varied; sound scripted
+void tsoSfxBoned(R5900Context *ctx, uint64_t &state, uint32_t scratch); // a0 a boned instance in scratch, a1 a place
+void tsoSfxVert(R5900Context *ctx, uint64_t &state, uint32_t scratch);  // a0 a vertex animation instance in scratch, a1 a place
 void tsoViewCone(R5900Context *ctx, uint64_t &state, uint32_t scratch); // a0 a point near the camera, f12 a radius
 
 } // namespace rc::fuzz

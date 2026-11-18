@@ -38,6 +38,10 @@ void rdrEndFrame(R5900Context *ctx, uint64_t &state, uint32_t scratch);     // n
 void hardwareArg(R5900Context *ctx, uint64_t &state, uint32_t scratch);     // a0 a tag address
 void imageTags(R5900Context *ctx, uint64_t &state, uint32_t scratch);       // a0 tags, a1 an image, a2-t1 a rectangle
 void imageTagsYX(R5900Context *ctx, uint64_t &state, uint32_t scratch);     // as imageTags with a2 a skip
+void gfxInit(R5900Context *ctx, uint64_t &state, uint32_t scratch);         // a0, a1 a screen size; the clear colour (whole RAM)
+void gfxTerm(R5900Context *ctx, uint64_t &state, uint32_t scratch);         // no arguments; the buffers null, the dump's or scratch
+void gfxDmaSend(R5900Context *ctx, uint64_t &state, uint32_t scratch);      // no arguments; the two packets in scratch
+void gfxLoadTex(R5900Context *ctx, uint64_t &state, uint32_t scratch);      // a0 a GS address, a1 a texture, a2 a level, a3 a frame
 void packerArgs(R5900Context *ctx, uint64_t &state, uint32_t scratch);      // a0 a quadword, a1-t3 random 64-bit values
 
 } // namespace rc::fuzz

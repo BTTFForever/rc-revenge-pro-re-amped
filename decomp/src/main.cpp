@@ -10,6 +10,8 @@
 #include "main.h"
 #include "main_fuzz.h"
 
+RC_VERSION_VARIANT(printf) // Europe also stores $f12-$f18
+
 namespace rc {
 
 using namespace mainunit;
@@ -686,6 +688,121 @@ void SetFrameWindow(int32_t windowId, tTime time)
     call(kApplyDefaultState);
 }
 
+// The game's own printf (MAIN.c) prints nothing: its body was compiled out, leaving a variadic function that stores its
+// variable arguments ($a1-$t3 as doublewords, and in the Europe version also $f12, $f14, $f16 and $f18) into its 0x80-byte
+// frame and returns ($v0 untouched). The recompiled build replaces it with the runtime's printf, which formats the text
+// (shown only in logging builds) and returns its length; the native one does what the game's does.
+void printf()
+{
+    const R5900Context &ctx = g_runtime->eeScheduler().runningContext();
+    const uint32_t frame = getRegU32(&ctx, 29) - 0x80u;
+    for (int r = 5; r <= 11; ++r)
+    {
+        const uint64_t value = GPR_U64((&ctx), r);
+        std::memcpy(guest_host(frame + 0x48u + 8u * static_cast<uint32_t>(r - 5)), &value, 8);
+    }
+#if RC_VERSION_EU
+    for (uint32_t i = 0; i < 4; ++i)
+        std::memcpy(guest_host(frame + 0x38u + 4u * i), &ctx.f[12 + 2 * i], 4);
+#endif
+}
+
+// The boot: the IOP rebooted with the game's image and its modules loaded, then the mode loop. MainLoop returns only
+// when a mode asks to quit (status 8), which no menu does.
+int32_t ps2_main()
+{
+    GuestFrame frame(0x20);
+    guest_call(sym::__main);
+    guest_call(sym::sceSifInitRpc, 0);
+    guest_call(sym::sceCdInit, 0);
+    const uint32_t iopImage = sym::sec_rodata + 0xcb0u; // the IOP's image on the disc
+    while (guest_call<int32_t>(sym::sceSifRebootIop, iopImage) == 0)
+        ;
+    while (guest_call<int32_t>(sym::sceSifSyncIop) == 0)
+        ;
+    guest_call(sym::sceSifInitRpc, 0);
+    guest_call(sym::sceCdInit, 0);
+    guest_call(sym::sceCdMmode, 1);
+    guest_call(sym::sceFsReset);
+    for (const uint32_t module : {0xcd0u, 0xcf0u, 0xd10u, 0xd28u, 0xd48u, 0xd60u, 0xd80u}) // the IOP modules' names
+        guest_call(sym::sceSifLoadModule, sym::sec_rodata + module, 0, 0);
+    guest_call(sym::sceCdDiskReady, 0);
+    at<uint32_t>(sym::stackStartG) = frame.local<uint8_t>(0).address; // main's $sp
+    guest_call(sym::MainLoop);
+    return 0;
+}
+
+// The mode loop. mainVarG.toDo picks the next mode (1 front end, 2 track editor, 3 a race or a cup, 4 the attract demo)
+// and mainVarG.status what a mode ended with (2 restart the level, 4 and 0x40 back to the menus, 8 quit). Every call goes
+// through the dispatcher, so the overrides' wrappers (RC_BOOT_LEVEL's MainFrontProcess, MainGameLevelInit) still apply.
+void MainLoop()
+{
+    GuestFrame frame(0xa0);
+    at<uint8_t>(kMain + 0x34au) = 3;
+    do
+    {
+        call(sym::MainInit);
+        uint32_t mode = toDo();
+        for (;;)
+        {
+            at<uint32_t>(kMain + 8u) = mode; // the mode before
+            if (mode == 2)
+            {
+                call(sym::MainTrackEdInit);
+                call(sym::MainTrackEdProcess);
+                call(sym::MainTrackEdTerm);
+            }
+            else if (mode == 1)
+            {
+                call(sym::MainFrontInit);
+                call(sym::MainFrontProcess);
+                const uint32_t next = toDo();
+                if (next != 2)
+                    guest_call(sym::MainSetCars, next == 4 ? 2 : 3);
+                call(sym::MainFrontTerm);
+                guest_call(kLoadingInit, toDo());
+            }
+            else if (mode == 3 || mode == 4)
+            {
+                // A race (each level of a cup, each restart) or the demo, until the menus or a quit.
+                uint32_t ended;
+                do
+                {
+                    call(sym::MainGameInit);
+                    if (mode == 3)
+                    {
+                        do
+                        {
+                            status() = 1;
+                            call(sym::MainGameLevelInit);
+                            call(sym::MainGameProcess);
+                            call(sym::MainGameLevelTerm);
+                        } while (status() == 2);
+                        call(sym::MainGameTerm);
+                        guest_call(kLoadingInit, toDo());
+                    }
+                    else
+                    {
+                        call(sym::MainGameLevelInit);
+                        guest_call(sym::TaskSet, kMain + 0x37cu, sym::MainDemoEndTask, 1, 30000); // ends the demo
+                        guest_call(sym::TaskCachedInsert, kMain + 0x37cu);
+                        call(sym::MainGameProcess);
+                        call(sym::MainGameLevelTerm);
+                        call(sym::MainGameTerm);
+                    }
+                    ended = status();
+                } while (ended != 8 && ended != 4 && ended != 0x40);
+            }
+            else
+                guest_checkpoint(); // no mode: the original spins here (its backward branch is a scheduling point)
+            if (status() == 8)
+                break;
+            mode = toDo();
+        }
+        call(sym::MainTerm);
+    } while (status() != 8);
+}
+
 } // namespace rc
 
 RC_DECOMP_FN_BLOCKING(MainInit)           // Once, at start-up.
@@ -697,7 +814,33 @@ RC_DECOMP_FN_BLOCKING(MainGameLevelInit)
 RC_DECOMP_FN_BLOCKING(MainGameProcess)    // The race's frame loop.
 RC_DECOMP_FN_BLOCKING(MainGameLevelTerm)
 RC_DECOMP_FN_BLOCKING(MainGameTerm)
-// Not registered: MainTrackEdInit, MainTrackEdProcess and MainTrackEdTerm (the track editor, reached only through the
-// menus, so no run checks them) and MainTerm (shut-down; MainLoop never ends). Their code above is unchecked.
+// The boot and the mode loop, the track editor's set-up, frame loop and tear-down, and the shut-down: offline their
+// callees are scripted fakes that log each call and change the mode and status (main_fuzz.cpp).
+RC_DECOMP_FN_BLOCKING_SETUP(ps2_main, rc::fuzz::mainBoot)
+RC_DECOMP_FN_BLOCKING_SETUP(MainLoop, rc::fuzz::mainLoop)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(MainTrackEdInit, rc::fuzz::mainTrackEdInit)
+RC_DECOMP_FN_BLOCKING_SETUP(MainTrackEdProcess, rc::fuzz::mainTrackEdProcess)
+RC_DECOMP_FN_BLOCKING_SETUP_HEAP(MainTrackEdTerm, rc::fuzz::mainTrackEdTerm)
+RC_DECOMP_FN_BLOCKING_SETUP(MainTerm, rc::fuzz::mainTerm)
+
+namespace {
+// The game's printf as its instructions are (the recompiler made it the runtime's printf): the variable arguments
+// stored into the frame below $sp, nothing else.
+void printfInstructions(uint8_t *, R5900Context *ctx, PS2Runtime *)
+{
+    const uint32_t sp = getRegU32(ctx, 29) - 0x80u;
+    for (int r = 5; r <= 11; ++r)
+    {
+        const uint64_t value = GPR_U64(ctx, r);
+        std::memcpy(rc::guest_host(sp + 0x48u + 8u * static_cast<uint32_t>(r - 5)), &value, 8); // sd $a1-$t3, 0x48-0x78
+    }
+#if RC_VERSION_EU
+    for (int i = 0; i < 4; ++i)
+        std::memcpy(rc::guest_host(sp + 0x38u + 4u * static_cast<uint32_t>(i)), &ctx->f[12 + 2 * i], 4); // swc1 $f12-$f18, 0x38-0x44
+#endif
+    ctx->pc = getRegU32(ctx, 31);
+}
+} // namespace
+RC_DECOMP_FN_SETUP_REFERENCE(printf, rc::fuzz::mainPrintf, printfInstructions)
 RC_DECOMP_FN_SETUP_HEAP(MainScreenGameInit, rc::fuzz::mainScreen)
 RC_DECOMP_FN_SETUP_HEAP(SetFrameWindow, rc::fuzz::mainFrameWindow)

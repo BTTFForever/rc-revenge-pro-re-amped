@@ -525,3 +525,6 @@ keep	decomp/src/front_fuzz.cpp	0x100000	bool inRam(uint32_t address) { return ad
 keep	decomp/src/tedit_frame.cpp	0x100000	at<int32_t>(camera + 0x5cu) = 0x100000;	# the far view camera's height (offset.y), not an address
 keep	decomp/src/tedit_fuzz.cpp	0x100000	t.trackDesc.bestLapTime = rng.chance(50) ? 0x9275cu : rng.below(0x100000);	# a random range of lap times
 keep	decomp/src/tedit_fuzz.cpp	0x100000	mem<uint32_t>(saved + 0x10u) = rng.chance(50) ? 0x9275cu : rng.below(0x100000);	# a random range of lap times
+keep	decomp/src/bb.cpp	0x1e0000	constexpr uint32_t kTextureStart = 0x1e0000u, kTextureEnd = 0x3fffffu; // the GS area the tiles may fill (bytes)	# GS memory addresses (the first texture tile, the end of GS memory), not EE addresses
+keep	decomp/src/bb.cpp	0x3fffff	constexpr uint32_t kTextureStart = 0x1e0000u, kTextureEnd = 0x3fffffu; // the GS area the tiles may fill (bytes)	# the end of GS memory, not an EE address
+keep	decomp/src/display_fuzz.cpp	0x1e0000	setArg(ctx, 0, chance(state, 70) ? (0x1e0000u + 0x4000u * rnd(state, 0x40)) : nextFuzz(state));	# a GS memory address (the first texture), not an EE address

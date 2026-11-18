@@ -744,36 +744,38 @@ void Vfx2Renderer_TumbleWeed(ptr32<_sVfx_TSFX> mem)
 // The cartoon cloud under the carousel car: a flat shadow sprite, then a spinning star above it, both at the car's x and z.
 void Vfx2CloudCarouselCar(ptr32<_sObject> pObj)
 {
-    GuestFrame frame(0x40);
-    uint32_t sp = vfx::sprite();
-    const uint32_t rendObj = pObj->pRendObj.address;
-    at<uint8_t>(sp + vfx::spr::kCode) = 4;
-    at<uint32_t>(sp + vfx::spr::kTexture) = at<uint32_t>(pObj.address + 0x34);
-    sp = vfx::sprite();
-    at<uint8_t>(sp + vfx::spr::kFlipX) = 1;
-    at<float>(sp + vfx::spr::kPos + 4) = 312.0f;
-    at<float>(sp + vfx::spr::kPos) = ee_itof(at<int32_t>(rendObj + 4) >> 8) - ee_float(20.0f);
-    at<float>(sp + vfx::spr::kPos + 8) = ee_itof(at<int32_t>(rendObj + 0xc) >> 8);
-    at<float>(sp + vfx::spr::kScale) = 50.0f;
-    at<uint32_t>(sp + vfx::spr::kRgb) = 0x707070;
-    at<uint16_t>(sp + vfx::spr::kAngle) = 0;
-    VfxPS2SpriteRotated3D(-20.0f);
-    const ee_float angleScale = at<float>(sym::lit4_3278bc);
-    const int32_t time = G(mainVarG).time;
-    sp = vfx::sprite();
-    at<uint32_t>(sp + vfx::spr::kTexture) = vfx::vfxTexture(0x15);
-    at<float>(sp + vfx::spr::kScale) = 30.0f;
-    ee_float a = ee_itof((time >> 1) & 0xfff);
-    // The game's own sinf is run (not ee_sinf) so that it leaves its frame on the stack as the original does: the sprite
-    // drawn next reads a word of stack nobody wrote.
-    const ee_float spin = callOriginalFloat(sym::sinf, (a + a) * angleScale) * ee_float(4096.0f);
-    a = ee_itof((((time >> 3) & 0xfff) * ee_ftoi(spin)) & 0xfff);
-    const ee_float tilt = callOriginalFloat(sym::sinf, (a + a) * angleScale) * ee_float(4096.0f);
-    sp = vfx::sprite();
-    at<uint8_t>(sp + vfx::spr::kCode) = 2;
-    at<uint32_t>(sp + vfx::spr::kRgb) = 0x606060;
-    at<uint16_t>(sp + vfx::spr::kAngle) = static_cast<uint16_t>(ee_ftoi(tilt) >> 5);
-    VfxPS2SpriteRotated3D(-30.0f);
+    {
+        GuestFrame frame(0x40);
+        uint32_t sp = vfx::sprite();
+        const uint32_t rendObj = pObj->pRendObj.address;
+        at<uint8_t>(sp + vfx::spr::kCode) = 4;
+        at<uint32_t>(sp + vfx::spr::kTexture) = at<uint32_t>(pObj.address + 0x34);
+        sp = vfx::sprite();
+        at<uint8_t>(sp + vfx::spr::kFlipX) = 1;
+        at<float>(sp + vfx::spr::kPos + 4) = 312.0f;
+        at<float>(sp + vfx::spr::kPos) = ee_itof(at<int32_t>(rendObj + 4) >> 8) - ee_float(20.0f);
+        at<float>(sp + vfx::spr::kPos + 8) = ee_itof(at<int32_t>(rendObj + 0xc) >> 8);
+        at<float>(sp + vfx::spr::kScale) = 50.0f;
+        at<uint32_t>(sp + vfx::spr::kRgb) = 0x707070;
+        at<uint16_t>(sp + vfx::spr::kAngle) = 0;
+        VfxPS2SpriteRotated3D(-20.0f);
+        const ee_float angleScale = at<float>(sym::lit4_3278bc);
+        const int32_t time = G(mainVarG).time;
+        sp = vfx::sprite();
+        at<uint32_t>(sp + vfx::spr::kTexture) = vfx::vfxTexture(0x15);
+        at<float>(sp + vfx::spr::kScale) = 30.0f;
+        ee_float a = ee_itof((time >> 1) & 0xfff);
+        // The game's own sinf is run (not ee_sinf) so that it leaves its frame on the stack as the original does: the sprite
+        // drawn next reads a word of stack nobody wrote.
+        const ee_float spin = callOriginalFloat(sym::sinf, (a + a) * angleScale) * ee_float(4096.0f);
+        a = ee_itof(static_cast<int32_t>((static_cast<uint32_t>((G(mainVarG).time >> 3) & 0xfff) * static_cast<uint32_t>(ee_ftoi(spin))) & 0xfffu));
+        const ee_float tilt = callOriginalFloat(sym::sinf, (a + a) * angleScale) * ee_float(4096.0f);
+        sp = vfx::sprite();
+        at<uint8_t>(sp + vfx::spr::kCode) = 2;
+        at<uint32_t>(sp + vfx::spr::kRgb) = 0x606060;
+        at<uint16_t>(sp + vfx::spr::kAngle) = static_cast<uint16_t>(ee_ftoi(tilt) >> 5);
+    }
+    VfxPS2SpriteRotated3D(-30.0f); // a tail jump: after the frame is gone
 }
 
 // The target circle under a car: a sprite 60 units wide at the car's position, 10 below it, spinning with the clock.
@@ -1018,6 +1020,7 @@ void vfxGulls(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxTumbleWeedRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxCloudCarousel(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxTargetCar(R5900Context *ctx, uint64_t &state, uint32_t scratch);
+void vfxCloudCarouselPad(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxSkullFartHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxSkullFartRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxCarRight(R5900Context *ctx, uint64_t &state, uint32_t scratch);
@@ -1042,9 +1045,10 @@ RC_DECOMP_FN_SETUP(Vfx2Renderer_Bees, rc::fuzz::vfxBees)
 RC_DECOMP_FN_SETUP(Vfx2Renderer_Flies, rc::fuzz::vfxFlies)
 RC_DECOMP_FN_SETUP(Vfx2Renderer_Gulls, rc::fuzz::vfxGulls)
 RC_DECOMP_FN_SETUP(Vfx2Renderer_TumbleWeed, rc::fuzz::vfxTumbleWeedRenderer)
-// Vfx2CloudCarouselCar (0x170998) is not registered: the quad's fourth lane after its second sprite is a stack word that
-// sinf's callees left, and the random test cannot make the native one's frames leave the same ones (it matches only when
-// the stack below was already as the original leaves it). It stays recompiled.
+// Vfx2CloudCarouselCar: the quad's fourth lanes after its second sprite are a stack word sinf's callees left, which the
+// native frames cannot reproduce; its setup keeps the sprite and quad in the scratchpad, as the game does, where those
+// lanes (read by nothing) are not compared.
+RC_DECOMP_FN_SETUP(Vfx2CloudCarouselCar, rc::fuzz::vfxCloudCarouselPad)
 RC_DECOMP_FN_SETUP(Vfx2TargetCar, rc::fuzz::vfxTargetCar)
 RC_DECOMP_FN_SETUP(Vfx2Handler_SkullFart, rc::fuzz::vfxSkullFartHandler)
 RC_DECOMP_FN_SETUP(Vfx2Renderer_SkullFart, rc::fuzz::vfxSkullFartRenderer)

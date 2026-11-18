@@ -3,6 +3,8 @@
 #include "main_fuzz.h"
 
 #include <cstring>
+#include <initializer_list>
+#include <vector>
 
 namespace rc::fuzz {
 
@@ -231,6 +233,207 @@ void mainFrameWindow(R5900Context *ctx, uint64_t &state, uint32_t)
         mem<uint8_t>(kMain + 0x368u) = static_cast<uint8_t>(rnd(state, 2)); // split screen
     setArg(ctx, 0, chance(state, 5) ? nextFuzz(state) % 6 : rnd(state, 4));
     setArg(ctx, 1, mem<uint32_t>(kMain + 0x1cu) + rnd(state, 0x4000));
+}
+
+// --- Scripted callees: the boot (main), the mode loop, the track editor's set-up, frame loop and tear-down, and the
+// shut-down. Offline each callee named by the setup becomes a fake that logs its call (the argument registers it reads)
+// into scratch with a running hash, answers from the script and, after its call, applies the script's next change to
+// mainVarG.status and toDo. After a chosen number of calls everything ends: status 8 (quit), every polled answer true
+// and the music faded, so each loop the functions run is left. A callee the original reaches by a tail jump is not
+// replaced (recompiled code calls a tail jump's target directly, past any replacement): it runs for real. ---
+
+namespace {
+
+constexpr uint32_t kEnv = kFuzzScratch + 0x7a00u, kScript = kFuzzScratch + 0x7800u, kLog = kFuzzScratch + 0x7c00u, kLogMax = 50u;
+constexpr uint32_t kScriptEntries = 64u, kLeave = 0xffffffffu;
+enum : uint32_t
+{
+    eCalls = 0x0,
+    eLimit = 0x4,    // from this call on: status 8, polled answers true, the music faded
+    eHash = 0x8,     // a hash of every logged call, so calls past the log's end are compared too
+    eTrueMask = 0xc, // bit (call % 32): the answer of a polled call (sceSifRebootIop, sceSifSyncIop, Init3dFrame)
+    eTime = 0x10,    // TimerGet's first answer (then 0x11 more a call)
+    eFadeMask = 0x14, // bit (call % 32): RCMusicFadeControl ends the fade
+    eAnswer = 0x18,  // every other fake's answer
+};
+constexpr uint32_t kMusicFading = sym::rcmusicVarG + 0x14u;
+
+uint32_t env(uint32_t offset) { return mem<uint32_t>(kEnv + offset); }
+void setEnv(uint32_t offset, uint32_t value) { mem<uint32_t>(kEnv + offset) = value; }
+
+void logCall(uint32_t what, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
+{
+    uint32_t hash = env(eHash);
+    for (const uint32_t word : {what, a, b, c, d})
+        hash = (hash ^ word) * 16777619u;
+    setEnv(eHash, hash);
+    const uint32_t count = mem<uint32_t>(kLog);
+    if (count < kLogMax)
+    {
+        const uint32_t at = kLog + 4u + count * 20u;
+        mem<uint32_t>(at) = what;
+        mem<uint32_t>(at + 4u) = a;
+        mem<uint32_t>(at + 8u) = b;
+        mem<uint32_t>(at + 12u) = c;
+        mem<uint32_t>(at + 16u) = d;
+    }
+    mem<uint32_t>(kLog) = count + 1u;
+}
+
+template <uint32_t Address, int Args>
+void scripted(uint8_t *, R5900Context *ctx, PS2Runtime *)
+{
+    const auto arg = [ctx](int i) { return i < Args ? getRegU32(ctx, 4 + i) : 0u; };
+    logCall(Address, arg(0), arg(1), arg(2), arg(3));
+    const uint32_t n = env(eCalls);
+    setEnv(eCalls, n + 1u);
+    const bool over = n + 1u >= env(eLimit);
+    const bool yes = over || ((env(eTrueMask) >> (n % 32u)) & 1u) != 0u;
+    uint32_t answer = env(eAnswer);
+    if constexpr (Address == sym::sceSifRebootIop || Address == sym::sceSifSyncIop || Address == sym::Init3dFrame)
+        answer = yes ? 1u : 0u;
+    else if constexpr (Address == sym::TimerGet)
+        answer = env(eTime) + n * 0x11u;
+    else if constexpr (Address == sym::RCMusicFadeControl)
+    {
+        if (over || ((env(eFadeMask) >> (n % 32u)) & 1u) != 0u)
+            mem<uint32_t>(kMusicFading) = 0;
+    }
+    if (n < kScriptEntries)
+    {
+        const uint32_t newStatus = mem<uint32_t>(kScript + 8u * n), newToDo = mem<uint32_t>(kScript + 8u * n + 4u);
+        if (newStatus != kLeave)
+            mem<uint32_t>(kMain) = newStatus;
+        if (newToDo != kLeave)
+            mem<uint32_t>(kMain + 4u) = newToDo;
+    }
+    if (over)
+    {
+        mem<uint32_t>(kMain) = 8u;
+        mem<uint32_t>(kMusicFading) = 0;
+    }
+    SET_GPR_S32(ctx, 2, static_cast<int32_t>(answer));
+    ctx->pc = getRegU32(ctx, 31);
+}
+
+struct Fake
+{
+    uint32_t address;
+    void (*fake)(uint8_t *, R5900Context *, PS2Runtime *);
+};
+#define RC_SCRIPTED(name, args) Fake{sym::name, &scripted<sym::name, args>}
+
+// Installs the fakes (once per process: the oracle runs each function in its own) and starts a script: status values
+// from `statuses`, modes 1-4 only (a mode outside them with no quit would spin with no call), the limit from limitRange.
+void startScript(uint64_t &state, std::initializer_list<Fake> fakes, std::initializer_list<uint32_t> statuses, uint32_t limitLow, uint32_t limitRange)
+{
+    if (g_offline)
+    {
+        static bool installed = false;
+        if (!installed)
+        {
+            installed = true;
+            for (const Fake &f : fakes)
+                g_runtime->replaceFunction(f.address, f.fake);
+        }
+    }
+    soundOff();
+    for (uint32_t offset = 0; offset < 0x40u; offset += 4u)
+        setEnv(offset, 0);
+    mem<uint32_t>(kLog) = 0;
+    setEnv(eLimit, limitLow + rnd(state, limitRange));
+    setEnv(eTrueMask, chance(state, 30) ? nextFuzz(state) | 0x80000000u : nextFuzz(state) | nextFuzz(state) | 0x80000000u);
+    setEnv(eTime, nextFuzz(state));
+    setEnv(eFadeMask, nextFuzz(state) & nextFuzz(state));
+    setEnv(eAnswer, chance(state, 50) ? 0u : nextFuzz(state));
+    const std::vector<uint32_t> statusList(statuses);
+    for (uint32_t i = 0; i < kScriptEntries; ++i)
+    {
+        mem<uint32_t>(kScript + 8u * i) = chance(state, 70) ? kLeave : statusList[rnd(state, static_cast<uint32_t>(statusList.size()))];
+        mem<uint32_t>(kScript + 8u * i + 4u) = chance(state, 70) ? kLeave : 1u + rnd(state, 4);
+    }
+    mem<uint32_t>(kMain) = statusList[rnd(state, static_cast<uint32_t>(statusList.size()))];
+    mem<uint32_t>(kMain + 4u) = 1u + rnd(state, 4);
+    mem<uint32_t>(kMusicFading) = rnd(state, 2);
+}
+
+} // namespace
+
+void mainBoot(R5900Context *, uint64_t &state, uint32_t)
+{
+    startScript(state,
+                {RC_SCRIPTED(__main, 0), RC_SCRIPTED(sceSifInitRpc, 1), RC_SCRIPTED(sceCdInit, 1), RC_SCRIPTED(sceSifRebootIop, 1),
+                 RC_SCRIPTED(sceSifSyncIop, 0), RC_SCRIPTED(sceCdMmode, 1), RC_SCRIPTED(sceFsReset, 0), RC_SCRIPTED(sceSifLoadModule, 3),
+                 RC_SCRIPTED(sceCdDiskReady, 1), RC_SCRIPTED(MainLoop, 0)},
+                {1u}, 40u, 20u);
+}
+
+void mainLoop(R5900Context *, uint64_t &state, uint32_t)
+{
+    startScript(state,
+                {RC_SCRIPTED(MainInit, 0), RC_SCRIPTED(MainFrontInit, 0), RC_SCRIPTED(MainFrontProcess, 0), RC_SCRIPTED(MainSetCars, 1),
+                 RC_SCRIPTED(MainFrontTerm, 0), RC_SCRIPTED(LoadingInit, 1), RC_SCRIPTED(MainTrackEdInit, 0), RC_SCRIPTED(MainTrackEdProcess, 0),
+                 RC_SCRIPTED(MainTrackEdTerm, 0), RC_SCRIPTED(MainGameInit, 0), RC_SCRIPTED(MainGameLevelInit, 0), RC_SCRIPTED(MainGameProcess, 0),
+                 RC_SCRIPTED(MainGameLevelTerm, 0), RC_SCRIPTED(MainGameTerm, 0), RC_SCRIPTED(TaskSet, 4), RC_SCRIPTED(TaskCachedInsert, 1),
+                 RC_SCRIPTED(MainTerm, 0)},
+                {1u, 2u, 2u, 4u, 0x40u, 8u, 0u, 0x10u}, 10u, 60u);
+}
+
+void mainTrackEdInit(R5900Context *, uint64_t &state, uint32_t)
+{
+    startScript(state,
+                {RC_SCRIPTED(RCMusicStop, 0), RC_SCRIPTED(LevelInit, 0), RC_SCRIPTED(TEditInit, 0), RC_SCRIPTED(CameraLvlInit, 1),
+                 RC_SCRIPTED(TimerSetup, 3), RC_SCRIPTED(mpegOnInterruptTERM, 1), RC_SCRIPTED(RCMusicPlayLevel, 1), RC_SCRIPTED(RCMusicSetVol, 1),
+                 RC_SCRIPTED(DisplaySetBackground, 3)},
+                {1u}, 100u, 1u);
+    mem<uint32_t>(kMain + 0x3acu) = nextFuzz(state) >> rnd(state, 32); // the music volume
+    if (chance(state, 50))
+        mem<uint8_t>(kMain + 0x34au) = static_cast<uint8_t>(rnd(state, 0x64));
+}
+
+void mainTrackEdProcess(R5900Context *, uint64_t &state, uint32_t)
+{
+    startScript(state,
+                {RC_SCRIPTED(TimerGet, 1), RC_SCRIPTED(CameraSetMode, 2), RC_SCRIPTED(InputReset, 0), RC_SCRIPTED(Rdr_StartFrame, 0),
+                 RC_SCRIPTED(RdrState_ApplyDefaultStateBlock, 0), RC_SCRIPTED(GfxP2_ZWriteEnable, 0), RC_SCRIPTED(InputSnapshot, 0),
+                 RC_SCRIPTED(TEditControl, 1), RC_SCRIPTED(CameraProcess, 2), RC_SCRIPTED(SfxDoSfx, 0), RC_SCRIPTED(Init3dFrame, 4),
+                 RC_SCRIPTED(TileFrameInit, 0), RC_SCRIPTED(TEditDisplay, 2), RC_SCRIPTED(FontPrint, 3), RC_SCRIPTED(DisplayRenderFrameProfile, 1),
+                 RC_SCRIPTED(RdrAlphaAddToDmaChain, 0), RC_SCRIPTED(Rdr_EndFrame, 0), RC_SCRIPTED(RevSfxPauseFade, 1), RC_SCRIPTED(sceGsSyncV, 1),
+                 RC_SCRIPTED(RCMusicFadeControl, 0)},
+                {1u, 1u, 1u, 0u, 2u, 8u}, 20u, 120u);
+    // The frame counter and the time it was last taken, so the once-a-second count runs now and then.
+    mem<uint32_t>(kMain + 0x354u) = rnd(state, 100);
+    mem<uint32_t>(kMain + 0x358u) = env(eTime) - rnd(state, 3000);
+    mem<uint32_t>(sym::cameraVarG + 0xb70u) = sym::cameraVarG + 0x5b8u * rnd(state, 2); // the current camera
+}
+
+void mainTrackEdTerm(R5900Context *, uint64_t &state, uint32_t)
+{
+    startScript(state, {RC_SCRIPTED(TEditTerm, 0), RC_SCRIPTED(RdrAlphaTerm, 0), RC_SCRIPTED(LevelTerm, 0)}, {1u}, 100u, 1u);
+}
+
+void mainTerm(R5900Context *, uint64_t &state, uint32_t)
+{
+    startScript(state,
+                {RC_SCRIPTED(CarListTerm, 0), RC_SCRIPTED(UserInterfaceTerm, 0), RC_SCRIPTED(TEditFreePermTrackStructures, 0),
+                 RC_SCRIPTED(TexFreeIntermediateResData, 0), RC_SCRIPTED(PhysicsTerm, 0), RC_SCRIPTED(MemBlockFree, 1), RC_SCRIPTED(ResTerm, 0),
+                 RC_SCRIPTED(LoadErrorTerm, 0), RC_SCRIPTED(CardUnInit, 0), RC_SCRIPTED(InputTerm, 0), RC_SCRIPTED(SysTimerTerm, 0),
+                 RC_SCRIPTED(Init3dClean, 0), RC_SCRIPTED(DisplayTerm, 0), RC_SCRIPTED(BackdropTerm, 0), RC_SCRIPTED(MemBlockTerm, 0)},
+                {1u}, 100u, 1u);
+}
+
+// The variable arguments, any 64-bit values, and $sp in scratch so the frame they are stored into is compared.
+void mainPrintf(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    setArg(ctx, 0, scratch + 0x100u);
+    for (int r = 5; r <= 11; ++r)
+        SET_GPR_U64(ctx, r, (static_cast<uint64_t>(nextFuzz(state)) << 32) | nextFuzz(state));
+    for (int f = 12; f < 20; ++f)
+    {
+        const uint32_t bits = nextFuzz(state);
+        std::memcpy(&ctx->f[f], &bits, 4);
+    }
+    SET_GPR_U32(ctx, 29, scratch + 0x4000u + 16u * rnd(state, 0x100));
 }
 
 } // namespace rc::fuzz

@@ -48,6 +48,8 @@ void backdropScreens(R5900Context *ctx, uint64_t &state, uint32_t scratch);     
 void backdropBmp(R5900Context *ctx, uint64_t &state, uint32_t scratch);         // a0 a screen's file name
 void backdropVag(R5900Context *ctx, uint64_t &state, uint32_t scratch);         // a0 a sound's file name; dwAddr
 void backdropDisplay(R5900Context *ctx, uint64_t &state, uint32_t scratch);     // a0 a BMP anywhere in RAM, a1 a buffer
+void bbLoad(R5900Context *ctx, uint64_t &state, uint32_t scratch);             // a0 a level, a1 flags; failed header reads (whole RAM)
+void bbTransfer(R5900Context *ctx, uint64_t &state, uint32_t scratch);         // a0 the kind, a1-a2 a size and place, a3 a header, t0 the data
 void backdropPlay(R5900Context *ctx, uint64_t &state, uint32_t scratch);        // no arguments; the voice addresses
 
 // For other units' setups: the loader ready to load (see loadEnvironment in the .cpp; false without a disc) and the id

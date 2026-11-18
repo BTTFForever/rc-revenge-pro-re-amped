@@ -901,6 +901,16 @@ void revAnim(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     setArg(ctx, 1, chance(state, 50) ? 2u : rnd(state, 4));
 }
 
+void soundScripted(uint64_t &state)
+{
+    quietSound(state);
+    varySound(state);
+    runningGame(state);
+    varyAmbients(state);
+}
+
+int32_t ambientCount() { return rev().ambientActualCt; }
+
 void revTso(R5900Context *ctx, uint64_t &state, uint32_t)
 {
     quietSound(state);

@@ -434,8 +434,9 @@ bool loggedStore(uint32_t address, uint32_t value)
 }
 
 // Offline: installs the fakes (once) and resets their control words; reads are good, the pad untouched, the movie
-// finishes at once.
-void quietLoader()
+// finishes at once. Without fakeIopFree, sceSifFreeIopHeap stays real (BBTransferSRAM reaches it by a tail jump, which
+// recompiled code makes past any replacement).
+void quietLoader(bool fakeIopFree = true)
 {
     if (g_offline)
     {
@@ -458,7 +459,8 @@ void quietLoader()
             rt.replaceFunction(kFlushCache, &loggedCall<kFlushCache, 1>);
             rt.replaceFunction(kSyncPath, &loggedCall<kSyncPath, 2>);
             rt.replaceFunction(kExecLoadImage, &loggedCall<kExecLoadImage, 2>);
-            rt.replaceFunction(kSifFreeIopHeap, &loggedCall<kSifFreeIopHeap, 1>);
+            if (fakeIopFree)
+                rt.replaceFunction(kSifFreeIopHeap, &loggedCall<kSifFreeIopHeap, 1>);
             rt.replaceFunction(kSdTransToIOP, &loggedCall<kSdTransToIOP, 4>);
             rt.replaceFunction(kMpegLoad, &loggedCall<kMpegLoad, 4>);
             rt.replaceFunction(kMpegPlay, &loggedCall<kMpegPlay, 2>);
@@ -1128,6 +1130,187 @@ void backdropDisplay(R5900Context *ctx, uint64_t &state, uint32_t)
 void backdropPlay(R5900Context *, uint64_t &state, uint32_t)
 {
     backdropCommon(state);
+}
+
+// --- BB.c ---
+
+namespace {
+
+// A BBK on the disc (\BB\<n / 10>\<n % 10>.BBK): its sections' sizes, whether it has the sound bank (the level and front
+// end files; the track editor's (97, 100, 101) have only the GS image, the game data and the handles, and are loaded with
+// flag 1), and where its game data goes.
+struct BbFile
+{
+    uint32_t level = 0;
+    bool sound = false;
+    uint32_t compressed[4] = {}; // the sections' size words, in file order
+    uint32_t sections = 0;
+    uint32_t soundSize = 0, gsSize = 0, dataAt = 0, dataSize = 0;
+};
+
+const std::vector<BbFile> &bbFiles()
+{
+    static const std::vector<BbFile> files = []
+    {
+        std::vector<BbFile> found;
+        for (uint32_t n = 0; n < 120; ++n)
+        {
+            const auto [sector, size] = isoFile(("BB/" + std::to_string(n / 10) + "/" + std::to_string(n % 10) + ".BBK").c_str());
+            if (size < 0x14ecu)
+                continue;
+            std::vector<uint8_t> bytes(size);
+            readIso(iso(), static_cast<uint64_t>(sector) * 2048u, bytes.data(), size);
+            BbFile f;
+            f.level = n;
+            f.soundSize = le32(bytes.data() + 0x24u);
+            f.gsSize = le32(bytes.data() + 0x11c0u);
+            f.dataSize = le32(bytes.data() + 0x14d4u);
+            f.dataAt = le32(bytes.data() + 0x14dcu);
+            for (const uint32_t k : {4u, 3u})
+            {
+                uint32_t at = 0x14ecu, i = 0;
+                for (; i < k && at + 4u <= size; ++i)
+                {
+                    f.compressed[i] = le32(bytes.data() + at);
+                    at += 4u + f.compressed[i];
+                }
+                if (i == k && at == size)
+                {
+                    f.sections = k;
+                    f.sound = k == 4u;
+                    break;
+                }
+            }
+            if (f.sections != 0)
+                found.push_back(f);
+        }
+        return found;
+    }();
+    return files;
+}
+
+bool overlaps(uint32_t a, uint32_t aSize, uint32_t b, uint32_t bSize) { return a < b + bSize && b < a + aSize; }
+
+// Where a file's load can go in the dump's heap (a level is loaded there, so the game's own places are in use): each
+// section's buffer in the first free block it fits (MemBlockAllocLo's choice), and the resource area's top (where the
+// sound bank and the GS image inflate) and the handles inside a used block, all clear of the game data's place and of
+// every block header. False if the dump has no such room for this file.
+struct BbPlaces
+{
+    uint32_t top = 0, handles = 0;
+};
+
+bool bbFits(const BbFile &f, BbPlaces *places = nullptr)
+{
+    const uint32_t header = G(memVarG).pHeader.address;
+    uint32_t largest = 0;
+    for (uint32_t i = 0; i < f.sections; ++i)
+        largest = std::max(largest, f.compressed[i]);
+    const uint32_t topSize = (std::max({f.soundSize, f.gsSize, f.sound ? f.compressed[0] : 0u}) + 0xffu) & ~0xffu;
+    constexpr uint32_t kHandlesRoom = 0x20000u;
+    bool buffered = false;
+    uint32_t area = 0;
+    for (uint32_t block = load<uint32_t>(header + 0xcu), n = 0; block != header && n < 100000; block = load<uint32_t>(block + 0xcu), ++n)
+    {
+        const uint32_t type = load<uint32_t>(block), size = load<uint32_t>(block + 4u);
+        if (type == MEM_BLOCK_TYPE_FREE && !buffered && size >= largest + 0x80u)
+        {
+            if (overlaps(block, size, f.dataAt, f.dataSize))
+                return false;
+            buffered = true;
+        }
+        else if (type == MEM_BLOCK_TYPE_USED && area == 0 && size >= 0x80u + topSize + kHandlesRoom && !overlaps(block, size, f.dataAt, f.dataSize))
+            area = (block + 0x40u + 0xffu) & ~0xffu;
+    }
+    if (!buffered || area == 0)
+        return false;
+    if (places)
+    {
+        places->top = area;
+        places->handles = area + topSize;
+    }
+    return true;
+}
+
+} // namespace
+
+// a0 a level whose file fits the dump's heap (or one with no file; the resource area's top and the handles placed by
+// bbFits), a1 flags as the game loads that file: the sound
+// bank's kinds (0x10, 0x20, both, raw) with or without the handles (8), or flag 1 for the editor's files (no sound
+// section); the first header reads fail now and then (the retries and the error function), the generic effects loaded or
+// not. (Flag 2, no GS image, is used by no file: with any file on the disc it would read the next section's size as the
+// GS image's.)
+void bbLoad(R5900Context *ctx, uint64_t &state, uint32_t)
+{
+    quietLoader(false);
+    std::vector<const BbFile *> fitting;
+    for (const BbFile &f : bbFiles())
+        if (bbFits(f))
+            fitting.push_back(&f);
+    uint32_t level, flag;
+    if (fitting.empty() || chance(state, 4))
+    {
+        level = chance(state, 50) ? 49u + rnd(state, 40) : nextFuzz(state); // no such file
+        flag = 0x10;
+    }
+    else
+    {
+        // Every other input the editor's small file (101, 0.8 MB): each input inflates its file twice, and the
+        // oracle gives a function 20 s for all its inputs on a dump.
+        const BbFile *small = nullptr;
+        for (const BbFile *candidate : fitting)
+            if (candidate->level == 101u)
+                small = candidate;
+        const BbFile &f = small && chance(state, 50) ? *small : *fitting[rnd(state, static_cast<uint32_t>(fitting.size()))];
+        level = f.level;
+        BbPlaces places;
+        bbFits(f, &places);
+        G(resVarG).pTop.address = places.top;
+        G(resVarG).handlesHandle.address = places.handles;
+        static const uint32_t kSound[] = {0x10, 0x20, 0x30, 0, 0x18, 0x28, 0x38, 8};
+        flag = f.sound ? kSound[rnd(state, 8)] : (chance(state, 70) ? 1u : 9u);
+        if (chance(state, 20))
+            flag |= nextFuzz(state) & 0xc0u; // bits nothing reads
+    }
+    if (chance(state, 30))
+    {
+        // Up to seven header reads fail in a row (short, empty or long; never corrupt with the full count, which the
+        // game would take): six or more run the error function.
+        setEnv(eFailMask, (1u << (1u + rnd(state, 7))) - 1u);
+        uint32_t kinds = nextFuzz(state);
+        for (uint32_t k = 0; k < 16u; ++k)
+            if (((kinds >> (2u * k)) & 3u) == 1u)
+                kinds ^= 3u << (2u * k);
+        setEnv(eFailKind, kinds);
+    }
+    if (chance(state, 5))
+        setEnv(eOpenFailMask, 1);
+    errorFunction(state);
+    G(genericLoaded) = static_cast<int32>(rnd(state, 2));
+    setEnv(eIopHeap, chance(state, 85) ? 0xa0000u + 0x40u * rnd(state, 0x800) : 0u);
+    shuffleSlots(state, {});
+    setArg(ctx, 0, level);
+    setArg(ctx, 1, flag);
+}
+
+// a0 the generic-then-level kind or not, a1 a size, a2 a sound RAM address, a3 a header in scratch, t0 the bank.
+void bbTransfer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    quietLoader(false);
+    const uint32_t header = scratch + 0x100u;
+    for (uint32_t i = 0; i < 0x40u; i += 4)
+        store<uint32_t>(header + i, nextFuzz(state));
+    const uint32_t start = 0x5010u + 0x10u * rnd(state, 0x100);
+    const uint32_t end = start + 0x19000u + 0x10u * rnd(state, 0x4000);
+    store<uint32_t>(header + 0x24u, chance(state, 85) ? (end - start) + 0x10u * rnd(state, 0x8000) : nextFuzz(state)); // dataSize
+    store<uint32_t>(header + 0x28u, chance(state, 85) ? start : nextFuzz(state));                                     // startOfGenericAddr
+    store<uint32_t>(header + 0x2cu, chance(state, 85) ? end : nextFuzz(state));                                       // endOfGenericAddr
+    setEnv(eIopHeap, chance(state, 85) ? 0xa0000u + 0x40u * rnd(state, 0x800) : 0u);
+    setArg(ctx, 0, chance(state, 50) ? 0u : chance(state, 80) ? 1u : nextFuzz(state));
+    setArg(ctx, 1, chance(state, 80) ? 0x10u * rnd(state, 0x20000) : nextFuzz(state));
+    setArg(ctx, 2, chance(state, 80) ? 0x10u * rnd(state, 0x20000) : nextFuzz(state));
+    setArg(ctx, 3, header);
+    setArg(ctx, 4, scratch + 0x1000u + 0x10u * rnd(state, 0x100));
 }
 
 } // namespace fuzz

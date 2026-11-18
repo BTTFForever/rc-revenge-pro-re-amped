@@ -458,6 +458,18 @@ inline constexpr bool registeredHere = F.sameAsReference || versionVariant<F>;
     }                                                                                                \
     static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_shadow_##name, ::rc::registeredHere<::rc::fns::name>);
 
+// As RC_DECOMP_FN_SETUP, for a function the recompiler replaced by a runtime stub (printf: the stub prints, the game's
+// own printf only stores its arguments): live and random comparisons run `reference`, a transcription of the original's
+// instructions in the recompiled code's form, as the original.
+#define RC_DECOMP_FN_SETUP_REFERENCE(name, setup, reference)                                \
+    static ::rc::Entry rc_entry_##name{#name, ::rc::fns::name.address, &::rc::Thunk<&::rc::name>::run,               \
+                                       &reference, ::rc::Thunk<&::rc::name>::returns, &setup};       \
+    static void rc_shadow_##name(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)             \
+    {                                                                                                \
+        ::rc::shadowCall(rdram, ctx, runtime, rc_entry_##name);                                      \
+    }                                                                                                \
+    static ::rc::Registrar rc_registrar_##name(rc_entry_##name, &rc_shadow_##name, ::rc::registeredHere<::rc::fns::name>);
+
 #define RC_DECOMP_FN(name)                                                                  \
     static ::rc::Entry rc_entry_##name{#name, ::rc::fns::name.address, &::rc::Thunk<&::rc::name>::run,               \
                                        ::rc::fns::name.original, ::rc::Thunk<&::rc::name>::returns,       \

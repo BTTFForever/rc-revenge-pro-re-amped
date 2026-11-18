@@ -25,6 +25,7 @@ void AINodeRouteFinder(ptr32<_sObject> pObj, int32 iDistance, int32 count); // a
 void PS2C_GteMatrixMulVec16(ptr32<_sVec16> pVec);        // psxdefs.cpp
 void PS2C_SetGteMatrix(ptr32<_sMat> pMat);
 void PS2C_GetVec16GteResult(ptr32<_sVec16> pOut);
+ptr32<_sObject> ObjectCreate(ptr32<_sObjectDef> pDef, tTime time, int32 type); // object.cpp
 
 namespace {
 
@@ -879,10 +880,79 @@ void Vfx2Renderer_TTclock(ptr32<_sVfx_Object> mem)
     VfxPS2SpriteRotated3D(ee_float(0.0f));
 }
 
-// Not ported: `Vfx2PodiumInitialise` (0x16ab88), which creates the podium's cars (through `ObjectCreate`, from the front end's
-// car definitions and the level's start data) after a race. No demo race reaches it, and a random test would need a
-// whole front end and level start record; its second-to-fourth place paths also use a register ($s1) from the previous loop
-// pass or the caller when neither of its two conditions hold, which Ghidra shows as `unaff_s1_lo`. It stays recompiled.
+// The podium after a cup race: a car for each place (the players and computer cars, at most three, plus one for each
+// player who finished fourth or lower: aiVarG's place of player 1 (+0x64) and 2 (+0x66), counted from 1), each made from
+// the front end's definition of its model (the race order's car number), standing at the level's start positions (or a
+// row of its own when the level has none). The fourth and fifth cars are the players' when they finished out of the top
+// three; +0x68 and +0x6a note which car each player got. When a fourth or fifth car has no player to show, the model
+// of the previous car is used again (its index is still in the register; the counts as the game sets them never ask
+// for it, and before the first car it would be the caller's).
+void Vfx2PodiumInitialise()
+{
+    int32_t model = static_cast<int32_t>(getRegU32(&g_runtime->eeScheduler().runningContext(), 17)); // the caller's $s1
+    GuestFrame frame(0x70);
+    const uint32_t ai = sym::aiVarG;
+    const auto place = [&](uint32_t offset) { return static_cast<uint32_t>(at<uint16_t>(ai + offset)); };
+    int32_t cars = static_cast<int32_t>(at<uint8_t>(sym::mainVarG + 0x369u)) + static_cast<int32_t>(at<uint8_t>(sym::mainVarG + 0x36au));
+    const bool p1Shown = place(0x64u) < 4u, p2Shown = place(0x66u) < 4u;
+    if (cars >= 4)
+        cars = 3;
+    if (!p1Shown)
+        ++cars;
+    if (!p2Shown)
+        ++cars;
+    at<uint32_t>(G(pMenuSystemG).address) = 0;
+    for (int32_t i = 0; i < cars; ++i)
+    {
+        const uint32_t self = static_cast<uint32_t>(i);
+        int32_t carByte = -1;
+        if (i == 3 && place(0x64u) >= 4u)
+        {
+            carByte = at<uint8_t>(ai + (place(0x64u) - 1u) * 12u + 8u);
+            at<uint16_t>(ai + 0x68u) = static_cast<uint16_t>(i);
+        }
+        else if ((i == 3 || i == 4) && place(0x66u) >= 4u)
+        {
+            carByte = at<uint8_t>(ai + (place(0x66u) - 1u) * 12u + 8u);
+            at<uint16_t>(ai + 0x6au) = static_cast<uint16_t>(i);
+        }
+        else if (i != 3 && i != 4)
+        {
+            if (place(0x64u) - 1u == self)
+                at<uint16_t>(ai + 0x68u) = static_cast<uint16_t>(i);
+            if (place(0x66u) - 1u == self)
+                at<uint16_t>(ai + 0x6au) = static_cast<uint16_t>(i);
+            carByte = at<uint8_t>(ai + self * 12u + 8u);
+        }
+        if (carByte >= 0)
+            model = carByte - 1 < 0x13 ? carByte - 1 : carByte - 0x14; // cars 1-19, or the bonus cars from 0x14
+        const uint32_t def = at<uint32_t>(at<uint32_t>(sym::frontEndVarG) + static_cast<uint32_t>(model) * 4u + 0x38u);
+        const uint32_t row = self * 0xd3b8u;
+        const uint32_t starts = at<uint32_t>(G(pLvlG).address + 0x30u);
+        at<int32_t>(def + 8u) = static_cast<int32_t>(row + 0xffff7af6u) >> 8;
+        at<int32_t>(def + 0xcu) = 0xed;
+        at<int32_t>(def + 0x10u) = static_cast<int32_t>(row + 0xffe8f330u) >> 8;
+        at<uint16_t>(def + 0x16u) = 0x190;
+        at<uint16_t>(def + 0x14u) = 0;
+        at<uint16_t>(def + 0x18u) = 0;
+        if (starts != 0)
+        {
+            const uint32_t start = starts + self * 8u;
+            at<int32_t>(def + 8u) = at<int16_t>(start);
+            at<int32_t>(def + 0xcu) = at<int16_t>(start + 2u) + 0x3c98;
+            at<int32_t>(def + 0x10u) = at<int16_t>(start + 4u);
+        }
+        const ptr32<_sObject> car = ObjectCreate(ptr32<_sObjectDef>(def), 0, at<uint8_t>(ai + self * 12u + 9u));
+        const uint32_t body = at<uint32_t>(car.address + 0x20u);
+        const uint32_t x = at<uint32_t>(def + 8u) << 8, y = at<uint32_t>(def + 0xcu) << 8, z = at<uint32_t>(def + 0x10u) << 8;
+        const uint8_t bits = at<uint8_t>(body + 0x1cdu);
+        at<float>(body + 0x10u) = ee_itof(static_cast<int32_t>(z));
+        at<float>(body + 8u) = ee_itof(static_cast<int32_t>(x));
+        at<float>(body + 0xcu) = ee_itof(static_cast<int32_t>(y));
+        if ((bits & 2u) == 0)
+            at<uint8_t>(body + 0x1cdu) = static_cast<uint8_t>(bits | 2u);
+    }
+}
 
 // The cannon's smoke: the scenery's position raised (and moved back) 0x10e units; each 0x14-byte particle is drawn twice,
 // first as a puff that cools from yellow to red as it ages, then as a smaller spinning grey disc.
@@ -1087,6 +1157,7 @@ void Vfx3Renderer_RocketCar(ptr32<_sVfx_Object> mem)
 } // namespace rc
 
 namespace rc::fuzz {
+void vfxPodium(R5900Context *ctx, uint64_t &state, uint32_t scratch); // object_fuzz.cpp
 void vfxUfoBurnerRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxLavaSpit(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxFeathersHandler(R5900Context *ctx, uint64_t &state, uint32_t scratch);
@@ -1115,6 +1186,7 @@ void vfxFinishPosition(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 void vfxSkullWave(R5900Context *ctx, uint64_t &state, uint32_t scratch);
 }
 
+RC_DECOMP_FN_SETUP_HEAP(Vfx2PodiumInitialise, rc::fuzz::vfxPodium)
 RC_DECOMP_FN_SETUP(Vfx2Renderer_MonkeySmoke, rc::fuzz::vfxMonkeySmokeRenderer)
 RC_DECOMP_FN_SETUP(Vfx2Renderer_BigVolcano, rc::fuzz::vfxBigVolcanoRenderer)
 RC_DECOMP_FN_SETUP(Vfx2Renderer_Fountain, rc::fuzz::vfxFountainRenderer)

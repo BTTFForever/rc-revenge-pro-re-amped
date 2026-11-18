@@ -36,4 +36,5 @@ for dump in "${dumps[@]}"; do
 done
 [ -n "$only" ] && args+=(--only "$only")
 args+=(--cases "${cases:-$( [ $all = 1 ] && echo 20 || echo 300 )}")
+export RC_ISO # the disc image of the version, which the loader setups read (res_fuzz.cpp)
 cd "$root" && exec "$oracle" --elf "$RC_DISC/$RC_ELF" --known "$root/tools/oracle_known.txt" "${dumpArgs[@]}" "${args[@]}"
