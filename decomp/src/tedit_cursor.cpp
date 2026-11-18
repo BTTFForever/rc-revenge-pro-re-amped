@@ -19,17 +19,18 @@ bool cellOpen(uint32_t row, int32_t column)
     return at<int8_t>(row + 0x1cu + static_cast<uint32_t>(column)) != 0 && at<int8_t>(row + 0x23u + static_cast<uint32_t>(column)) == 0;
 }
 
-// TEditAdjustCursorModule (recompiled) on the locals of a frame: x 0x0/0x10, y, direction, elevation.
+// TEditAdjustCursorModule on the locals of a frame: x 0x0/0x10, y, direction, elevation.
 uint32_t adjust(uint32_t module, uint32_t x, uint32_t y, uint32_t direction, uint32_t elevation, uint32_t flag)
 {
-    return guest_call<uint32_t>(sym::TEditAdjustCursorModule, module, x, y, direction, elevation, flag);
+    return static_cast<uint32_t>(TEditAdjustCursorModule(ptr32<_sCursorModule>(module), ptr32<int16>(x), ptr32<int16>(y), ptr32<eDirection>(direction),
+                                                         ptr32<int16>(elevation), static_cast<uint8_t>(flag)));
 }
 
 } // namespace
 
-void TEditControlPlaceStartGrid(ptr32<_sTrackInput> pInput, tTime time) { guest_call(sym::TEditProcessPlaceStartGrid, pInput, time); }
+void TEditControlPlaceStartGrid(ptr32<_sTrackInput> pInput, tTime time) { TEditProcessPlaceStartGrid(pInput, time); }
 
-void TEditControlRotateStartGrid(ptr32<_sTrackInput> pInput, tTime time) { guest_call(sym::TEditProcessRotateStartGrid, pInput, time); }
+void TEditControlRotateStartGrid(ptr32<_sTrackInput> pInput, tTime time) { TEditProcessRotateStartGrid(pInput, time); }
 
 void TEditFreeTrackAINodes() { guest_call<int32_t>(sym::MemBlockFree, sym::aiNodeVarG + 4u); }
 
@@ -66,7 +67,7 @@ void TEditDisplayHelpScreen(tTime)
     const uint32_t temp = frame.local<uint8_t>(0).address;
     guest_call(sym::memset, temp, 0, 0xc);
     guest_call(sym::CellRenderInit, temp);
-    guest_call(sym::TEditDisplay3DGridLines);
+    TEditDisplay3DGridLines();
     guest_call(sym::BuildTrackEditorHelp, G(pMenuSystemG)->pActiveMenu);
     if (G(frontEndVarG).flagPTT == 0)
     {
@@ -74,7 +75,7 @@ void TEditDisplayHelpScreen(tTime)
         G(pMenuSystemG)->pActiveMenu = te().pTrackMainMenu;
         te().trackState.menuCurrentState = 0;
     }
-    guest_call(sym::TEditRenderTrack);
+    TEditRenderTrack();
 }
 
 // The start grid's cameras (the level's first path, tags of 0x10000000 and up, last first) placed along the AI route.
@@ -304,7 +305,7 @@ void TEditSetNewCursorModule()
             const eSlope desired = TEditGetEditModuleInputSlope(t.editMenu.slopeNdx, t.editMenu.moduleNdx);
             if (t.cursor.currentSlope != desired)
             {
-                guest_call(sym::TEditBuildTransitionCursorModules, t.cursor.currentSlope, desired);
+                TEditBuildTransitionCursorModules(t.cursor.currentSlope, desired);
                 return;
             }
             AddEditModuleToCursorModuleList(ptr32<_sEditModuleDesc>(at<uint32_t>(kGridSlopes + t.editMenu.slopeNdx * 0x2cu + t.editMenu.moduleNdx * 4u)));
@@ -343,8 +344,8 @@ void TEditRender2DHudMapModule(int16 xPos, int16 yPos, int8 tileId, int16, uint8
     if ((tileOrientation & 0x80u) != 0)
         flags |= 0x20u;
     const uint32_t tile = tileId < 0x19 ? static_cast<uint16_t>(tileId) : static_cast<uint16_t>(tileId - 0x19);
-    guest_call(sym::TEditRenderTileToHudMap, static_cast<int16_t>(xPos << 2), static_cast<int16_t>((15 - yPos) << 2),
-               static_cast<int32_t>((tile % 5u) * 5u + 1u), static_cast<int16_t>((tile / 5u) * 5u + 1u), flags);
+    TEditRenderTileToHudMap(static_cast<int16_t>(xPos << 2), static_cast<int16_t>((15 - yPos) << 2),
+                            static_cast<int16_t>((tile % 5u) * 5u + 1u), static_cast<int16_t>((tile / 5u) * 5u + 1u), flags);
 }
 
 // A unit's tile on the 2D map (20 x 10 pixels a unit) from the tile sheets (25 tiles each, 5 a row, 11 pixels apart).

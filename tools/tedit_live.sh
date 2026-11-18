@@ -6,6 +6,8 @@
 # native (default): the named functions native and compared. skip: the same walk with them in RC_DECOMP_SKIP and no
 # comparisons, for the screenshots to set beside the native ones.
 # TEDIT_CARD=<dir>: memory card 1 starts as a copy of that folder (mc0).
+# TEDIT_SCRIPT=<tokens>: a scripted session in place of the random edit (see tools/tedit_walk.py).
+# TEDIT_FIELDS=<list>: the screenshot fields (default every 600 from 600 to 7200).
 # Results in $RC_GAME_BUILD/teditlive/<mode>-<seed>/: walk.pad, game.log, shadow.txt, shots/. RC_VERSION=eu for Europe.
 set -u
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -14,14 +16,14 @@ seed="${1:?seed}"; seconds="${2:?seconds}"; names="${3:?names}"; mode="${4:-nati
 out="$RC_GAME_BUILD/teditlive/$mode-$seed"; sandbox="$RC_GAME_BUILD/teditlive/game"
 rm -rf "$out"; mkdir -p "$out/shots"
 rc_make_sandbox "$sandbox"
-python3 "$root/tools/tedit_walk.py" "$seed" 7000 $( [ "${RC_VERSION:-usa}" = eu ] && echo eu ) > "$out/walk.pad"
+python3 "$root/tools/tedit_walk.py" "$seed" 7000 $( [ "${RC_VERSION:-usa}" = eu ] && echo eu ) ${TEDIT_SCRIPT:+"$TEDIT_SCRIPT"} > "$out/walk.pad"
 if [ -n "${TEDIT_CARD:-}" ]; then rm -rf "$sandbox/disc/mc0"; cp -r "$TEDIT_CARD" "$sandbox/disc/mc0"; fi
 if nvidia-smi -L >/dev/null 2>&1; then
     export __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only __GLX_VENDOR_LIBRARY_NAME=nvidia
 else
     echo "warning: NVIDIA GPU not responding, using the integrated GPU" >&2
 fi
-fields=$(seq -s, 600 600 7200)
+fields="${TEDIT_FIELDS:-$(seq -s, 600 600 7200)}"
 if [ "$mode" = skip ]; then
     check=(RC_DECOMP_SKIP="$names")
 else

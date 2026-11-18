@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
-"""tedit_walk.py SEED FRAMES [eu] > file.pad: a scripted Track Editor session for PS2X_PAD_REPLAY (epoch 0, use with
+"""tedit_walk.py SEED FRAMES [eu] [SCRIPT] > file.pad: a scripted Track Editor session for PS2X_PAD_REPLAY (epoch 0, use with
 RC_SKIP_INTRO=1). From the front end into the Track Editor (Main Menu, three down, Track Editor, OK), the start grid
 turned and placed, then a random edit: pieces chosen (arrows) and added (cross), deleted (circle), the view turned
 (L2, R2), the 2D map held (L1), the far view and back (R1), the editor's menu opened and closed (start), now and then
-a wait. Europe (eu) first picks the language (the first). The editor's keys are the pad's bits: InputHit(k) is bit k."""
+a wait. Europe (eu) first picks the language (the first). The editor's keys are the pad's bits: InputHit(k) is bit k.
+SCRIPT replaces the random edit (after the start grid is placed): tokens separated by commas, each a key (u d l r x o
+t q st sel l1 l2 r1 r2) with an optional *N (pressed N times) and :G (G frames after each press, default 30), or wN
+(wait N frames). The editor's menu (st) is: Load Track, Save Track, New Track, Play Track, Complete Track, Random
+Track, Options, Help Screen, Quit (see NOTES.md, TEDIT part 2, for the walks used)."""
 import random, sys
 seed, frames = int(sys.argv[1]), int(sys.argv[2])
-eu = len(sys.argv) > 3 and sys.argv[3] == 'eu'
+args = sys.argv[3:]
+eu = bool(args) and args[0] == 'eu'
+script = args[1 if eu else 0] if len(args) > (1 if eu else 0) else None
 r = random.Random(seed)
 SELECT, START, UP, RIGHT, DOWN, LEFT = 0x1, 0x8, 0x10, 0x20, 0x40, 0x80
 L2, R2, L1, R1, TRI, CIR, CROSS, SQ = 0x100, 0x200, 0x400, 0x800, 0x1000, 0x2000, 0x4000, 0x8000
@@ -26,6 +32,27 @@ press(CROSS, 6, 700)                           # OK: into the editor
 for _ in range(r.randint(0, 3)):
     press(r.choice([LEFT, RIGHT]), 6, 30)      # turn the start grid
 press(CROSS, 6, 60)                            # place it
+KEYS = {'u': UP, 'd': DOWN, 'l': LEFT, 'r': RIGHT, 'x': CROSS, 'o': CIR, 't': TRI, 'q': SQ, 'st': START, 'sel': SELECT,
+        'l1': L1, 'l2': L2, 'r1': R1, 'r2': R2}
+if script:
+    for token in script.split(','):
+        token = token.strip()
+        if not token:
+            continue
+        if token[0] == 'w' and token[1:].isdigit():
+            f += int(token[1:])
+            continue
+        gap = 30
+        if ':' in token:
+            token, g = token.split(':')
+            gap = int(g)
+        count = 1
+        if '*' in token:
+            token, c = token.split('*')
+            count = int(c)
+        for _ in range(count):
+            press(KEYS[token], 6, gap)
+    frames = 0
 while f < frames:
     kind = r.random()
     if kind < 0.45:

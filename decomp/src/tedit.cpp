@@ -280,9 +280,9 @@ void TEditDisplay(tTime time, uint32 frameCnt)
             TEditDisplayHelpScreen(time);
             break;
         case 3:
-            guest_call(sym::TEditDisplay3DGridLines);
+            TEditDisplay3DGridLines();
             TEditRenderCursor();
-            guest_call(sym::TEditRenderTrack);
+            TEditRenderTrack();
             break;
         default:
             break;
@@ -312,13 +312,18 @@ void TEditCreateTrack() { guest_call<int32_t>(sym::MemBlockAllocLo, kTE + 0x1cu,
 
 void TEditFreeTrack() { guest_call<int32_t>(sym::MemBlockFree, kTE + 0x1cu); }
 
-void TEditControlEditing(ptr32<_sTrackInput> pInput, tTime time)
+void tedit::controlEditing(ptr32<_sTrackInput> pInput, tTime time, uint32_t s5)
 {
     {
         GuestFrame frame(0x30);
         TEditProcessEditMenuSpecialKeys(pInput, time);
     }
-    guest_call(sym::TEditProcessEditMenuKeys, pInput, time); // not native yet
+    processEditMenuKeys(pInput, time, s5);
+}
+
+void TEditControlEditing(ptr32<_sTrackInput> pInput, tTime time)
+{
+    controlEditing(pInput, time, getRegU32(&g_runtime->eeScheduler().runningContext(), 21));
 }
 
 void TEditInitPermTrackStructures()
@@ -540,7 +545,8 @@ void tedit::generateTrackFromList(uint32_t a3)
     for (; node != 0; node = at<uint32_t>(node))
     {
         at<uint32_t>(sp + 4u) = editModuleDesc(at<uint32_t>(node + 4u));
-        slope = guest_call<uint32_t>(sym::TEditAdjustCursorModule, sp, sp + 0x10u, sp + 0x12u, sp + 0x18u, sp + 0x14u, 2);
+        slope = static_cast<uint32_t>(TEditAdjustCursorModule(ptr32<_sCursorModule>(sp), ptr32<int16>(sp + 0x10u), ptr32<int16>(sp + 0x12u),
+                                                              ptr32<eDirection>(sp + 0x18u), ptr32<int16>(sp + 0x14u), 2));
     }
     t.cursor.direction = static_cast<eDirection>(at<int32_t>(sp + 0x18u));
     t.cursor.yPos = at<int16_t>(sp + 0x12u);
@@ -814,7 +820,7 @@ RC_DECOMP_FN_BLOCKING_SETUP_HEAP(TEditDisplay, rc::fuzz::teditDisplay) // TEditD
 RC_DECOMP_FN_SETUP_HEAP(TEditInitialiseCursor, rc::fuzz::teditHeap)
 RC_DECOMP_FN_SETUP_HEAP(TEditCreateTrack, rc::fuzz::teditHeap)
 RC_DECOMP_FN_SETUP_HEAP(TEditFreeTrack, rc::fuzz::teditHeap)
-RC_DECOMP_FN_SETUP(TEditControlEditing, rc::fuzz::teditPlain)
+RC_DECOMP_FN_SETUP(TEditControlEditing, rc::fuzz::teditKeys)
 RC_DECOMP_FN_SETUP(TEditInitPermTrackStructures, rc::fuzz::teditPlain)
 RC_DECOMP_FN_SETUP(TEditSetupTCLvLClass, rc::fuzz::teditLevelData)
 RC_DECOMP_FN_SETUP(TEditSetupTALvLClass, rc::fuzz::teditLevelData)

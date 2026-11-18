@@ -31,6 +31,9 @@ constexpr uint32_t kSprites = 0x4720u;     // the editor's sprite table (pTrackS
 constexpr uint32_t kArena = 0x47e0u, kArenaEnd = 0x7800u; // the heap stand-ins' blocks
 constexpr uint32_t kEnv = kFuzzScratch + 0x7800u, kLog = kFuzzScratch + 0x7900u, kLogMax = 44u;
 constexpr uint32_t kModules = 42u, kTiles = 0xb0u;
+constexpr uint32_t kHudBits = 0x5c00u; // the spread tile pictures (pHudMapBitsBPP), 0x400: in the arena's top, for the
+constexpr uint32_t kHudMap = 0x6200u;  // setups that draw on the hud map; the byte map (pHudMapBPP), 0x1000, with room
+                                       // either side for units off the map
 enum : uint32_t
 {
     eSeed = 0x0,
@@ -38,7 +41,14 @@ enum : uint32_t
     eHash = 0x8,
     eArena = 0xc,  // the next free block
     eKeys = 0x10,  // percent of InputHit calls that answer true
+    eArenaLo = 0x14, // the heap stand-ins' area (the scratch arena, or the searches' large one)
+    eArenaHi = 0x18,
+    eFree = 0x1c,  // freed blocks, linked through their first word (each reused as a block of up to 16 bytes)
 };
+
+// The searches' heap: unused RAM past the runtime's own guest heap (their stack alone is 0x3cf0 bytes). Outside the
+// scratch area, so those functions compare all of RAM.
+constexpr uint32_t kBigArena = 0x4d0000u, kBigArenaEnd = 0x4f8000u;
 
 constexpr uint32_t kTE = sym::tEditVarG, kDescs = sym::editModuleListG;
 
@@ -125,6 +135,27 @@ void logged(uint8_t *, R5900Context *ctx, PS2Runtime *)
     returnWith(ctx, 0);
 }
 
+// CellRenderInit: its vector (the callers clear it on their stack).
+void cellRenderInit(uint8_t *, R5900Context *ctx, PS2Runtime *)
+{
+    const uint32_t p = arg(ctx, 0);
+    const bool ok = inRam(p);
+    logEntry(sym::CellRenderInit, p, ok ? mem<uint32_t>(p) : 0u, ok ? mem<uint32_t>(p + 4u) : 0u, ok ? mem<uint32_t>(p + 8u) : 0u);
+    returnWith(ctx, 0);
+}
+
+// TColBuildLvlCollision: the count, the four arrays and the bounds (two vectors on the caller's stack).
+void tcolBuild(uint8_t *, R5900Context *ctx, PS2Runtime *)
+{
+    uint32_t hash = 2166136261u;
+    for (const int reg : {9, 10})
+        for (uint32_t i = 0; i < 6u && inRam(getRegU32(ctx, reg)); ++i)
+            hash = (hash ^ mem<uint8_t>(getRegU32(ctx, reg) + i)) * 16777619u;
+    logEntry(sym::TColBuildLvlCollision, arg(ctx, 0), arg(ctx, 1) ^ arg(ctx, 2) * 31u, arg(ctx, 3) ^ arg(ctx, 4) * 31u, hash);
+    logEntry(sym::TColBuildLvlCollision, getRegU32(ctx, 9), getRegU32(ctx, 10), 0, 0);
+    returnWith(ctx, 0);
+}
+
 void inputHeld(uint8_t *, R5900Context *ctx, PS2Runtime *)
 {
     logEntry(sym::InputHeld, arg(ctx, 0), 0, 0, 0);
@@ -149,11 +180,23 @@ void inputHit(uint8_t *, R5900Context *ctx, PS2Runtime *)
 void memAllocLo(uint8_t *, R5900Context *ctx, PS2Runtime *)
 {
     const uint32_t handle = arg(ctx, 0), size = arg(ctx, 1);
-    uint32_t at = env(eArena);
-    if (at + 0x100u > kFuzzScratch + kArenaEnd || size > kArenaEnd - kArena)
-        at = kFuzzScratch + kArena;
-    const uint32_t room = kFuzzScratch + kArenaEnd - at, take = ((size < room ? size : room) + 15u) & ~15u;
-    setEnv(eArena, at + take);
+    const uint32_t lo = env(eArenaLo), hi = env(eArenaHi);
+    uint32_t at = env(eArena), take;
+    if (size <= 16u && env(eFree) != 0)
+    {
+        // A freed block again (the searches allocate and free thousands of list nodes).
+        at = env(eFree);
+        setEnv(eFree, mem<uint32_t>(at));
+        take = 16u;
+    }
+    else
+    {
+        if (at + 0x100u > hi || size > hi - lo)
+            at = lo;
+        const uint32_t room = hi - at;
+        take = ((size < room ? size : room) + 15u) & ~15u;
+        setEnv(eArena, at + take);
+    }
     // A new block holds whatever was there: a word from the seed.
     for (uint32_t i = 0; i < take; i += 4u)
         mem<uint32_t>(at + i) = draw();
@@ -166,9 +209,16 @@ void memAllocLo(uint8_t *, R5900Context *ctx, PS2Runtime *)
 void memFree(uint8_t *, R5900Context *ctx, PS2Runtime *)
 {
     const uint32_t handle = arg(ctx, 0);
-    logEntry(sym::MemBlockFree, handle, inRam(handle) ? mem<uint32_t>(handle) : 0u, 0, 0);
+    const uint32_t block = inRam(handle) ? mem<uint32_t>(handle) : 0u;
+    logEntry(sym::MemBlockFree, handle, block, 0, 0);
     if (inRam(handle))
         mem<uint32_t>(handle) = 0;
+    // Only the large arena recycles: its blocks are the stand-in's own, never the setup's lists.
+    if (env(eArenaLo) == kBigArena && block >= kBigArena && block + 16u <= kBigArenaEnd && (block & 15u) == 0)
+    {
+        mem<uint32_t>(block) = env(eFree);
+        setEnv(eFree, block);
+    }
     returnWith(ctx, 0);
 }
 
@@ -261,7 +311,13 @@ void install(bool heap)
         {sym::RectRender, &drawn<sym::RectRender, 0x17, 0x17>},
         {sym::RectRenderGouraud, &drawn<sym::RectRenderGouraud, 0x24, 0x17>},
         {sym::LineRender2D, &drawn<sym::LineRender2D, 0xf, 0xf>},
-        {sym::TEditRenderTileToHudMap, &logged<sym::TEditRenderTileToHudMap, 5>},
+        {sym::LineRender3D, &drawn<sym::LineRender3D, 0x17, 0x17>},
+        {sym::TileRenderGameROB, &logged<sym::TileRenderGameROB, 6>},
+        {sym::TColBuildLvlCollision, &tcolBuild},
+        {sym::sceGsSetDefLoadImage, &logged<sym::sceGsSetDefLoadImage, 7>},
+        {sym::FlushCache, &logged<sym::FlushCache, 1>},
+        {sym::sceGsExecLoadImage, &logged<sym::sceGsExecLoadImage, 2>},
+        {sym::sceGsSyncPath, &logged<sym::sceGsSyncPath, 2>},
         {sym::GetCameraFromTag, &cameraFromTag},
         {sym::ResTypeSetConstructDaemon, &logged<sym::ResTypeSetConstructDaemon, 3>},
         {sym::ResTypeUnSetConstructDaemon, &logged<sym::ResTypeUnSetConstructDaemon, 1>},
@@ -302,6 +358,8 @@ public:
         mem<uint32_t>(kLog) = 0;
         setEnv(eSeed, rng.next());
         setEnv(eArena, s + kArena);
+        setEnv(eArenaLo, s + kArena);
+        setEnv(eArenaHi, s + kArenaEnd);
         setEnv(eKeys, rng.pick({0u, 10u, 30u, 60u, 90u}));
         std::memset(guest_host(0), 0, 0x100);
         // Stale stack words: the leftovers below $sp.
@@ -328,6 +386,16 @@ public:
     const uint32_t s;
     const bool walk;
     bool realModules = false;
+
+    // The hud map's buffers in scratch (the heap stand-ins' arena ends before them).
+    void hudBuffers()
+    {
+        for (uint32_t i = 0; i < 0x400u; ++i)
+            mem<uint8_t>(s + kHudBits + i) = static_cast<uint8_t>(rng.chance(30) ? 0u : rng.below(16));
+        te().pHudMapBitsBPP = ptr32<int32>(s + kHudBits);
+        te().pHudMapBPP = ptr32<int32>(s + kHudMap);
+        setEnv(eArenaHi, s + kHudBits);
+    }
 
     int16_t position() { return static_cast<int16_t>(walk ? rng.between(4, 11) : rng.chance(85) ? rng.below(16) : rng.between(-2, 18)); }
     uint32_t walkLength(uint32_t longest) { return walk ? rng.below(4) : longest; }
@@ -601,13 +669,9 @@ void teditDisplay(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     std::memcpy(skies, guest_host(kTE + 0x5cu), sizeof(skies));
     World w(ctx, rng, scratch, true);
     standIn({{sym::TEditDisplayMainMenus, &logged<sym::TEditDisplayMainMenus, 2>},
-             {sym::TEditDisplay3DGridLines, &logged<sym::TEditDisplay3DGridLines, 0>},
-             {sym::TEditRenderTrack, &logged<sym::TEditRenderTrack, 0>},
              {sym::AMenuDisplayOptions, &logged<sym::AMenuDisplayOptions, 1>},
              {sym::AMenuProcessAll, &logged<sym::AMenuProcessAll, 1>},
-             {sym::CellRenderInit, &logged<sym::CellRenderInit, 1>},
-             {sym::TEditDEBUGDisplayCursor, &logged<sym::TEditDEBUGDisplayCursor, 0>},
-             {sym::TEditRenderEditMenu, &logged<sym::TEditRenderEditMenu, 1>},
+             {sym::CellRenderInit, &cellRenderInit},
              {sym::BuildTrackEditorHelp, &logged<sym::BuildTrackEditorHelp, 1>}});
     const uint32_t vfx = G(visFxVarG).pVfxRes.address;
     for (uint32_t i = 0; i < 6u; ++i)
@@ -622,10 +686,8 @@ void teditStandIns(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 {
     Rng rng{state};
     World w(ctx, rng, scratch);
-    standIn({{sym::CellRenderInit, &logged<sym::CellRenderInit, 1>},
-             {sym::TEditDisplay3DGridLines, &logged<sym::TEditDisplay3DGridLines, 0>},
-             {sym::BuildTrackEditorHelp, &logged<sym::BuildTrackEditorHelp, 1>},
-             {sym::TEditRenderTrack, &logged<sym::TEditRenderTrack, 0>}});
+    standIn({{sym::CellRenderInit, &cellRenderInit},
+             {sym::BuildTrackEditorHelp, &logged<sym::BuildTrackEditorHelp, 1>},});
     setArg(ctx, 0, scratch + kArgs);
     setArg(ctx, 1, rng.next());
 }
@@ -678,6 +740,7 @@ void teditMapUnit(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 {
     Rng rng{state};
     World w(ctx, rng, scratch);
+    w.hudBuffers();
     setArg(ctx, 0, static_cast<uint32_t>(rng.chance(90) ? rng.below(16) : rng.between(-4, 20)));
     setArg(ctx, 1, static_cast<uint32_t>(rng.chance(90) ? rng.below(16) : rng.between(-4, 20)));
     setArg(ctx, 2, static_cast<uint32_t>(static_cast<int8_t>(rng.chance(90) ? rng.below(0x32) : rng.next())));
@@ -739,6 +802,10 @@ void teditGridControl(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     Rng rng{state};
     World w(ctx, rng, scratch);
     w.te().trackState.editState = static_cast<uint16_t>(rng.chance(90) ? rng.below(5) : rng.below(0x10000));
+    // As in the game: nothing on the cursor only once the track is complete. (Key 4 would else store a register for the
+    // cursor's slope, and the pieces to an unknown slope are taken from registers in turn.)
+    if (!w.te().cursor.pCursorModuleList)
+        w.te().trackIsComplete = 1;
     w.te().input.analog1LastInput = rng.chance(70) ? rng.pick({0u, 1u, 2u, 4u, 8u, 5u, 10u}) : rng.next();
     setArg(ctx, 0, rng.next());
 }
@@ -750,11 +817,7 @@ void teditGridDisplay(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     World w(ctx, rng, scratch, true);
     standIn({{sym::AMenuDisplayOptions, &logged<sym::AMenuDisplayOptions, 1>},
              {sym::AMenuProcessAll, &logged<sym::AMenuProcessAll, 1>},
-             {sym::CellRenderInit, &logged<sym::CellRenderInit, 1>},
-             {sym::TEditDisplay3DGridLines, &logged<sym::TEditDisplay3DGridLines, 0>},
-             {sym::TEditDEBUGDisplayCursor, &logged<sym::TEditDEBUGDisplayCursor, 0>},
-             {sym::TEditRenderTrack, &logged<sym::TEditRenderTrack, 0>},
-             {sym::TEditRenderEditMenu, &logged<sym::TEditRenderEditMenu, 1>}});
+             {sym::CellRenderInit, &cellRenderInit},});
     w.te().trackState.editState = static_cast<uint16_t>(rng.chance(90) ? rng.below(5) : rng.below(0x10000));
     mem<uint32_t>(scratch + kMenuSys + 0x68u) = rng.chance(50) ? 0x7fff0001u : rng.below(3);
     // Times at the cursor's blink (half of each second) and anywhere.
@@ -883,6 +946,556 @@ void teditAINodes(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     ai.pNode = ptr32<_sAINode>(nodes);
     ai.noNodesSingle = static_cast<int16_t>(rng.chance(85) ? rng.between(0, 40) : rng.between(-3, 200));
     ai.nodeTotalDist = static_cast<int32_t>(rng.next());
+}
+
+// --- Part 2: the cursor engine, auto-complete and random tracks. ---
+
+namespace {
+
+constexpr uint32_t kEntryAt = kArgs + 0x40u; // an sAutoCompStackData (0x9c bytes)
+
+// An auto-complete stack entry: the cells sorted or not, a few scored -1.
+void autoCompEntry(World &w, uint32_t entry)
+{
+    Rng &rng = w.rng;
+    for (uint32_t i = 0; i < 0x9cu; i += 4u)
+        mem<uint32_t>(entry + i) = rng.next();
+    mem<uint8_t>(entry) = static_cast<uint8_t>(rng.below(35)); // the callers place a piece only below 35
+    for (uint32_t i = 0; i < 35u; ++i)
+    {
+        const uint32_t piece = entry + 0x10u + i * 4u;
+        mem<uint8_t>(piece) = static_cast<uint8_t>(rng.below(7));
+        mem<uint8_t>(piece + 1u) = static_cast<uint8_t>(rng.below(5));
+        mem<int16_t>(piece + 2u) = static_cast<int16_t>(rng.chance(30) ? -1 : rng.chance(70) ? rng.between(0, 120) : rng.between(-3, 300));
+    }
+}
+
+// Every cell of the edit menu holds a module (the functions that try the cells follow the pointers).
+void fillMenu(World &w)
+{
+    sTEditClass &t = w.te();
+    for (int r = 0; r < 5; ++r)
+        for (int j = 0; j < 7; ++j)
+            if (!t.editMenuGridSlopes[r].pEditModuleDesc[j])
+                t.editMenuGridSlopes[r].pEditModuleDesc[j] = ptr32<_sEditModuleDesc>(w.anyDesc());
+    for (int i = 0; i < 2; ++i)
+        for (int j = 0; j < 7; ++j)
+            if (!t.editMenu.pEditModuleSpecial[i][j])
+                t.editMenu.pEditModuleSpecial[i][j] = ptr32<_sEditModuleDesc>(w.anyDesc());
+}
+
+// The registers a function can be left to read: a slope where one is taken for the cursor's slope ($s5, $s6, $fp; a
+// slope the transition table does not know would then make TEditBuildTransitionCursorModules read registers in turn),
+// small values elsewhere.
+void leftovers(R5900Context *ctx, Rng &rng)
+{
+    for (const int reg : {8, 9, 10, 11, 16, 19, 20, 23})
+        setReg(ctx, reg, static_cast<uint32_t>(rng.chance(70) ? rng.between(-2, 2) : rng.between(0, 49)));
+    for (const int reg : {21, 22, 30})
+        setReg(ctx, reg, static_cast<uint32_t>(rng.between(-2, 2)));
+}
+
+void seededAnswer(uint8_t *, R5900Context *ctx, PS2Runtime *)
+{
+    logEntry(0x5eed0000u, arg(ctx, 0), 0, 0, 0);
+    returnWith(ctx, draw());
+}
+
+void init3dFrame(uint8_t *, R5900Context *ctx, PS2Runtime *)
+{
+    logEntry(sym::Init3dFrame, arg(ctx, 0), arg(ctx, 1), arg(ctx, 2), arg(ctx, 3));
+    returnWith(ctx, drawChance(80) ? 1u : 0u);
+}
+
+// AMenuProcessAll during Complete Track: the player stops it now and then.
+void menuProcessBreak(uint8_t *, R5900Context *ctx, PS2Runtime *)
+{
+    logEntry(sym::AMenuProcessAll, arg(ctx, 0), 0, 0, 0);
+    if (drawChance(env(eKeys) / 4u))
+        mem<uint32_t>(G(pMenuSystemG).address + 0x68u) = 0x11000000u;
+    returnWith(ctx, 0);
+}
+
+// A walked world the searches can run in: every menu cell filled, the start near the cursor.
+void searchWorld(World &w)
+{
+    fillMenu(w);
+    sTEditClass &t = w.te();
+    t.trackDesc.startOrientation = static_cast<eDirection>(w.rng.below(4));
+    if (w.rng.chance(60))
+    {
+        t.trackDesc.startXPos = static_cast<uint8_t>(t.cursor.xPos + w.rng.between(-2, 2));
+        t.trackDesc.startYPos = static_cast<uint8_t>(t.cursor.yPos + w.rng.between(-2, 2));
+    }
+    t.resourceMemoryUsed = w.rng.chance(85) ? w.rng.below(0x19000) : 0x19000u - w.rng.below(3) * 1000u;
+}
+
+} // namespace
+
+// TEditAdjustCursorModule: a0 a cursor module, a1-a2 a position, a3 a direction, t0 a height, t1 what to do.
+void teditAdjust(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    Rng rng{state};
+    World w(ctx, rng, scratch, true);
+    w.hudBuffers();
+    sTEditClass &t = w.te();
+    const uint32_t args = scratch + kArgs;
+    mem<int16_t>(args) = static_cast<int16_t>(rng.between(4, 11));
+    mem<int16_t>(args + 2u) = static_cast<int16_t>(rng.between(4, 11));
+    mem<int16_t>(args + 4u) = static_cast<int16_t>(rng.chance(60) ? rng.pick({0, 0x300, 0x600, -0x300, 0x900}) : rng.between(-0x1000, 0x1000));
+    mem<uint32_t>(args + 8u) = rng.chance(92) ? rng.below(4) : rng.chance(50) ? rng.below(8) : rng.next();
+    mem<uint32_t>(args + 0x20u) = rng.next();
+    mem<uint32_t>(args + 0x24u) = w.anyDesc();
+    t.placementErrorChecking = rng.chance(50) ? 0 : 1;
+    t.resourceErrorCheckMemoryUsed = rng.chance(50) ? 0x19000u - rng.below(3) * 1000u : rng.next();
+    setArg(ctx, 0, args + 0x20u);
+    setArg(ctx, 1, args);
+    setArg(ctx, 2, args + 2u);
+    setArg(ctx, 3, args + 8u);
+    setReg(ctx, 8, args + 4u);
+    setReg(ctx, 9, rng.chance(90) ? rng.pick({1u, 2u, 4u, 8u, 2u, 1u}) : rng.chance(50) ? rng.pick({0u, 3u, 16u, 0x102u}) : rng.next());
+}
+
+// TEditBuildTransitionCursorModules: a0-a1 two slopes (the same one or an unknown one now and then: the id is then a
+// leftover register).
+void teditTransition(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    Rng rng{state};
+    World w(ctx, rng, scratch);
+    leftovers(ctx, rng);
+    for (const int reg : {8, 9, 10, 11, 16, 19, 20})
+        setReg(ctx, reg, rng.chance(80) ? rng.below(50) : rng.next());
+    setArg(ctx, 0, static_cast<uint32_t>(rng.chance(92) ? rng.between(-2, 2) : rng.between(-4, 4)));
+    setArg(ctx, 1, static_cast<uint32_t>(rng.chance(92) ? rng.between(-2, 2) : rng.between(-4, 4)));
+}
+
+// The auto-complete functions: a walked track and cursor, every menu cell filled, a0 a stack entry.
+void teditAutoComp(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    Rng rng{state};
+    World w(ctx, rng, scratch, true);
+    searchWorld(w);
+    leftovers(ctx, rng);
+    sTEditClass &t = w.te();
+    if (rng.chance(8)) // TEditGetAutoCompPieceScore: a start orientation it does not know
+        t.trackDesc.startOrientation = static_cast<eDirection>(rng.between(4, 6));
+    if (!t.trackDesc.pTrackModuleList)
+    {
+        mem<uint32_t>(scratch + kTrackNodes) = 0;
+        mem<uint32_t>(scratch + kTrackNodes + 4u) = rng.below(42);
+        t.trackDesc.pTrackModuleList = ptr32<_sTrackModule>(scratch + kTrackNodes);
+    }
+    uint32_t length = 0;
+    for (uint32_t node = t.trackDesc.pTrackModuleList.address; node != 0; node = mem<uint32_t>(node))
+        ++length;
+    const uint32_t entry = scratch + kEntryAt;
+    autoCompEntry(w, entry);
+    // TEditAutoCompRemoveLastPiece takes that many modules off: all of them now and then (the cursor's slope is then
+    // the register TEditClearTrack leaves).
+    mem<uint8_t>(entry + 1u) = static_cast<uint8_t>(rng.chance(15) ? length : rng.below(length));
+    setArg(ctx, 0, entry);
+}
+
+namespace {
+
+void searchStandIns()
+{
+    standIn({{sym::Rdr_EndFrame, &logged<sym::Rdr_EndFrame, 0>},
+             {sym::Rdr_StartFrame, &logged<sym::Rdr_StartFrame, 0>},
+             {sym::RdrState_ApplyDefaultStateBlock, &logged<sym::RdrState_ApplyDefaultStateBlock, 0>},
+             {sym::GfxP2_ZWriteEnable, &logged<sym::GfxP2_ZWriteEnable, 0>},
+             {sym::Init3dFrame, &init3dFrame},
+             {sym::TileFrameInit, &logged<sym::TileFrameInit, 0>},
+             {sym::CellRenderInit, &cellRenderInit},
+             {sym::InputSnapshot, &logged<sym::InputSnapshot, 0>},
+             {sym::AMenuProcessAll, &menuProcessBreak},
+             {sym::DisplayRenderFrameProfile, &logged<sym::DisplayRenderFrameProfile, 1>},
+             {sym::TimerGet, &seededAnswer},
+             {sym::CameraProcess, &logged<sym::CameraProcess, 2>},
+             {sym::SfxDoSfx, &logged<sym::SfxDoSfx, 0>},
+             {sym::LineRender3D, &logged<sym::LineRender3D, 1>}});
+}
+
+// The searches' heap, and their grid moved out of scratch into the spare RAM above the heap, with empty units all
+// round it: a search can stack a special piece a fourth layer high or step off the grid, which in scratch would write
+// units over the edit modules (and a module 200 units wide never ends).
+void bigArena(World &w)
+{
+    setEnv(eArena, kBigArena);
+    setEnv(eArenaLo, kBigArena);
+    setEnv(eArenaHi, kBigArenaEnd);
+    constexpr uint32_t kRoom = kBigArenaEnd, kRoomEnd = 0x500000u, kGrid = kRoom + 0x1000u;
+    for (uint32_t unit = kRoom; unit < kRoomEnd; unit += 8u)
+    {
+        mem<int16_t>(unit) = -1;
+        mem<int16_t>(unit + 2u) = 0;
+        mem<uint32_t>(unit + 4u) = 0;
+    }
+    std::memcpy(guest_host(kGrid), guest_host(w.s + kUnits), 0x1800u);
+    w.te().track.pTrackUnits = ptr32<_sTrackUnit>(kGrid);
+}
+
+} // namespace
+
+// Complete Track and one random track: the frame's calls stood in (answers from the seed), the large heap.
+void teditSearch(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    Rng rng{state};
+    uint32_t skies[6];
+    std::memcpy(skies, guest_host(kTE + 0x5cu), sizeof(skies));
+    World w(ctx, rng, scratch, true);
+    // The sky is drawn for real (TEditRenderSkyDome's tail jump): the level's, else the effects' shape, as teditDisplay.
+    for (uint32_t i = 0; i < 6u; ++i)
+        mem<uint32_t>(kTE + 0x5cu + i * 4u) = w.realModules ? skies[i] : mem<uint32_t>(G(visFxVarG).pVfxRes.address + 0x88u);
+    searchStandIns();
+    searchWorld(w);
+    leftovers(ctx, rng);
+    bigArena(w);
+    sTEditClass &t = w.te();
+    if (!t.trackDesc.pTrackModuleList)
+    {
+        mem<uint32_t>(scratch + kTrackNodes) = 0;
+        mem<uint32_t>(scratch + kTrackNodes + 4u) = 0;
+        t.trackDesc.pTrackModuleList = ptr32<_sTrackModule>(scratch + kTrackNodes);
+    }
+    t.pTrackAutoCompActive = ptr32<sAMenuHeader>(scratch + kMenuSys + 0xa0u);
+    mem<uint32_t>(scratch + kMenuSys + 0x68u) = rng.chance(5) ? 0x11000000u : rng.below(3);
+}
+
+// A world a random track can close in (TEditMenuDoRandomTrack tries until one does): on the Track Editor dump the
+// level's own modules, editModuleListG and edit menu half the time; else one-unit flat pieces (every module a straight,
+// a right or a left turn by its number) with the flat row's cells left turns, a straight, right turns.
+namespace {
+
+struct Closable
+{
+    uint8_t menu[0x134], descs[200];
+    uint32_t real;
+    Closable()
+    {
+        std::memcpy(menu, guest_host(kTE + 0xa4u), sizeof(menu));
+        std::memcpy(descs, guest_host(kDescs), sizeof(descs));
+        real = mem<uint32_t>(kTE + 0x38u);
+    }
+    void apply(World &w) const
+    {
+        Rng &rng = w.rng;
+        sTEditClass &t = w.te();
+        const uint32_t header = w.s + kModuleHeader;
+        if (w.realModules && rng.chance(50))
+        {
+            std::memcpy(guest_host(header), guest_host(real), 4u + kModules * 0x18u);
+            std::memcpy(guest_host(kTE + 0xa4u), menu, sizeof(menu));
+            std::memcpy(guest_host(kDescs), descs, sizeof(descs));
+            return;
+        }
+        mem<uint8_t>(w.s + kPosArrays) = 1;
+        for (uint32_t m = 0; m < kModules; ++m)
+        {
+            const uint32_t at = header + 4u + m * 0x18u;
+            mem<uint16_t>(at) = 1;
+            mem<uint16_t>(at + 2u) = 1;
+            mem<int16_t>(at + 4u) = static_cast<int16_t>(m == 0 ? 0 : m % 3u == 0 ? 0 : m % 3u == 1 ? 1 : 3);
+            mem<int16_t>(at + 6u) = 0;
+            mem<int32_t>(at + 8u) = 0;
+            mem<int32_t>(at + 0xcu) = 0;
+            mem<uint32_t>(at + 0x10u) = w.s + kPosArrays;
+        }
+        std::memcpy(guest_host(kDescs), descs, sizeof(descs));
+        const auto cell = [&](uint32_t turn) // an editModuleListG entry whose module turns so (0 straight, 1 right, 3 left)
+        {
+            for (;;)
+            {
+                const uint32_t d = w.desc(1u + rng.below(49));
+                if (static_cast<uint32_t>(static_cast<uint16_t>(mem<int16_t>(header + 4u + mem<uint16_t>(d) * 0x18u + 4u))) == turn && mem<uint16_t>(d) != 0)
+                    return d;
+            }
+        };
+        for (int r = 0; r < 5; ++r)
+            for (int j = 0; j < 7; ++j)
+            {
+                sEditGridSlopeInstance &g = t.editMenuGridSlopes[r];
+                g.pEditModuleDesc[j] = ptr32<_sEditModuleDesc>(cell(j < 3 ? 3u : j == 3 ? 0u : 1u));
+                g.avail[j] = static_cast<int8_t>(r == 2 ? 1 : 0);
+            }
+        for (int i = 0; i < 2; ++i)
+            for (int j = 0; j < 7; ++j)
+                t.editMenu.pEditModuleSpecial[i][j] = ptr32<_sEditModuleDesc>(cell(rng.pick({0u, 0u, 1u, 3u})));
+    }
+};
+
+// LoadSaveProcess in the editor's menu: -1 (left), 1 (done) or still going.
+void loadSaveProcess(uint8_t *, R5900Context *ctx, PS2Runtime *)
+{
+    logEntry(sym::LoadSaveProcess, arg(ctx, 0), 0, 0, 0);
+    const uint32_t answer = drawBelow(4);
+    returnWith(ctx, answer == 0 ? 0xffffffffu : answer == 1 ? 1u : answer == 2 ? 0u : 2u);
+}
+
+} // namespace
+
+void teditRandomTrack(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    Rng rng{state};
+    const Closable closable;
+    World w(ctx, rng, scratch, true);
+    searchStandIns();
+    leftovers(ctx, rng);
+    bigArena(w);
+    closable.apply(w);
+}
+
+// TEditDisplayMainMenus: a menu state and a code the menu "chose", in a world a random track closes in and Complete
+// Track can run in; the menu, the memory card screens and the help page stood in, the cars' availability random.
+void teditMainMenus(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    Rng rng{state};
+    const Closable closable;
+    uint32_t skies[6];
+    std::memcpy(skies, guest_host(kTE + 0x5cu), sizeof(skies));
+    World w(ctx, rng, scratch, true);
+    for (uint32_t i = 0; i < 6u; ++i)
+        mem<uint32_t>(kTE + 0x5cu + i * 4u) = w.realModules ? skies[i] : mem<uint32_t>(G(visFxVarG).pVfxRes.address + 0x88u);
+    searchStandIns();
+    standIn({{sym::LoadSaveProcess, &loadSaveProcess},
+             {sym::LoadSaveInit, &logged<sym::LoadSaveInit, 1>},
+             {sym::MenuItemDisabler, &logged<sym::MenuItemDisabler, 1>},
+             {sym::BuildTrackEditorHelp, &logged<sym::BuildTrackEditorHelp, 1>},
+             {sym::InputResetAllHit, &logged<sym::InputResetAllHit, 0>},
+             {sym::AMenuProcessAll, &logged<sym::AMenuProcessAll, 1>}});
+    leftovers(ctx, rng);
+    bigArena(w);
+    closable.apply(w);
+    sTEditClass &t = w.te();
+    if (!t.trackDesc.pTrackModuleList)
+    {
+        mem<uint32_t>(scratch + kTrackNodes) = 0;
+        mem<uint32_t>(scratch + kTrackNodes + 4u) = 0;
+        t.trackDesc.pTrackModuleList = ptr32<_sTrackModule>(scratch + kTrackNodes);
+    }
+    // The menus: headers of their own for the active menu and the second player's car menu, the others a word each.
+    const uint32_t sys = scratch + kMenuSys, menus = scratch + kArgs;
+    const auto menu = [&](uint32_t i) { return ptr32<sAMenuHeader>(menus + 0x100u + i * 8u); };
+    t.pTrackMainMenu = ptr32<sAMenuHeader>(sys + 0x80u);
+    t.pTrackPlayer2CarSelectMenu = ptr32<sAMenuHeader>(menus);
+    t.pTrackUnsaved = menu(0);
+    t.pTrackIncomplete = menu(1);
+    t.pTrackComplete = menu(2);
+    t.pTrackOptionsMenu = menu(3);
+    t.pTrackWarnings[3] = menu(4);
+    for (uint32_t i = 0; i < 4u; ++i)
+        t.pTrackAutoCompMsg[i] = menu(5u + i);
+    t.pTrackUnPlayable = menu(9);
+    t.pTrackAutoCompActive = menu(10);
+    mem<uint32_t>(sys) = rng.chance(70) ? sys + 0x80u : rng.chance(50) ? menus : menus + 0x80u;
+    mem<int8_t>(mem<uint32_t>(sys) + 0x63u) = static_cast<int8_t>(rng.chance(85) ? rng.below(12) : rng.between(-2, 25));
+    static constexpr uint32_t kCodes[] = {0x1000022cu, 0x10000227u, 0x1000007du, 0x1000007cu, 0x10000225u, 0x10000226u, 0x10000229u,
+                                          0x10000228u, 0x1000022au, 0x1000022bu, 0x7fff1002u, 0x1000022du, 0x1000022eu, 0x1000022fu,
+                                          0x11000000u, 0x7fff2000u, 0x7fff2001u, 0x7fff3000u, 0x7fff4000u, 0x7fff5000u, 0x11000001u, 0u};
+    mem<uint32_t>(sys + 0x68u) = rng.chance(92) ? rng.pick(kCodes) : rng.chance(50) ? rng.pick(kCodes) + rng.pick({1u, 0xffffffffu}) : rng.next();
+    t.trackState.menuCurrentState = static_cast<uint16_t>(rng.chance(45) ? 0u : rng.chance(92) ? rng.between(1, 8) : rng.below(12));
+    t.trackState.menuNextState = static_cast<uint16_t>(rng.pick({1u, 2u, 4u, 5u, 2u, 0u}));
+    t.trackState.editState = static_cast<uint16_t>(rng.chance(60) ? 2u : rng.below(5));
+    t.loadSaveFlags = rng.below(8);
+    G(oldThemeTypeNdxG) = rng.chance(70) ? t.trackDesc.themeTypeNdx : rng.below(6);
+    G(oldSoundTrackNdxG) = rng.chance(70) ? t.trackDesc.soundTrackNdx : rng.below(8);
+    // The cars: the secret ones unlocked or not, the players' cars any of the 19 (or none of them).
+    for (const uint32_t reward : {0x3bcu, 0x3bdu, 0x3beu, 0x3bfu, 0x3c0u, 0x3c1u, 0x3dbu, 0x3dcu, 0x3ddu, 0x3deu})
+        mem<uint8_t>(sym::mainVarG + reward) = static_cast<uint8_t>(rng.chance(50) ? 0 : rng.chance(80) ? 1 : rng.next());
+    mem<uint8_t>(sym::mainVarG + 0x3dfu) = static_cast<uint8_t>(rng.chance(90) ? rng.between(1, 19) : rng.below(30));
+    mem<uint8_t>(sym::mainVarG + 0x3e0u) = static_cast<uint8_t>(rng.chance(90) ? rng.between(1, 19) : rng.below(30));
+    for (const uint32_t config : {0x188u, 0x18cu, 0x190u, 0x194u})
+        mem<uint32_t>(sym::frontEndVarG + config) = rng.chance(80) ? rng.below(9) : rng.next();
+    // GetCarText: the Track Editor's names (no level's): 20 strings' addresses in scratch.
+    G(pLvlG).address = scratch + kLevel;
+    mem<uint32_t>(scratch + kLevel + 0x58u) = scratch + kLevel + 0x80u;
+    for (uint32_t i = 0; i < 20u; ++i)
+        mem<uint32_t>(scratch + kLevel + 0x80u + i * 4u) = scratch + kSaved + rng.below(0x100);
+    mem<uint32_t>(scratch + kLevel + 0x4cu) = mem<uint32_t>(kTE + 0x5cu);
+    setArg(ctx, 0, rng.next());
+    setArg(ctx, 1, rng.next());
+}
+
+// The edit menu's keys: a0 the pad's block (the editor's own or one in scratch) with a response of the six keys; a
+// walked track and cursor, every menu cell filled.
+void teditKeys(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    Rng rng{state};
+    World w(ctx, rng, scratch, true);
+    fillMenu(w);
+    leftovers(ctx, rng);
+    sTEditClass &t = w.te();
+    if (!t.trackDesc.pTrackModuleList)
+    {
+        mem<uint32_t>(scratch + kTrackNodes) = 0;
+        mem<uint32_t>(scratch + kTrackNodes + 4u) = rng.chance(50) ? 0u : rng.below(50);
+        t.trackDesc.pTrackModuleList = ptr32<_sTrackModule>(scratch + kTrackNodes);
+    }
+    // The last module decides where the menu goes after a delete: any id now and then.
+    if (rng.chance(40))
+    {
+        uint32_t last = t.trackDesc.pTrackModuleList.address;
+        while (mem<uint32_t>(last) != 0)
+            last = mem<uint32_t>(last);
+        mem<uint32_t>(last + 4u) = rng.below(50);
+    }
+    t.trackIsComplete = rng.chance(80) ? 0 : 1;
+    t.trackDesc.startOrientation = static_cast<eDirection>(rng.below(4));
+    t.pTrackComplete = ptr32<sAMenuHeader>(scratch + kMenuSys + 0xb0u);
+    const uint32_t input = rng.chance(50) ? kTE + 0x7cu : scratch + kArgs;
+    mem<uint32_t>(input) = rng.chance(90) ? rng.pick({0u, 1u, 2u, 4u, 8u, 0x10u, 0x20u, 0x10u, 0x20u, 0x11u, 0x30u, 0x24u}) : rng.next();
+    setArg(ctx, 0, input);
+    setArg(ctx, 1, rng.next());
+}
+
+// The start grid's keys: a0 the pad's block, the cursor often on or beside the grid's edges.
+void teditStartGrid(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    Rng rng{state};
+    World w(ctx, rng, scratch);
+    fillMenu(w);
+    sTEditClass &t = w.te();
+    const auto place = [&] { return static_cast<int16_t>(rng.chance(70) ? rng.pick({0, 1, 14, 15, 0, 15}) : rng.chance(90) ? rng.below(16) : rng.between(-2, 18)); };
+    t.cursor.xPos = place();
+    t.cursor.yPos = place();
+    t.cursor.direction = static_cast<eDirection>(rng.chance(92) ? rng.below(4) : rng.below(8));
+    t.placementViewDir = static_cast<eDirection>(rng.chance(92) ? rng.below(4) : rng.below(8));
+    const uint32_t input = rng.chance(50) ? kTE + 0x7cu : scratch + kArgs;
+    mem<uint32_t>(input) = rng.chance(90) ? rng.below(0x40) : rng.next();
+    setArg(ctx, 0, input);
+    setArg(ctx, 1, rng.next());
+}
+
+// a0 a time: the edit menu's pulse (1.2 s), its turning points and negative times.
+void teditMenuTime(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    Rng rng{state};
+    World w(ctx, rng, scratch);
+    setArg(ctx, 0, static_cast<uint32_t>(rng.chance(40) ? static_cast<int32_t>(rng.below(100)) * 600 + rng.between(-2, 2)
+                                         : rng.chance(80) ? rng.between(0, 200000) : static_cast<int32_t>(rng.next())));
+}
+
+// --- Part 2: the track as a race level. ---
+
+namespace {
+
+constexpr uint32_t kAISets = kBigArena + 0x10000u; // the AI node sets (pAINode): a word, then 32 sets of 0x288 bytes
+
+// A level in scratch: eight start positions, a hud resource whose first map sprite leads to a texture handle, a sky.
+void levelData(World &w, uint32_t sky)
+{
+    Rng &rng = w.rng;
+    const uint32_t level = w.s + kLevel;
+    for (uint32_t i = 0; i < 0x100u; i += 4u)
+        mem<uint32_t>(level + i) = rng.next();
+    mem<uint32_t>(level + 0x30u) = level + 0x80u; // pStartData: startPos[8]
+    for (uint32_t i = 0; i < 0x40u; i += 2u)
+        mem<int16_t>(level + 0x80u + i) = static_cast<int16_t>(rng.chance(70) ? rng.between(-0x400, 0x400) : rng.between(-0x8000, 0x7fff));
+    mem<uint32_t>(level + 0x40u) = level + 0xc0u;  // pHudRes
+    mem<uint32_t>(level + 0xc8u) = level + 0xd0u;  // pMapSpr[0]
+    mem<uint32_t>(level + 0xd0u) = w.s + kArgs + 0x100u; // its texture handle (idxList at 0x2c, pBitmapList at 0x48)
+    mem<uint32_t>(level + 0x4cu) = sky;
+    G(pLvlG).address = level;
+}
+
+} // namespace
+
+// The track-to-level functions: a walked track, the AI node sets (in the spare RAM the searches' heap uses: read only),
+// a level with its start positions, the pickups' positions, a ring of AI nodes; a0 a 0x80-byte bitmap.
+void teditLevel(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    Rng rng{state};
+    World w(ctx, rng, scratch, true);
+    sTEditClass &t = w.te();
+    leftovers(ctx, rng);
+    setReg(ctx, 8, static_cast<uint32_t>(rng.between(-2, 2))); // TEditConvertTrackToALF's slope with no modules
+    for (uint32_t i = 0; i < 4u + 32u * 0x288u; i += 4u)
+        mem<uint32_t>(kAISets + i) = rng.chance(60) ? rng.next() & 0x0fff0fffu : rng.next();
+    t.pAINode = ptr32<uint32>(kAISets);
+    levelData(w, 0);
+    t.trackDesc.startOrientation = static_cast<eDirection>(rng.chance(92) ? rng.below(4) : rng.below(8));
+    // The AI nodes TEditUpdatePickupNumAndPositions reads: a stretch of 15 a pair.
+    const uint32_t nodes = scratch + kAINodes;
+    for (uint32_t i = 0; i < 24u * 0x6cu; i += 4u)
+        mem<uint32_t>(nodes + i) = rng.next();
+    sAINodeClass &ai = G(aiNodeVarG);
+    ai.pNode = ptr32<_sAINode>(nodes);
+    ai.noNodesSingle = static_cast<int16_t>(rng.chance(90) ? rng.between(0, 65) : rng.between(-40, 0));
+    mem<uint32_t>(sym::pickupVarG + 0x48u) = rng.chance(90) ? rng.below(12) : rng.below(40); // a pair a stretch of 15 nodes
+    mem<uint32_t>(sym::pickupVarG + 0x44u) = scratch + kArgs + 0x40u;
+    // The grid for the icon: a few start grid tiles, some stacked.
+    if (rng.chance(50))
+        for (uint32_t i = rng.below(12); i-- > 0;)
+            mem<int16_t>(scratch + kUnits + rng.below(0x300) * 8u) = static_cast<int16_t>(rng.chance(60) ? 0x43 : w.tileId());
+    setArg(ctx, 0, scratch + kArgs + 0x40u);
+}
+
+// TEditConstructAINode: a0 a set, a1 five nodes' room, a2 the last node's handle, a3 an offset, t0-t1 mirrored and
+// run backwards, t2 a direction (another now and then: the turn's start is then what the stack held).
+void teditAINodeSet(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    Rng rng{state};
+    World w(ctx, rng, scratch);
+    for (uint32_t i = 0; i < 4u + 32u * 0x288u; i += 4u)
+        mem<uint32_t>(kAISets + i) = rng.chance(60) ? rng.next() & 0x0fff0fffu : rng.next();
+    w.te().pAINode = ptr32<uint32>(kAISets);
+    const uint32_t args = scratch + kArgs;
+    for (uint32_t i = 0; i < 8u; i += 2u)
+        mem<int16_t>(args + i) = static_cast<int16_t>(rng.chance(70) ? rng.between(-8, 8) * 0x800 : rng.between(-0x8000, 0x7fff));
+    mem<uint32_t>(args + 0x20u) = rng.chance(30) ? 0u : scratch + kAINodes + rng.below(24) * 0x6cu;
+    setArg(ctx, 0, rng.chance(90) ? rng.below(32) : 0x10000u + rng.below(32));
+    setArg(ctx, 1, scratch + kArena + rng.below(8) * 4u);
+    setArg(ctx, 2, args + 0x20u);
+    setArg(ctx, 3, args);
+    setReg(ctx, 8, rng.chance(80) ? rng.below(2) : rng.pick({0x10000u, 0x10001u, 2u, 0xffffu}));
+    setReg(ctx, 9, rng.chance(80) ? rng.below(2) : rng.pick({0x10000u, 0x10001u, 2u, 0xffffu}));
+    setReg(ctx, 10, rng.chance(92) ? rng.below(4) : rng.below(8));
+}
+
+// TEditRenderGameTrack: the grid's tiles (TileRenderGameROB stood in) and the level's sky, drawn for real.
+void teditGameTrack(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    Rng rng{state};
+    const uint32_t realSky = mem<uint32_t>(kTE + 0x5cu);
+    World w(ctx, rng, scratch);
+    levelData(w, w.realModules ? realSky : mem<uint32_t>(G(visFxVarG).pVfxRes.address + 0x88u));
+}
+
+// The hud map: the tile pictures' sprite (a 0x200-byte bitmap), the buffers TEditRenderTileToHudMap reads and draws
+// on, a level whose map sprite names a texture; a0-a1 a place on the map, a2-a3 a picture's place, t0 the flags.
+void teditHudMap(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    Rng rng{state};
+    World w(ctx, rng, scratch, true);
+    sTEditClass &t = w.te();
+    w.hudBuffers();
+    levelData(w, 0);
+    const uint32_t sprite = scratch + kArgs + 0x80u, handle = scratch + kArgs + 0x100u;
+    mem<uint32_t>(sprite) = handle;
+    mem<uint32_t>(handle + 0x48u) = scratch + kSaveGame; // the bitmap: 0x200 bytes of the save buffer's random words
+    mem<int16_t>(handle + 0x2cu) = static_cast<int16_t>(rng.next());
+    t.pTrackMapBits = ptr32<_sSprite>(sprite);
+    t.pHudMap = ptr32<int32>(rng.chance(80) ? scratch + kArena : 0u);
+    setArg(ctx, 0, static_cast<uint32_t>(rng.chance(90) ? rng.between(0, 60) : rng.between(-16, 80)));
+    setArg(ctx, 1, static_cast<uint32_t>(rng.chance(90) ? rng.between(0, 60) : rng.between(-16, 76)));
+    setArg(ctx, 2, static_cast<uint32_t>(rng.chance(90) ? rng.between(0, 28) : rng.between(0, 31)));
+    setArg(ctx, 3, static_cast<uint32_t>(rng.chance(90) ? rng.between(0, 28) : rng.between(0, 100)));
+    setReg(ctx, 8, rng.chance(90) ? (rng.pick({0u, 2u, 4u, 8u}) | (rng.chance(40) ? 0x20u : 0u)) : rng.next());
+}
+
+// TEditGenerateHudMapForTrackLevel: a walked track and the tile pictures' sprite; its buffers come from the heap.
+void teditHudMapBuild(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    Rng rng{state};
+    World w(ctx, rng, scratch, true);
+    sTEditClass &t = w.te();
+    const uint32_t sprite = scratch + kArgs + 0x80u, handle = scratch + kArgs + 0x100u;
+    mem<uint32_t>(sprite) = handle;
+    mem<uint32_t>(handle + 0x48u) = scratch + kSaveGame;
+    t.pTrackMapBits = ptr32<_sSprite>(sprite);
+    t.pHudMap = ptr32<int32>(rng.next());
+    t.pHudMapBitsBPP = ptr32<int32>(rng.next());
+    t.pHudMapBPP = ptr32<int32>(rng.next());
 }
 
 } // namespace rc::fuzz

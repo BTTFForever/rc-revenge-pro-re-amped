@@ -92,7 +92,7 @@ void TEditControlGridEdit(tTime time)
         TEditControlRotateStartGrid(input, time);
         break;
     case 2:
-        TEditControlEditing(input, time);
+        controlEditing(input, time, (kTE + 0x8000u) & 0xffff0000u); // $s5: the upper half of tEditVarG's address
         break;
     default:
         break;
@@ -114,7 +114,7 @@ void TEditDisplayGridEdit(tTime time)
         TEditDisplay2DGridLines();
     }
     guest_call(sym::CellRenderInit, temp);
-    guest_call(sym::TEditDisplay3DGridLines);
+    TEditDisplay3DGridLines();
     const bool blink = time % 1000 < 500;
     switch (t.trackState.editState)
     {
@@ -129,17 +129,17 @@ void TEditDisplayGridEdit(tTime time)
         break;
     case 2:
         guest_call(sym::AMenuDisplayOptions, t.pTrackMenuBar[2]);
-        guest_call(sym::TEditDEBUGDisplayCursor);
+        TEditDEBUGDisplayCursor();
         if (blink)
             TEditRenderCursor();
-        guest_call(sym::TEditRenderTrack);
-        guest_call(sym::TEditRenderEditMenu, time);
+        TEditRenderTrack();
+        TEditRenderEditMenu(time);
         TEditRenderResourceMeter();
         break;
     case 3:
     case 4:
         guest_call(sym::AMenuProcessAll, G(pMenuSystemG)->pActiveMenu);
-        guest_call(sym::TEditDEBUGDisplayCursor);
+        TEditDEBUGDisplayCursor();
         if (G(pMenuSystemG)->executeCode == 0x7fff0001)
         {
             guest_call<int16_t>(sym::SfxPlay, 0x45, 0x80, 0xf, 0xf, 0x100, 0, 0);
@@ -148,8 +148,8 @@ void TEditDisplayGridEdit(tTime time)
             guest_call(sym::InputResetAllHit);
         }
         TEditRenderCursor();
-        guest_call(sym::TEditRenderTrack);
-        guest_call(sym::TEditRenderEditMenu, time);
+        TEditRenderTrack();
+        TEditRenderEditMenu(time);
         TEditRenderResourceMeter();
         break;
     default:

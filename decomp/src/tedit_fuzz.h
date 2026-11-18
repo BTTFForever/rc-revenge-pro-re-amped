@@ -36,5 +36,19 @@ void teditSlopeModule(R5900Context *ctx, uint64_t &state, uint32_t scratch); // 
 void teditMenuCell(R5900Context *ctx, uint64_t &state, uint32_t scratch);    // a0 a slope row, a1 a column
 void teditRestrict(R5900Context *ctx, uint64_t &state, uint32_t scratch);    // a0-a1 restriction bits
 void teditAINodes(R5900Context *ctx, uint64_t &state, uint32_t scratch);     // a ring of AI nodes
+void teditAdjust(R5900Context *ctx, uint64_t &state, uint32_t scratch);     // a0 a module, a1-t0 position, direction, height, t1 a flag
+void teditTransition(R5900Context *ctx, uint64_t &state, uint32_t scratch); // a0-a1 two slopes; leftover ids
+void teditAutoComp(R5900Context *ctx, uint64_t &state, uint32_t scratch);   // a0 a stack entry; a walked track, a full menu
+void teditSearch(R5900Context *ctx, uint64_t &state, uint32_t scratch);     // the searches; the frame's calls stood in
+void teditRandomTrack(R5900Context *ctx, uint64_t &state, uint32_t scratch); // a world a random track closes in
+void teditKeys(R5900Context *ctx, uint64_t &state, uint32_t scratch);        // a0 the pad's block; a walked track, a full menu
+void teditStartGrid(R5900Context *ctx, uint64_t &state, uint32_t scratch);   // a0 the pad's block; the cursor near the edges
+void teditMenuTime(R5900Context *ctx, uint64_t &state, uint32_t scratch);    // a0 a time
+void teditLevel(R5900Context *ctx, uint64_t &state, uint32_t scratch);       // a walked track, AI node sets, a level's data
+void teditAINodeSet(R5900Context *ctx, uint64_t &state, uint32_t scratch);   // TEditConstructAINode's seven arguments
+void teditGameTrack(R5900Context *ctx, uint64_t &state, uint32_t scratch);   // the grid and a level's sky
+void teditHudMap(R5900Context *ctx, uint64_t &state, uint32_t scratch);      // the hud map's buffers; a0-t0 a tile picture's draw
+void teditHudMapBuild(R5900Context *ctx, uint64_t &state, uint32_t scratch); // a walked track, the tile pictures' sprite
+void teditMainMenus(R5900Context *ctx, uint64_t &state, uint32_t scratch);   // a menu state and code; a world the searches close in
 
 } // namespace rc::fuzz

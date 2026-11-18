@@ -105,6 +105,37 @@ ptr32<_sTrackInput> TEditGetInput(tTime time);
 void TEditControlGridEdit(tTime time);
 void TEditDisplayGridEdit(tTime time);
 void TEditCameraFollowCursor();
+int16 TEditGetAutoCompPieceScore();
+void TEditGetAutoCompAllPiecesScore(ptr32<_sAutoCompStackData> pAutoCompPiece);
+void TEditAutoCompRemoveLastPiece(ptr32<_sAutoCompStackData> pAutoCompPiece);
+void TEditAutoCompPlacePiece(ptr32<_sAutoCompStackData> pAutoCompPiece);
+int32 TEditMenuDoCompleteTrack();
+void TEditRandomTrackAssignStartGrid();
+void TEditRandomTrackPlaceSpecialPiece(ptr32<_sAutoCompStackData> pAutoCompPiece);
+bool_ TEditRandomTrackGenerate();
+void TEditMenuDoRandomTrack();
+void TEditDisplayMainMenus(tTime time, uint32 frameCnt);
+void TEditDEBUGDisplayCursor();
+void TEditRenderTrack();
+void TEditProcessEditMenuKeys(ptr32<_sTrackInput> pInput, tTime time);
+void TEditProcessPlaceStartGrid(ptr32<_sTrackInput> pInput, tTime time);
+void TEditProcessRotateStartGrid(ptr32<_sTrackInput> pInput, tTime time);
+void TEditDisplay3DGridLines();
+void TEditRenderEditMenu(tTime time);
+eSlope TEditAdjustCursorModule(ptr32<_sCursorModule> pCursorModule, ptr32<int16> xPos, ptr32<int16> yPos, ptr32<eDirection> direction,
+                               ptr32<int16> elevation, uint8 flag);
+void TEditRenderTileToHudMap(int16 x, int16 y, int16 xOffset, int16 yOffset, uint32 flags);
+void TEditBuildTransitionCursorModules(eSlope currentSlope, eSlope desiredSlope);
+void TEditGeneratePreTColData(ptr32<uint16> pModIds, ptr32<void> pOff, ptr32<uint16> pRFlags, ptr32<uint16> pMFlags);
+void TEditGenerateTrackAINodes();
+void TEditGenerateTCol();
+void TEditUpdateStartGridPositions();
+void TEditUpdatePickupNumAndPositions();
+void TEditConvertTrackToALF();
+void TEditRenderGameTrack();
+void TEditGenerateMemCardIconFromLevel(ptr32<int32> pBitMap);
+void TEditGenerateHudMapForTrackLevel();
+void TEditCopyHudMapForTrackLevelToVRAM();
 
 namespace tedit {
 
@@ -138,6 +169,12 @@ inline uint32_t editModule(uint32_t moduleId) { return te().pEditModuleList.addr
 void generateTrackFromList(uint32_t a3);
 // TEditGetEditMenuAvailSlopeAndModule with the $a1 its caller leaves (the module when every slope is restricted).
 void availSlopeAndModule(uint32_t a1);
+// TEditProcessEditMenuKeys and TEditControlEditing (which ends by jumping to it) with the $s5 their caller leaves: the
+// cursor's slope when key 4 finds no pieces on the cursor (TEditControlGridEdit holds tEditVarG's upper half there).
+void processEditMenuKeys(ptr32<_sTrackInput> pInput, tTime time, uint32_t s5);
+void controlEditing(ptr32<_sTrackInput> pInput, tTime time, uint32_t s5);
+// TEditMenuDoCompleteTrack with the $s5 its caller leaves (the camera's time if the search ends at its first step).
+int32 completeTrack(uint32_t s5);
 
 } // namespace tedit
 } // namespace rc
