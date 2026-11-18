@@ -131,6 +131,7 @@ Prefix with `RC_VERSION=eu` for the Europe version. See `NOTES.md`, "Offline ora
 | `tools/` | Setup, run, check and analysis scripts |
 | `third_party/ps2recomp/` | PS2Recomp's recompiler and runtime, vendored with local changes (`VENDORED.md`) |
 | `third_party/ico_platform/` | The fiber layer from ico-pc |
+| `third_party/ico_rhi/` | ico-pc's render hardware interface, Vulkan backend (`VENDORED.md`); checked by `tools/rhi_triangle` |
 | `third_party/port_engine/` | ps2-port-engine's experimental Vulkan GS renderer (`PS2X_GS_VK=1`) |
 | `config.toml`, `config_eu.toml`, `functions_*.csv` | Recompiler configuration and function maps (names and addresses) |
 | `NOTES.md` | The working notes: how everything works, findings, history |
@@ -145,10 +146,11 @@ Third-party code in this repository keeps its own licence:
 
 - `third_party/ps2recomp/`: PS2Recomp, GPL-3.0.
 - `third_party/ico_platform/`: from ico-pc, MIT; `minicoro/` inside it, MIT or public domain (Unlicense).
+- `third_party/ico_rhi/`: from ico-pc, MIT.
 - `third_party/port_engine/`: from ps2-port-engine, MIT; `gpu/third_party/smaa/`, SMAA, MIT.
 
 Dependencies fetched at build time (raylib, imgui, rlImGui, ELFIO, toml11, fmt, libdwarf, rabbitizer, Vulkan-Headers,
-volk) are under their own licences.
+volk; SDL3 and glslang when no system copy is found) are under their own licences.
 
 ## Credits
 
@@ -157,7 +159,7 @@ volk) are under their own licences.
   the VU1 recompiler, GPU GS backend and threading this project builds on.
 - The God of War recomp by KIexster: the render-target renderer and Linux EGL context code in the runtime.
 - [ico-pc](https://github.com/nathanialf/ico-pc): the reference for the decompilation approach and the renderer
-  plan, and the source of the fiber layer.
+  plan, and the source of the fiber layer and the render hardware interface (RHI).
 - [ps2-port-engine](https://github.com/danielgomesvieira2000/ps2-port-engine): the experimental Vulkan GS renderer.
 - ghidra-emotionengine-reloaded: Ghidra support for the Emotion Engine, used during analysis (not needed to build).
 

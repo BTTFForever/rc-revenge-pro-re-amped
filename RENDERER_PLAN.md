@@ -65,8 +65,10 @@ in `AGENT_USAGE.md`, as for the decompilation.
    all GS traffic passes DMA channels 1 and 2; then every question of study section 5 (render to texture, mipmaps,
    fog, every ALPHA/PABE/TEST/TEXA/CLAMP value by path, texture formats, uploads, field/frame, buffer high-water
    marks), per scene (boot, front end, levels 1-24, Track Editor, podium, movies), both versions.
-2. **Vendor the RHI** (Opus). `third_party/ico_rhi/`, Vulkan only, SDL3 found or fetched; a test program draws a
-   textured triangle on the RTX 2060 with validation layers clean.
+2. **Vendor the RHI** (Opus). **Done 2026-11-19.** `third_party/ico_rhi/` (ico-pc `port/rhi` at 4e62244, Vulkan
+   backend only, 25 files unchanged, `VENDORED.md`); SDL3 from the system or fetched, Vulkan-Headers and volk fetched;
+   `tools/rhi_triangle` draws a checkerboard-textured triangle on the RTX 2060 with 0 validation errors or warnings
+   and a pixel-exact read-back. How to build and run it: below, "The RHI test".
 3. **Window and input spike** (Opus). In `vk` mode: SDL3 window and pad, no raylib window, raylib audio still
    playing, the game running blind; pad scripts and frame pacing unchanged.
 After step 1: fold its answers into this plan's open questions.
@@ -96,6 +98,20 @@ Path by path, where a feature or the end state needs it: the side tags grow into
 packets in the `vk` build, and the GS build keeps the original code for the oracle. Likely order: HUD and fonts (anchors,
 crisp text at any resolution), cars and track (interpolation, modern effects), effects, the rest. Level textures
 decoded at load time replace the shadow texture memory once no path samples it raw.
+
+### The RHI test (P0 step 2)
+Its own CMake project; the game's build and build folders are not involved.
+```
+cmake -S tools/rhi_triangle -B build-rhi -DCMAKE_BUILD_TYPE=Debug && cmake --build build-rhi
+tools/rhi_triangle/run.sh build-rhi --frames 120 --screenshot build-rhi/triangle.png
+```
+`run.sh` sets the PRIME offload variables, asks for the validation layer with synchronisation validation, and
+fails unless the program passes (image check, exit code), the device is the NVIDIA one and stderr holds no
+validation error or warning. With no validation layer installed, `RC_VVL_LIB=<path to
+libVkLayer_khronos_validation.so>` points it at a copy (it writes the manifest). Dependencies: system SDL3 and
+`glslangValidator` when present (pacman `sdl3`, `glslang`), else built from source (`RC_RHI_FETCH_SDL3`,
+`RC_RHI_FETCH_GLSLANG` force that). Notes for the renderer: the RHI's clip space is y-up; GLSL bindings are
+set = bind group, binding = slot + 16 (textures) / + 32 (samplers) / + 0 (uniforms) (`third_party/ico_rhi/VENDORED.md`).
 
 ## PC features (references: ico-pc `docs/OPTIONS.md`, burnout3-pc)
 burnout3-pc (MIT, github.com/danielgomesvieira2000/burnout3-pc; a racing game on ps2-port-engine, still GS-emulated

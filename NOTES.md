@@ -202,6 +202,18 @@ It is too slow to use yet. With a synchronous read-back: about 22 fps at 1x, 4 f
 not the main cost; where that time goes (recording, or waiting for the GPU) has not been measured. Set aside on 2026-11-09 until more bugs are fixed.
 Presenting straight to the window was not tried. The window is a GLFW X11 window under Wayland, so a Vulkan surface would need a child X11 window.
 
+### Native renderer: the vendored RHI (2026-11-19)
+`third_party/ico_rhi/` is ico-pc's render hardware interface (`rhi.h`, the dispatcher and the Vulkan backend, MIT,
+upstream files unchanged; `VENDORED.md` has the commit, the file list and how the dependencies are found). It is not
+linked into the game yet. `tools/rhi_triangle` is its stand-alone check (own CMake project, build folder
+`build-rhi`): an SDL3 window, a checkerboard-textured triangle, the backbuffer read back and checked pixel by pixel,
+optionally saved as PNG/PPM. `tools/rhi_triangle/run.sh build-rhi` runs it on the RTX 2060 with the validation layer
+and synchronisation validation and fails on any validation message or another device. First run: RTX 2060, 120
+frames, 0 wrong pixels, 0 validation errors or warnings, clean shutdown. Things learnt: the RHI's clip space is
+y-up (it flips the Vulkan viewport), and its binding numbers are slot + 16 for textures, + 32 for samplers. The
+validation layer is not installed system-wide here (no `vulkan-validation-layers` package); the run used Steam's
+copy through `RC_VVL_LIB` (the script writes a manifest for it into the build folder).
+
 ### Level testing (2026-11-09)
 `RC_BOOT_LEVEL=<n> tools/play.sh` skips the intro and menus and loops the attract-mode demo on level n. `RC_SKIP_INTRO=1` skips only the legal screen, movie and Dolby screen and starts in the front end (for menu tests: `PS2X_PAD_REPLAY=<file>` plays a pad script of `epoch frame buttons axes` lines). `tools/level_sweep.sh <first> <last> <seconds> [VAR=value ...]` prints each level's frame rate.
 Sweep of levels 1-24 on the God of War renderer at 3x: 1, 3, 4, 10, 15, 16 and 22 hold about 55-60 fps; 6, 8, 9, 12, 17, 18 and 24 ran about 25-35 fps before the blend and palette fixes. On level 18 the default renderer reaches 35-43 fps with VU1 87% busy at 14.5 ms per field, so those levels are limited by VU1 on both renderers. About half the VU time is one block of program C3952C0FAEB52EAD; its cost is spread evenly over its instructions.
@@ -219,6 +231,8 @@ Sweep of levels 1-24 on the God of War renderer at 3x: 1, 3, 4, 10, 15, 16 and 2
 - Shadow of the Colossus port and PS2Recomp fork, by LightVelox: VU1 recompiler, GPU GS backend, VU1/GIF threads,
   the policy of keeping GS/DMA libraries as original code (GPL-3.0)
 - God of War recomp, by KIexster: Linux EGL context code and the render-target renderer (GPL-3.0)
+- ico-pc (github.com/nathanialf/ico-pc, MIT): the fiber layer (`third_party/ico_platform`) and the RHI
+  (`third_party/ico_rhi`)
 
 ### GPU
 
