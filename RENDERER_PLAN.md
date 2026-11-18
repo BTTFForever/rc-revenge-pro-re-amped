@@ -56,9 +56,37 @@ DATE; any render-to-texture or framebuffer feedback (none seen yet; the survey m
 precision: the GS's 8-bit integer maths; Vulkan in UNORM8 targets with blend constants matching the GS where
 possible, shader blending where not (the port_engine `gs.frag -DSHADER_BLEND` is a reference for the hard cases).
 
+## Reference: ico-pc's renderer (study first)
+`../ico-pc` (MIT, already on disk, the project this decompilation follows) has a working native renderer for a
+decompiled PS2 game on Vulkan, Direct3D 12 and OpenGL, with about 12,000 lines of design docs in `docs/port/`
+(`RENDER.md`, `RHI.md`, `GS.md`, `PIPELINES.md`, `TEXTURES.md`, `VU1_PROGRAMS.md`, `DISPLAY.md`,
+`TESTING_PROGRAMS_RENDER.md`). Its shape, from `GS.md` and `RENDER.md`:
+- The game's render layer still runs as on the PS2 and builds its packets in its own buffers. A headless build sends
+  them on unchanged; the window build (`ICO_RD`) sends the same register writes to a host decoder that turns them into
+  `rd` state, and reads the VU1 chains with a host VIF reader that turns each model packet into an `rd` mesh drawn by
+  a shader version of the VU program. libgraph/libdma are stubs; a DMA kick does nothing.
+- `rd` records a frame as command lists with the GS's finite state (blend, test, TEXA, wrap, filters as a pipeline
+  key), decodes GS texture formats into a texture cache, and replays the frame on an RHI (Vulkan first), with the
+  exact GS blend read from the destination in the shader where fixed-function blending can't match.
+- Render-to-texture, post effects, upscaling, culling and testing programs are all documented.
+
+This is a better route than the one sketched in P1 below: intercepting at the game's own packet buffers keeps the
+game's render code byte-identical (so the oracle and shadow keep checking it) and needs no rewrite of the draw paths
+to a new API. The plan therefore starts with a study of ico-pc (P0 step 0) and P1 is decided after it: either adopt
+its decoder-at-the-buffers model (likely), or the `rc::gfx` interface. Code can be reused under MIT (the RHI, the
+texture decoding, the pipeline cache), credited in NOTES.
+
+Other projects, for narrower questions: OpenGOAL (Jak and Daxter, OpenGL; per-VU-program renderers rewritten for the
+GPU, documented at opengoal.dev); PCSX2's Vulkan GS (GPL-3; the reference for hard GS blending/PABE/DATE cases);
+BT3-Recomp (PS2Recomp + paraLLEl-GS: still GS emulation, so not this design).
+
 ## Phases
 
 ### P0: preparation (no change to the game; can run beside other work)
+0. **Study ico-pc's renderer** (`docs/port/*.md`, `port/render`, `port/rhi`, `ico2/seki/src/GsBase.c`,
+   `GifPacket.c`, `RegistPacket.c`, `Texture.c`): write `fork/ICO_RENDER_STUDY.md` mapping each part to RC's
+   equivalents (RC's packet buffers: the RDR DMA chain, GFX_P2's packet buffer, RDRALPHA; its VU programs: track, env,
+   skin, water, TERdr; its uploads), what can be reused as is, what must change, and a recommendation for P1.
 1. **GS usage survey.** A runtime-side counter (env-gated, in the GS front end) of every distinct GS state the game
    uses: PRIM types, ALPHA, TEST, FBA/PABE, ZBUF, TEX0 PSM/TFX/TCC, TEX1 (LOD/mip), CLAMP, FOG use, FRAME/ZBUF
    formats, scissor, texture uploads (size/format/source), any draw whose TBP is a framebuffer. Tagged by the draw
@@ -78,7 +106,7 @@ possible, shader blending where not (the port_engine `gs.frag -DSHADER_BLEND` is
    reference), validation layers (not installed: `vulkan-validation-layers` package or built from source), RenderDoc
    for captures.
 
-### P1: the `rc::gfx` interface, GS backend only (byte-identical refactor)
+### P1 (to be decided after the ico-pc study): the `rc::gfx` interface, GS backend only (byte-identical refactor)
 Route every draw path through `rc::gfx` calls whose GS backend writes exactly the packets written today. Checked by
 the oracle (`--all` 0 FAIL both versions) and live shadow on several levels: no visible or measurable change.
 Design points: the frame structure (begin/end frame, passes, the alpha sort), texture handles in place of raw TBP
@@ -97,7 +125,7 @@ Resolution scaling, widescreen (projection and HUD anchors: ps2-port-engine `doc
 or SMAA, and dropping the VU1 path from the frame. The GS backend stays as the reference and the oracle's target.
 
 ## Delegation
-P0 survey and captures: Opus. P0 window spike and Vulkan scaffolding: Opus. P1 interface design: Fable (the
+P0 ico-pc study: Fable (it decides the architecture). P0 survey and captures: Opus. P0 window spike and Vulkan scaffolding: Opus. P1 interface design: Fable (the
 architecture decisions are the hardest part and shape everything after), implementation in batches by Opus with the
 oracle as the check. P2 hard paths (blending/PABE/alpha-test semantics, water, textures and palettes): Fable; the
 mechanical paths: Opus. Every batch re-checked independently and logged in `AGENT_USAGE.md`, as for the decompilation.
