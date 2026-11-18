@@ -1,140 +1,133 @@
 # Native Vulkan renderer: plan
 
-Decided 2026-11-18: once the game code is native, the priority is a full native Vulkan renderer. The game's own drawing
-code calls Vulkan directly; there is no PS2 graphics emulation in that path. This is not the ps2-port-engine backend
-(`PS2X_GS_VK=1`), which still emulates the GS from raw GIF packets.
+Decided 2026-11-18 (user): once the game code is native, the priority is a native Vulkan renderer, and in the long
+run a PC port with no emulation of PS2 hardware at all (end state below). Architecture chosen the same day:
+**option C: get Vulkan drawing first by reading the game's own packets on the host, then move draw paths to a native
+API over time, where features need it.** Background and the evidence for every step: `ICO_RENDER_STUDY.md` (the
+study of ico-pc's renderer mapped onto RC, section numbers below refer to it).
 
-## Goals
-- The game draws through a renderer interface (`rc::gfx`) at the level of its own concepts (a shape with a matrix, a
-  sorted alpha triangle list, a sprite, a font string, a water strip, an effect quad, a texture upload, a movie frame),
-  not GS packets.
-- Two backends behind one switch: the **GS backend** emits exactly what the game emits today (the reference, and what
-  the oracle and live comparisons check), and the **Vulkan backend** draws with Vulkan. `RC_RENDERER=gs|vk`.
-- Visual parity with the GS path at 1x first (screenshot comparison), then the reasons for doing it: resolution
-  scaling, widescreen (with HUD anchoring), stable 60 fps on the heavy levels (18, 17, 24, 6, 8, 9, 12), no VU1 in the
-  frame.
-- Both versions (USA NTSC 640x448-ish, Europe PAL 512 lines): the backend takes the display mode from the game.
+## The decision: option C
 
-## Why the order matters
-The oracle and the live shadow check render code by comparing what it writes: GS/VIF packets in RAM. A renderer that
-no longer writes packets can't be checked that way. So:
-1. the render-side units must be native and checked first (all are, except `TSORender` and the GFX_P2 set-up functions,
-   in the leftovers batch running now);
-2. `rc::gfx` is introduced as a refactor whose GS backend produces byte-identical packets (checked by the existing
-   oracle and shadow, so the refactor itself is verified);
-3. only then the Vulkan backend, checked by screenshots against the GS backend, path by path.
+| Option | What | Chosen? |
+|---|---|---|
+| A: read the packets | Game code unchanged; a host reader takes its GS/VIF packets at the kicks, records the frame, Vulkan draws it; VU1 programs become shaders (ico-pc's design) | the first stage |
+| B: native API | The game's render functions call `rc::gfx` (shape, sprite, font, effect) instead of building packets | the direction, path by path, where a feature needs it |
+| C: A first, then B where needed | | **yes** |
 
-## How a frame is drawn today (to be confirmed by the P0 survey)
-- `Rdr_StartFrame` and the RDR DMA chain (`rdr.cpp`): VIF packets that upload a VU1 program and data; the program
-  writes GIF packets to the GS over PATH1.
-  - Track and scenery: `TRdr_VUShape` -> `TRdr_VUShapeProg` (C++ `decomp/vu1/trdr_shape.cpp`, GLSL
-    `decomp/shaders/trdr_shape.vert`, both checked against VU1; `RC_TRACK_SHADER=1` already draws it with the shader
-    in the GL backend through `decomp/vu1/track_draw.cpp`).
-  - Shiny pass: `EnvRdr` (C++ + shader mode 1/2). Skinned drivers: `Rdr_VUSkin` (C++ + shader mode 3). Water:
-    `Rdr_Water` (C++, three passes per triangle with state changes). Track Editor pieces: `TERdr_VUShape` (C++,
-    checked, still VU1 in the game). Version-2 shapes: `Rdr_VUShape` (never runs in game data).
-  - RDRPOLY (`RdrPoly`, `RdrPolyTexture`, `RdrPolyCamera`): HUD, menu and effect polygons batched into VIF packets.
-  - RDRALPHA: transparent triangles, sorted back to front once a frame (`qsort` through guest_call).
-- GFX_P2's packet buffer, sent straight to the GS (PATH3, double-buffered `gpGfx_DmaBuff0/1`,
-  `GfxP2_RenderDmaSendActual`): SPRITE (HUD, menu, font sprites), FONT, the GfxP2 texture setters.
-- VISFX (237 functions, all native): effects drawn through RDRPOLY/sprites/alpha triangles.
-- Texture memory: each level's BBK holds a GS memory image (64x64 32-bit tiles) uploaded whole; textures are
-  addressed by TBP/PSM/CBP (palettised 4/8-bit with CLUTs). `GfxTex_*` manages uploads; `sceGsExecLoadImage` also from
-  `backdrop.cpp` (24-bit backdrops), `tedit_level.cpp` (the Track Editor's HUD map to VRAM), the MPEG decoder
-  (movies, `mpeg.cpp`). `tools/track_viewer` already decodes BBK texture memory (swizzle tables in
-  `decomp/generated/gs_tables.bin`).
-- Display: `sceGsSwapDBuff`, `sceGsPutDispEnv`, `sceGsSetHalfOffset` (field offset dropped by the overrides),
-  `GsSetCrt` (NTSC/PAL), vsync through `sceGsSyncV`.
+Why: A gets a native Vulkan picture soonest, keeps the oracle and shadow checks valid for every native function (the
+game still writes the same bytes), and covers recompiled SDK code, the movie player and both versions with no
+per-function work. B is the cleaner end state, so paths move to it later, starting with the ones the PC features need
+(cars and track for interpolation, the HUD for anchors and widescreen).
 
-## GS behaviour the Vulkan backend must reproduce (to be narrowed by the survey)
-Blending `((A-B)*C >> 7) + D` with alpha 0x80 = 1.0 and the fixed alpha; PABE (the game's zero-alpha textures rely
-on it to draw opaque, found by the God of War renderer); alpha test with its fail modes (keep framebuffer only / Z only);
-24-bit (or 16-bit) depth with the GS test directions and ZMSK; texture functions (modulate with x2/128 scaling, decal,
-highlight), TCC; PSMCT32/24/16 and PSMT8/4 with CSM1 CLUTs; CLAMP including region repeat; mipmaps (LOD K/L, MIPTBP)
-if the game uses them; fog (FOG/FOGCOL); primitive types (triangles, strips, fans, sprites, lines); scissor; FBMSK;
-DATE; any render-to-texture or framebuffer feedback (none seen yet; the survey must prove it either way). Colour
-precision: the GS's 8-bit integer maths; Vulkan in UNORM8 targets with blend constants matching the GS where
-possible, shader blending where not (the port_engine `gs.frag -DSHADER_BLEND` is a reference for the hard cases).
+What A costs: the reader is a front end for the subset of GS state RC uses (no GS rasteriser, no VU1 execution, no
+frame-buffer VRAM). The one piece of emulated hardware state kept is a shadow of GS texture memory, because each
+level's texture data is a GS memory image (study 4.3). Both go away as paths move to B and the level textures are
+decoded at load time instead.
 
-## Reference: ico-pc's renderer (study first)
-`../ico-pc` (MIT, already on disk, the project this decompilation follows) has a working native renderer for a
-decompiled PS2 game on Vulkan, Direct3D 12 and OpenGL, with about 12,000 lines of design docs in `docs/port/`
-(`RENDER.md`, `RHI.md`, `GS.md`, `PIPELINES.md`, `TEXTURES.md`, `VU1_PROGRAMS.md`, `DISPLAY.md`,
-`TESTING_PROGRAMS_RENDER.md`). Its shape, from `GS.md` and `RENDER.md`:
-- The game's render layer still runs as on the PS2 and builds its packets in its own buffers. A headless build sends
-  them on unchanged; the window build (`ICO_RD`) sends the same register writes to a host decoder that turns them into
-  `rd` state, and reads the VU1 chains with a host VIF reader that turns each model packet into an `rd` mesh drawn by
-  a shader version of the VU program. libgraph/libdma are stubs; a DMA kick does nothing.
-- `rd` records a frame as command lists with the GS's finite state (blend, test, TEXA, wrap, filters as a pipeline
-  key), decodes GS texture formats into a texture cache, and replays the frame on an RHI (Vulkan first), with the
-  exact GS blend read from the destination in the shader where fixed-function blending can't match.
-- Render-to-texture, post effects, upscaling, culling and testing programs are all documented.
+**Designed in from the start: side tags.** Packets don't say what a draw is. Native code hands the renderer small
+tags beside the packets, never changing what it writes to RAM (so the oracle is unaffected): an object/draw key (for
+interpolation between frames), the HUD element (for anchoring), the camera and view (for widescreen and effects), the
+pass (opaque, alpha, 2D). ico-pc does the same (`gif_HostDrawKey`, its full-frame scope). The tags are also the first
+step of each B migration.
 
-This is a better route than the one sketched in P1 below: intercepting at the game's own packet buffers keeps the
-game's render code byte-identical (so the oracle and shadow keep checking it) and needs no rewrite of the draw paths
-to a new API. The plan therefore starts with a study of ico-pc (P0 step 0) and P1 is decided after it: either adopt
-its decoder-at-the-buffers model (likely), or the `rc::gfx` interface. Code can be reused under MIT (the RHI, the
-texture decoding, the pipeline cache), credited in NOTES.
+## Shape of the renderer (study 4.2)
 
-Other projects, for narrower questions: OpenGOAL (Jak and Daxter, OpenGL; per-VU-program renderers rewritten for the
-GPU, documented at opengoal.dev); PCSX2's Vulkan GS (GPL-3; the reference for hard GS blending/PABE/DATE cases);
-BT3-Recomp (PS2Recomp + paraLLEl-GS: still GS emulation, so not this design).
+```
+game code (unchanged) -> packets in guest RAM
+   kicks: K1 2D GIF buffer (GfxP2_RenderDmaSendActual), K2 VIF1 chain (Rdr_EndFrame), K3 flip, image uploads
+   (preferably on the runtime's hardware-store hook at D1/D2_CHCR; function hooks as the fallback)
+        |                                    + side tags from native code
+   rc::rd front (C++, fork/render/): GIF reader, VIF chain reader, VU program table, shadow texture memory
+        |
+   frame record (state deltas, screen prims, shape batches, image blits, clear, flip)  <- dump / replay tool
+        |
+   replay -> RHI (ico-pc's, C, Vulkan) -> SDL3 window
+```
 
-## Phases
+- Switch: `RC_RENDERER=gs` (today's emulated path, the reference; the oracle build always uses it) or `vk`.
+- VU programs: first the existing C++ references (`decomp/vu1`) feed the GIF reader (exact, slow, the parity
+  reference inside the new renderer); then shader batches per program (`trdr_shape.vert` covers track, RDRPOLY and
+  RDRALPHA; env and skin shaders exist; water and TERdr last).
+- Frame order as the game does it today (3D of frame N-1 under the 2D of frame N, if the survey confirms); removing
+  the one-frame offset is an enhancement, not parity.
+- Parity at 640x240 (640x256 PAL) presented at 4:3, then scaling.
+- Reuse from ico-pc (MIT): its RHI (`port/rhi/rhi.h`, `port/rhi/vk/`) nearly as is in `third_party/ico_rhi/`; its GS
+  maths (`gs_math.hlsli`) ported to GLSL; its texture decode kernels; its renderer (`rd`) as a design only. Secondary
+  GLSL reference for GS blending: ps2-port-engine's `gs.frag` (already in `third_party/port_engine`). Credit both.
 
-### P0: preparation (no change to the game; can run beside other work)
-0. **Study ico-pc's renderer** (`docs/port/*.md`, `port/render`, `port/rhi`, `ico2/seki/src/GsBase.c`,
-   `GifPacket.c`, `RegistPacket.c`, `Texture.c`): write `fork/ICO_RENDER_STUDY.md` mapping each part to RC's
-   equivalents (RC's packet buffers: the RDR DMA chain, GFX_P2's packet buffer, RDRALPHA; its VU programs: track, env,
-   skin, water, TERdr; its uploads), what can be reused as is, what must change, and a recommendation for P1.
-1. **GS usage survey.** A runtime-side counter (env-gated, in the GS front end) of every distinct GS state the game
-   uses: PRIM types, ALPHA, TEST, FBA/PABE, ZBUF, TEX0 PSM/TFX/TCC, TEX1 (LOD/mip), CLAMP, FOG use, FRAME/ZBUF
-   formats, scissor, texture uploads (size/format/source), any draw whose TBP is a framebuffer. Tagged by the draw
-   path that issued it (the native function on the call stack: shape, poly, alpha, sprite, font, water, effect,
-   backdrop, movie). Run over boot, front end, Track Editor, levels 1-24 (demo races), a podium. Output: a table
-   that becomes the backend's feature list. Nothing outside the survey's list gets implemented.
-2. **Reference captures.** A fixed set of screenshots from the GS path (front end screens, each level at fixed fields
-   with `RC_BOOT_LEVEL`, Track Editor, movies), both versions, deterministic enough to compare (same pad script,
-   same fields). Plus per-path masks (`RC_GFX_MASK`, implemented in both backends) so one path can be compared alone.
-3. **Window and input decision.** raylib owns the window (GL context), keyboard, gamepad and audio. A Vulkan surface
-   needs a window without a GL context. Recommended: in `vk` mode a GLFW window with `GLFW_NO_API` (GLFW is already
-   linked inside raylib; 3.4 runs natively on Wayland), input read through GLFW, raylib kept for audio only. Alternative:
-   SDL3 for window, input and gamepads. Decide in P0 with a small spike (open window, Vulkan surface on the RTX 2060,
-   pad input, audio still playing).
-4. **Scaffolding.** Vulkan device/swapchain/frame pacing (volk + headers already fetched by
-   `third_party/port_engine/CMakeLists.txt`; `glslangValidator` installed; port_engine's `vk_device.cpp` as a
-   reference), validation layers (not installed: `vulkan-validation-layers` package or built from source), RenderDoc
-   for captures.
+## Phases and steps
 
-### P1 (to be decided after the ico-pc study): the `rc::gfx` interface, GS backend only (byte-identical refactor)
-Route every draw path through `rc::gfx` calls whose GS backend writes exactly the packets written today. Checked by
-the oracle (`--all` 0 FAIL both versions) and live shadow on several levels: no visible or measurable change.
-Design points: the frame structure (begin/end frame, passes, the alpha sort), texture handles in place of raw TBP
-(with a lookup from GS addresses while the game still thinks in TBP), state blocks in place of GS registers, and
-where the VU1 programs sit (in the Vulkan backend their work moves into vertex shaders: track, env and skin shaders
-exist; water and TERdr have C++ references).
+Each step is one batch with its check (details: study section 6). Every batch is re-checked independently and logged
+in `AGENT_USAGE.md`, as for the decompilation.
 
-### P2: Vulkan backend, path by path
-Order (each compared alone with masks, then together): clear/display and movies (full-screen images) -> sprites and
-fonts (front end becomes usable) -> polygons and alpha triangles -> track shapes (shader exists) -> env, skin, water,
-Track Editor pieces -> VISFX -> backdrops, HUD map. Textures: decode BBK GS memory at level load into host textures
-(palettes applied in the shader or pre-expanded; decided by the survey), invalidated by later uploads.
+### P0: groundwork (changes nothing in the game; can start as soon as the builds are free)
+1. **Kick and GS usage survey** (Opus). Env-gated logging at the kicks and uploads: confirm the frame order and that
+   all GS traffic passes DMA channels 1 and 2; then every question of study section 5 (render to texture, mipmaps,
+   fog, every ALPHA/PABE/TEST/TEXA/CLAMP value by path, texture formats, uploads, field/frame, buffer high-water
+   marks), per scene (boot, front end, levels 1-24, Track Editor, podium, movies), both versions.
+2. **Vendor the RHI** (Opus). `third_party/ico_rhi/`, Vulkan only, SDL3 found or fetched; a test program draws a
+   textured triangle on the RTX 2060 with validation layers clean.
+3. **Window and input spike** (Opus). In `vk` mode: SDL3 window and pad, no raylib window, raylib audio still
+   playing, the game running blind; pad scripts and frame pacing unchanged.
+After step 1: fold its answers into this plan's open questions.
 
-### P3: enhancements
-Resolution scaling, widescreen (projection and HUD anchors: ps2-port-engine `docs/GPU.md`), frame pacing at 60, MSAA
-or SMAA, and dropping the VU1 path from the frame. The GS backend stays as the reference and the oracle's target.
+### P1: the reader and the frame record (option A)
+4. Frame record, dump and replay tool (Fable designs, Opus builds); the side-tag channel defined here.
+5. Shadow texture memory and decode (Fable); checked against `tools/track_viewer` off-line and the emulated GS
+   memory in game.
+6. Uploads into the frame buffer and the flip (Opus): logos, movies, backdrops match the GS path.
+7. GIF reader and the 2D packet (Opus, blend/alpha rules by Fable): front end and menus usable; per-state pixel tests
+   against a CPU model of the GS blend.
+8. VIF chain reader with the C++ VU references (Opus): races draw correctly (slowly); GIF bytes equal the emulated
+   VU1's for recorded frames; full screenshots on levels 5, 17, 18, 20.
+
+### P2: speed and parity
+9. Shader batches (Fable: state and blend design; Opus: plumbing): track, polygons and alpha in one shader, then env,
+   skin, TERdr, water.
+10. Pipelines built at start-up, performance pass on the heavy levels (18, 17, 24, 6, 8, 9, 12), a DIVERGENCES list.
+Then `vk` becomes the default renderer; `gs` stays as the reference.
+
+### P3: PC features on the native renderer (see "PC features")
+Resolution scaling, widescreen with HUD anchors, anti-aliasing, texture filtering, frame pacing, higher frame rates,
+modern effects.
+
+### P4: move paths to the native API (option B, ongoing)
+Path by path, where a feature or the end state needs it: the side tags grow into calls, the path stops building
+packets in the `vk` build, and the GS build keeps the original code for the oracle. Likely order: HUD and fonts (anchors,
+crisp text at any resolution), cars and track (interpolation, modern effects), effects, the rest. Level textures
+decoded at load time replace the shadow texture memory once no path samples it raw.
+
+## PC features (references: ico-pc `docs/OPTIONS.md`, burnout3-pc)
+burnout3-pc (MIT, github.com/danielgomesvieira2000/burnout3-pc; a racing game on ps2-port-engine, still GS-emulated
+but with VU1 as shaders) is the closest reference for what a racing port can offer: `games/burnout3/docs/
+HIGH_FPS_PLAN.md`, `MODERN_GRAPHICS_PLAN.md`, `GRAPHICS_PLAN.md`, `NATIVE_RENDERER.md`.
+- **Display:** resolution 1x up to 4x or the screen's, 4:3 / 16:9 / window shape, fullscreen/borderless/windowed,
+  vsync and VRR, frame-rate counter.
+- **Widescreen** with a HUD editor that anchors each HUD element (burnout3-pc F10); needs the HUD tags, later the HUD on
+  the native API; the game's fixed buffers (1000 tags, 256 state, 360 shape packets) padded on the host.
+- **Higher frame rates** (60 / 120 / screen rate) with the game logic at its own tick and frames between ticks drawn
+  from interpolated transforms (burnout3-pc: matrices that moved, halfway back; ico-pc: keyed draws). RC's native code
+  knows every car, wheel and camera matrix, so the keys come from the side tags rather than memory scans.
+- **Picture:** FXAA/SMAA/SSAA or MSAA, texture filtering up to 16x anisotropic, LOD and particle options, upscaling.
+- **Modern preset** (burnout3-pc's MODERN, ~1 ms a frame): ambient occlusion and sun shadows from the depth buffer,
+  reprojected motion blur, bloom, colour grade, soft particles, reflections; ORIGINAL stays the default for checks.
+- **Settings menu** inside the game's own menus (AMENU is native; ico-pc extends the game's layout tables), saved to a
+  config file; pages for video, graphics, controls, audio, mods.
+- **Controls:** full remapping, button prompts that follow the bindings, mouse in menus, rumble, DualSense triggers
+  (SDL3).
+- **Mods / extras** (optional): speedometer, mirror mode, free or orbit camera, more AI cars, split-screen layouts.
 
 ## Beyond graphics (added 2026-11-18)
 ico-pc also replaces the PS2's other hardware layers and has a full settings menu (`../ico-pc/docs/OPTIONS.md`,
 `docs/port/AUDIO.md`, `FMV.md`, `INPUT.md`, `UI.md`, `CONFIG.md`). The same direction for RC, in rough order:
-1. **Platform: SDL3 window, input and audio** (with the Vulkan window, P0 step 3): a window without a GL context,
+1. **Platform: SDL3 window, input and audio** (window and input in P0 step 3; audio later): a window without a GL context,
    SDL3 gamepads and keyboard behind a binding layer that presents a virtual DualShock 2 to the game's pad code,
    remapping, and the audio device. Replaces raylib in the Vulkan build.
 2. **Settings menu** built on the game's own menus (AMENU is native; ico-pc extends the game's layout tables so the
    port's screens are drawn, navigated and faded by the game's code), saved to a `config.toml`. Early rows: window
    mode, resolution scale, aspect ratio, vsync, frame-rate cap, anti-aliasing, volumes, controls; later rows as the
    features below land.
-3. **Frame rate above the original.** RC's game speed follows the frame rate today, so higher rates need the game to
+3. **Frame rate above the original** (see PC features). RC's game speed follows the frame rate today, so higher rates need the game to
    keep its own tick while the presenter draws extra frames by interpolating between the last two ticks (ico-pc:
    `docs/port/ARCHITECTURE.md` "interpolation", `DISPLAY.md`). Needs the native renderer (P3); the hardest feature on
    this list.
@@ -154,9 +147,9 @@ native. What is still emulated, and what replaces it:
 
 | Emulated today | Where | Replaced by |
 |---|---|---|
-| GS (graphics chip) | runtime GS front end + GL backends | the native Vulkan renderer (this plan, P1-P3) |
+| GS (graphics chip) | runtime GS front end + GL backends | the native Vulkan renderer (P1-P2), then native API paths (P4) |
 | VU1 microprograms | runtime VU1 recompiler/threads | shaders and C++ in the renderer (track, env, skin done as references; water, TERdr, Rdr_VUShape) |
-| VIF/DMA/GIF transfers | runtime DMA and GIF paths | gone with the renderer: the game's packet buffers read on the host (ico-pc style) |
+| VIF/DMA/GIF transfers | runtime DMA and GIF paths | read on the host in P1-P3; gone as paths move to the native API (P4) |
 | IOP + SPU2 (sound, music streaming) | `ps2xIOP` emulator, SPU2 | a host sound driver behind the game's RPCs and a software mixer (Beyond graphics, item 5) |
 | IPU/MPEG (movies) | runtime MPEG/IPU stubs | a host movie player (item 6) |
 | CD/DVD streaming | runtime CD stubs, IOP side | host file reads behind the game's disc calls (keeping the disc's timing where the game depends on it) |
@@ -170,16 +163,12 @@ When every row is done the recompiled output and the runtime's emulation can be 
 oracle/shadow tooling stays available against the recompiled reference as a separate test build.
 
 ## Delegation
-P0 ico-pc study: Fable (it decides the architecture). P0 survey and captures: Opus. P0 window spike and Vulkan scaffolding: Opus. P1 interface design: Fable (the
-architecture decisions are the hardest part and shape everything after), implementation in batches by Opus with the
-oracle as the check. P2 hard paths (blending/PABE/alpha-test semantics, water, textures and palettes): Fable; the
-mechanical paths: Opus. Every batch re-checked independently and logged in `AGENT_USAGE.md`, as for the decompilation.
+- Fable (approved by the user for the harder parts): the frame record and side-tag design (step 4), texture memory
+  and decode (5), GS blend/alpha rules (7, 9), the B-migration designs (P4), and the high-frame-rate design.
+- Opus: the survey, vendoring, spikes, readers, plumbing, performance passes, and the remaining decompilation.
+- Independent re-check of every batch and a row in `AGENT_USAGE.md`. One agent on the builds and the game at a time.
 
-## Open questions
-- Does the game ever render to a texture or read the framebuffer back (mirrors, menus showing a 3D car, screen
-  effects)? The survey answers it; it decides whether the backend needs render targets beyond the swapchain.
-- Interlaced field rendering: does the game draw full frames or fields? (`sceGsSetHalfOffset` suggests frame mode with
-  a field offset.) Decides the native output size.
-- Mipmaps: used or not.
-- How much of the SDK GS/DMA/VIF library code is still reached once `rc::gfx` exists (the plan is to skip decompiling
-  those libraries and let the Vulkan backend replace them).
+## Open questions (answered by P0 step 1)
+Render to texture or framebuffer reads; mipmaps; fog; field or frame rendering per scene; whether all GS traffic
+passes DMA channels 1 and 2; the frame order; PABE/alpha cases that fixed-function blending can't match; whether
+raylib audio runs without its window. Study sections 5, 7 and 9 list the rest.
