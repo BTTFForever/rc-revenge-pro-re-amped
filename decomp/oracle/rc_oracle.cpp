@@ -41,7 +41,7 @@ struct Options
     int cases = 300;
     uint64_t seed = 0;
     int jobs = std::max(1, static_cast<int>(sysconf(_SC_NPROCESSORS_ONLN)) - 1);
-    int timeout = 20;
+    int timeout = 60; // Per job (one function on one dump, all its inputs). BBLoad on a level dump needs more than 20 s while the other jobs share the CPU.
     bool verbose = false;
     std::string known; // file of functions whose differences are known artefacts, one "name reason" per line
 };
