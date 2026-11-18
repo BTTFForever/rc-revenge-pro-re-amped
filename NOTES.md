@@ -15,11 +15,11 @@ Open decisions and work:
 5. A faster VU1 generator without the cycle-accurate timing might gain 20-30%.
 
 ## Branches
-`decomp` holds the decompilation. It still contains the whole recompilation, which it runs beside the C as its
-reference and which fills in every function not decompiled. `main` is the old recompilation-only build (the fallback);
-it ends at c94065e ("Add level boot and sweep tools, speed up heavy levels on the God of War renderer"), an ancestor of
-`decomp` (`git log decomp..main` is empty), so `decomp` contains all of it. Planned before publishing (see
-`GITHUB_PREP_STATUS.md`): delete the old `main` and rename `decomp` to `main`. The runtime is built with
+`main` holds the decompilation. It still contains the whole recompilation, which it runs beside the C as its
+reference and which fills in every function not decompiled. The old recompilation-only `main` (it ended at c94065e,
+"Add level boot and sweep tools, speed up heavy levels on the God of War renderer", an ancestor of the decompilation
+branch) was deleted on 2026-11-19, when the `decomp` branch was renamed `main` and pushed to the private GitHub repo.
+The runtime is built with
 `PS2X_EE_FIBERS=1` (each EE thread on a fiber).
 
 ## Decompilation (started 2026-11-10)
@@ -69,8 +69,15 @@ has the same SHA-1 as the ISO made earlier by hand; `output/`, `vu1/` and `decom
 rc_globals,rc_types}.h` are byte-identical to the ones in the working tree. `build-decomp/rc_revenge_pro` and
 `build-oracle/rc_oracle` built. `tools/play.sh replay playtest2` booted the game (113 files indexed from the image), went
 through the menus into a race (screenshot at field 4000: level, HUD, car correct) and ran at 50-59 fps on the RTX 2060
-over 2 minutes, while the oracle was still compiling. Not yet done in a clean clone: the Europe setup (from the .iso,
-the symlink path), `tools/capture_dumps.sh` + `tools/oracle.sh --all`. See `GITHUB_PREP_STATUS.md`.
+over 2 minutes, while the oracle was still compiling.
+
+Second clean clone (2026-11-19, both versions): `tools/setup.sh --oracle -j 8` from the Europe .iso and the USA .cue
+(both exit 0), `tools/capture_dumps.sh` (fresh dumps), `tools/oracle.sh --all`. USA: 1629 ok, 0 FAIL. Europe: 1559 ok,
+**1 FAIL: FCollisionResponseCarCar**, every input on all four fresh Europe dumps. Crossing builds and dumps shows the
+cause is the dumps, not the build: the working-tree oracle fails on the fresh dumps and the clean-clone oracle passes on
+the old ones. Original and native differ on the fresh dumps (car field at +0x94 written 0x67 by the original, 0 by
+the native). Likely the degenerate path where no sphere has a car-car contact (bestSphere -1, other car null), which
+the old dumps never produced. The fresh dumps are kept in `build-oracle-eu/dumps_cleanclone/` for the fix.
 
 ## The runtime (vendored, 2026-11-19)
 PS2Recomp lives in `third_party/ps2recomp/` (see its `VENDORED.md`): ps2xRecomp, ps2xRuntime and ps2xIOP from the SotC fork
