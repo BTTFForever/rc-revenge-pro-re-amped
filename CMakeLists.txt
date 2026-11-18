@@ -119,8 +119,8 @@ target_sources(rc_revenge_pro PRIVATE third_party/port_engine/rc_backend.cpp)
 set_source_files_properties(third_party/port_engine/rc_backend.cpp PROPERTIES SKIP_UNITY_BUILD_INCLUSION TRUE COMPILE_OPTIONS "-w")
 target_link_libraries(rc_revenge_pro PRIVATE rc_port_engine)
 
-# Profile-guided build. RC_PGO=generate builds an instrumented executable; running it (see
-# tools/pgo.sh) writes a profile, and RC_PGO=use rebuilds with it in the same build folder.
+# Profile-guided build. RC_PGO=generate builds an instrumented executable; running it (a scripted game run, for
+# example tools/play.sh replay) writes a profile, and RC_PGO=use rebuilds with it in the same build folder.
 # Only the runtime and VU1 code are instrumented: they hold the hot paths, and the game code
 # then compiles once for all modes.
 set(RC_PGO "off" CACHE STRING "off, generate or use")

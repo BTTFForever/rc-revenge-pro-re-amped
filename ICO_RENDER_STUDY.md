@@ -673,7 +673,7 @@ block), linked from the options menu and the pause menu, with variables whose fe
 existing choice and slider items cover every option type below. Constraints: items and strings must live in guest
 memory because the menu code follows guest pointers; adding a link changes RAM the oracle compares, so the extension
 must be absent in the oracle build and off under `RC_SHADOW`; the Europe build's menu functions that differ run
-recompiled, which is fine since they read the same structures. Config file: one TOML or INI beside `run.sh`,
+recompiled, which is fine since they read the same structures. Config file: one TOML or INI beside the executable,
 replacing the growing set of environment variables (`NOTES.md`, "Run-time switches"). Effort M for the mechanism,
 S per page.
 
