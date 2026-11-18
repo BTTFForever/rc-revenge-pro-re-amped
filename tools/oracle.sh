@@ -3,7 +3,8 @@
 # RAM dumps of the game (tools/capture_dumps.sh). Deterministic; no game window, threads or timers.
 #   tools/oracle.sh --only a,b,c [--level N]... [--cases N] [--seed S] [--jobs J]
 #   tools/oracle.sh --all [--level N]... [--cases N]     the reference suite: every function with a random setup
-# Dumps: build-oracle/dumps/level<N>.bin (default: every level dump there; menu.bin only if named with --level menu).
+# Dumps: build-oracle/dumps/level<N>.bin (default: every level dump there; menu.bin and tedit.bin, the Track Editor,
+# only if named with --level menu or --level tedit).
 # RC_VERSION=eu runs the Europe version's oracle (build-oracle-eu, its dumps and executable; see tools/version.sh).
 # Prints one line per function and a summary; functions in tools/oracle_known.txt show as "known" and do not fail. Exit 0 if nothing failed, 1 if something did, 2 on a usage error.
 set -u
@@ -13,7 +14,7 @@ oracle="$RC_ORACLE_BUILD/rc_oracle"
 dumps=(); only=""; all=0; cases=""; args=()
 while [ $# -gt 0 ]; do
     case "$1" in
-        --level) dumps+=("$RC_ORACLE_BUILD/dumps/$( [ "$2" = menu ] && echo menu || echo "level$2").bin"); shift 2 ;;
+        --level) dumps+=("$RC_ORACLE_BUILD/dumps/$(case "$2" in menu|tedit) echo "$2" ;; *) echo "level$2" ;; esac).bin"); shift 2 ;;
         --only) only="$2"; shift 2 ;;
         --all) all=1; shift ;;
         --cases) cases="$2"; shift 2 ;;
