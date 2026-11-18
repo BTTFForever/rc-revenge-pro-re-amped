@@ -473,13 +473,16 @@ namespace
 
         std::ofstream out(path, std::ios::trunc);
         const uint8_t *rdram = runtime->memory().getRDRAM();
+        // RC_DEBUG_DUMP_MS=<n> samples more often than every 5 s (tools/fps.py --ms n), for short events such as a save.
+        const char *msText = std::getenv("RC_DEBUG_DUMP_MS");
+        const int intervalMs = msText ? std::max(50, std::atoi(msText)) : 5000;
         for (unsigned tick = 0;; ++tick)
         {
-            std::this_thread::sleep_for(std::chrono::seconds(5));
+            std::this_thread::sleep_for(std::chrono::milliseconds(intervalMs));
 
             const EeKernelSnapshot kernel = runtime->eeScheduler().snapshot();
             out << "gameframes " << g_gameFrames.load(std::memory_order_relaxed) << "\n";
-            out << "=== t=" << (tick + 1) * 5 << "s running=" << kernel.runningThreadId
+            out << "=== t=" << (tick + 1) * intervalMs / 1000.0 << "s running=" << kernel.runningThreadId
                 << " eeCycle=" << kernel.eeCycle << " nextEvent=" << kernel.nextEventCycle << "\n";
 
             out << std::hex;
