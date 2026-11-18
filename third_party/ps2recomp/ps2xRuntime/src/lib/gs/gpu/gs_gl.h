@@ -142,6 +142,27 @@ namespace GSGL
         void (*Enable)(GLenum) = nullptr;
         void (*Disable)(GLenum) = nullptr;
         void (*MaxShaderCompilerThreads)(GLuint) = nullptr;
+        void (*ActiveTexture)(GLenum) = nullptr;
+        void (*FramebufferTexture2D)(GLenum, GLenum, GLenum, GLuint, GLint) = nullptr;
+        void (*BlendFuncSeparate)(GLenum, GLenum, GLenum, GLenum) = nullptr;
+        void (*BlendEquationSeparate)(GLenum, GLenum) = nullptr;
+        void (*BlendColor)(float, float, float, float) = nullptr;
+        void (*ColorMask)(unsigned char, unsigned char, unsigned char, unsigned char) = nullptr;
+        void (*DepthMask)(unsigned char) = nullptr;
+        void (*DepthFunc)(GLenum) = nullptr;
+        void (*ClearColor)(float, float, float, float) = nullptr;
+        void (*ClearDepth)(double) = nullptr;
+        void (*Clear)(GLbitfield) = nullptr;
+        void (*Scissor)(GLint, GLint, GLsizei, GLsizei) = nullptr;
+        void (*Uniform1i)(GLint, GLint) = nullptr;
+        void (*Uniform1f)(GLint, float) = nullptr;
+        void (*Uniform2f)(GLint, float, float) = nullptr;
+        void (*Uniform4i)(GLint, GLint, GLint, GLint, GLint) = nullptr;
+        void (*VertexAttribPointer)(GLuint, GLint, GLenum, unsigned char, GLsizei, const void *) = nullptr;
+        void (*EnableVertexAttribArray)(GLuint) = nullptr;
+        void (*ReadPixels)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void *) = nullptr;
+        void (*TextureBarrier)() = nullptr;
+        void (*PixelStorei)(GLenum, GLint) = nullptr;
         bool graphics = false;
     };
 

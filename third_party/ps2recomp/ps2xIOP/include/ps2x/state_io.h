@@ -178,7 +178,7 @@ namespace ps2x::state
         if constexpr (Ar::kLoading)
         {
             if (present)
-                value.emplace();
+                value = T{}; // Clang rejects emplace() for nested types with default member initializers
             else
                 value.reset();
         }

@@ -16,6 +16,10 @@
 #include <string>
 #include <vector>
 
+#if PS2X_EE_FIBERS
+extern void (*g_vu1KickObserver)(const uint8_t *, size_t); // Sees each PATH1 packet, for comparing VU1 programs.
+#endif
+
 #ifndef VU1_FORCE_INLINE
 #if defined(_MSC_VER)
 #define VU1_FORCE_INLINE __forceinline
@@ -945,6 +949,10 @@ inline void VU1Interpreter::finishXgkick()
             return;
         }
     }
+#if PS2X_EE_FIBERS
+    if (g_vu1KickObserver)
+        g_vu1KickObserver(m_xgkick.packet.data(), m_xgkick.totalBytes);
+#endif
     if (m_activeMemory)
         m_activeMemory->submitGifPacket(GifPathId::Path1, m_xgkick.packet.data(), m_xgkick.totalBytes);
     else if (m_activeGs)
@@ -3329,6 +3337,21 @@ struct VU1InterpreterAccess
             flags.mac = zeroBits | (sign << 4);
             flags.status = (zeroBits != 0u ? 1u : 0u) | (sign != 0u ? 2u : 0u);
             flags.extra = extra;
+        }
+        normalized = c.result;
+        return c.result;
+    }
+
+    // An FMAC whose flags no instruction can observe (see planDeadFlags in vu1_recomp).
+    template <FK K, bool Lean = true>
+    static VU1_FORCE_INLINE __m128 fmacN(VU1Interpreter &vu, Vu1FastCtx &ctx, uint64_t cycle, uint32_t dest, __m128 s, __m128 t, __m128 a,
+                                         __m128 &normalized)
+    {
+        const FmacCore c = fmacCore<K, Lean>(dest, s, t, a);
+        if (!c.safe)
+        {
+            FmacFlags flags;
+            return fmacExact<K, Lean>(vu, ctx, cycle, dest, c.s, c.t, a, c.result, normalized, flags);
         }
         normalized = c.result;
         return c.result;

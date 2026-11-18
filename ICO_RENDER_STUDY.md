@@ -3,7 +3,7 @@
 Study for P0 step 0 of `RENDERER_PLAN.md`, written 2026-11-18 from a read of both trees. Nothing was built or run.
 ico-pc is `../ico-pc` at commit 4e6224495 (MIT). Paths starting `port/`, `ico2/` or `docs/` are in ico-pc; paths
 starting `decomp/`, `overrides/`, `third_party/` or `tools/` are in this fork; the runtime is
-`~/PS2Recomp-sotc/ps2xRuntime`. Anything marked **guess** was not confirmed in code. GS register values were decoded
+`third_party/ps2recomp/ps2xRuntime` (then `~/PS2Recomp-sotc/ps2xRuntime`, vendored since). Anything marked **guess** was not confirmed in code. GS register values were decoded
 by hand from the constants in the sources; the decodings are mine and the survey should confirm them.
 
 How much of ico-pc was read: `docs/port/GS.md`, `TEXTURES.md` and the head of `ARCHITECTURE.md` in full; the model,

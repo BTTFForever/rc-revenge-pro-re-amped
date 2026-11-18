@@ -547,6 +547,9 @@ static void UploadFrame(Texture2D &tex, PS2Runtime *rt, uint32_t &outWidth, uint
         return;
     }
     s_lastPresentationTick = currentTick;
+    // With VU1 on its own thread the display registers can run ahead of the drawing,
+    // which shows a cleared buffer as a black frame. Let queued work finish first.
+    ps2x::asyncvif::sync(rt->memory());
     rt->gs().latchHostPresentationFrame();
     if (GSSharedPresent::Active())
     {
@@ -2292,8 +2295,14 @@ void PS2Runtime::Store16(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr, uint
     }
 }
 
+// For the decompilation's offline oracle (rc_oracle): sees each 32-bit store the runtime sends to hardware, and drops
+// it if the hook returns true. Null (the default) costs one test per hardware store.
+bool (*g_ps2HardwareStoreHook)(uint32_t address, uint32_t value) = nullptr;
+
 void PS2Runtime::Store32(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr, uint32_t value)
 {
+    if (g_ps2HardwareStoreHook && g_ps2HardwareStoreHook(vaddr, value))
+        return;
     ps2TraceGuestWrite(rdram, vaddr, 4u, value, 0u, "WRITE32", ctx);
     try
     {

@@ -18,6 +18,8 @@ public:
     explicit GSThreadedBackend(std::unique_ptr<GSRasterBackend> inner);
     ~GSThreadedBackend() override;
 
+    // Set before the GS is created to replace the default backend.
+    static std::unique_ptr<GSRasterBackend> (*s_backendFactory)();
     static std::unique_ptr<GSRasterBackend> MakeDefault();
     static void SetEnabledByDefault(bool enabled);
     static void SetGpuByDefault(bool enabled);

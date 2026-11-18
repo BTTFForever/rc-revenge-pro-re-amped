@@ -39,6 +39,8 @@ namespace ps2x::iop::detail
         void advanceTo(uint64_t cycle);
         void setAudioSink(std::function<void(std::span<const int16_t>)> sink) { m_audioSink = std::move(sink); }
         void flushAudio();
+        // Called when a voice or DMA transfer reaches an enabled IRQ address (IOP interrupt 9).
+        void setIrqSink(std::function<void()> sink) { m_irqSink = std::move(sink); }
 
         [[nodiscard]] uint32_t nextAddress(uint32_t core, uint32_t voice) const noexcept { return m_voices[core][voice].nextA; }
         [[nodiscard]] uint32_t loopAddress(uint32_t core, uint32_t voice) const noexcept { return m_voices[core][voice].loopStartA; }
@@ -105,6 +107,7 @@ namespace ps2x::iop::detail
         [[nodiscard]] uint16_t &reg(uint32_t offset) noexcept { return m_regs[(offset & 0x7FEu) >> 1u]; }
         [[nodiscard]] uint16_t reg(uint32_t offset) const noexcept { return m_regs[(offset & 0x7FEu) >> 1u]; }
 
+        void testIrqAddress(uint32_t first, uint32_t count);
         void keyOn(uint32_t core, uint32_t voice);
         void keyOff(uint32_t core, uint32_t voice);
         int32_t runVoice(uint32_t core, uint32_t voice);
@@ -124,5 +127,6 @@ namespace ps2x::iop::detail
         std::array<int16_t, 1024> m_audioBuffer{};
         size_t m_audioFrames = 0u;
         std::function<void(std::span<const int16_t>)> m_audioSink;
+        std::function<void()> m_irqSink;
     };
 }

@@ -927,6 +927,10 @@ struct GSGpuBackend::Impl
 
     void prewarmHardwareVariants()
     {
+        // Loading every variant ever used occupies the GS for seconds at startup, while
+        // draws fall back to the compute path. PS2X_GS_SHADER_PRELOAD=0 loads them on demand.
+        if (const char *preload = std::getenv("PS2X_GS_SHADER_PRELOAD"); preload && *preload == '0')
+            return;
         const std::filesystem::path path = hardwareManifestPath();
         if (path.empty())
             return;

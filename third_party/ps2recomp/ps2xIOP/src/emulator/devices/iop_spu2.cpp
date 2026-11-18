@@ -22,6 +22,11 @@ namespace ps2x::iop::detail
         constexpr uint32_t kTransferAddressLow = 0x1AAu;
         constexpr uint32_t kTransferData = 0x1ACu;
         constexpr uint32_t kAutoDma = 0x1B0u;
+        constexpr uint32_t kAttr = 0x19Au;
+        constexpr uint32_t kIrqAddressHigh = 0x19Cu;
+        constexpr uint32_t kIrqAddressLow = 0x19Eu;
+        constexpr uint16_t kAttrIrqEnable = 0x40u;
+        constexpr uint32_t kIrqInfo = 0x7C2u;
         constexpr uint32_t kEndFlags0 = 0x340u;
         constexpr uint32_t kEndFlags1 = 0x342u;
         constexpr uint32_t kStatus = 0x344u;
@@ -198,6 +203,8 @@ namespace ps2x::iop::detail
             return;
         }
         const uint32_t core = offset / kCoreStride;
+        if ((offset % kCoreStride) == kAttr && (value & kAttrIrqEnable) == 0u)
+            reg(kIrqInfo) = static_cast<uint16_t>(reg(kIrqInfo) & ~(4u << core));
         const uint32_t local = offset % kCoreStride;
         if (local < kVoiceParamsEnd)
         {
@@ -294,6 +301,7 @@ namespace ps2x::iop::detail
     {
         advanceTo(cycle);
         uint32_t address = m_transferAddress[core];
+        testIrqAddress(address, static_cast<uint32_t>(bytes / 2u));
         for (size_t i = 0; i + 2u <= bytes; i += 2u)
         {
             m_ram[address] = static_cast<uint16_t>(source[i] | (source[i + 1u] << 8));
@@ -306,6 +314,7 @@ namespace ps2x::iop::detail
     {
         advanceTo(cycle);
         uint32_t address = m_transferAddress[core];
+        testIrqAddress(address, static_cast<uint32_t>(bytes / 2u));
         for (size_t i = 0; i + 2u <= bytes; i += 2u)
         {
             destination[i] = static_cast<uint8_t>(m_ram[address]);
@@ -313,6 +322,31 @@ namespace ps2x::iop::detail
             address = (address + 1u) & kAddressMask;
         }
         m_transferAddress[core] = address;
+    }
+
+    // An address read by a voice or crossed by a transfer raises the IRQ of each core that
+    // has it enabled, with IRQINFO recording the core. Clearing the enable bit acknowledges it.
+    void IopSpu2::testIrqAddress(uint32_t first, uint32_t count)
+    {
+        bool raised = false;
+        for (uint32_t core = 0u; core < kCores; ++core)
+        {
+            const uint32_t base = core * kCoreStride;
+            if ((reg(base + kAttr) & kAttrIrqEnable) == 0u)
+                continue;
+            const uint16_t bit = static_cast<uint16_t>(4u << core);
+            if ((reg(kIrqInfo) & bit) != 0u)
+                continue;
+            const uint32_t irqAddress =
+                ((static_cast<uint32_t>(reg(base + kIrqAddressHigh)) << 16) | reg(base + kIrqAddressLow)) & kAddressMask;
+            if (((irqAddress - first) & kAddressMask) < count)
+            {
+                reg(kIrqInfo) = static_cast<uint16_t>(reg(kIrqInfo) | bit);
+                raised = true;
+            }
+        }
+        if (raised && m_irqSink)
+            m_irqSink();
     }
 
     void IopSpu2::advanceTo(uint64_t cycle)
@@ -469,6 +503,7 @@ namespace ps2x::iop::detail
         if (voice.sampleIndex >= kSamplesPerBlock)
         {
             const uint32_t block = voice.nextA & ~7u & kAddressMask;
+            testIrqAddress(block, 8u);
             if (voice.phase != kPhaseOff)
                 decodeBlock(core, index, block);
             voice.loopFlags = static_cast<uint8_t>(m_ram[block] >> 8);

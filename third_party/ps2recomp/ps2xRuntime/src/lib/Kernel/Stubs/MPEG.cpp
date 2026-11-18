@@ -601,8 +601,10 @@ namespace ps2_stubs
 
             const uint64_t extensionNumerator = static_cast<uint64_t>(frameRateExtensionN) + 1u;
             const uint64_t extensionDenominator = static_cast<uint64_t>(frameRateExtensionD) + 1u;
-            const uint64_t denominator = 1001u * frameRateNumerator * extensionNumerator;
-            const uint64_t numerator = (60000u * frameRateDenominator * extensionDenominator) << 32u;
+            // Fields per picture = field rate / picture rate (59.94 Hz NTSC, 50 Hz PAL).
+            const EeScheduler::FieldRate rate = EeScheduler::fieldRate();
+            const uint64_t denominator = rate.denominator * frameRateNumerator * extensionNumerator;
+            const uint64_t numerator = (rate.numerator * frameRateDenominator * extensionDenominator) << 32u;
             return std::max(kPictureClockOne, (numerator + denominator / 2u) / denominator);
         }
 

@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <exception>
 #include <functional>
 #include <mutex>
 #include <optional>
@@ -15,6 +16,12 @@
 #include <unordered_map>
 #include <variant>
 #include <vector>
+
+#if PS2X_EE_FIBERS
+extern "C" {
+typedef struct IcoFiber IcoFiber;
+}
+#endif
 
 // This exception is the EE equivalent of a longjmp to the dispatcher.  It is
 // not an error and must only be caught at EeScheduler::run().
@@ -293,6 +300,9 @@ public:
     void requestStop();
     void postEvent(EeEvent event);
     [[nodiscard]] bool checkpointDue(uint32_t cycles = kGeneratedCheckpointCycles) noexcept;
+    // While held, checkpoints still count cycles but never cut guest code short; events wait until the hold ends.
+    // For running a non-blocking function to completion from native code (the decompilation's comparison).
+    void holdCheckpoints(bool hold) noexcept { m_holdCheckpoints = hold; }
     void accountCycles(uint32_t cycles) noexcept;
     uint64_t skipIdleCycles() noexcept;
     [[nodiscard]] bool isExecutingGuest() const noexcept;
@@ -334,6 +344,21 @@ public:
         EeScheduler &m_scheduler;
         bool m_previous;
     };
+
+#if PS2X_EE_FIBERS
+    // Runs guest code at `target` from native code and returns when it returns. The native caller's
+    // frames survive anything the guest code does, because each guest thread has its own host stack.
+    // Clobbers $ra and the caller-saved registers, as a real call does.
+    void callGuestFromNative(R5900Context &ctx, uint32_t target);
+
+    // A scheduling point in native code, as a call in recompiled code is one: charges a call's cycles and, if an
+    // interrupt or a thread switch is due, lets the dispatcher run it before returning. For native loops that poll
+    // memory another thread or an interrupt changes. Does nothing off a fiber (the decompilation's offline oracle).
+    void checkpointFromNative(R5900Context &ctx);
+
+    // The context of the guest thread now running.
+    [[nodiscard]] R5900Context &runningContext();
+#endif
 
     [[nodiscard]] bool transferPending() const noexcept
     {
@@ -414,6 +439,14 @@ public:
 
     [[nodiscard]] EeKernelSnapshot snapshot() const;
     void setVBlankPeriodMicroseconds(uint32_t microseconds) noexcept;
+    // The display's field rate as a fraction of fields per second, from the video mode the game last set (GsSetCrt):
+    // 50/1 for PAL, 60000/1001 otherwise. For code that converts between fields and seconds (CD streaming, MPEG).
+    struct FieldRate
+    {
+        uint64_t numerator;
+        uint64_t denominator;
+    };
+    [[nodiscard]] static FieldRate fieldRate() noexcept;
     [[nodiscard]] std::chrono::microseconds vblankPeriod() const noexcept;
     [[nodiscard]] uint64_t vblankPeriodCycles() const noexcept;
     void publishSnapshot();
@@ -471,6 +504,26 @@ private:
     uint8_t *m_rdram = nullptr;
     std::array<std::deque<int>, kPriorityCount> m_readyQueues{};
     std::unordered_map<int, GuestThread> m_threads;
+
+#if PS2X_EE_FIBERS
+    // Guest code runs on one fiber per thread. The dispatcher, on the host stack, decides what runs next
+    // and leaves it here; the fiber runs it and yields.
+    struct FiberJob
+    {
+        void (*function)(uint8_t *, R5900Context *, PS2Runtime *) = nullptr;
+        R5900Context *context = nullptr;
+        bool insideInterrupt = false;
+    };
+    static void fiberEntry(void *scheduler);
+    bool executeFiberJob(); // True when the job blocked or switched threads.
+    static constexpr uint32_t kNativeReturnPc = 0xFFFFFFF0u; // No guest code has this address.
+    void resumeThreadFiber(const GuestThread &item);
+    void retireThreadFiber(const GuestThread &item);
+    FiberJob m_fiberJob{};
+    std::exception_ptr m_fiberError;
+    std::unordered_map<int, IcoFiber *> m_fibers;
+    std::vector<IcoFiber *> m_retiredFibers;
+#endif
     std::unordered_map<int, EeSemaphore> m_semaphores;
     std::unordered_map<int, EeEventFlag> m_eventFlags;
     std::unordered_map<int, EeAlarm> m_alarms;
@@ -494,6 +547,7 @@ private:
     mutable GuestThread *m_currentThread = nullptr;
     bool m_rescheduleRequested = false;
     bool m_unwinding = false;
+    bool m_holdCheckpoints = false;
     bool m_sharedVu0RandomValid = false;
     __m128 m_sharedVu0Random{};
     bool m_timeSliceExpired = false;

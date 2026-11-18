@@ -390,6 +390,8 @@ add_library(ps2_runtime STATIC
     src/lib/gs/gs_band_pool.cpp
     src/lib/gs/gpu/gs_gl.cpp
     src/lib/gs/gpu/gs_gpu_backend.cpp
+    src/lib/gs/gpu/gs_hw_backend.cpp
+    src/lib/gs/gpu/gs_texture_store.cpp
     src/lib/gs/gpu/gs_gpu_shaders.cpp
     src/lib/ps2_iop_host.cpp
     src/lib/ps2_async_vif.cpp

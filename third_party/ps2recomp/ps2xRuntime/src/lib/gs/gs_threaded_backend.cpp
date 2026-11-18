@@ -1,6 +1,7 @@
 #include "runtime/gs/gs_threaded_backend.h"
 #include "runtime/gs/gs_cpu_backend.h"
 #include "runtime/gs/gs_gpu_backend.h"
+#include "runtime/gs/gs_hw_backend.h"
 #include "runtime/gs/gs_shared_present.h"
 #include "ThreadPriority.h"
 #include "ThreadNaming.h"
@@ -77,12 +78,19 @@ GSThreadedBackend::~GSThreadedBackend()
         m_worker.join();
 }
 
+std::unique_ptr<GSRasterBackend> (*GSThreadedBackend::s_backendFactory)() = nullptr;
+
 std::unique_ptr<GSRasterBackend> GSThreadedBackend::MakeDefault()
 {
     const char *value = std::getenv("PS2X_GS_THREAD");
     const bool enabled = (value && *value) ? *value != '0' : s_enabledByDefault.load();
     const char *gpu = std::getenv("PS2X_GS_GPU");
     const bool useGpu = (gpu && *gpu) ? *gpu != '0' : s_gpuByDefault.load();
+    if (s_backendFactory)
+        return s_backendFactory();
+    const char *hw = std::getenv("PS2X_GS_HW");
+    if (hw && *hw == '1')
+        return std::make_unique<GSThreadedBackend>(std::make_unique<GSHwBackend>());
     if (useGpu)
         return std::make_unique<GSThreadedBackend>(std::make_unique<GSGpuBackend>());
     if (!enabled)

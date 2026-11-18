@@ -16,7 +16,7 @@ public:
 
 private:
     bool m_initialized = false;
-    bool m_visible = true;
+    bool m_visible = std::getenv("PS2X_DEBUG_PANEL") == nullptr || std::getenv("PS2X_DEBUG_PANEL")[0] != '0';
     bool m_showRegisters = true;
     unsigned int m_memoryAddress = 0x00100000u;
     unsigned int m_memoryBytes = 0x100u;

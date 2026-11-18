@@ -1,3 +1,4 @@
+#include "runtime/gs/gs_track_batch.h"
 #include "runtime/gs/gs_frontend.h"
 #include "runtime/gs/gs_cpu_backend.h"
 #include "runtime/gs/gs_recording.h"
@@ -663,14 +664,31 @@ void GS::latchHostPresentationFrame()
         request = buildPresentationRequestUnlocked();
     }
 
+    // The game writes DISPFB and then immediately queues the clear of the buffer it just
+    // stopped displaying. Read the display registers only once the queue has drained, and
+    // read again if a swap landed during the copy, or the cleared buffer gets presented.
     PresentationFrame frame{};
     {
         std::lock_guard<std::mutex> backendLock(m_backendLifetimeMutex);
         if (m_backend)
         {
-            m_backend->Flush();
-            m_backend->Sync(GSSyncReason::Presentation);
-            frame = m_backend->Present(request);
+            for (int attempt = 0; attempt < 3; ++attempt)
+            {
+                m_backend->Flush();
+                m_backend->Sync(GSSyncReason::Presentation);
+                {
+                    std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
+                    if (!m_privRegs)
+                        break;
+                    request = buildPresentationRequestUnlocked();
+                }
+                frame = m_backend->Present(request);
+
+                std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
+                if (!m_privRegs ||
+                    (m_privRegs->dispfb1 == request.dispfb1 && m_privRegs->dispfb2 == request.dispfb2))
+                    break;
+            }
         }
     }
 
@@ -747,110 +765,101 @@ bool GS::copyLatchedHostPresentationFrame(std::vector<uint8_t> &outPixels,
     return true;
 }
 
+bool GS::continueGifTag(const uint8_t *data, uint32_t sizeBytes, uint32_t &offset)
+{
+    GifTagProgress &tag = m_gifProgress;
+    if (tag.format == GIF_FMT_IMAGE)
+    {
+        const uint32_t available = sizeBytes > offset ? sizeBytes - offset : 0u;
+        const uint32_t imageBytes = std::min(tag.imageBytesLeft, available);
+        if (imageBytes != 0u)
+            processImageData(data + offset, imageBytes);
+        offset += imageBytes;
+        tag.imageBytesLeft -= imageBytes;
+        tag.active = tag.imageBytesLeft != 0u;
+        return !tag.active;
+    }
+
+    const bool packed = tag.format == GIF_FMT_PACKED;
+    const uint32_t itemBytes = packed ? 16u : 8u;
+    while (tag.loopsLeft != 0u)
+    {
+        while (tag.regIndex < tag.regCount)
+        {
+            if (offset + itemBytes > sizeBytes)
+                return false;
+            const uint64_t lo = loadLE64(data + offset);
+            if (packed)
+                writeRegisterPacked(tag.regs[tag.regIndex], lo, loadLE64(data + offset + 8));
+            else
+                writeRegisterUnlocked(tag.regs[tag.regIndex], lo);
+            offset += itemBytes;
+            ++tag.regIndex;
+        }
+        tag.regIndex = 0u;
+        --tag.loopsLeft;
+    }
+    if (!packed && (tag.totalRegWrites & 1u) != 0u)
+        offset += 8u; // REGLIST data is padded to a whole qword.
+    tag.active = false;
+    return true;
+}
+
 void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
 {
+    if (s_rawGifSink)
+        s_rawGifSink(data, sizeBytes);
     std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
     if (!data || sizeBytes < 16 || !m_backend)
         return;
 
-    if (tryProcessNativeImageUploadPacket(data, sizeBytes))
+    if (!m_gifProgress.active && tryProcessNativeImageUploadPacket(data, sizeBytes))
     {
         m_backend->Flush();
         return;
     }
 
-    PS2_IF_AGRESSIVE_LOGS({
-        const uint32_t packetIndex = s_debugGifPacketCount.fetch_add(1, std::memory_order_relaxed);
-        if (packetIndex < 48u)
-        {
-            const uint64_t tagLo = loadLE64(data);
-            const uint32_t nloop = static_cast<uint32_t>(tagLo & 0x7FFFu);
-            const uint8_t flg = static_cast<uint8_t>((tagLo >> 58) & 0x3u);
-            uint32_t nreg = static_cast<uint32_t>((tagLo >> 60) & 0xFu);
-            if (nreg == 0u)
-                nreg = 16u;
-            RUNTIME_LOG("[gs:gif] idx=" << packetIndex
-                                        << " size=" << sizeBytes
-                                        << " nloop=" << nloop
-                                        << " flg=" << static_cast<uint32_t>(flg)
-                                        << " nreg=" << nreg
-                                        << " ctx0fbp=" << m_ctx[0].frame.fbp
-                                        << " ctx1fbp=" << m_ctx[1].frame.fbp
-                                        << std::endl);
-        }
-    });
-
     uint32_t offset = 0;
+    if (m_gifProgress.active && !continueGifTag(data, sizeBytes, offset))
+    {
+        m_backend->Flush();
+        return;
+    }
+
     while (offset + 16 <= sizeBytes)
     {
-        uint64_t tagLo = loadLE64(data + offset);
-        uint64_t tagHi = loadLE64(data + offset + 8);
+        const uint64_t tagLo = loadLE64(data + offset);
+        const uint64_t tagHi = loadLE64(data + offset + 8);
         offset += 16;
 
         m_curQ = 1.0f;
 
-        uint32_t nloop = static_cast<uint32_t>(tagLo & 0x7FFF);
+        const uint32_t nloop = static_cast<uint32_t>(tagLo & 0x7FFF);
         uint8_t flg = static_cast<uint8_t>((tagLo >> 58) & 0x3);
+        if (flg == 3u)
+            flg = GIF_FMT_IMAGE; // FLG=3 behaves exactly like IMAGE.
         uint32_t nreg = static_cast<uint32_t>((tagLo >> 60) & 0xF);
         if (nreg == 0)
             nreg = 16;
 
         recordGifTagDebugEventUnlocked(sizeBytes, nloop, flg, nreg);
 
-        bool pre = ((tagLo >> 46) & 1) != 0;
-        if (pre)
-        {
+        if (((tagLo >> 46) & 1) != 0)
             writeRegisterUnlocked(GS_REG_PRIM, (tagLo >> 47) & 0x7FF);
-        }
 
-        uint8_t regs[16];
+        GifTagProgress &tag = m_gifProgress;
+        tag = {};
+        tag.active = true;
+        tag.format = flg;
+        tag.loopsLeft = nloop;
+        tag.regCount = nreg;
+        tag.totalRegWrites = nloop * nreg;
+        tag.imageBytesLeft = nloop * 16u;
         for (uint32_t i = 0; i < nreg; ++i)
-            regs[i] = static_cast<uint8_t>((tagHi >> (i * 4)) & 0xF);
+            tag.regs[i] = static_cast<uint8_t>((tagHi >> (i * 4)) & 0xF);
 
-        if (flg == GIF_FMT_PACKED)
-        {
-            for (uint32_t loop = 0; loop < nloop; ++loop)
-            {
-                for (uint32_t r = 0; r < nreg; ++r)
-                {
-                    if (offset + 16 > sizeBytes)
-                    {
-                        m_backend->Flush();
-                        return;
-                    }
-                    uint64_t lo = loadLE64(data + offset);
-                    uint64_t hi = loadLE64(data + offset + 8);
-                    offset += 16;
-                    writeRegisterPacked(regs[r], lo, hi);
-                }
-            }
-        }
-        else if (flg == GIF_FMT_REGLIST)
-        {
-            for (uint32_t loop = 0; loop < nloop; ++loop)
-            {
-                for (uint32_t r = 0; r < nreg; ++r)
-                {
-                    if (offset + 8 > sizeBytes)
-                    {
-                        m_backend->Flush();
-                        return;
-                    }
-                    writeRegisterUnlocked(regs[r], loadLE64(data + offset));
-                    offset += 8;
-                }
-            }
-            if ((nloop * nreg) & 1)
-                offset += 8;
-        }
-        else if (flg == GIF_FMT_IMAGE)
-        {
-            uint32_t imageBytes = nloop * 16;
-            if (offset + imageBytes > sizeBytes)
-                imageBytes = sizeBytes - offset;
-            processImageData(data + offset, imageBytes);
-            offset += imageBytes;
-        }
+        if (!continueGifTag(data, sizeBytes, offset))
+            break;
     }
     m_backend->Flush();
 }
@@ -1189,6 +1198,19 @@ void GS::writeRegister(uint8_t regAddr, uint64_t value)
 
 void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
 {
+#if PS2X_EE_FIBERS
+    if (regAddr == kGSTrackBatchRegister)
+    {
+        if (m_backend)
+        {
+            GSPrimitiveBatch batch = buildDrawBatch(1);
+            batch.vertexCount = kGSTrackBatchMarker;
+            std::memcpy(&batch.vertices[0].z, &value, sizeof(value));
+            m_backend->Submit(batch);
+        }
+        return;
+    }
+#endif
     const bool interestingReg =
         regAddr == GS_REG_PRIM ||
         regAddr == GS_REG_RGBAQ ||

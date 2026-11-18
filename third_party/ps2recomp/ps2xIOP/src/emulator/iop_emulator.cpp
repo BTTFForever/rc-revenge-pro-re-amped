@@ -32,6 +32,7 @@ namespace ps2x::iop::detail
     namespace
     {
         constexpr uint32_t kRamSize = IopMemory::RamSize;
+        constexpr int kSpu2InterruptLine = 9;
         constexpr uint32_t kKernelHeapBase = IopMemory::HeapBase;
         constexpr uint32_t kKernelHeapLimit = IopMemory::HeapLimit;
         constexpr uint32_t kCallStackBase = kKernelHeapLimit;
@@ -140,6 +141,7 @@ namespace ps2x::iop::detail
             sio2.reset();
             memory.attachSio2(&sio2);
             spu2.reset();
+            spu2.setIrqSink([this]() { pendingDmaInterrupts[kSpu2InterruptLine] = totalCycles; });
             spu2.setAudioSink([this](std::span<const int16_t> samples) { host.submitAudio(samples); });
             host.resetAudio();
             memory.attachSpu2(&spu2, &totalCycles);

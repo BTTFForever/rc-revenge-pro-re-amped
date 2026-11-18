@@ -10,6 +10,7 @@
 #include <map>
 #include <regex>
 #include <set>
+#include <tuple>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -738,7 +739,7 @@ namespace
     std::string referencePaths(std::string text)
     {
         if (!kLeanFmac)
-            text = std::regex_replace(text, std::regex(R"(\b(fmac[VF]?<FK::\w+)>)"), "$1, false>");
+            text = std::regex_replace(text, std::regex(R"(\b(fmac[VFN]?<FK::\w+)>)"), "$1, false>");
         if (!kLeanNorm)
             text = std::regex_replace(text, std::regex(R"(\b(vnorm|qN|iN)\()"), "$1<false>(");
         return text;
@@ -763,6 +764,134 @@ namespace
         std::set<uint32_t> segs;
         bool aggregateFlags = true;
         bool cacheRegisters = true;
+        std::vector<bool> deadFlags;
+
+        bool writesFlags(const Pair &p) const
+        {
+            const RegViewProbe probe;
+            const UpperEmit up = upperEmit(p.d.upper);
+            return up.isFmac && !up.generic;
+        }
+
+        // Status and MAC readers among the lower instructions.
+        static bool readsStatusFlag(const Pair &p)
+        {
+            const uint32_t op = (p.d.lower >> 25) & 0x7Fu;
+            return !p.d.iBit && op >= 0x14u && op <= 0x17u;
+        }
+
+        static bool readsMacFlag(const Pair &p)
+        {
+            const uint32_t op = (p.d.lower >> 25) & 0x7Fu;
+            return !p.d.iBit && (op == 0x18u || op == 0x1Au || op == 0x1Bu);
+        }
+
+        // True if a MAC reader can see the flags of an FMAC before a later FMAC's flags have landed for certain.
+        // A later FMAC issued at pair k has landed by pair k + 4, since every pair takes at least one cycle. The state is
+        // (pair, pending branch target or -1, pairs until the later FMAC has landed or -1).
+        bool flagsVisible(uint32_t fmacIndex, uint32_t count) const
+        {
+            struct State { uint32_t index; int pending; int land; };
+            std::vector<State> work;
+            std::set<std::tuple<uint32_t, int, int>> seen;
+            bool unknown = false;
+            const auto successors = [&](uint32_t index, int pending, int land)
+            {
+                if (index >= count)
+                {
+                    unknown = true;
+                    return;
+                }
+                const Pair &p = pairs[index];
+                if (p.fallback || p.reserved)
+                {
+                    unknown = true;
+                    return;
+                }
+                if (pending != -1 && (p.branch || p.d.eBit))
+                {
+                    unknown = true; // A branch or end in a delay slot: not modelled here.
+                    return;
+                }
+                const uint32_t fall = index + 1u;
+                if (pending == -2)
+                    return; // The delay slot of an E-bit pair ends the program.
+                if (pending >= 0)
+                {
+                    work.push_back({static_cast<uint32_t>(pending), -1, land});
+                    return;
+                }
+                if (p.d.eBit)
+                {
+                    work.push_back({fall, -2, land});
+                    return;
+                }
+                if (p.branch)
+                {
+                    if (p.dynamic)
+                    {
+                        unknown = true;
+                        return;
+                    }
+                    work.push_back({fall, static_cast<int>(p.target / 8u), land});
+                    if (p.conditional)
+                        work.push_back({fall, -1, land});
+                    return;
+                }
+                work.push_back({fall, -1, land});
+            };
+            // The FMAC's own pair may be a delay slot, so what follows it depends on the pair before.
+            successors(fmacIndex, -1, -1);
+            if (fmacIndex > 0u && pairs[fmacIndex - 1u].branch)
+            {
+                if (pairs[fmacIndex - 1u].dynamic)
+                    return true;
+                successors(fmacIndex, static_cast<int>(pairs[fmacIndex - 1u].target / 8u), -1);
+            }
+            else if (fmacIndex > 0u && pairs[fmacIndex - 1u].d.eBit)
+                successors(fmacIndex, -2, -1);
+            while (!work.empty() && !unknown)
+            {
+                const State state = work.back();
+                work.pop_back();
+                if (state.land == 0)
+                    continue;
+                if (!seen.insert({state.index, state.pending, state.land}).second)
+                    continue;
+                if (state.index >= count)
+                    return true;
+                const Pair &p = pairs[state.index];
+                if (readsMacFlag(p))
+                    return true;
+                int land = state.land > 0 ? state.land - 1 : -1;
+                if (writesFlags(p) && land < 0)
+                    land = 4;
+                successors(state.index, state.pending, land);
+            }
+            return unknown;
+        }
+
+        void planDeadFlags(uint32_t count, std::map<std::string, uint32_t> &stats)
+        {
+            deadFlags.assign(pairs.size(), false);
+            if (!settingEnabled("PS2X_VU1_DEAD_FLAGS"))
+                return;
+            // Sticky STATUS bits gather every FMAC's result, so a program that reads STATUS keeps all of them.
+            for (uint32_t index = 0; index < count; ++index)
+                if (readsStatusFlag(pairs[index]))
+                    return;
+            for (uint32_t index = 0; index < count; ++index)
+            {
+                if (pairs[index].fallback || !writesFlags(pairs[index]))
+                    continue;
+                ++stats["fmacs"];
+                if (!flagsVisible(index, count))
+                {
+                    deadFlags[index] = true;
+                    ++stats["fmacs without flags"];
+                }
+            }
+        }
 
         bool inBlock(uint32_t pc) const
         {
@@ -1055,7 +1184,10 @@ namespace
             std::string fmacValue = up.value;
             std::string fmacDecl = "__m128 un;";
             std::string fmacAfter;
-            if (known && up.isFmac)
+            const bool flagsDead = up.isFmac && !up.generic && p.pc / 8u < deadFlags.size() && deadFlags[p.pc / 8u];
+            if (flagsDead)
+                fmacValue = "fmacN" + up.fmacCall + ")";
+            else if (known && up.isFmac)
             {
                 known->fmacPos.push_back(known->pos);
                 if (known->pos == known->lastCollapsed)
@@ -1452,6 +1584,8 @@ namespace
             if (p.branch && !p.dynamic)
                 emitter.isTarget[p.target / 8u] = true;
         }
+
+        emitter.planDeadFlags(count, stats);
 
         std::vector<bool> spanned(count + 1u, false);
         for (uint32_t index = 0; index < count; ++index)

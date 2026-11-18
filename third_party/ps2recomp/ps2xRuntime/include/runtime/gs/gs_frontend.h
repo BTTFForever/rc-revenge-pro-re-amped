@@ -107,6 +107,8 @@ public:
     void setRasterBackend(std::unique_ptr<GSRasterBackend> backend);
 
     void processGIFPacket(const uint8_t *data, uint32_t sizeBytes);
+    // When set, receives every GIF packet before it is parsed.
+    static inline void (*s_rawGifSink)(const uint8_t *data, uint32_t sizeBytes) = nullptr;
     bool processNativePackedGIFPacket(const uint8_t *data, uint32_t sizeBytes);
     void uploadImageNative(uint64_t bitbltbuf,
                            uint64_t trxpos,
@@ -192,6 +194,22 @@ private:
 
     uint8_t m_curR = 0x80, m_curG = 0x80, m_curB = 0x80, m_curA = 0x80;
     float m_curQ = 1.0f;
+
+    // A GIF tag's data can span DMA transfers, e.g. a header transfer ending in an IMAGE
+    // tag followed by a transfer holding only the pixels.
+    struct GifTagProgress
+    {
+        bool active = false;
+        uint8_t format = 0;
+        uint32_t loopsLeft = 0;
+        uint32_t regCount = 0;
+        uint32_t regIndex = 0;
+        uint32_t totalRegWrites = 0;
+        uint32_t imageBytesLeft = 0;
+        uint8_t regs[16]{};
+    };
+    GifTagProgress m_gifProgress;
+    bool continueGifTag(const uint8_t *data, uint32_t sizeBytes, uint32_t &offset);
     float m_curS = 0.0f, m_curT = 0.0f;
     uint16_t m_curU = 0, m_curV = 0;
     uint8_t m_curFog = 0;

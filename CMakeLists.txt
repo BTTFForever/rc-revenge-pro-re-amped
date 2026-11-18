@@ -1,5 +1,6 @@
-# RC Revenge Pro (SLUS-20153) built against the Shadow of the Colossus PS2Recomp fork:
-# https://github.com/LightVelox/PS2Recomp @ d06a4ab
+# RC Revenge Pro (SLUS-20153, SLES-50077) built against the Shadow of the Colossus PS2Recomp fork
+# (https://github.com/LightVelox/PS2Recomp @ d06a4ab plus local changes), vendored in third_party/ps2recomp.
+# tools/setup.sh goes from a game disc to a build; see README.md.
 cmake_minimum_required(VERSION 3.21)
 project(RCRevengeProFork C CXX)
 
@@ -9,15 +10,20 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-set(PS2RECOMP_DIR "$ENV{HOME}/PS2Recomp-sotc" CACHE PATH "PS2Recomp fork checkout")
+# The runtime (third_party/ps2recomp/VENDORED.md). A normal variable, so it overrides a PS2RECOMP_DIR left in an older cache.
+set(PS2RECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ps2recomp")
 
-foreach(dep raylib imgui rlimgui)
-    string(TOUPPER ${dep} DEP)
-    set(src "$ENV{HOME}/PS2Recomp/out/build/_deps/${dep}-src")
-    if(EXISTS "${src}")
-        set(FETCHCONTENT_SOURCE_DIR_${DEP} "${src}" CACHE PATH "")
-    endif()
-endforeach()
+# The runtime fetches raylib, imgui and rlImGui with FetchContent. RC_FETCH_CACHE can name a folder that already holds
+# <name>-src checkouts (for example another build's _deps) to build offline.
+set(RC_FETCH_CACHE "" CACHE PATH "Optional folder with raylib-src, imgui-src and rlimgui-src checkouts")
+if(RC_FETCH_CACHE)
+    foreach(dep raylib imgui rlimgui)
+        string(TOUPPER ${dep} DEP)
+        if(EXISTS "${RC_FETCH_CACHE}/${dep}-src")
+            set(FETCHCONTENT_SOURCE_DIR_${DEP} "${RC_FETCH_CACHE}/${dep}-src" CACHE PATH "")
+        endif()
+    endforeach()
+endif()
 
 set(PS2X_ENABLE_AGRESSIVE_LOGS OFF CACHE BOOL "")
 set(PS2X_ENABLE_SCCACHE OFF CACHE BOOL "")

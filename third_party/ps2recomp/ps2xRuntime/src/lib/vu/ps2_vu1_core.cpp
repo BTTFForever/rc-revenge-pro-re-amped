@@ -6,6 +6,8 @@
 #define VU1_FORCE_INLINE inline
 #include "ps2_vu1_impl.inl"
 
+void (*g_vu1KickObserver)(const uint8_t *, size_t) = nullptr;
+
 #include <algorithm>
 #include <bit>
 #include <cfenv>
@@ -1180,6 +1182,8 @@ bool VU1InterpreterAccess::runVerifiedWith(VU1Interpreter &vu, uint8_t *vuCode, 
     packetSink = nullptr;
 
     std::string diff;
+    // Set when the code was generated with dead-flag analysis: those MAC and STATUS values are not produced.
+    static const bool kIgnoreFlags = std::getenv("PS2X_VU1_VERIFY_NOFLAGS") != nullptr;
     const auto note = [&diff](const std::string &text)
     {
         if (diff.size() < 1500u)
@@ -1205,11 +1209,11 @@ bool VU1InterpreterAccess::runVerifiedWith(VU1Interpreter &vu, uint8_t *vuCode, 
         note("r");
     if (a.pc != b.pc)
         note("pc");
-    if (a.mac != b.mac)
+    if (!kIgnoreFlags && (a.mac != b.mac))
         note("mac");
     if (a.clip != b.clip)
         note("clip");
-    if (a.status != b.status)
+    if (!kIgnoreFlags && a.status != b.status)
         note("status");
     if (a.ebit != b.ebit || a.haltAfterDelaySlot != b.haltAfterDelaySlot || a.stoppedByD != b.stoppedByD ||
         a.stoppedByT != b.stoppedByT)
@@ -1247,7 +1251,7 @@ bool VU1InterpreterAccess::runVerifiedWith(VU1Interpreter &vu, uint8_t *vuCode, 
         std::sort(entries.begin(), entries.end());
         return entries;
     };
-    if (!realEnded && flagEntries(vu) != flagEntries(*shadow))
+    if (!kIgnoreFlags && !realEnded && flagEntries(vu) != flagEntries(*shadow))
         note("flags");
     const auto scalarEqual = [](const auto &x, const auto &y)
     {
