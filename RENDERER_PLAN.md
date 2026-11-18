@@ -148,6 +148,27 @@ ico-pc also replaces the PS2's other hardware layers and has a full settings men
 7. **Saves**: the card already works; later, PCSX2-layout folders and an importer for real PS2 saves.
 The Fable study (`ICO_RENDER_STUDY.md`) covers how ico-pc did each of these and what RC would need.
 
+## End state: no PS2 hardware emulation (user, 2026-11-18)
+The long-term goal is a PC port with no emulation of PS2 hardware anywhere, reached gradually after the game code is
+native. What is still emulated, and what replaces it:
+
+| Emulated today | Where | Replaced by |
+|---|---|---|
+| GS (graphics chip) | runtime GS front end + GL backends | the native Vulkan renderer (this plan, P1-P3) |
+| VU1 microprograms | runtime VU1 recompiler/threads | shaders and C++ in the renderer (track, env, skin done as references; water, TERdr, Rdr_VUShape) |
+| VIF/DMA/GIF transfers | runtime DMA and GIF paths | gone with the renderer: the game's packet buffers read on the host (ico-pc style) |
+| IOP + SPU2 (sound, music streaming) | `ps2xIOP` emulator, SPU2 | a host sound driver behind the game's RPCs and a software mixer (Beyond graphics, item 5) |
+| IPU/MPEG (movies) | runtime MPEG/IPU stubs | a host movie player (item 6) |
+| CD/DVD streaming | runtime CD stubs, IOP side | host file reads behind the game's disc calls (keeping the disc's timing where the game depends on it) |
+| SIF RPC, IOP modules | runtime SIF/IOP | host servers for each RPC the game uses (sound, music, card, pad) |
+| EE kernel: threads, semaphores, interrupts, vblank, timers | runtime EeScheduler (fibers) | a small host kernel layer as ico-pc's `port/platform` (likely the last to change; it is HLE already, not hardware emulation) |
+| Memory card, pad | runtime HLE stubs | host libmc/libpad over folders and SDL3 (items 1 and 7) |
+| SDK libraries (libgraph, libdma, libvu0, libc internals) | recompiled code | native where reached (SDK plan), stubs where the renderer/host layers make them dead |
+| EE recompiled code | PS2Recomp output | native decompiled code (1,710 of 2,486 now; game code nearly complete) |
+
+When every row is done the recompiled output and the runtime's emulation can be dropped from the build; the
+oracle/shadow tooling stays available against the recompiled reference as a separate test build.
+
 ## Delegation
 P0 ico-pc study: Fable (it decides the architecture). P0 survey and captures: Opus. P0 window spike and Vulkan scaffolding: Opus. P1 interface design: Fable (the
 architecture decisions are the hardest part and shape everything after), implementation in batches by Opus with the
