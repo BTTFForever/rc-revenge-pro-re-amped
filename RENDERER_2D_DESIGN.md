@@ -3,7 +3,7 @@
 Designed 2026-11-20 for `RENDERER_PLAN.md` step 7 (GIF reader for the 2D packet K1, the `gif2d` consumer, Vulkan
 drawing of K1). "Build batches" at the end is the work order for the Opus build agent. Read with
 `RENDERER_FRAME_RECORD.md` (sections 9, 10.2, 17, 18), `RENDERER_SURVEY.md` and `ICO_RENDER_STUDY.md` 1.6. Paths are
-relative to the repository; the runtime is `third_party/ps2recomp/ps2xRuntime` (`RT/`); "the reference" is the
+relative to the repository; batch 1 as built: section 14. The runtime is `third_party/ps2recomp/ps2xRuntime` (`RT/`); "the reference" is the
 runtime's software GS (`RT/src/lib/gs/gs_cpu_raster.cpp` and its headers), the machine every `REFI` picture comes
 from. Nothing here touches a game function or the runtime.
 
@@ -754,3 +754,160 @@ be checked tightly.
   checked only through its effect on later draws and through check (b)'s GS memory comparison.
 - Sampling the K1 fragment shader at more than one sample per pixel (P3): the record and the weights are
   resolution independent (`e_i` at a fractional sample point), the coverage guard is not.
+
+## 14. Batch 1 as built (2026-11-20): reader, draw list, encoder
+
+Section 11 item 1. Built: `render/gs2d/` (library `rc_gs2d` on `rc_tex`, namespace `rc::rd`) and `rc_replay --consumer
+gif2d` (`tools/rc_replay/gif2d.{h,cpp}`); the `emu` consumer gained a kick substitution hook. Usage: `NOTES.md`, "The
+2D packet: reader, draw list, encoder". Nothing of it is linked into the game or the oracle (`ninja -n rc_revenge_pro
+rc_oracle` has nothing to compile or link after the change, both trees), the runtime and every game function are
+untouched: normal play and the oracle cannot have changed and were not re-run.
+
+```
+render/gs2d/gs_state.h          GsState (128 bytes), GsVertex (32), GsReg / GsGroup / DrawOp / PrimKind, DrawCmd, DrawList
+render/gs2d/gs_plan.{h,cpp}     GsPlan planState(const GsState &), the guards, gsSourcePart, flatSourceExact
+render/gs2d/gif2d_reader.{h,cpp} Gif2dReader: the consumer (TexShadow + TextureCache inside), register file with
+                                provenance, primitive assembly, the draw list per cycle; path1Writes
+render/gs2d/gs2d_encode.{h,cpp} encodeDrawList: a list range back into PACKED A+D GIF packets, the register file restored
+tools/rc_replay/gif2d.{h,cpp}   Gif2dCheck: checks (a) and (b), the section 3 tables, planted faults
+```
+
+### 14.1 Changes to the design, and why
+
+1. **`GsState` is 128 bytes with `reserved[14]`** (the fields of 2.1 add up to 124; the struct is padded to 8, so the
+   padding is made explicit and zeroed: the reader compares states with `memcmp`). **`prim`'s type is the primitive
+   class** (point 0, line 1 for lines and line strips, triangle 3 for lists, strips and fans, sprite 6): triangles
+   from a strip are stored as separate triangles anyway, and the re-encoder writes `prim` as PRIM before each
+   primitive. `known` is a bit per register group (`GsGroup`: FRAME ... DTHE, 16 groups), set where every register of
+   the group the draw read came from the stream.
+2. **`GsVertex`'s `reserved` word holds the fog byte and a flag "sent as XYZF"**, so the re-encoder writes back
+   exactly what was sent (`XYZF2` with its F, or `XYZ2` with 32-bit Z). No XYZF vertex occurs in K1 or the clear.
+3. **`SCREEN_PRIMS` kinds 0 (points) and 3 (sprites other than the clear)** are emitted rather than dropped (never seen
+   on PATH3: 0 in all dumps), so check (b) re-encodes everything the reader saw. **States a guard marks as not
+   drawable are emitted with `STATE` flag bit 0** (and the replay drops them) instead of being left out of the list;
+   the reader itself drops only a draw with FRAME.FBW 0 (2.2) and a draw that needs an unknown register with no
+   default (3.1's "none"). Scope commands: a = tag kind, b = tag sequence number, c = the tag's guest address, payload
+   the tag's.
+4. **`GsPlan` grew** `ks`, `kd` (the coefficients of Cs and Cd as forms in F, after FIX 0 or 0x80 made them
+   integers), `abcd` (the ALPHA selectors the shader uses for the integer source term, 0 = Cs where the blend is off
+   by ABE 0 or by PABE under its precondition), `alphaByBlend` (5.2's RGB_ONLY-with-ZMSK case) and `guards` (a bit per
+   guard that fired); `unsupported` is the guard that drops the draw. Two guards were added: `ZTE` (ZTE 0: the
+   reference ignores it and applies ZTST; drawn the same way) and the 16-bit Z formats under `ZBUF`. A destination
+   coefficient that cannot be expressed (1+F, -F, 2, -1) is drawn as its source part with blend off (`BLEND_FORM`).
+   The plan's blend classification reproduces 4.2's table row for row (14.3).
+5. **`TEXTURE` commands are emitted once per texture generation for the reader's life**, not per list (2's "has not
+   sent yet" read as "ever"): `forgetSentTextures()` makes the next lists self-contained again. Over the USA `s5`
+   dumps 236 `TEXTURE` commands (8.3 MB) in 22,000 cycles.
+6. **The re-encoder restores the register file at the end of each kick.** The design's encoding (state writes,
+   PRIM, RGBAQ, ST, XYZ2 per vertex) leaves registers different from the original stream's (PRMODECONT, TEXA and
+   TEX0 written as the state holds them, XYZ3 never written, the last RGBAQ/ST...), and `emu --verify` checks the
+   register file before every kick. So after the draws the encoder writes back every register whose value its own
+   writes left different from the reader's file after the kick (which check (a) proves equal to the recorded one):
+   vertex registers under PRIM type 7 (the reference takes their values into its registers and draws nothing for the
+   reserved type), then the others, then PRIM and PRMODECONT. TRXDIR, HWREG, SIGNAL, FINISH and LABEL have side
+   effects and would only be counted (never needed: 0 in all dumps). UV is written per vertex as well.
+7. **The emulated machine takes the substitute through `PS2Memory::submitGifPacket(Path3)` under the kick's MXCSR**
+   (the software GS's float arithmetic depends on it), in place of the DMA kick; the kick's recorded GIF hash is not
+   checked for a substituted kick (it is counted). Every drawing PATH3 kick of every dump was substituted: no kick
+   both uploaded and drew (the reader counts them and would leave them to the DMA).
+8. **The registers a VIF1 kick changes were measured** (2.2 left them to the reader): over the 67 exact dumps PRIM,
+   RGBAQ, ST, XYZ2, XYZ3, TEX0_1, TEX1_1, TEXA, SCISSOR_1, ALPHA_1, TEST_1, PABE and ZBUF_1 differ before and after a
+   VIF1 kick; `path1Writes` is that set plus UV, XYZF2, XYZF3 and FOG. A channel 1 kick makes them unknown; every
+   other register is compared by check (a) across VIF1 kicks too (stronger than "replaced by the next kick's file"),
+   and none differed.
+9. **2.2's "K1 depends on two registers PATH3 never writes" is not the whole story.** Draws that needed a seeded
+   register after the dump's first clear (`s5`; "wrong" = the 3.1 default differs or there is none):
+
+   | register | USA primitives (wrong by default) | Europe | where |
+   |---|---|---|---|
+   | ZBUF_1 | 127,862 (9,780) | 104,322 (6) | every race cycle's HUD (value 0x10000a0, the default); USA front end and boot: the CT32 backdrop with ZMSK |
+   | FBA_1 | 645,830 (0) | 522,932 (0) | everything: never written on PATH3, always 0 |
+   | SCISSOR_1 | 170,709 (170,709) | 147,372 (147,372) | Track Editor (no default exists) |
+   | TEST_1 | 62,237 (62,237) | 54,822 (54,822) | Track Editor lines (no default) |
+   | TEX1_1 | 99,612 (99,612) | 86,380 (86,240) | Track Editor (0xf6000000160) |
+   | TEXA | 56 (0) | 96 (0) | the CT16 quad, as designed |
+   | CLAMP_1 | 10 (8) | 0 | boot, before PATH3 first writes it; cover nothing |
+   | PABE | 3 (0) | 3 (0) | boot |
+
+   Before the dump's first clear: 352 / 299 primitives (FRAME, XYOFFSET... at a boot or a dump's start, as designed).
+   So K1 inherits from PATH1 (the 3D packet drawn just before it in the cycle): ZBUF_1 on every race cycle's HUD (the
+   value is 3.1's default) and on the front end's backdrop (USA: ZMSK set, which the default does not give), and in
+   the Track Editor SCISSOR_1, TEST_1 and TEX1_1 (the grid lines' scissor 3..637 x 3..237 in the USA version, their
+   alpha test 0x2f, the texture filter K -10). FBA is never written on PATH3 (0, the default) and CLAMP not before 8-10
+   primitives covering nothing. **Consequence for batch 5** (live, before step 8 reads PATH1): with only 3.1's defaults
+   the front-end backdrop would be drawn with Z writes it does not make and the Track Editor's 2D with the wrong
+   scissor, alpha test and filter. Batch 5 needs PATH1's register writes: either step 8 first, or the live reader
+   seeds from the runtime's register shadow (`ps2x::capture::g_gsRawRegs`, kept by the GS front end) at each PATH3
+   kick, which is exact only where the GS is synchronous with the EE (exact mode) — a decision for batch 5.
+10. **The `reg` fault drops every write of one register for a cycle** rather than "write n of the cycle": a single
+    lost write of a vertex register is overwritten before the kick ends and only (b) can see it (it did: 14 pixels);
+    a register lost for the cycle shows in (a) at the next kick.
+
+### 14.2 Checks and results
+
+`rc_replay <dump> --consumer gif2d --with-emu --verify --quiet` on all 67 exact dumps (this runs (a) and (b) in one
+pass; (a) alone, without `--with-emu`, gives the same (a) numbers in about a second a dump). All 67 `PASS`; 16 minutes
+for the lot on 7 cores.
+
+| | USA s5 (28) | Europe s5 (27) | USA s6 (2) | Europe s6 (2) | USA b4 (4) | Europe b4 (4) |
+|---|---|---|---|---|---|---|
+| cycles | 22,000 | 19,300 | 1,300 | 1,300 | 874 | 845 |
+| (a) values compared / kicks / differ | 76,654,573 / 785,929 / 0 | 68,996,065 / 707,323 / 0 | 2,363,281 / 24,295 / 0 | 2,769,964 / 28,445 / 0 | 2,896,060 / 29,697 / 0 | 2,764,513 / 28,350 / 0 |
+| (b) drawing kicks encoded = substituted | 43,145 | 37,864 | 2,080 | 2,082 | 1,679 | 1,624 |
+| (b) primitives re-encoded (STATE writes) | 645,858 (137,884) | 522,959 (104,768) | 176,605 (38,933) | 118,650 (24,315) | 27,751 (6,160) | 32,084 (7,469) |
+| registers written back at kick ends; left different | 176,415; 0 | 152,881; 0 | 8,062; 0 | 8,117; 0 | 7,308; 0 | 7,058; 0 |
+| emu: register files before a kick | 785,929 of 785,929 | 707,323 / 707,323 | 24,295 / 24,295 | 28,445 / 28,445 | 29,697 / 29,697 | 28,350 / 28,350 |
+| emu: picture hashes; stored pictures (REFI bytes) | 22,000 / 22,000; - | 19,300 / 19,300; - | 1,300; 1,300 / 1,300 | 1,300; 1,300 / 1,300 | 874; 130 / 130 | 845; 130 / 130 |
+| emu: GS memory at keyframes; final | 62 / 62; 28 / 28 | 54 / 54; 27 / 27 | 3 / 3; 2 / 2 | 3 / 3; 2 / 2 | 4 / 4; 4 / 4 | 5 / 5; 4 / 4 |
+| emu: GIF hashes of the kicks not substituted | 742,784 / 742,784 | 669,459 / 669,459 | 22,215 / 22,215 | 26,363 / 26,363 | 28,018 / 28,018 | 26,726 / 26,726 |
+| primitives dropped (FRAME.FBW 0) | 324 | 272 | 2 | 2 | 0 | 0 |
+
+Zero everywhere: guards fired, kicks that both uploaded and drew, walker bytes dropped, absent pages, indexed textures
+drawn with CLD other than 1, vertices with Z at or above 2^24 under Z24, XYZF vertices, points and non-clear sprites,
+draws with SCANMSK or CSM2 set, and writes of any register outside `GsState` a draw could read (SCANMSK, DIMX,
+TEXCLUT, FOGCOL, FOG, TEX2). The dropped FBW-0 draws change nothing in the emulated pictures or memory (they are left
+out of the substitute, and (b) still holds), which confirms 2.2's "none covering a pixel". The plain dumps of step 4
+(14 per version) run without being judged (no recorded register files); (a) compares nothing there.
+
+### 14.3 The tables of section 3 from the reader's own draw lists
+
+The `gif2d` consumer counts, per cycle's list, the keys `gif2dstat` uses where the list holds the information (the
+`state`, `blend` and `z` categories, and the `reg` lines PRIM attributes, SCISSOR, XYOFFSET, FRAME, ZBUF, TEST, TEX1,
+CLAMP, texture), with the reference's coverage for the pixel column. Summed over the `s5` dumps (`tools/gif2d_agg.py`)
+and compared key by key with `gif2dstat`'s: USA 97 keys, Europe 152, equal in primitives and pixels but for the
+FRAME.FBW 0 draws (324 / 272 primitives, 0 pixels), which `gif2dstat` counts and the reader drops. So section 3.1's
+table and the draw-state table are reproduced from the draw lists. PRMODECONT and TEXA lines are not comparable (the
+state folds PRMODECONT into `prim` and keeps TEXA only where the format reads it).
+
+planState over those states (the `plan` lines; USA `s5` without `l17long`) gives 4.2's column: 0x09 MIX linear
+(ks 1, kd F=As), 0x01 and 0x21 MIX linear (ks 1-F, kd F) with the RGB_ONLY split, 0x29 FIX 0x80 MIX exact (ks 1, kd 1),
+0xa1 FIX 0x80 MIXSUB exact (ks -1, kd 1), untextured and line states OFF, the clear OFF with depth ALWAYS. All 31,460 /
+28,230 dimming boxes (0x21 FIX 0x20) are flat-source exact (no zero colour channel), so they leave L.
+
+Draw-list size: `TEXTURE` commands USA `s5` 268 (9.0 MB) in 22,000 cycles, Europe 338 (13.2 MB); the largest list
+in any dump 201 commands, the largest payload 362 KB (a front-end cycle whose textures are sent for the first time).
+
+### 14.4 Planted faults (`--fault`, `s5` front end and Track Editor of each version)
+
+| planted | USA | Europe |
+|---|---|---|
+| `reg:500:66`, `:71`, `:6` (every write of ALPHA_1, TEST_1, TEX0_1 lost in cycle 500), no emu | (a) fails: 6 values at the next kicks | the same |
+| `prim:500:7` (primitive 7 of the front end's cycle 500 left out of the substitute) | (b) fails: cycle 500's picture (899 / 900) | the same |
+| `prim:400:300` in the Track Editor | passes: that primitive changes no picture or memory image (overdrawn or off the picture; not looked into further) | the same |
+| `field:0:k` (GsState field k written as 0 in every STATE), k = frame, zbuf, scissor, xyoffset, test, alpha, tex0, tex1, clamp, prim | (b) fails on both dumps: 4-390 of 900 front-end pictures and 0-1 of 700 Track Editor pictures right; GS memory at the keyframes and the end differs | the same |
+| `field:0:k`, k = miptbp1, miptbp2 | never matter: MXL is 0 in every K1 state, so the GS reads neither | the same |
+| `field:0:11` (texa), also on `l13` (the CT16 quad) | never mattered in these dumps: TEXA is stored only for the CT16 quad, and zeroing it changed no picture or memory image of `l13` | the same |
+| `field:0:k`, k = pabe, fba, colclamp, dthe | never matter: PABE, FBA and DTHE are 0 in every K1 state (zeroing is no change), and with COLCLAMP 0 no K1 blend result leaves 0..255 in these dumps | the same |
+
+Earlier, on step 4's menu dump `b4-key-1`: `field:450:0` and `field:450:4` fail from cycle 450 on, `prim:450:5` fails
+cycle 450 (13 pixels); a single lost RGBAQ write (the old `reg` fault) failed (b) by 14 pixels but not (a), hence 14.1
+item 10.
+
+### 14.5 Open
+
+- **K1's PATH1-inherited registers (14.1 item 9)** decide batch 5's approach before step 8: read the runtime's register
+  shadow at PATH3 kicks, or wait for step 8. Not a batch 1 matter; the replay is exact either way.
+- **Why zeroing TEXA changes nothing on `l13`** was not looked into (the quad's vertex alpha or its alpha test may make
+  As irrelevant there); check (b) holds with the real value, which is what counts.
+- Scenes not recorded (split screen, podium, results, memory card, the Track Editor's race): `path1Writes` and the
+  guards are measured on the 67 dumps only; check (a) on a new dump names any register PATH1 changes beyond the set.

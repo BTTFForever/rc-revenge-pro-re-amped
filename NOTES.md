@@ -652,6 +652,34 @@ Design and results: `RENDERER_FRAME_RECORD.md` section 18. Nothing of it is link
   (`frame-dumps/s6/`: `RC_FRAME_RECORD_REF=1 RC_FRAME_RECORD_AT=boot+900 tools/frame_record.sh`, and the same with
   `RC_BOOT_LEVEL=17` and `boot+400`; 0.2-0.33 GB each, not committed). All pass on both versions (section 18.2).
 
+### The 2D packet: reader, draw list, encoder (2026-11-20, renderer P1 step 7 batch 1)
+PATH3's packets (the flip's clear and the 2D packet K1) read into a draw list per display cycle (`render/gs2d/`, library
+`rc_gs2d` on `rc_tex`), and `rc_replay`'s `gif2d` consumer that checks it on dumps. Design: `RENDERER_2D_DESIGN.md`;
+what was built and the results: its section 14. Nothing of it is linked into the game or the oracle.
+- **What it is:** `Gif2dReader` (an `rc::rec::Consumer`) owns step 5's `TexShadow` and `TextureCache`, keeps one GS
+  register file with a provenance per register (stream, seeded from a recorded file, default, unknown), assembles
+  primitives as the GS does (XYZ3 / ADC vertices included) and emits `STATE` (the 128-byte `GsState`, only when it
+  changes), `TEXTURE` (a cache entry's texels when its generation was not sent yet), `SCREEN_PRIMS`, `CLEAR` and scope
+  commands (side-tag spans) into `DrawList` (`gs_state.h`). `planState` (`gs_plan.h`) derives the drawing decisions
+  and guards; `encodeDrawList` (`gs2d_encode.h`) writes a list back as GIF packets.
+- **Check on a dump** (exact dumps are judged): `ninja -C build-decomp rc_replay`, then
+  `build-decomp/rc_replay <dump> --consumer gif2d --verify --quiet` (check (a): every register the reader knows equals
+  every kick's recorded register file; a second or so a dump), and
+  `build-decomp/rc_replay <dump> --consumer gif2d --with-emu --verify --quiet` (check (b): every drawing PATH3 kick is
+  replaced by its draw list encoded back into GIF packets in front of the emulated GS; `emu --verify` must still hold
+  for every picture, every register file before a kick and GS memory at keyframes and at the end; about as fast as
+  `--consumer emu`). Both end `PASS`. The output names the registers a VIF1 kick changed, the draws that needed a
+  seeded or default register (by register, and whether the default would have been right), the guards that fired,
+  and with `--with-emu` the kicks substituted. `H` lines are the tables of the design's section 3 counted from the
+  draw lists (`python3 tools/gif2d_agg.py <outputs>` sums them; `--no-tables` leaves them out); `gif2dstat` remains
+  the measuring tool they are compared with.
+- **Planted faults:** `--fault reg:<cycle>:<addr>` (every write of GS register `addr`, decimal, in that cycle is lost:
+  (a) fails at the next kick), `prim:<cycle>:<n>` (primitive n of the cycle left out of the encoded stream: (b)),
+  `field:<cycle>:<k>` (`GsState` field k, `gs2d_encode.h` `GsField`, written as 0 in every `STATE` from that cycle on:
+  (b)).
+- **Dumps:** step 5's (`frame-dumps/s5/`), step 6's (`frame-dumps/s6/`) and step 4's exact ones (`b4-key*`, `b4-x2-*`),
+  both versions. Plain dumps run without judging (no recorded register files).
+
 ### Level testing (2026-11-09)
 `RC_BOOT_LEVEL=<n> tools/play.sh` skips the intro and menus and loops the attract-mode demo on level n. `RC_SKIP_INTRO=1` skips only the legal screen, movie and Dolby screen and starts in the front end (for menu tests: `PS2X_PAD_REPLAY=<file>` plays a pad script of `epoch frame buttons axes` lines). `tools/level_sweep.sh <first> <last> <seconds> [VAR=value ...]` prints each level's frame rate.
 Sweep of levels 1-24 on the God of War renderer at 3x: 1, 3, 4, 10, 15, 16 and 22 hold about 55-60 fps; 6, 8, 9, 12, 17, 18 and 24 ran about 25-35 fps before the blend and palette fixes. On level 18 the default renderer reaches 35-43 fps with VU1 87% busy at 14.5 ms per field, so those levels are limited by VU1 on both renderers. About half the VU time is one block of program C3952C0FAEB52EAD; its cost is spread evenly over its instructions.

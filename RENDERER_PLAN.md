@@ -331,6 +331,15 @@ After step 1: fold its answers into this plan's open questions.
    hide one another by Z everywhere; the Track Editor's lines are sorted against the 3D). Two decisions are put to
    the user at the top of that file: exact integer blending by destination read (recommended: not now), and two
    marked edits to the vendored RHI to enable `shaderFloat64` (recommended).
+   - **Batch 1 built 2026-11-20** (`RENDERER_2D_DESIGN.md` section 14): the reader, draw list, plan and GIF re-encoder
+     (`render/gs2d`, library `rc_gs2d` on `rc_tex`) and `rc_replay --consumer gif2d`. On all 67 exact dumps of both
+     versions (steps 4-6), (a) every register the reader knows equals every kick's recorded register file, and (b)
+     every drawing PATH3 kick replaced by its draw list encoded back into GIF in front of the emulated GS gives every
+     picture, register file and GS memory image bit for bit. Section 3's tables come out of the draw lists exactly
+     (but the 324 / 272 FRAME.FBW 0 primitives the reader drops, which cover no pixel). Found: K1 inherits ZBUF_1
+     (front-end backdrop, race HUD) and in the Track Editor SCISSOR_1, TEST_1 and TEX1_1 from PATH1, so the live half
+     (batch 5) needs PATH1's register writes (step 8, or the runtime's register shadow). Nothing is linked into the
+     game or the oracle.
 8. VIF chain reader with the C++ VU references (Opus): races draw correctly (slowly); GIF bytes equal the emulated
    VU1's for recorded frames; full screenshots on levels 5, 17, 18, 20.
 
