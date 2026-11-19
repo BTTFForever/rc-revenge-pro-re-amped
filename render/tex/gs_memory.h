@@ -6,8 +6,10 @@
 // Draws never write it: frame and Z memory (blocks below 0x1e00) hold only what was uploaded there.
 //
 // Dirty tracking: every transfer gets a serial number, and each 256-byte block remembers the serial of the last
-// transfer that wrote it. A texture cache keeps the serial it decoded at and re-decodes when one of its blocks is
-// newer (tex_cache.h); the same numbers tell a GPU uploader which host textures to refresh.
+// transfer that changed it. A pixel written with the value it already has changes nothing: RC uploads its animated
+// textures again every frame, mostly with the frame they already hold. A texture cache keeps the serial it decoded at
+// and re-decodes when one of its blocks is newer (tex_cache.h); the same numbers tell a GPU uploader which host
+// textures to refresh.
 // No dependencies beyond gs_layout, C++17.
 
 #include "gs_layout.h"
@@ -36,7 +38,9 @@ namespace rc::rd
             uint64_t pixels = 0, bytes = 0;
             uint64_t byPsm[64] = {};       // transfers by destination format
             uint64_t bytesByPsm[64] = {};
-            uint64_t blockMarks = 0;       // blocks written, counted once per transfer
+            uint64_t pixelsChanged = 0;    // pixels whose value the transfer changed
+            uint64_t transfersChanging = 0; // transfers that changed at least one pixel
+            uint64_t blockMarks = 0;       // blocks changed, counted once per transfer
             uint64_t intoFrame = 0;        // transfers whose first pixel lies below the texture area
             uint64_t unfinished = 0;       // transfers replaced by the next TRXDIR before all their pixels arrived
             uint64_t excessBytes = 0;      // image data with no transfer open
@@ -63,6 +67,8 @@ namespace rc::rd
         uint64_t trxdir() const { return m_trxdir; }
         void setTransferRegisters(uint64_t bitbltbuf, uint64_t trxpos, uint64_t trxreg, uint64_t trxdir); // from a keyframe
         bool transferOpen() const { return m_open; }
+        // For planting a fault: the transfer with this ordinal (stats().transfers after it began) loses its data.
+        void dropTransferForTests(uint64_t ordinal) { m_dropAt = ordinal; }
 
         // Dirty tracking.
         uint64_t serial() const { return m_serial; }                        // of the newest transfer (or load)
@@ -98,6 +104,9 @@ namespace rc::rd
         uint32_t m_lastBlock = ~0u;
         uint8_t m_carry[4] = {};
         uint32_t m_carryBytes = 0;
+        uint64_t m_dropAt = 0;
+        uint32_t m_changed = 0;
+        bool m_countedChanged = false;
         Stats m_stats;
     };
 }

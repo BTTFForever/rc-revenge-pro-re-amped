@@ -3,7 +3,7 @@
 //   rc_replay <dump> [--consumer stats|emu|tex] [--cycles a-b] [--verify] [--quiet]
 //             [--png <dir>] [--picture-before <cycle>:<kick> <out.png>] [--path1 <cycle>:<kick> <out.bin>] [--kick-hashes]
 //             [--fault page|kick|hw:<cycle>[:<n>]]
-//             [--with-emu] [--fault kick|swizzle|decode:<cycle>:<n>]          (tex)
+//             [--with-emu] [--fault transfer|kick|swizzle|decode:<cycle>:<n>] (tex)
 //
 // stats: per cycle and in total, kicks by channel and mode, stream bytes, DMA tags by id, pages and bytes by record
 // type, odd events. With --verify: the host's chain walker (render/record/chain_walk) over the rebuilt RAM image
@@ -437,7 +437,7 @@ namespace
         std::fprintf(stderr, "usage: rc_replay <dump.rcfr> [--consumer stats|emu|tex] [--cycles a-b] [--verify] [--quiet] [--png <dir>]\n"
                              "                 [--picture-before <cycle>:<kick> <out.png>] [--path1 <cycle>:<kick> <out.bin>] [--kick-hashes]\n"
                              "                 [--fault page|kick|hw:<cycle>[:<n>]]\n"
-                             "       tex: [--with-emu] [--png <dir>] [--fault kick:<cycle>:<n> | swizzle:<cycle>:<bits> | decode:0:<bits>]\n");
+                             "       tex: [--with-emu] [--png <dir>] [--fault transfer|kick:<cycle>:<n> | swizzle:<cycle>:<bits> | decode:0:<bits>]\n");
     }
 }
 

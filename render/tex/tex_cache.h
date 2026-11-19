@@ -58,9 +58,6 @@ namespace rc::rd
         // Alpha summary of the last decode (raw alpha; 0x80 = 1.0).
         uint8_t alphaMin = 0, alphaMax = 0;
         uint32_t alphaAbove80 = 0, alphaAt80 = 0, alphaZero = 0;
-        // Over every decode since the entry was made.
-        uint8_t alphaMaxEver = 0, alphaMinEver = 0xFF;
-        uint32_t alphaAbove80Most = 0;
     };
 
     class TextureCache

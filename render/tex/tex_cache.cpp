@@ -125,9 +125,6 @@ namespace rc::rd
         e.alphaAbove80 = above;
         e.alphaAt80 = at;
         e.alphaZero = zero;
-        e.alphaMaxEver = std::max(e.alphaMaxEver, hi);
-        e.alphaMinEver = std::min(e.alphaMinEver, lo);
-        e.alphaAbove80Most = std::max(e.alphaAbove80Most, above);
         ++m_stats.decodes;
         m_stats.texels += texels;
         m_stats.decodeNs += static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());

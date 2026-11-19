@@ -24,7 +24,9 @@ namespace rc::replay
     {
         bool verify = false, quiet = false;
         std::string pngDir; // write every decoded texture as a PNG (RGBA, alpha doubled so 0x80 is opaque)
-        // --fault kick:<cycle>:<n>      the shadow skips kick n of that cycle (a dropped transfer)
+        // --fault transfer:<cycle>:<n>  transfer n (from 0) of that cycle loses its data (a dropped transfer)
+        // --fault kick:<cycle>:<n>      the shadow skips kick n of that cycle; skipping a pixel kick leaves the GIF
+        //                               inside its IMAGE tag, which then swallows the next kicks, as the GS's would
         // --fault swizzle:<cycle>:<bits> two neighbouring entries of the 32/16/8/4-bit column table swapped from that
         //                               cycle on (0: from the start)
         // --fault decode:0:<bits>       the same swap made after the last cycle, before the textures are decoded for

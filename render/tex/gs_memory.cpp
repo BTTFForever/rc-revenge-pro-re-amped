@@ -95,17 +95,22 @@ namespace rc::rd
             return;
         }
         m_open = true;
+        m_countedChanged = false;
+        m_changed = 0;
         m_carryBytes = 0;
         m_lastBlock = ~0u;
         ++m_serial;
         ++m_stats.transfers;
         ++m_stats.byPsm[m_dpsm];
+        if (m_stats.transfers == m_dropAt)
+            m_open = false; // a planted fault: its data goes nowhere
         if (gsBlockOf(layoutTables(), m_dpsm, m_dbp, m_dbw, m_dsax, m_dsay) < kTextureFirstBlock)
             ++m_stats.intoFrame;
     }
 
     inline void GsMemory::mark(uint32_t block)
     {
+        ++m_changed;
         if (block == m_lastBlock)
             return;
         m_lastBlock = block;
@@ -146,8 +151,11 @@ namespace rc::rd
             while (done < total && bytes - at >= 4u)
             {
                 const uint32_t a = gsAddr32(t, m_dbp, m_dbw, (m_dsax + x) & 0x7FFu, (m_dsay + y) & 0x7FFu) & kMask;
-                std::memcpy(mem + a, data + at, 4);
-                mark(a >> 8);
+                if (std::memcmp(mem + a, data + at, 4) != 0)
+                {
+                    std::memcpy(mem + a, data + at, 4);
+                    mark(a >> 8);
+                }
                 at += 4;
                 step();
             }
@@ -161,8 +169,11 @@ namespace rc::rd
                     continue;
                 m_carryBytes = 0;
                 const uint32_t a = gsAddr32(t, m_dbp, m_dbw, (m_dsax + x) & 0x7FFu, (m_dsay + y) & 0x7FFu) & kMask;
-                std::memcpy(mem + a, m_carry, 3); // the top byte stays
-                mark(a >> 8);
+                if (std::memcmp(mem + a, m_carry, 3) != 0)
+                {
+                    std::memcpy(mem + a, m_carry, 3); // the top byte stays
+                    mark(a >> 8);
+                }
                 step();
             }
             break;
@@ -172,8 +183,11 @@ namespace rc::rd
             {
                 const uint32_t px = (m_dsax + x) & 0x7FFu, py = (m_dsay + y) & 0x7FFu;
                 const uint32_t a = (m_dpsm == kPsmCt16 ? gsAddr16(t, m_dbp, m_dbw, px, py) : gsAddr16s(t, m_dbp, m_dbw, px, py)) & kMask;
-                std::memcpy(mem + a, data + at, 2);
-                mark(a >> 8);
+                if (std::memcmp(mem + a, data + at, 2) != 0)
+                {
+                    std::memcpy(mem + a, data + at, 2);
+                    mark(a >> 8);
+                }
                 at += 2;
                 step();
             }
@@ -182,8 +196,12 @@ namespace rc::rd
             while (done < total && at < bytes)
             {
                 const uint32_t a = gsAddr8(t, m_dbp, m_dbw, (m_dsax + x) & 0x7FFu, (m_dsay + y) & 0x7FFu) & kMask;
-                mem[a] = data[at++];
-                mark(a >> 8);
+                const uint8_t v = data[at++];
+                if (mem[a] != v)
+                {
+                    mem[a] = v;
+                    mark(a >> 8);
+                }
                 step();
             }
             break;
@@ -197,8 +215,12 @@ namespace rc::rd
                 {
                     const uint32_t n = gsNibble4(t, m_dbp, m_dbw, (m_dsax + x) & 0x7FFu, (m_dsay + y) & 0x7FFu);
                     const uint32_t a = (n >> 1) & kMask, shift = (n & 1u) * 4u;
-                    mem[a] = static_cast<uint8_t>((mem[a] & ~(0x0Fu << shift)) | (((packed >> (half * 4u)) & 0x0Fu) << shift));
-                    mark(a >> 8);
+                    const uint8_t v = static_cast<uint8_t>((mem[a] & ~(0x0Fu << shift)) | (((packed >> (half * 4u)) & 0x0Fu) << shift));
+                    if (mem[a] != v)
+                    {
+                        mem[a] = v;
+                        mark(a >> 8);
+                    }
                     step();
                 }
             }
@@ -206,6 +228,13 @@ namespace rc::rd
         default: break;
         }
         m_stats.pixels += done - m_done;
+        m_stats.pixelsChanged += m_changed;
+        if (m_changed && !m_countedChanged)
+        {
+            m_countedChanged = true;
+            ++m_stats.transfersChanging;
+        }
+        m_changed = 0;
         m_stats.bytes += at;
         m_stats.bytesByPsm[m_dpsm] += at;
         m_done = done;

@@ -97,6 +97,15 @@ namespace rc::replay
         {
             uint64_t prims = 0;
             uint64_t byVertexAlpha[256] = {}; // primitives by their largest vertex alpha
+            uint8_t texAlphaMax = 0;          // the texture's largest alpha over the draws (as decoded at each draw)
+        };
+        // A texture as the draws saw it: its alpha summary at the times it was drawn with. (Memory under a cache entry
+        // can later hold something else, a new level's image for one; that is not this texture any more.)
+        struct TexUse
+        {
+            uint64_t prims = 0;
+            uint8_t alphaMin = 0xFF, alphaMax = 0;
+            uint32_t above80 = 0, texels = 0;
         };
 
         // Does a pixel with source alpha `a` reach the colour output under TEST (the alpha test passes, or fails with
@@ -167,6 +176,9 @@ namespace rc::replay
         uint32_t vertexCount = 0;
         uint8_t vertexAlpha[3] = {};
         std::map<std::pair<StateKey, const CachedTexture *>, Combo> combos;
+        std::map<const CachedTexture *, TexUse> uses;
+        const CachedTexture *comboTex = nullptr;
+        TexUse *texUse = nullptr;
         struct MipUse
         {
             uint32_t mxl = 0;
@@ -180,7 +192,7 @@ namespace rc::replay
         // Per cycle, for the cost figures.
         struct CycleCost
         {
-            uint64_t applyNs = 0, refreshNs = 0, bytes = 0, transfers = 0, blocks = 0, redecoded = 0, first = 0, texels = 0, decodeNs = 0;
+            uint64_t applyNs = 0, bytes = 0, transfers = 0, changing = 0, blocks = 0, redecoded = 0, first = 0, texels = 0, decodeNs = 0;
         };
         TextureCache::Stats cacheAtCycle{};
         std::vector<CycleCost> costs;
@@ -271,6 +283,15 @@ namespace rc::replay
             ++draws;
             ++combo->prims;
             ++combo->byVertexAlpha[a];
+            if (comboTex)
+            {
+                combo->texAlphaMax = std::max(combo->texAlphaMax, comboTex->alphaMax);
+                TexUse &u = *texUse;
+                ++u.prims;
+                u.alphaMin = std::min(u.alphaMin, comboTex->alphaMin);
+                u.alphaMax = std::max(u.alphaMax, comboTex->alphaMax);
+                u.above80 = std::max(u.above80, comboTex->alphaAbove80);
+            }
             if (mipUse)
                 ++mipUse->prims;
         }
@@ -310,6 +331,8 @@ namespace rc::replay
                 }
             }
             combo = &combos[{key, tex}];
+            comboTex = tex;
+            texUse = tex ? &uses[tex] : nullptr;
             comboDirty = false;
         }
 
@@ -459,6 +482,12 @@ namespace rc::replay
         s.cacheAtCycle = s.cache.stats();
         if (!s.faultDone && s.opt.faultKind == "swizzle" && static_cast<int64_t>(cycle) >= s.opt.faultCycle)
             s.plantSwizzle(s.opt.faultN);
+        if (!s.faultDone && s.opt.faultKind == "transfer" && static_cast<int64_t>(cycle) == s.opt.faultCycle)
+        {
+            s.shadow.memory().dropTransferForTests(s.shadow.memory().stats().transfers + s.opt.faultN + 1u);
+            s.faultDone = true;
+            std::printf("fault planted: transfer %u of cycle %" PRIu64 " loses its data\n", s.opt.faultN, cycle);
+        }
     }
 
     void TexCheck::tag(const TagView &t)
@@ -494,6 +523,11 @@ namespace rc::replay
             const uint64_t *r = k.regs + kRegBitbltbuf;
             if (r[0] == mem.bitbltbuf() && r[1] == mem.trxpos() && r[2] == mem.trxreg() && r[3] == mem.trxdir())
                 ++s.regsOk;
+            else if (s.regsChecked - s.regsOk > 3)
+            {
+                ++s.failures;
+                s.shadow.memory().setTransferRegisters(r[0], r[1], r[2], r[3]);
+            }
             else
             {
                 char buf[256];
@@ -560,11 +594,8 @@ namespace rc::replay
         c.bytes = ms.bytes - s.memAtCycle.bytes;
         c.transfers = ms.transfers - s.memAtCycle.transfers;
         c.blocks = ms.blockMarks - s.memAtCycle.blockMarks;
-        // Textures are decoded when a draw names them; what no draw named this cycle is brought up to date here, so the
-        // figures are those of a renderer that keeps every cached texture current.
-        const uint64_t t0 = nowNs();
-        s.cache.refreshAll();
-        c.refreshNs = nowNs() - t0;
+        c.changing = ms.transfersChanging - s.memAtCycle.transfersChanging;
+        // Textures are decoded when a draw names them (the cache validates at each TEX0 a draw follows).
         const TextureCache::Stats &cs = s.cache.stats();
         c.redecoded = cs.redecodes - s.cacheAtCycle.redecodes;
         c.first = (cs.decodes - s.cacheAtCycle.decodes) - c.redecoded;
@@ -572,9 +603,10 @@ namespace rc::replay
         c.decodeNs = cs.decodeNs - s.cacheAtCycle.decodeNs;
         s.costs.push_back(c);
         if (!s.opt.quiet)
-            std::printf("cycle %" PRIu64 ": %" PRIu64 " transfers, %" PRIu64 " bytes into %" PRIu64 " blocks in %.3f ms; of %zu textures %" PRIu64
-                        " new and %" PRIu64 " decoded again (%" PRIu64 " texels in %.3f ms)\n",
-                        info.end.cycle, c.transfers, c.bytes, c.blocks, c.applyNs / 1e6, s.cache.size(), c.first, c.redecoded, c.texels, c.decodeNs / 1e6);
+            std::printf("cycle %" PRIu64 ": %" PRIu64 " transfers (%" PRIu64 " changing memory), %" PRIu64 " bytes, %" PRIu64 " blocks changed, %.3f ms; of %zu "
+                        "textures %" PRIu64 " new and %" PRIu64 " decoded again (%" PRIu64 " texels in %.3f ms)\n",
+                        info.end.cycle, c.transfers, c.changing, c.bytes, c.blocks, c.applyNs / 1e6, s.cache.size(), c.first, c.redecoded, c.texels,
+                        c.decodeNs / 1e6);
     }
 
     void TexCheck::Impl::sampleCheck()
@@ -696,35 +728,36 @@ namespace rc::replay
     {
         if (combos.empty())
             return;
-        // Textures.
-        std::map<const CachedTexture *, uint64_t> primsOf;
+        // Textures, as the draws saw them.
         std::map<const CachedTexture *, std::set<std::string>> statesOf;
         for (const auto &[key, c] : combos)
-            if (key.second)
+            if (key.second && c.prims)
             {
-                primsOf[key.second] += c.prims;
                 char buf[96];
                 std::snprintf(buf, sizeof(buf), "P%u ALPHA 0x%" PRIx64 "%s PABE %u TEST %s", key.first.path, key.first.alpha & 0xFFu,
                               (key.first.prim & 0x40u) ? "" : " (ABE off)", key.first.pabe, testText(key.first.test).c_str());
                 statesOf[key.second].insert(buf);
             }
-        uint64_t byFormat[64] = {}, aboveByFormat[64] = {}, texAbove = 0, texAt80Only = 0, texZeroOnly = 0;
-        std::printf("\ntextures drawn with: %zu (cache entries with their mip levels: %zu)\n", primsOf.size(), cache.size());
+        uint64_t byFormat[64] = {}, aboveByFormat[64] = {}, texAbove = 0, texAt80Only = 0, texZeroOnly = 0, texDrawn = 0;
         std::vector<const CachedTexture *> above;
-        for (const auto &[e, prims] : primsOf)
+        for (const auto &[e, u] : uses)
         {
+            if (!u.prims)
+                continue;
+            ++texDrawn;
             ++byFormat[e->key.psm & 63u];
-            if (e->alphaMaxEver > 0x80u)
+            if (u.alphaMax > 0x80u)
             {
                 ++texAbove;
                 ++aboveByFormat[e->key.psm & 63u];
                 above.push_back(e);
             }
-            else if (e->alphaMaxEver == 0u)
+            else if (u.alphaMax == 0u)
                 ++texZeroOnly;
-            else if (e->alphaMinEver == 0x80u)
+            else if (u.alphaMin == 0x80u)
                 ++texAt80Only;
         }
+        std::printf("\ntextures drawn with: %" PRIu64 " (cache entries with their mip levels: %zu)\n", texDrawn, cache.size());
         for (uint32_t f = 0; f < 64; ++f)
             if (byFormat[f])
                 std::printf("  %-5s %4" PRIu64 " textures, %" PRIu64 " with a texel alpha above 0x80\n", psmName(static_cast<uint8_t>(f)), byFormat[f],
@@ -733,10 +766,11 @@ namespace rc::replay
         std::sort(above.begin(), above.end(), [](const CachedTexture *a, const CachedTexture *b) { return a->key.tbp < b->key.tbp; });
         for (const CachedTexture *e : above)
         {
+            const TexUse &u = uses.at(e);
             std::printf("  above 0x80: %-4s %3ux%-3u TBP 0x%04x CBP 0x%04x: %u of %u texels (alpha %02x..%02x), %" PRIu64 " primitives:", psmName(e->key.psm),
-                        e->key.width, e->key.height, e->key.tbp, e->key.cbp, e->alphaAbove80Most, static_cast<uint32_t>(e->key.width) * e->key.height,
-                        e->alphaMinEver, e->alphaMaxEver, primsOf.at(e));
-            for (const std::string &st : statesOf.at(e))
+                        e->key.width, e->key.height, e->key.tbp, e->key.cbp, u.above80, static_cast<uint32_t>(e->key.width) * e->key.height, u.alphaMin,
+                        u.alphaMax, u.prims);
+            for (const std::string &st : statesOf[e])
                 std::printf(" [%s]", st.c_str());
             std::printf("\n");
         }
@@ -770,14 +804,14 @@ namespace rc::replay
                 uint32_t asMax = av;
                 if (e && tcc)
                 {
-                    const uint32_t at = e->alphaMaxEver;
+                    const uint32_t at = c.texAlphaMax;
                     asMax = tfx == 0u ? std::min(255u, (at * av) >> 7) : tfx == 2u ? std::min(255u, at + av) : at;
                 }
                 r.prims += n;
                 r.asMax = std::max(r.asMax, asMax);
                 if (av > 0x80u)
                     r.vertexAbove += n;
-                if (e && e->alphaMaxEver > 0x80u)
+                if (e && c.texAlphaMax > 0x80u)
                     r.texAbove += n;
                 bool ge = false, gt = false;
                 for (uint32_t a = 0x80; a <= asMax; ++a)
@@ -821,7 +855,7 @@ namespace rc::replay
         }
         std::printf("TEXSUM %s scenes=%s draws=%" PRIu64 " textures=%zu texAbove80=%" PRIu64 " pabePrims=%" PRIu64 " pabeVertexAbove80=%" PRIu64
                     " pabeTexAbove80=%" PRIu64 " pabeAsGe80Out=%" PRIu64 " pabeAsGt80Out=%" PRIu64 " mips=%zu\n",
-                    header.gameVersion ? "eu" : "usa", sceneList.empty() ? "-" : sceneList.c_str(), draws, primsOf.size(), texAbove, pabe.prims,
+                    header.gameVersion ? "eu" : "usa", sceneList.empty() ? "-" : sceneList.c_str(), draws, static_cast<size_t>(texDrawn), texAbove, pabe.prims,
                     pabe.vertexAbove, pabe.texAbove, pabe.reachGe, pabe.reachGt, mips.size());
     }
 
@@ -843,8 +877,9 @@ namespace rc::replay
         const GifWalker::Stats &ws = s.shadow.walker().stats();
         const TexShadow::Stats &sh = s.shadow.stats();
         std::printf("\ntex: %zu cycles, %" PRIu64 " PATH3 kicks (%.1f MB), %" PRIu64 " GIF tags (%" PRIu64 " image), %" PRIu64 " transfers, %.2f MB of "
-                    "pixel data, %" PRIu64 " block writes; %" PRIu64 " keyframes loaded\n",
-                    s.costs.size(), sh.kicks, sh.streamBytes / 1048576.0, ws.tags, ws.image, ms.transfers, ms.bytes / 1048576.0, ms.blockMarks, s.keyLoaded);
+                    "pixel data; %" PRIu64 " transfers changed %" PRIu64 " pixels in %" PRIu64 " blocks; %" PRIu64 " keyframes loaded\n",
+                    s.costs.size(), sh.kicks, sh.streamBytes / 1048576.0, ws.tags, ws.image, ms.transfers, ms.bytes / 1048576.0, ms.transfersChanging,
+                    ms.pixelsChanged, ms.blockMarks, s.keyLoaded);
         std::printf("  transfers by format:");
         for (uint32_t f = 0; f < 64; ++f)
             if (ms.byPsm[f])
@@ -881,13 +916,13 @@ namespace rc::replay
             std::printf("  per cycle:\n");
             line("transfers", &Impl::CycleCost::transfers, 1.0, "");
             line("pixel data", &Impl::CycleCost::bytes, 1.0 / 1024.0, "KB");
-            line("blocks written", &Impl::CycleCost::blocks, 1.0, "");
+            line("transfers changing memory", &Impl::CycleCost::changing, 1.0, "");
+            line("blocks changed", &Impl::CycleCost::blocks, 1.0, "");
             line("walk and apply", &Impl::CycleCost::applyNs, 1e-6, "ms");
             line("textures decoded first", &Impl::CycleCost::first, 1.0, "");
             line("textures decoded again", &Impl::CycleCost::redecoded, 1.0, "");
             line("texels decoded", &Impl::CycleCost::texels, 1.0, "");
             line("decode", &Impl::CycleCost::decodeNs, 1e-6, "ms");
-            line("end-of-cycle validation", &Impl::CycleCost::refreshNs, 1e-6, "ms");
             std::printf("  full decode of the %" PRIu64 " cached textures (%" PRIu64 " texels, %.2f MB of RGBA): %.3f ms\n", s.fullDecodeTextures,
                         s.fullDecodeTexels, s.fullDecodeTexels * 4.0 / 1048576.0, s.fullDecodeNs / 1e6);
         }
