@@ -95,7 +95,14 @@ namespace rc::replay
         if (fatal())
             return;
         const bool final = (kf.header.flags & kKeyFinal) != 0;
-        if (m_started && m_opt.verify && m_exact && (kf.header.flags & kKeyVramExact))
+        // (batch 4) A keyframe after a save-state load holds the loaded machine, not what the cycles before it drew:
+        // it is loaded, not compared.
+        if (kf.header.flags & kKeyAfterStateLoad)
+        {
+            ++m_t.keyframesAfterLoad;
+            std::printf("keyframe at cycle %" PRIu64 " follows a save-state load: loaded, not compared\n", kf.header.cycle);
+        }
+        else if (m_started && m_opt.verify && m_exact && (kf.header.flags & kKeyVramExact))
         {
             // GS memory after the replayed cycles against the recorder's.
             const StateChunk *vram = kf.find(kStateGsMemory);

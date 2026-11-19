@@ -280,8 +280,11 @@ struct GSStateAccess
     static void serialize(GS &gs, Ar &ar)
     {
         using namespace ps2x::state;
-        std::lock_guard<std::recursive_mutex> lock(gs.m_stateMutex);
+        // RC (2026-11-20): lifetime, then state, as the presentation latch (GS::latchHostPresentationFrame, main thread)
+        // takes them. Upstream took state first; a save or load then deadlocked against the latch now and then (seen
+        // with the frame record in exact mode: timed saves of PS2X_STATE_SAVE_AT never finished, 2 runs in 3).
         std::lock_guard<std::mutex> lifetime(gs.m_backendLifetimeMutex);
+        std::lock_guard<std::recursive_mutex> lock(gs.m_stateMutex);
         ar.section(fourcc("GSFE"));
         fields(ar, gs.m_ctx, gs.m_prim, gs.m_primRegister, gs.m_prmodeRegister, gs.m_curR, gs.m_curG, gs.m_curB, gs.m_curA, gs.m_curQ,
                gs.m_curS, gs.m_curT, gs.m_curU, gs.m_curV, gs.m_curFog, gs.m_fogR, gs.m_fogG, gs.m_fogB, gs.m_prmodecont, gs.m_pabe,
@@ -853,6 +856,12 @@ bool EeScheduler::serviceStateRequests()
         notify("No saved state at " + path.string());
         return false;
     }
+    bool stateReplaced = false;
+    auto stateLoadedHook = [&]
+    {
+        if (const ps2x::capture::Hooks *hooks = ps2x::capture::g_hooks; stateReplaced && hooks && hooks->stateLoaded)
+            hooks->stateLoaded();
+    };
     try
     {
         ps2x::state::Reader in(bytes.data(), bytes.size());
@@ -862,6 +871,11 @@ bool EeScheduler::serviceStateRequests()
         ps2x::state::fields(in, magic, version, tick);
         if (magic != kMagic || version != kVersion)
             throw ps2x::state::Error("not a compatible save state");
+        // RC frame record (batch 4): the record closes its cycle before the machine is replaced, and starts a new
+        // segment with a keyframe after it.
+        if (const ps2x::capture::Hooks *hooks = ps2x::capture::g_hooks; hooks && hooks->stateLoading)
+            hooks->stateLoading();
+        stateReplaced = true;
         serializeMachine(in);
         in.section(ps2x::state::fourcc("EEXT"));
         uint64_t count = 0;
@@ -891,10 +905,12 @@ bool EeScheduler::serviceStateRequests()
     catch (const std::exception &error)
     {
         notify(std::string("Load failed, emulation state is undefined: ") + error.what());
+        stateLoadedHook();
         m_runtime.requestStop();
         requestStop();
         return true;
     }
+    stateLoadedHook();
     publishSnapshotNow();
     notify("State loaded (field " + std::to_string(m_vsyncTick) + ")");
     return true;

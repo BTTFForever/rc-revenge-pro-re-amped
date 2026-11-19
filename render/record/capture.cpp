@@ -57,6 +57,8 @@ namespace rc::rec
                 Game,
                 Level,
                 Scene,
+                Key,  // (batch 4) F10 starts, F10 or count stops; again on the next F10
+                Ring, // (batch 4) the last `value` cycles in memory; F10 writes them and recording goes on
                 Unsupported
             } kind = Boot;
             uint64_t value = 0;
@@ -67,7 +69,7 @@ namespace rc::rec
         Trigger parseTrigger(const char *s)
         {
             Trigger t;
-            t.text = s && *s ? s : "boot+120";
+            t.text = s && *s ? s : "key"; // (batch 4) the default trigger: F10
             std::string spec = t.text;
             const size_t plus = spec.find('+');
             if (plus != std::string::npos)
@@ -88,10 +90,16 @@ namespace rc::rec
                 t.kind = Trigger::Level, t.value = std::strtoull(arg, nullptr, 10);
             else if (name == "scene")
                 t.kind = Trigger::Scene, t.value = std::strtoull(arg, nullptr, 16);
+            else if (name == "key" && colon == std::string::npos)
+                t.kind = Trigger::Key;
+            else if (name == "ring" && *arg)
+                t.kind = Trigger::Ring, t.value = std::strtoull(arg, nullptr, 10);
             else
                 t.kind = Trigger::Unsupported;
             if (t.count == 0)
                 t.count = 120;
+            if (t.kind == Trigger::Ring && t.value == 0)
+                t.kind = Trigger::Unsupported;
             return t;
         }
 
@@ -105,8 +113,12 @@ namespace rc::rec
         {
         public:
             Capture(std::string path, Trigger trigger, uint64_t keyEvery)
-                : m_path(std::move(path)), m_trigger(std::move(trigger)), m_keyEvery(keyEvery ? keyEvery : 300)
+                : m_path(std::move(path)), m_trigger(std::move(trigger)),
+                  m_keyEvery(keyEvery ? keyEvery : m_trigger.kind == Trigger::Ring ? 120u : 300u)
             {
+                // (batch 4) The ring keeps only the reference pictures' hashes unless told otherwise (section 6.2).
+                if (m_trigger.kind == Trigger::Ring)
+                    m_refEvery = 0;
                 // RC_FRAME_RECORD_REF=<n>|hash|off (exact mode): a picture every n-th cycle (default 1), only the hash,
                 // or neither. RC_FRAME_RECORD_STRICT=1: stop the run when exact mode is not possible.
                 if (const char *ref = std::getenv("RC_FRAME_RECORD_REF"); ref && *ref)
@@ -120,9 +132,71 @@ namespace rc::rec
                 }
                 const char *strict = std::getenv("RC_FRAME_RECORD_STRICT");
                 m_strict = strict && *strict && std::strcmp(strict, "0") != 0;
-                const size_t pct = m_path.find("%d");
+                // (batch 4) A test aid: RC_FRAME_RECORD_F10=<cycle>[,<cycle>...] acts as if F10 was pressed at the close of
+                // those display cycles (the real key goes through the hotkey hook).
+                if (const char *sim = std::getenv("RC_FRAME_RECORD_F10"); sim && *sim)
+                {
+                    for (const char *p = sim; *p;)
+                    {
+                        char *end = nullptr;
+                        const uint64_t v = std::strtoull(p, &end, 10);
+                        if (end == p)
+                            break;
+                        m_simPresses.push_back(v);
+                        p = *end ? end + 1 : end;
+                    }
+                    std::sort(m_simPresses.begin(), m_simPresses.end());
+                }
+            }
+
+            // (batch 4) The n-th dump of this run: "%d" in RC_FRAME_RECORD becomes n; without one, dumps after the first
+            // get "-n" before the extension, so a second F10 never overwrites the first dump.
+            std::string pathFor(uint64_t n) const
+            {
+                std::string path = m_path;
+                const size_t pct = path.find("%d");
                 if (pct != std::string::npos)
-                    m_path.replace(pct, 2, "0");
+                    return path.replace(pct, 2, std::to_string(n));
+                if (n == 0)
+                    return path;
+                const size_t slash = path.find_last_of('/');
+                const size_t dot = path.find_last_of('.');
+                const size_t at = dot != std::string::npos && (slash == std::string::npos || dot > slash) ? dot : path.size();
+                return path.insert(at, "-" + std::to_string(n));
+            }
+
+            // F10 (hotkey hook, main thread): only counted here; the EE thread acts on it at the next cycle close.
+            void hotkey()
+            {
+                m_keyPresses.fetch_add(1, std::memory_order_relaxed);
+                std::fprintf(stderr, "[frame-record] F10\n");
+            }
+
+            // A save state is about to replace the machine (EE thread, between guest dispatches): the cycle in progress
+            // closes here, with the picture the display shows now, so everything recorded so far replays as it was.
+            void stateLoading()
+            {
+                if (m_state != Recording || !m_eeKnown || std::this_thread::get_id() != m_ee)
+                    return;
+                flushPendingKick();
+                flushDeferred();
+                for (Consumer *c : m_consumers)
+                    c->note("save state load: the cycle closes here");
+                const uint64_t dispfb2 = m_runtime->memory().gs().dispfb2;
+                m_stateLoadCut = true;
+                closeCycle(dispfb2, static_cast<uint32_t>(dispfb2 & 0x1FFu));
+                m_stateLoadCut = false;
+            }
+
+            // The save state is loaded: a new segment starts with a keyframe of the loaded machine (section 3.4).
+            void stateLoaded()
+            {
+                if (m_state != Recording || !m_eeKnown || std::this_thread::get_id() != m_ee)
+                    return;
+                keyframe(false, kKeyAfterStateLoad);
+                ++m_stateLoads;
+                std::fprintf(stderr, "[frame-record] save state loaded: new segment from display cycle %llu\n",
+                             static_cast<unsigned long long>(m_cycle));
             }
 
             // --- hooks -------------------------------------------------------------------------------------------
@@ -133,12 +207,15 @@ namespace rc::rec
                              m_trigger.text.c_str(), static_cast<unsigned long long>(m_keyEvery));
                 if (m_trigger.kind == Trigger::Unsupported)
                 {
-                    std::fprintf(stderr, "[frame-record] trigger '%s' is not supported in this build (boot, cycle:, game:, level:, scene:); not recording\n",
+                    std::fprintf(stderr, "[frame-record] trigger '%s' is not supported (boot, cycle:, game:, level:, scene:, key, ring:<n>); not recording\n",
                                  m_trigger.text.c_str());
                     m_state = Done;
                 }
-                else if (m_trigger.kind == Trigger::Boot)
+                else if (m_trigger.kind == Trigger::Boot || m_trigger.kind == Trigger::Ring)
                     start();
+                else if (m_trigger.kind == Trigger::Key)
+                    std::fprintf(stderr, "[frame-record] press F10 in the game window to record %llu cycles (F10 again stops early)\n",
+                                 static_cast<unsigned long long>(m_trigger.count));
             }
 
             void kickBegin(uint32_t channelBase, uint32_t chcr, uint32_t madr, uint32_t qwc, uint32_t tadr, uint32_t asr0, uint32_t asr1,
@@ -619,7 +696,7 @@ namespace rc::rec
                 }
             }
 
-            void keyframe(bool final)
+            void keyframe(bool final, uint32_t extraFlags = 0u)
             {
                 const Clock::time_point t0 = Clock::now();
                 KeyframeState state;
@@ -628,7 +705,7 @@ namespace rc::rec
                 kf.header.gameFrame = m_gameFrame;
                 kf.header.field = m_runtime->memory().gs().vsyncTick.load(std::memory_order_relaxed);
                 // Plain mode: GS memory as the backend gives it; exact mode: the software GS's own memory.
-                kf.header.flags = (final ? kKeyFinal : 0u) | (m_exact ? kKeyVramExact : 0u);
+                kf.header.flags = (final ? kKeyFinal : 0u) | (m_exact ? kKeyVramExact : 0u) | extraFlags;
                 if (!captureKeyframeState(*m_runtime, state))
                     std::fprintf(stderr, "[frame-record] keyframe at cycle %llu: the GS has no memory yet\n",
                                  static_cast<unsigned long long>(m_cycle));
@@ -650,6 +727,8 @@ namespace rc::rec
                     m_tracker->reset();
                     m_segmentStart = Clock::now();
                     m_inSegment = 0;
+                    if (m_ring)
+                        ringStatus();
                 }
                 const uint64_t ns = nsSince(t0);
                 m_keyNs += ns;
@@ -659,13 +738,16 @@ namespace rc::rec
 
             void start()
             {
-                auto writer = std::make_unique<Writer>(m_path);
+                m_ring = m_trigger.kind == Trigger::Ring;
+                const std::string path = pathFor(m_dumpIndex);
+                auto writer = m_ring ? std::make_unique<Writer>(Writer::Ring{m_trigger.value}) : std::make_unique<Writer>(path);
                 if (!writer->ok())
                 {
-                    std::fprintf(stderr, "[frame-record] cannot write %s; not recording\n", m_path.c_str());
+                    std::fprintf(stderr, "[frame-record] cannot write %s; not recording\n", path.c_str());
                     m_state = Done;
                     return;
                 }
+                m_hookNsTotal = m_hookNsMax = m_keyNs = m_keyMaxNs = m_keyframes = m_oddRecorded = m_pictures = m_strayGifTotal = 0;
                 m_exact = false;
                 std::string why;
                 if (!ps2x::capture::exactCapable(*m_runtime))
@@ -714,9 +796,15 @@ namespace rc::rec
                 m_state = Recording;
                 m_recorded = 0;
                 m_firstCycle = m_cycle;
-                std::fprintf(stderr, "[frame-record] recording from display cycle %llu (game frame %lld) for %llu cycles\n",
-                             static_cast<unsigned long long>(m_cycle), static_cast<long long>(m_gameFrame),
-                             static_cast<unsigned long long>(m_trigger.count));
+                if (m_ring)
+                    std::fprintf(stderr, "[frame-record] ring: keeping the last %llu display cycles in memory (segments of %llu) from cycle %llu; "
+                                         "F10 writes them to %s\n",
+                                 static_cast<unsigned long long>(m_trigger.value), static_cast<unsigned long long>(m_keyEvery),
+                                 static_cast<unsigned long long>(m_cycle), pathFor(m_dumpIndex).c_str());
+                else
+                    std::fprintf(stderr, "[frame-record] recording %s from display cycle %llu (game frame %lld) for %llu cycles\n", path.c_str(),
+                                 static_cast<unsigned long long>(m_cycle), static_cast<long long>(m_gameFrame),
+                                 static_cast<unsigned long long>(m_trigger.count));
                 keyframe(false);
                 for (Consumer *c : m_consumers)
                     c->cycleBegin(m_cycle);
@@ -734,7 +822,7 @@ namespace rc::rec
                 std::fprintf(stderr,
                              "[frame-record] wrote %s: cycles %llu-%llu (%llu), %llu keyframes, %.1f MB on disc; cycles %.1f MB raw -> %.1f MB "
                              "stored (%.0f KB / %.0f KB a cycle; largest %.0f KB / %.0f KB); keyframes %.1f MB raw -> %.1f MB stored\n",
-                             m_path.c_str(), static_cast<unsigned long long>(m_firstCycle),
+                             m_writer->path().c_str(), static_cast<unsigned long long>(m_firstCycle),
                              static_cast<unsigned long long>(m_firstCycle + m_recorded - 1), static_cast<unsigned long long>(m_recorded),
                              static_cast<unsigned long long>(s.keyframes), s.fileBytes / 1048576.0, s.cycleRawBytes / 1048576.0,
                              s.cycleStoredBytes / 1048576.0, s.cycleRawBytes / cycles / 1024.0, s.cycleStoredBytes / cycles / 1024.0,
@@ -772,6 +860,14 @@ namespace rc::rec
                 m_consumers.clear();
                 m_writer.reset();
                 m_tracker.reset();
+                ++m_dumpIndex;
+                if (m_trigger.kind == Trigger::Key)
+                {
+                    // (batch 4) The next F10 records again, into the next file.
+                    m_state = Armed;
+                    std::fprintf(stderr, "[frame-record] F10 records again, to %s\n", pathFor(m_dumpIndex).c_str());
+                    return;
+                }
                 // Tags are of no use any more: detach the channel (call sites go back to one test of a byte).
                 rc::gfx::detail::attach(nullptr);
                 m_tagsAttached = false;
@@ -834,6 +930,7 @@ namespace rc::rec
                         c->cycleEnd(info, picture);
                     m_hookNsTotal += m_cycleHookNs;
                     m_hookNsMax = std::max(m_hookNsMax, m_cycleHookNs);
+                    m_statusHookMax = std::max(m_statusHookMax, m_cycleHookNs);
                     ++m_recorded;
                     ++m_inSegment;
                 }
@@ -842,21 +939,89 @@ namespace rc::rec
                 m_kickIndex = 0;
                 m_lastCloseFbp = fbp;
                 expireTags();
+                // (batch 4) F10 (or a simulated press) since the last close. A cycle cut by a state load acts on none:
+                // the keyframe after the load comes next.
+                bool press = false;
+                if (!m_stateLoadCut)
+                {
+                    press = m_keyPresses.exchange(0, std::memory_order_relaxed) != 0u;
+                    while (!m_simPresses.empty() && m_simPresses.front() <= m_cycle)
+                    {
+                        m_simPresses.erase(m_simPresses.begin());
+                        std::fprintf(stderr, "[frame-record] F10 (simulated, RC_FRAME_RECORD_F10) at display cycle %llu\n",
+                                     static_cast<unsigned long long>(m_cycle));
+                        press = true;
+                    }
+                }
                 if (m_state == Recording)
                 {
-                    if (m_recorded >= m_trigger.count)
+                    if (m_ring)
+                    {
+                        if (press)
+                            ringDump();
+                        if (m_inSegment >= m_keyEvery && !m_stateLoadCut)
+                            keyframe(false);
+                        for (Consumer *c : m_consumers)
+                            c->cycleBegin(m_cycle);
+                        resetCycleStats();
+                    }
+                    else if (m_recorded >= m_trigger.count || (press && m_trigger.kind == Trigger::Key))
                         finish();
                     else
                     {
-                        if (m_inSegment >= m_keyEvery)
+                        if (m_inSegment >= m_keyEvery && !m_stateLoadCut)
                             keyframe(false);
                         for (Consumer *c : m_consumers)
                             c->cycleBegin(m_cycle);
                         resetCycleStats();
                     }
                 }
-                else if (m_state == Armed && triggered())
+                else if (m_state == Armed && (m_trigger.kind == Trigger::Key ? press : triggered()))
                     start();
+            }
+
+            // (batch 4) F10 in ring mode: a final keyframe (the state after the last cycle, for the dump's end check),
+            // then the writer's worker writes the ring and it to the next file. Recording goes on.
+            void ringDump()
+            {
+                keyframe(true);
+                const std::string path = pathFor(m_dumpIndex++);
+                const Writer::RingStats r = m_writer->ringStats();
+                std::fprintf(stderr, "[frame-record] F10: writing the ring (about %llu cycles) to %s\n", static_cast<unsigned long long>(r.cycles),
+                             path.c_str());
+                m_writer->dump(path);
+            }
+
+            // (batch 4) Ring mode, at each new segment: what the ring holds and what the last segment cost. Sizes come from
+            // the writer's worker and lag the EE thread by the jobs still queued.
+            void ringStatus()
+            {
+                const Writer::RingStats r = m_writer->ringStats();
+                const Writer::Stats &s = m_writer->stats(); // record counts and sizes: EE side
+                const uint64_t cycles = m_recorded - m_statusRecorded;
+                if (cycles)
+                {
+                    const double n = static_cast<double>(cycles);
+                    auto kb = [&](int t) { return (s.recordBytes[t] - m_statusRecordBytes[t]) / n / 1024.0; };
+                    const uint64_t enc = r.cyclesEncoded - m_statusEncoded;
+                    std::fprintf(stderr,
+                                 "[frame-record] ring: segment of %llu cycles to cycle %llu (scene 0x%x): a cycle %.0f KB raw (PAGE %.0f, KICK %.1f, "
+                                 "HW %.1f, TAG %.1f, END %.1f) -> %.0f KB stored; recorder %.2f ms a cycle (largest %.2f); ring %llu cycles in %llu "
+                                 "segments, %.1f MB (peak %.1f MB)\n",
+                                 static_cast<unsigned long long>(cycles), static_cast<unsigned long long>(m_cycle - 1u), m_scene,
+                                 (r.cycleRawBytes - m_statusRaw) / std::max<double>(1.0, enc) / 1024.0, kb(RecPage), kb(RecKick), kb(RecHw), kb(RecTag),
+                                 kb(RecEnd), (r.cycleStoredBytes - m_statusStored) / std::max<double>(1.0, enc) / 1024.0,
+                                 (m_hookNsTotal - m_statusHookNs) / n / 1e6, m_statusHookMax / 1e6, static_cast<unsigned long long>(r.cycles),
+                                 static_cast<unsigned long long>(r.segments), r.bytes / 1048576.0, r.peakBytes / 1048576.0);
+                    m_statusEncoded = r.cyclesEncoded;
+                    m_statusRaw = r.cycleRawBytes;
+                    m_statusStored = r.cycleStoredBytes;
+                }
+                m_statusRecorded = m_recorded;
+                for (int t = 0; t < 9; ++t)
+                    m_statusRecordBytes[t] = s.recordBytes[t];
+                m_statusHookNs = m_hookNsTotal;
+                m_statusHookMax = 0;
             }
 
             static std::string backendName()
@@ -928,6 +1093,13 @@ namespace rc::rec
                      m_labelledKicks = 0, m_tagpRecords = 0;
 
             uint64_t m_cycleHookNs = 0, m_cyclePages = 0, m_hookNsTotal = 0, m_hookNsMax = 0;
+            // Key, ring and state loads (batch 4).
+            std::atomic<uint32_t> m_keyPresses{0};
+            std::vector<uint64_t> m_simPresses;
+            uint64_t m_dumpIndex = 0, m_stateLoads = 0;
+            bool m_ring = false, m_stateLoadCut = false;
+            uint64_t m_statusRecorded = 0, m_statusEncoded = 0, m_statusRaw = 0, m_statusStored = 0, m_statusHookNs = 0, m_statusHookMax = 0;
+            uint64_t m_statusRecordBytes[9] = {};
             uint64_t m_keyNs = 0, m_keyMaxNs = 0, m_keyframes = 0, m_oddRecorded = 0;
         };
 
@@ -944,9 +1116,10 @@ namespace rc::rec
             [](uint32_t address, uint32_t width, uint64_t value, uint32_t ra) { g_capture->hwStore(address, width, value, ra); },
             [](int interlaced, int mode, int ffmd) { g_capture->setCrt(interlaced, mode, ffmd); },
             [](int kind, uint32_t address, uint64_t value) { g_capture->odd(kind, address, value); },
-            nullptr, // stateLoaded: batch 4
-            nullptr, // hotkey: batch 4
+            []() { g_capture->stateLoaded(); },
+            []() { g_capture->hotkey(); },
             [](uint64_t frame, uint64_t levelFrame, uint32_t scene) { g_capture->gameFrame(frame, levelFrame, scene); },
+            []() { g_capture->stateLoading(); },
         };
 
         const bool g_installed = []
@@ -955,7 +1128,7 @@ namespace rc::rec
             if (!path || !*path)
                 return false;
             const char *key = std::getenv("RC_FRAME_RECORD_KEY");
-            g_capture = new Capture(path, parseTrigger(std::getenv("RC_FRAME_RECORD_AT")), key ? std::strtoull(key, nullptr, 10) : 300u);
+            g_capture = new Capture(path, parseTrigger(std::getenv("RC_FRAME_RECORD_AT")), key ? std::strtoull(key, nullptr, 10) : 0u);
             ps2x::capture::install(&kHooks);
             // (batch 3) The side-tag channel feeds the capture from now on; RC_FRAME_RECORD_TAGS=0 leaves it detached.
             const char *tags = std::getenv("RC_FRAME_RECORD_TAGS");

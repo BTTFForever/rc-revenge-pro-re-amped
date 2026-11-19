@@ -56,11 +56,18 @@ namespace ps2x::capture
         void (*hwStore)(uint32_t address, uint32_t width, uint64_t value, uint32_t callerRa);
         void (*setCrt)(int interlaced, int mode, int ffmd);
         void (*odd)(int kind, uint32_t address, uint64_t value);
+        // (batch 4) A save state is being loaded: stateLoading just before the machine is replaced, stateLoaded right
+        // after (also when the load failed half way). Both on the EE executor (EeScheduler::serviceStateRequests, between
+        // guest dispatches), so no kick is in progress.
         void (*stateLoaded)();
-        void (*hotkey)(); // F10, from either host loop
+        // (batch 4) F10, from either host loop (the raylib loop or runHostPlatformLoop), on the main thread. The
+        // capture only notes the press; the EE thread acts on it at the next cycle close.
+        void (*hotkey)();
         // From the game's GfxP2_SwapBuffers override (RC's overrides): a game frame starts. frame: since boot;
         // levelFrame: since the last level start (as RC_RAMDUMP_FRAME counts); scene: the GS survey's scene id.
         void (*gameFrame)(uint64_t frame, uint64_t levelFrame, uint32_t scene);
+        // (batch 4) See stateLoaded. Last in the table so the earlier positional initialisers keep their order.
+        void (*stateLoading)();
     };
 
     inline const Hooks *g_hooks = nullptr;

@@ -168,8 +168,9 @@ namespace
         {
             ++m_keyframes;
             if (!m_quiet)
-                std::printf("keyframe%s at cycle %" PRIu64 " (field %" PRIu64 "), %zu state chunks\n", (kf.header.flags & kKeyFinal) ? " (final)" : "",
-                            kf.header.cycle, kf.header.field, kf.chunks.size());
+                std::printf("keyframe%s%s at cycle %" PRIu64 " (field %" PRIu64 "), %zu state chunks\n", (kf.header.flags & kKeyFinal) ? " (final)" : "",
+                            (kf.header.flags & kKeyAfterStateLoad) ? " (after a save-state load)" : "", kf.header.cycle, kf.header.field,
+                            kf.chunks.size());
             if (!(kf.header.flags & kKeyFinal) && (!kf.find(kStateGsMemory) || kf.find(kStateGsMemory)->bytes != kGsMemBytes))
                 fail("keyframe at cycle " + std::to_string(kf.header.cycle) + " without 4 MB of GS memory");
         }

@@ -47,6 +47,8 @@ namespace rc::rec
         m_ok = m_file != nullptr;
     }
 
+    Writer::Writer(Ring ring, int zlibLevel) : m_level(zlibLevel), m_ok(true), m_ringMode(true), m_ringCycles(ring.cycles ? ring.cycles : 1u) {}
+
     Writer::~Writer()
     {
         if (m_open)
@@ -85,6 +87,11 @@ namespace rc::rec
     {
         std::vector<uint8_t> out;
         const uint64_t stored = appendChunk(out, id, raw, rawBytes, compress);
+        if (m_ringMode)
+        {
+            ringAdd(id, std::move(out), m_pendingCycle);
+            return stored;
+        }
         if (m_ok && std::fwrite(out.data(), 1, out.size(), m_file) != out.size())
             m_ok = false;
         m_offset += out.size();
@@ -101,6 +108,14 @@ namespace rc::rec
         m_header.headerBytes = sizeof(FileHeader);
         m_header.indexOffset = 0;
         m_header.flags &= ~kFileComplete;
+        if (m_ringMode)
+        {
+            // The header and the name table are written with each dump.
+            m_tagNames = info.tagNames;
+            m_open = true;
+            m_thread = std::thread(&Writer::worker, this);
+            return;
+        }
         writeChunk(kChunkFile, reinterpret_cast<const uint8_t *>(&m_header), sizeof(m_header), false);
         // (batch 3) The tag name table, right after the header (section 5.3).
         if (!info.tagNames.empty())
@@ -296,14 +311,21 @@ namespace rc::rec
             uint64_t done = 0;
             if (job.kind == Job::Close)
                 break;
-            if (job.kind == Job::Cycle)
+            m_pendingCycle = job.kind == Job::Key ? job.key.cycle : job.cycle;
+            m_pendingKind = job.kind == Job::Key && (job.key.flags & kKeyFinal) ? kRingFinal : 0u;
+            if (job.kind == Job::Dump)
+                ringDump(job.path);
+            else if (job.kind == Job::Cycle)
             {
                 done = job.raw.size();
-                if (!m_segments.empty() && m_segments.back().cycleCount == 0u)
-                    m_segments.back().firstCycle = job.cycle;
-                if (!m_segments.empty())
-                    ++m_segments.back().cycleCount;
-                m_cycles.push_back({m_offset, 0u});
+                if (!m_ringMode)
+                {
+                    if (!m_segments.empty() && m_segments.back().cycleCount == 0u)
+                        m_segments.back().firstCycle = job.cycle;
+                    if (!m_segments.empty())
+                        ++m_segments.back().cycleCount;
+                    m_cycles.push_back({m_offset, 0u});
+                }
                 const uint64_t stored = writeChunk(kChunkCycle, job.raw.data(), job.raw.size(), true);
                 ++m_stats.cycles;
                 m_stats.cycleRawBytes += job.raw.size();
@@ -314,7 +336,7 @@ namespace rc::rec
             else if (job.kind == Job::Picture)
             {
                 done = job.raw.size();
-                if (!m_cycles.empty())
+                if (!m_ringMode && !m_cycles.empty())
                     m_cycles.back().refiOffset = m_offset;
                 writeChunk(kChunkPicture, job.raw.data(), job.raw.size(), true);
             }
@@ -329,21 +351,163 @@ namespace rc::rec
                     raw += data.size();
                     done += data.size();
                 }
-                if (!(job.key.flags & kKeyFinal))
+                if (!m_ringMode && !(job.key.flags & kKeyFinal))
                     m_segments.push_back({m_offset, job.key.cycle, 0u});
                 writeChunk(kChunkKeyframe, payload.data(), payload.size(), false);
                 ++m_stats.keyframes;
                 m_stats.keyRawBytes += raw;
                 m_stats.keyStoredBytes += payload.size();
             }
-            if (m_ok)
+            if (m_ok && m_file)
                 std::fflush(m_file);
             {
                 std::lock_guard<std::mutex> lock(m_mutex);
                 m_pendingBytes -= std::min(m_pendingBytes, done);
+                if (m_ringMode)
+                {
+                    m_ringStats.cycleRawBytes = m_stats.cycleRawBytes;
+                    m_ringStats.cycleStoredBytes = m_stats.cycleStoredBytes;
+                    m_ringStats.cyclesEncoded = m_stats.cycles;
+                    m_ringStats.keyStoredBytes = m_stats.keyStoredBytes;
+                    m_ringStats.keyframes = m_stats.keyframes;
+                }
             }
             m_space.notify_all();
         }
+    }
+
+    void Writer::dump(std::string path)
+    {
+        if (!m_open || !m_ringMode)
+            return;
+        Job job;
+        job.kind = Job::Dump;
+        job.path = std::move(path);
+        push(std::move(job), 0u);
+    }
+
+    Writer::RingStats Writer::ringStats()
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_ringStats;
+    }
+
+    // Worker thread. A non-final keyframe opens a segment; cycles and pictures go into the newest; the oldest segment
+    // is dropped while the rest still hold m_ringCycles cycles.
+    void Writer::ringAdd(uint32_t id, std::vector<uint8_t> &&chunk, uint64_t cycle)
+    {
+        if (id == kChunkKeyframe && m_pendingKind == kRingFinal)
+        {
+            m_ringFinal = std::move(chunk);
+            return;
+        }
+        if (id == kChunkKeyframe)
+            m_ring.emplace_back();
+        if (m_ring.empty())
+            return; // nothing before the first keyframe
+        RingSegment &seg = m_ring.back();
+        if (id == kChunkCycle)
+        {
+            if (seg.cycleCount == 0u)
+                seg.firstCycle = cycle;
+            ++seg.cycleCount;
+        }
+        seg.bytes += chunk.size();
+        seg.chunks.push_back({id, std::move(chunk)});
+        uint64_t cycles = 0, bytes = 0;
+        for (const RingSegment &r : m_ring)
+            cycles += r.cycleCount, bytes += r.bytes;
+        while (m_ring.size() > 1u && cycles - m_ring.front().cycleCount >= m_ringCycles)
+        {
+            cycles -= m_ring.front().cycleCount;
+            bytes -= m_ring.front().bytes;
+            m_ring.pop_front();
+        }
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_ringStats.segments = m_ring.size();
+        m_ringStats.cycles = cycles;
+        m_ringStats.bytes = bytes + m_ringFinal.size();
+        m_ringStats.peakBytes = std::max(m_ringStats.peakBytes, m_ringStats.bytes);
+    }
+
+    // Worker thread: header, name table, the ring's segments, the final keyframe, index, ENDF.
+    void Writer::ringDump(const std::string &path)
+    {
+        std::FILE *f = std::fopen(path.c_str(), "wb");
+        if (!f)
+        {
+            std::fprintf(stderr, "[frame-record] cannot write %s\n", path.c_str());
+            return;
+        }
+        std::vector<uint8_t> head;
+        FileHeader header = m_header;
+        // Offsets: the header chunk has a fixed size, so everything can be placed before anything is written.
+        const uint64_t headerChunk = sizeof(ChunkHeader) + sizeof(FileHeader) + pad8(sizeof(FileHeader));
+        std::vector<uint8_t> names;
+        if (!m_tagNames.empty())
+            appendChunk(names, kChunkTagNames, reinterpret_cast<const uint8_t *>(m_tagNames.data()), m_tagNames.size(), false);
+        uint64_t offset = headerChunk + names.size();
+        std::vector<IndexSegment> segments;
+        std::vector<IndexCycle> cycles;
+        uint64_t firstCycle = ~0ull, lastCycle = 0;
+        for (const RingSegment &seg : m_ring)
+        {
+            segments.push_back({offset, seg.firstCycle, seg.cycleCount});
+            if (seg.cycleCount)
+            {
+                firstCycle = std::min(firstCycle, seg.firstCycle);
+                lastCycle = std::max(lastCycle, seg.firstCycle + seg.cycleCount - 1u);
+            }
+            for (const RingChunk &c : seg.chunks)
+            {
+                if (c.id == kChunkCycle)
+                    cycles.push_back({offset, 0u});
+                else if (c.id == kChunkPicture && !cycles.empty())
+                    cycles.back().refiOffset = offset;
+                offset += c.bytes.size();
+            }
+        }
+        const uint64_t finalOffset = offset;
+        offset += m_ringFinal.size();
+        std::vector<uint8_t> index(sizeof(IndexHeader) + segments.size() * sizeof(IndexSegment) + cycles.size() * sizeof(IndexCycle));
+        const IndexHeader ih{segments.size(), cycles.size()};
+        std::memcpy(index.data(), &ih, sizeof(ih));
+        if (!segments.empty())
+            std::memcpy(index.data() + sizeof(ih), segments.data(), segments.size() * sizeof(IndexSegment));
+        if (!cycles.empty())
+            std::memcpy(index.data() + sizeof(ih) + segments.size() * sizeof(IndexSegment), cycles.data(), cycles.size() * sizeof(IndexCycle));
+        std::vector<uint8_t> tail;
+        appendChunk(tail, kChunkIndex, index.data(), index.size(), true);
+        appendChunk(tail, kChunkEnd, nullptr, 0u, false);
+        header.indexOffset = offset;
+        header.flags |= kFileComplete;
+        appendChunk(head, kChunkFile, reinterpret_cast<const uint8_t *>(&header), sizeof(header), false);
+        bool ok = head.size() == headerChunk;
+        auto put = [&](const std::vector<uint8_t> &v)
+        {
+            if (ok && !v.empty() && std::fwrite(v.data(), 1, v.size(), f) != v.size())
+                ok = false;
+        };
+        put(head);
+        put(names);
+        for (const RingSegment &seg : m_ring)
+            for (const RingChunk &c : seg.chunks)
+                put(c.bytes);
+        (void)finalOffset;
+        put(m_ringFinal);
+        put(tail);
+        ok = std::fclose(f) == 0 && ok;
+        uint64_t dumps;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            dumps = ++m_ringStats.dumps;
+        }
+        std::fprintf(stderr,
+                     "[frame-record] ring dump %llu %s %s: cycles %llu-%llu (%zu cycles in %zu segments%s), %.1f MB\n",
+                     static_cast<unsigned long long>(dumps), ok ? "written to" : "FAILED writing", path.c_str(),
+                     static_cast<unsigned long long>(firstCycle == ~0ull ? 0u : firstCycle), static_cast<unsigned long long>(lastCycle),
+                     cycles.size(), segments.size(), m_ringFinal.empty() ? ", no final keyframe" : ", final keyframe",
+                     (offset + tail.size()) / 1048576.0);
     }
 
     void Writer::close()
@@ -355,6 +519,8 @@ namespace rc::rec
         push(std::move(job), 0u);
         m_thread.join();
         m_open = false;
+        if (m_ringMode)
+            return;
         // Index.
         std::vector<uint8_t> index(sizeof(IndexHeader) + m_segments.size() * sizeof(IndexSegment) + m_cycles.size() * sizeof(IndexCycle));
         IndexHeader ih{m_segments.size(), m_cycles.size()};

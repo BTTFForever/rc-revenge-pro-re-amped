@@ -2699,6 +2699,8 @@ static void runHostPlatformLoop(PS2Runtime &runtime, const ps2_host_platform::Ho
             ps2x::savestate::requestQuickSave();
         if (platform.keyPressed(KEY_F9))
             ps2x::savestate::requestQuickLoad();
+        if (const ps2x::capture::Hooks *hooks = ps2x::capture::g_hooks; hooks && hooks->hotkey && platform.keyPressed(KEY_F10))
+            hooks->hotkey(); // RC frame record (batch 4)
         if (!open)
         {
             RUNTIME_LOG("[run] window close requested, breaking out of loop");
@@ -2968,6 +2970,8 @@ void PS2Runtime::run()
             ps2x::savestate::requestQuickSave();
         if (IsKeyPressed(KEY_F9))
             ps2x::savestate::requestQuickLoad();
+        if (const ps2x::capture::Hooks *hooks = ps2x::capture::g_hooks; hooks && hooks->hotkey && IsKeyPressed(KEY_F10))
+            hooks->hotkey(); // RC frame record (batch 4)
 
         if (WindowShouldClose())
         {

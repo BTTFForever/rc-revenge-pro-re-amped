@@ -344,6 +344,71 @@ int main(int argc, char **argv)
         std::printf("dropped page: %" PRIu64 " absent page read(s), %" PRIu64 " of %" PRIu64 " kicks reproduced\n", v.absent, v.ok, v.kicks);
     }
 
+    // (batch 4) Ring mode: keep at least 5 cycles in segments of 3; a dump after cycle 107 holds 103-107 (two segments),
+    // one after cycle 111 holds 106-111; each replays whole with its final keyframe.
+    {
+        Writer ring(Writer::Ring{5});
+        check(ring.ok() && ring.ringMode(), "ring writer");
+        ring.open(info);
+        Recorder rr{m, PageTracker{}, ring};
+        auto key = [&](uint64_t cycle, bool final)
+        {
+            Keyframe kf;
+            kf.header.cycle = cycle;
+            kf.header.flags = final ? kKeyFinal : 0u;
+            kf.chunks.push_back({kStateGsMemory, gs.data(), gs.size()});
+            ring.keyframe(kf);
+            if (!final)
+                rr.tracker.reset();
+        };
+        const std::string d1 = dir + "/ring1.rcfr", d2 = dir + "/ring2.rcfr";
+        for (int c = 0; c < 12; ++c)
+        {
+            rr.cycle = 100 + c;
+            rr.kickIndex = 0;
+            ring.cycleBegin(rr.cycle);
+            if (c % 3 == 0)
+                key(rr.cycle, false);
+            m.ram[0x200FF0 + c] ^= 0xFFu;
+            rr.kick(2, (1u << 2) | 0x100u, 0, 0, 0x600000);
+            rr.kick(1, (1u << 2) | 0x40u | 0x100u, 0, 0, 0x100000);
+            CycleInfo ci;
+            ci.end.cycle = rr.cycle;
+            ci.end.kickCount = 2;
+            ring.cycleEnd(ci, nullptr);
+            if (c == 7 || c == 11)
+            {
+                key(rr.cycle + 1, true);
+                ring.dump(c == 7 ? d1 : d2);
+            }
+        }
+        ring.close();
+        const Writer::RingStats rs = ring.ringStats();
+        check(rs.dumps == 2, "two ring dumps");
+        struct Want
+        {
+            const std::string *path;
+            uint64_t first, cycles, segments;
+        };
+        for (const Want &w : {Want{&d1, 103, 5, 2}, Want{&d2, 106, 6, 2}})
+        {
+            Reader r;
+            check(r.open(*w.path), "ring dump: open: " + r.error());
+            check(r.complete(), "ring dump complete");
+            std::string report;
+            check(r.verify(report), "ring dump verify: " + report);
+            Verifier v;
+            check(r.run({&v}), "ring dump run: " + r.error());
+            const bool shape = r.segments().size() == w.segments && r.cycles().size() == w.cycles && !r.segments().empty() &&
+                               r.segments()[0].firstCycle == w.first;
+            check(shape && v.cycles == w.cycles && v.kicks == 2 * w.cycles && v.ok == v.kicks && v.finals == 1 && v.absent == 0,
+                  "ring dump " + *w.path + ": " + std::to_string(r.segments().size()) + " segments, " + std::to_string(v.cycles) + " cycles, " +
+                      std::to_string(v.ok) + " of " + std::to_string(v.kicks) + " kicks reproduced");
+            std::printf("ring dump: %zu segments from cycle %" PRIu64 ", %" PRIu64 " cycles, all %" PRIu64 " kicks reproduced, final keyframe %s\n",
+                        r.segments().size(), r.segments().empty() ? 0 : r.segments()[0].firstCycle, v.cycles, v.ok, v.finals ? "yes" : "no");
+        }
+    }
+
     std::printf("%s (%d failures, %d cut files)\n", g_failures ? "FAIL" : "PASS", g_failures, cuts);
     return g_failures ? 1 : 0;
 }

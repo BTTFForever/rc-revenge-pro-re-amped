@@ -201,7 +201,7 @@ def cmd_info(d):
             kh, states = d.keyframe(d.payload(c))
             final = kh[3] & 2
             segments += 0 if final else 1
-            print(f'  keyframe{" (final)" if final else ""} before cycle {kh[0]}: ' +
+            print(f'  keyframe{" (final)" if final else ""}{" (after a save-state load)" if kh[3] & 4 else ""} before cycle {kh[0]}: ' +
                   ', '.join(f'{s[0]} {s[2] // 1024} KB -> {s[1] // 1024} KB' for s in states))
             continue
         number, recs = info
@@ -223,7 +223,7 @@ def cmd_list(d, which=None):
         if kind == 'KEYF':
             if which is None:
                 kh, states = d.keyframe(d.payload(c))
-                print(f'-- keyframe{" (final)" if kh[3] & 2 else ""}: {", ".join(s[0] for s in states)}')
+                print(f'-- keyframe{" (final)" if kh[3] & 2 else ""}{" (after a save-state load)" if kh[3] & 4 else ""}: {", ".join(s[0] for s in states)}')
             continue
         number, recs = info
         if which is not None and number != which:

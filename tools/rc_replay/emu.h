@@ -86,7 +86,7 @@ namespace rc::replay
         {
             uint64_t cycles = 0, kicks = 0, gifChecked = 0, gifOk = 0, gifBytes = 0, regsChecked = 0, regsOk = 0;
             uint64_t refHashChecked = 0, refHashOk = 0, picturesChecked = 0, picturesOk = 0;
-            uint64_t keyframesChecked = 0, keyframesOk = 0, finalChecked = 0, finalOk = 0, keyframesLoaded = 0;
+            uint64_t keyframesChecked = 0, keyframesOk = 0, finalChecked = 0, finalOk = 0, keyframesLoaded = 0, keyframesAfterLoad = 0;
             uint64_t hwApplied = 0, pagesApplied = 0;
         } m_t;
         uint64_t m_digest = 0; // all replayed picture hashes, folded: equal digests = identical replays
