@@ -120,6 +120,30 @@ After step 1: fold its answers into this plan's open questions.
       run and the oracle are unaffected.
    4. Ring mode with the F10 hotkey, save-state handling, measured size and time budget, the NOTES.md section.
    Batches 1 and 2 are what steps 5-8 depend on.
+   **Batch 1 done 2026-11-19** (usage: NOTES.md, "Frame record"; what it changed in the design and why:
+   `RENDERER_FRAME_RECORD.md` section 13; sizes and cost: its sections 2 and 6.3). The runtime's capture hook table
+   (`ps2_capture_hooks.h`) and sites, `render/record/` (format, page shadow, chain walker, writer, reader, consumer
+   interface, capture with the boot/cycle/game/level/scene triggers, plain keyframes), `rc_replay` with `stats`,
+   `rc_record_test`, `tools/frame_dump.py`. Check:
+   - Synthetic round trip (`rc_record_test`): 8 cycles, 32 kicks over chains with every tag kind, the scratchpad and
+     the wrap at the end of RAM, two segments: all 32 reproduced by the walker after the read-back, the second segment
+     alone too; the file cut at 5 points reads 3, 3, 5, 4 and 8 whole cycles (each its last whole one) and says so; a
+     flipped byte and a dropped page are caught.
+   - Dumps (`tools/play.sh`, default renderer, RTX 2060), both versions: levels 17 and 18 (`level:300+120`), the front
+     end (`RC_SKIP_INTRO=1`, `game:600+120`), boot (`boot+900`: logos, the publisher movie, title, front end). `rc_replay
+     --verify`: every stream hash reproduced, USA 4,440 + 3,720 + 1,320 + 7,619 kicks, Europe the same counts (the
+     streams differ: 648 / 1,149 / 527 / 3,013 MB walked USA, 660 / 1,138 / 581 / 3,284 MB Europe); no page read that
+     the dump lacks; no `ODD` event but the survey's two start-up VIF1 FIFO stores in each boot dump (counted apart);
+     no hook call off the EE thread; `frame_dump.py verify` clean on all eight.
+   - Recording off changes nothing: `tools/play.sh replay playtest2` (150 s, `RC_SCENE_LOG`) gives the same frames,
+     input clocks and scenes as the run before the change on both versions (USA frames 1, 5, 657, race at 658;
+     Europe 1, 5, 1166, race at 1167); 60.0-60.2 fps (USA) and 50.0-50.2 (Europe, one 46.2 sample at boot as before
+     the change: 45.8). `tools/oracle.sh --all` with new seeds (the oracle links the runtime and the overrides): USA
+     seed 6160 1632 ok, 0 FAIL, 98 without a setup; Europe seed 6161 1563 ok, 0 FAIL, 90 without a setup (8 dumps).
+   - Sizes (plain mode): a race cycle 457-544 KB raw, 86-102 KB stored; front end 292-340 / 63-75 KB; keyframe
+     4.1 MB raw, 1.2-1.4 MB stored. Outside the game's rings a race cycle changes about 290-320 KB (two alternately
+     rewritten buffers at 0x617000/0x696000 read by K2, and the animated-texture header page), as much as inside them.
+     The recorder costs 2.6-6.8 ms a cycle on the EE thread (estimate was 1-2 ms; the stream hash was left out).
 5. Shadow texture memory and decode (Fable); checked against `tools/track_viewer` off-line and the emulated GS
    memory in game. Uploads arrive as CT32 (level image, palettes) **and** PSMT8/PSMT4 (single textures, animated
    frames), so the shadow needs those write swizzles too; formats sampled are T4/T8 with CT32 palettes (CSM1, CSA 0,

@@ -49,7 +49,7 @@ The goal is a full behaviour-matching decompilation in the style of ico-pc (`../
 |---|---|---|
 | Your disc image (`.iso`, or `.bin`/`.cue`), anywhere | The source of everything; `tools/setup.sh <image>` reads it | Yes |
 | `game/usa/`, `game/eu/` (ignored) | Per version: the disc image the game reads at run time (a link to your `.iso`, or one converted from a `.bin`, named `RC Revenge Pro (USA).iso` / `RC Revenge Pro (Europe).iso`) and `disc/`, every file extracted from it (the ELF `SLUS_201.53` / `SLES_500.77`) plus empty `mc0`/`mc1` | Required at run time |
-| `CMakeLists.txt`, `config.toml`, `config_eu.toml`, `overrides/`, `tools/`, `decomp/` (except `generated/`) | Hand-written project files and the decompiled code | Tracked in git |
+| `CMakeLists.txt`, `config.toml`, `config_eu.toml`, `overrides/`, `tools/`, `decomp/` (except `generated/`), `platform/`, `render/` | Hand-written project files, the decompiled code, the host platform and the native renderer's parts | Tracked in git |
 | `third_party/ps2recomp/` | The runtime and recompiler (PS2Recomp, SotC fork at d06a4ab, with the local changes); see its `VENDORED.md` | Tracked in git |
 | `functions_filtered.csv`, `functions_eu.csv` | The recompiler's function maps (name, start, end, size). The USA one came from the Ghidra export (`tools/filter_function_map.py`); the Europe one from `tools/function_map_from_elf.py` with the USA one as reference | Tracked in git |
 | `decomp/generated/eu/changed_functions.txt`, `lit4_map.txt` | Which functions differ in Europe (`tools/version_diff.py`) and the .lit4 alignment (`tools/gen_addrs.py --lit4-map`): the parts of the Europe headers that need the USA executable, kept so a Europe-only build needs only the Europe disc | Tracked in git |
@@ -229,6 +229,7 @@ Debugging:
   unset or `gs`, the raylib window as always. `RC_SCENE_LOG=<file>` writes a line at each scene change (game frame,
   input clock, field, seconds, scene) to compare two runs of a recording.
 - `RC_GS_SURVEY=<file>` records every DMA kick and GS register write by path, per frame and scene (`RENDERER_SURVEY.md`); use it with `RC_TRACK_SHADER=0 PS2X_MTVU=0` (tools/play.sh passes both through), read with `tools/gs_survey.py`.
+- `RC_FRAME_RECORD=<file.rcfr>` with `RC_FRAME_RECORD_AT=<trigger>` records the frame record (the DMA kicks, hardware stores and the guest RAM they read, per display cycle) for `rc_replay` and `tools/frame_dump.py`: section "Frame record" below.
 - `eeCycle` in the dump is not a reliable speed gauge. Use `gameframes`.
 - In zsh, unquoted variables do not word-split, so pass env settings one by one.
 
@@ -251,6 +252,7 @@ All are in `third_party/ps2recomp/` (against upstream d06a4ab; see "The runtime"
 - `gs/gs_survey.cpp` (2026-11-19, renderer P0 step 1): the GS usage survey, on with `RC_GS_SURVEY=<file>`; hooks in `ps2_memory.cpp` (DMA kicks, chain tags, `submitGifPacket`, the native GIF fast paths, GS privileged register and FIFO stores), `gs_frontend.cpp` (`GS::writeRegister`), `System.cpp` (`SetGsCrt`), `ps2_runtime.cpp` (`Store32/64`: the caller's address). Unset, each hook is one test of a false global. Findings and the record format: `RENDERER_SURVEY.md`; summariser `tools/gs_survey.py`.
 - `include/ps2_host_platform.h`, `ps2_runtime.cpp` (`initialize`, `run`, `runHostPlatformLoop`, `UploadFrame`), `ps2_host_input.cpp` (2026-11-19, renderer P0 step 3): host platform hooks. Null unless the game installs them (`platform/vk_host.cpp` for `RC_RENDERER=vk`); then no raylib window, a std::chrono host loop and input through the hooks in raylib's codes. With no hooks every path is the old one (one test of a null pointer per call).
 - `ps2_runtime.cpp` (`Store32`): `g_ps2HardwareStoreHook`, null except in the offline oracle, sees each 32-bit store sent to a hardware register and can drop it (the oracle logs them so both runs' DMA kicks are compared).
+- `include/ps2_capture_hooks.h` (2026-11-19, renderer P1 step 4 batch 1): the frame record's hooks, null unless `RC_FRAME_RECORD` installs them (one null test per site): `ps2_memory.cpp` (each DMA kick on channels 0-2 with every byte range its stream is read from, GS privileged, VIF1 and GIF register stores, FIFO stores, PATH2 packets, `submitGifPacket`), `ps2_runtime.cpp` (`attach` at the end of `initialize`, the store caller in `Store32/64`, the native GIF fast paths), `System.cpp` (`SetGsCrt`), `gs_frontend.cpp` (`GS::writeRegister`, local->host transfers, and `g_gsRawRegs`: every GS register write kept as written, always on), `ps2_save_state.cpp` (`snapshotGs`: GS memory and registers for keyframes, as a save state takes them). See "Frame record".
 - Experimental, off by default: God of War's render-target renderer (`gs_hw_backend.cpp`, `gs_texture_store.*`, `gs_gpu_helpers.h`,
   `gs_tri_groups.h`, `gs_upload24.h`, `gs_colour_runs.h`, additions to `gs_gl.h`, `gs_gl_api_load.inl` and `ps2_gs_memory.*`).
   Enable with `PS2X_GS_HW=1 PS2X_GS_HW_SCALE=<n>`.
@@ -365,6 +367,42 @@ SDL3 window with a Vulkan swapchain made by the RHI (`third_party/ico_rhi`) inst
   5151 1563 ok, 0 FAIL, 90 without a setup (8 dumps).
 - Known, not new: `playtest2` is all epoch 0 and the level load at frame 658 moves the clock to epoch 1, so the replay's
   driving inputs are skipped and the player sits on the grid (both modes); a later recording needs a fresh `record`.
+
+### Frame record (2026-11-19, renderer P1 step 4, batch 1)
+The kick record of `RENDERER_FRAME_RECORD.md`: per display cycle (DISPFB2 store to DISPFB2 store, one shown picture)
+every DMA kick on channels 1 and 2 as its registers, every GS privileged / VIF1 / GIF register store, and the 4 KB pages
+of guest RAM the kicks read, each stored when it is new or changed (a sparse page shadow), with keyframes (GS memory and
+registers, VU1 memory and registers, VIF1) every 300 cycles. Off-line consumers (the readers of renderer steps 5-8)
+replay it with the guest RAM rebuilt. Batch 1 records in plain mode (any renderer); exact mode with reference
+pictures and the emulated replay come with batch 2, side tags with 3, ring/F10 with 4.
+- **Record:** any run of the game, e.g.
+  `RC_FRAME_RECORD=build-decomp/frame-dumps/l17.rcfr RC_FRAME_RECORD_AT=level:300+120 RC_BOOT_LEVEL=17 tools/play.sh`
+  (`RC_VERSION=eu` as usual). Triggers (count in display cycles, default 120): `boot[+n]`, `cycle:<n>[+n]`,
+  `game:<n>[+n]` (game frames since boot), `level:<n>[+n]` (game frames since the last level start; not before one),
+  `scene:<hex>[+n]` (the GS survey's scene id). `RC_FRAME_RECORD_KEY=<n>` sets the cycles per segment (300). Unset
+  `RC_FRAME_RECORD_AT`: `boot+120`. The game logs `[frame-record]` lines to `session.log`: when it starts, and at the
+  end sizes by record type and the recorder's time. Keep dumps in a build folder or a scratch folder: they hold game
+  data and are never committed (`*.rcfr` is ignored).
+- **Check and read:** `ninja -C build-decomp rc_replay` (links the runtime and the VU1 library, no recompiled game
+  code; one build reads both versions' dumps), then `build-decomp/rc_replay <dump> --verify [--quiet] [--cycles a-b]`:
+  per cycle and in total the kicks, stream bytes, DMA tags, pages, stores; `--verify` walks every kick's DMA chain over
+  the rebuilt RAM with the host's walker (`render/record/chain_walk.cpp`) and must reproduce every recorded stream
+  hash, read no page the dump lacks, and find no `ODD` event (traffic outside the planned kicks; the two start-up VIF1
+  FIFO stores are counted apart). Exit 0 pass, 1 fail, 2 unusable dump. `tools/frame_dump.py info|list|kick|tags|png|
+  verify <dump> ...` (standard library only) prints the header and sizes, the events of a cycle, one kick with its first
+  stream bytes, and checks every chunk's CRC and the index.
+- **Container test:** `ninja -C build-decomp rc_record_test && build-decomp/rc_record_test <scratch folder>` writes a
+  synthetic dump (chains with every tag kind, the scratchpad, wrap at the end of RAM, two segments), reads it back,
+  cuts it at five points (each reads up to its last whole chunk) and checks a flipped byte and a dropped page are
+  caught.
+- **Code:** `render/record/` (format, consumer interface `rc::rec::Consumer`, page tracker, chain walker, writer,
+  reader, `capture.cpp` = the hooks, cycles and triggers, linked into the game only and installed only when
+  `RC_FRAME_RECORD` is set; `emu_state.cpp` = keyframe state from the runtime), `tools/rc_replay/`, the runtime's
+  `include/ps2_capture_hooks.h` (above, "Local changes to the runtime"). The oracle links none of it.
+- **Sizes and cost** (plain mode, both versions; details in `RENDERER_FRAME_RECORD.md` 6.3): a race cycle 0.46-0.54 MB
+  raw, 86-102 KB stored; front end 0.29-0.34 MB / 63-75 KB; a movie picture 0.35 MB / 93 KB; a keyframe 4.1 MB raw,
+  1.2-1.4 MB stored; 120 race cycles 14-18 MB on disc, `boot+900` 72-80 MB. The recorder costs the EE thread 2.6-6.8 ms
+  a cycle while it records (page compare and the stream hash; compression runs on its own thread).
 
 ### Level testing (2026-11-09)
 `RC_BOOT_LEVEL=<n> tools/play.sh` skips the intro and menus and loops the attract-mode demo on level n. `RC_SKIP_INTRO=1` skips only the legal screen, movie and Dolby screen and starts in the front end (for menu tests: `PS2X_PAD_REPLAY=<file>` plays a pad script of `epoch frame buttons axes` lines). `tools/level_sweep.sh <first> <last> <seconds> [VAR=value ...]` prints each level's frame rate.
