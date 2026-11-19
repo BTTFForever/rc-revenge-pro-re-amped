@@ -340,6 +340,13 @@ After step 1: fold its answers into this plan's open questions.
      (front-end backdrop, race HUD) and in the Track Editor SCISSOR_1, TEST_1 and TEX1_1 from PATH1, so the live half
      (batch 5) needs PATH1's register writes (step 8, or the runtime's register shadow). Nothing is linked into the
      game or the oracle.
+   - **Batch 2 built 2026-11-20** (`RENDERER_2D_DESIGN.md` section 15): `gs_model`, the RHI's `shaderFloat64` edit,
+     `Gs2dVk` (`render/gs2d/gs2d_vk`, shaders `gs2d.vert/.frag`) and `rc_gs2d_test`. On the RTX 2060 with the validation
+     layer (0 errors): the model's self-check, T2-T7 pass (alpha test and split, depth, coverage, textures and the
+     per-pixel arithmetic bit-exact against the emulated GS; 1/Q needed a double division), the planted faults fail
+     their tests. **T1 fails**: the device's blender works at 8 bits, so the lerps and `Cd*F+Cs` come out -1..+1 per
+     layer with the 127/256 bias and -1..+2 without (the design assumed 0..+1); the integer-exact forms are exact.
+     The bias is off as the design says. Whether to take the exact mode (U1) before batch 3 is open for the user.
 8. VIF chain reader with the C++ VU references (Opus): races draw correctly (slowly); GIF bytes equal the emulated
    VU1's for recorded frames; full screenshots on levels 5, 17, 18, 20.
 

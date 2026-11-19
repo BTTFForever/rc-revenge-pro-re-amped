@@ -680,6 +680,31 @@ what was built and the results: its section 14. Nothing of it is linked into the
 - **Dumps:** step 5's (`frame-dumps/s5/`), step 6's (`frame-dumps/s6/`) and step 4's exact ones (`b4-key*`, `b4-x2-*`),
   both versions. Plain dumps run without judging (no recorded register files).
 
+### The 2D packet on Vulkan: model, Gs2dVk, rc_gs2d_test (2026-11-20, renderer P1 step 7 batch 2)
+The draw list of batch 1 drawn through the vendored RHI (`render/gs2d/gs2d_vk`, library `rc_gs2d_vk`), the CPU model of
+the reference's pixel pipeline (`render/gs2d/gs_model`, in `rc_gs2d`) and their test, `rc_gs2d_test`. Design and results:
+`RENDERER_2D_DESIGN.md` section 15. Nothing of it is linked into the game or the oracle.
+- **What it is:** `Gs2dVk` replays TEXTURE / STATE / SCREEN_PRIMS / CLEAR into two RGBA8 targets (FBP 0x0, 0x50) and a
+  D32F depth (Z * 2^-24). Each primitive is a 44-word record in one storage buffer; `gs2d.frag` computes the software
+  GS's per-pixel arithmetic from it (weights in doubles, needing `shaderFloat64`, the RHI's `RC:` edit in
+  `third_party/ico_rhi/VENDORED.md`), the blend is fixed function with dual-source factors, 288 pipelines are made at
+  start, lines become one point a pixel, RGB_ONLY with Z write is two draws per group of non-overlapping primitives.
+  `seed()` / `readColour()` / `readDepth()` / `probe()` serve the tests and check (c).
+- **Check:** `ninja -C build-decomp rc_gs2d_test`, then `__NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only
+  build-decomp/rc_gs2d_test [--validation] [--quiet] [--only model,T1,...,T7] [--no-faults] [--no-design-bound]`: the
+  model's self-check, T1-T7 through the emulated GS (the runtime's `GS` alone), the model and Vulkan, then the planted
+  faults (each must fail its test). About 4.5 min, with or without `--validation` (T1 is most of it). **Ends FAIL on the RTX 2060** because T1's
+  design bound for inexact blends does not hold: the blender takes the source and the dual-source factor at 8 bits
+  (section 15.3; decision open). `--no-design-bound` checks everything else and ends PASS. `--only blenddbg` prints
+  a small table of the blender's results.
+- **Learnt:** the float division in a shader is not correctly rounded on the RTX 2060 (1/Q in double instead); the
+  double multiply and its rounding to float are; `rhi_readback_texture` reads a D32F depth back.
+- **The RHI edit and the game:** `rc_ico_rhi` changed, so the games were rebuilt (nothing else in them changed) and
+  checked (2026-11-20): `tools/oracle.sh --all` USA seed 7311 1632 ok, 0 FAIL, 98 without a setup; Europe seed 7312
+  1563 ok, 0 FAIL, 90 without a setup; `tools/play.sh replay playtest2` (70 s, `RC_SCENE_LOG`): USA race scene 3020
+  at frame 658, Europe at 1167; `RC_RENDERER=vk RC_VK_VALIDATION=1` USA: scene 3020 at frame 658, 3,762 presents,
+  0 validation errors.
+
 ### Level testing (2026-11-09)
 `RC_BOOT_LEVEL=<n> tools/play.sh` skips the intro and menus and loops the attract-mode demo on level n. `RC_SKIP_INTRO=1` skips only the legal screen, movie and Dolby screen and starts in the front end (for menu tests: `PS2X_PAD_REPLAY=<file>` plays a pad script of `epoch frame buttons axes` lines). `tools/level_sweep.sh <first> <last> <seconds> [VAR=value ...]` prints each level's frame rate.
 Sweep of levels 1-24 on the God of War renderer at 3x: 1, 3, 4, 10, 15, 16 and 22 hold about 55-60 fps; 6, 8, 9, 12, 17, 18 and 24 ran about 25-35 fps before the blend and palette fixes. On level 18 the default renderer reaches 35-43 fps with VU1 87% busy at 14.5 ms per field, so those levels are limited by VU1 on both renderers. About half the VU time is one block of program C3952C0FAEB52EAD; its cost is spread evenly over its instructions.

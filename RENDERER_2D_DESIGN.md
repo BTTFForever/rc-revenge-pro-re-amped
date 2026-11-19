@@ -911,3 +911,130 @@ item 10.
   As irrelevant there); check (b) holds with the real value, which is what counts.
 - Scenes not recorded (split screen, podium, results, memory card, the Track Editor's race): `path1Writes` and the
   guards are measured on the 67 dumps only; check (a) on a new dump names any register PATH1 changes beyond the set.
+
+## 15. Batch 2 as built (2026-11-20): the model and the Vulkan path
+
+Section 11 item 2. Built: `gs_model` (in `rc_gs2d`), the RHI edits of decision U2, `render/gs2d/gs2d_vk` (library
+`rc_gs2d_vk` on `rc_ico_rhi`) with its shaders, and `rc_gs2d_test` (`tools/rc_replay/gs2d_test.cpp`). Usage: `NOTES.md`,
+"The 2D packet on Vulkan". Nothing of it is linked into the game or the oracle; the RHI edit is (15.5).
+
+```
+render/gs2d/gs_model.{h,cpp}     the GS rules (texture function, alpha test and write mask, Z test, blend), ffBlend, gsPixel,
+                                 triangle setup / weights / per-pixel quantities, coverSprite, expandLine, GsModel (a list drawn on the CPU)
+render/gs2d/gs2d_vk.{h,cpp}      Gs2dVk: targets, every pipeline, Gs2dPrim records, TEXTURE uploads, the clear, line pixels,
+                                 the split by groups, seed / draw / read-back / probe; the planted faults
+render/gs2d/gs2d.vert, .frag     the record placed (half pixel, 4096 viewport); the reference's per-pixel arithmetic (GS2D_POINTS,
+                                 GS2D_PROBE builds); gs2d_seed.vert/.frag: colour and Z * 2^-24 from CPU planes
+tools/rc_replay/gs2d_test.cpp    rc_gs2d_test: the model's self-check, T1-T7 through the emulated GS, gs_model and Vulkan, the faults
+third_party/ico_rhi              RC: shaderFloat64 enabled where offered, RhiLimits.shaderFloat64 (VENDORED.md)
+```
+
+### 15.1 Changes to the design, and why
+
+1. **One storage buffer of 44-word records, no vertex buffer, no uniforms.** Every primitive (and each flat triangle of
+   the clear, each pixel of a line) is a `Gs2dPrim`: window coordinates, colours, S/T/Q, Z, the edge functions with `c`
+   and `1 / area` as double bits, and the plan's per-pixel parameters (term, factor, coefficients, FIX, ALPHA selectors,
+   alpha test, TFX/TCC/filter/wraps/size, region bounds, which part of the split, bias, faults). The vertex shader reads
+   its position from the record by `gl_VertexIndex` (3 a record, or 1 for the points build); the fragment shader reads
+   the record by a flat index. So nothing per draw needs a uniform; a draw is a pipeline, a texture group and a record
+   range.
+2. **The clear is two flat triangles with corners on whole framebuffer coordinates** (no pixel centre on an edge), its
+   rectangle from `coverSprite` intersected with the scissor; line pixels are points (`gl_PointSize` 1 at the pixel
+   centre) carrying the final colour and Z. A flat record skips the weights.
+3. **Pipelines:** blend configuration (3) x alpha-by-blend (2, only without depth write) x {triangles, points} x depth
+   compare (4) x depth write (2) x colour mask (none, A, RGB, RGBA): 288, made at `create()` by
+   `rhi_create_pipelines` in 0.1-0.7 s; plus the seed and the probe pipelines.
+4. **5.2's "As is one value" decision on the CPU** covers untextured primitives with flat alpha and textured ones whose
+   texture alpha range is one value; such a primitive goes only into the pass or the fail draw of its group.
+   **Groups** are runs of primitives whose scissored boxes are pairwise disjoint, the second half of a rectangle pair
+   (same check as the reader's) allowed to touch its first half; for points, runs of distinct pixels.
+5. **`1 / Q` in double** (6.3's fallback): T7 found the float division one ULP off on 4% of pixels on the RTX 2060
+   (22,063 of 521,450, and with it uf, vf, fu, fv); `float(1.0lf / double(q))` matches the reference on every pixel.
+   The weights `float(double(e) * invArea)` were exact from the start.
+6. **The source bias is off** (`Gs2dVk::Options::sourceBias`, default false): T1 fails with it (15.3); the design
+   switches it off then. It also fails without it, which the design did not foresee (15.3, 15.6).
+7. **Seed:** one full-target draw writes colour from an RGBA8 texture and depth from an `R32_UINT` texture (both always).
+   Depth read-back of the `D32F` texture works through the RHI (`rhi_readback_texture`, depth aspect); every value read
+   back is an integer Z (checked).
+8. **Reader test hooks:** `Gif2dReader::startBlank()` / `feedPath3()` (a kick from raw PATH3 bytes) and
+   `Options::faultIgnoreTexa` (the TEXA fault: textures decoded as if TEXA were TA0 0, TA1 0x80, AEM 0).
+9. **The emulated GS of the tests** is the runtime's `GS` alone (`GS::init` on 4 MB, the bare synchronous
+   `GSCpuBackend` as in rc_replay's emu machine), seeded and read with `GS::WriteVram` / `ReadVram` (CT32 at FBP 0x0 and
+   0x50, Z24 at ZBP 0xa0). Its fast paths were taken for every triangle; the 129 sprites (the clears) took its general
+   sprite path (fallback counter 0).
+10. **9.1's figures** are over Cs and Cd in 0..255 (F 0..0x80): without the bias `Cd*F+Cs` is one above on 35.0% and a
+    tie on 2.0% (the design's "37%"), the lerps 46.5% and 2.7% (49%); with the bias `Cd*F+Cs` exact 99.81%, one above
+    0.18%, the lerps exact 99.39%, one above 0.58% (the design said 98.0% exact: 100 - 0.58 - 0.02 is 99.4). Over Cs, Cd
+    in 0..0x80 the bias leaves 0.36% and 1.14% one above.
+
+### 15.2 Results (`rc_gs2d_test --validation`, RTX 2060, driver 620.70.06; 268 s, 1,716 scenes)
+
+| test | what ran | result |
+|---|---|---|
+| model (9.1) | every row of 4.2 x every As (0..0x80) or FIX (0x15, 0x20, 0x3f, 0x40, 0x7f, 0x80) x Cs, Cd 0..255: 44.2 M triples | pass: `ffBlend.lo >= gsBlend`, `hi <= gsBlend + 1`, equal wherever the plan is exact or the bias applies |
+| T1 | 675 scenes (each 256 x 256 pixels) with the bias and 675 without | **fails the design's criterion on the device** (15.3); passes everything else: emulated = `gsBlend` everywhere, stored alpha = As, every integer-exact row (0x68, 0x62, 0x08, 0x29/0xa1 with FIX 0x80, PABE rows) equal to the GS on all 44.2 M pixels |
+| T2 | two six-layer stacks x four patterned destinations | pass: emulated = model; `0 <= Vulkan - GS <= L` on every channel (largest L 10; (Vulkan - GS) / L at most 0.5; 97% of pixels have a channel above the GS) |
+| T3 | ATST 8 x AFAIL 4 x ZMSK 2 x AREF {0, 1, 0x2f, 0x3f, 0x80} = 320 scenes: flat columns (decided on the CPU), a textured alpha ramp (the split per pixel), two overlapping textured rectangles in one batch at equal and at rising Z; FBP alternating | pass: colour, alpha and Z planes emulated = model = Vulkan (24,120 split primitives in 11,880 groups; 46,440 decisions on the CPU) |
+| T4 | ZTST 4 x ZMSK 2; stored Z {0, 1, 2, 0x7fffff, 0xfffffd, 0xfffffe, 0xffffff} by column against drawn Z {0, 1, 2, 0xfffffd, 0xfffffe, 0xffffff}; the clear (Z32, Z 1) and bands over it | pass: all planes equal |
+| T5 | 768 triangles (each vertex at each of 16 x 16 subpixel offsets), 64 rectangles with subpixel corners, 8 slivers 1/16 high, 4 fans of 12 through integer centres, a triangle reaching 1,500 px off screen, 6 scissors (each edge), 64 lines in all octants crossing the scissor (Gouraud too), 120 sprites with subpixel corners in either order; additive blend counts coverage | pass: all planes equal (no pixel drawn twice or missed) |
+| T6 | CT32 64x64, CT16 64x64 with TEXA (TA0 0x30, TA1 0x70, AEM 1), T8 and T4 32x32 with CT32 palettes: 1, 2, 1/2, 1.07 texels a pixel, mirrored, Gouraud, one colour under IIP, colours above 0x80, nearest and linear; the four wraps past the borders; TFX 0-3 x TCC 0/1; the rotated subpixel quad and one with Q from 1 to 2.11 | pass: emulated = Vulkan (and = model) in all four channels |
+| T7 | six large triangles (vertices off screen, subpixel, Q 0.25..3), probe of w0, w1, w2, 1/Q, uf, vf, fu, fv | pass: all 521,450 covered pixels bit-equal to the CPU (after 15.1 item 5), coverage equal |
+| validation | Khronos layer on for the whole run | 0 errors, 0 warnings |
+
+### 15.3 T1 and the source bias: the blender is 8-bit on the RTX 2060
+
+Vulkan - GS per channel over T1's 44.2 M pixels (three channels each) for the rows that are not integer exact:
+
+| ALPHA | with the bias | without |
+|---|---|---|
+| 0x09 `Cd*As+Cs` | -1: 9.0 M, 0: 15.8 M, +1: 0.6 M | 0: 15.9 M, +1: 9.4 M |
+| 0x29 FIX f | -1: 0.37 M, 0: 0.79 M, +1: 0.02 M | 0: 0.82 M, +1: 0.36 M |
+| 0x01 lerp As (and 0x44) | -1: 4.3 M, 0: 18.1 M, +1: 3.0 M | -1: 0.31 M, 0: 13.7 M, +1: 11.3 M, +2: 0.12 M |
+| 0x21 FIX f | -1: 0.24 M, 0: 0.83 M, +1: 0.12 M | -1: 0.05 M, 0: 0.73 M, +1: 0.39 M, +2: 0.008 M |
+| 0xa1 FIX f < 0x80 | -1: 0.04 M, 0: 1.04 M, +1: 0.10 M | 0: 0.90 M, +1: 0.27 M, +2: 0.009 M |
+
+The design's premise (4.3: a blender with more than 17 bits) does not hold. The read-back of a small table
+(`rc_gs2d_test --only blenddbg`) fits a blender that takes the shader's source colour **and the dual-source factor at
+8 bits** before blending: a source of 0.504 level stores 0 and 1.504 stores 1 (the bias then costs a whole level), and
+FIX 0x15 (0.1640625) acts as 42/255 (Cd 252 gives 42 where the exact product is 41.34). Integer sources with factor 0
+or 1 come through exactly (every exact row above). So on this device fixed function gives, per inexactly blended layer,
+-1..+1 with the bias and -1..+2 without it, not 4.4's 0..+1; T2's stacks happen to stay within 0..L. Check (c)'s bound
+(4.4) cannot be claimed; exactness needs the destination read (decision U1). **Open for the user (15.6).**
+
+### 15.4 Planted faults (9.3; each run of the named test with the fault, the design criterion of T1/T2 left out)
+
+| fault | test | result |
+|---|---|---|
+| ATST LEQUAL drawn as LESS | T3 | fails |
+| the failing part of the split dropped | T3 | fails |
+| the split issued per batch instead of per group | T3 | fails |
+| ZTST GREATER as GEQUAL | T4 | fails |
+| the half pixel left out of the position | T5 | fails |
+| the bias applied where a < b | T1 | not applicable: the bias is off, and the criterion that would catch it fails without a fault |
+| FIX off by one | T1 | fails (the integer-exact FIX rows) |
+| TEXA ignored | T6 | fails |
+| the texel fetch one row off | T6 | fails |
+| a vertex colour's R and G swapped | T6 | fails |
+
+Check (c)'s side of each fault is batch 3's.
+
+### 15.5 The game and the oracle
+
+`rc_revenge_pro` and `rc_oracle` link nothing new (their link lines in both trees: no `rc_gs2d*`, `rc_tex`, `rc_blit`;
+the oracle has no RHI at all). The RHI edit changes `rc_ico_rhi`, which the game links, so both games were rebuilt
+and the regression checks run: `tools/oracle.sh --all` USA (seed 7311) 1632 ok and Europe (seed 7312) 1563 ok, 0 FAIL;
+`playtest2` replays reach the race scene 3020 at frame 658 (USA) and 1167 (Europe); an `RC_RENDERER=vk` replay with the
+validation layer: frame 658, 0 validation errors. `rc_gs2d_test --no-design-bound` (everything but T1's and T2's bound
+for inexact blends) ends PASS; without it the run ends FAIL on T1 alone.
+
+### 15.6 Open
+
+- **The blend on this device (15.3): decision for the user.** Options: (a) decision U1's exact mode now (the shader
+  reads the destination through fragment-shader interlock, which the RTX 2060 has; depth then also in a storage image
+  with the Z test in the shader, 4.2/U1); (b) accept fixed function with a measured bound (-1..+2 per inexact layer
+  without the bias, -1..+1 with it) as D-2D-1 and widen check (c) to it; (c) look for another target format (the RHI has
+  no RGBA16_UNORM or RGBA32F target; RGBA16F cannot hold the GS's integer floor). Batch 3's check (c) depends on it.
+- Whether to keep the bias off (design rule; larger maximum error) or on (smaller maximum error, fewer equal pixels for
+  `Cd*F+Cs`, more for the lerps) if (b) is chosen.
+- The model draws textures only from the decoded level, so region wraps that reach past the texture read 0 where the
+  reference reads memory (the tests keep region bounds inside the texture; RC uses CLAMP only).
