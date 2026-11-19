@@ -61,6 +61,9 @@ namespace rc::replay
         // submitted to the GS as PATH3 packets (under the kick's MXCSR) in place of the DMA transfer, and the kick's
         // recorded GIF hash is not checked (it is counted as substituted). Everything else is verified as usual.
         void setKickSubstitute(std::function<const std::vector<uint8_t> *(const rc::rec::KickView &)> f) { m_substitute = std::move(f); }
+        // (step 7 batch 3, check (c)) Called after the machine has run a kick (substituted or not), so a consumer in
+        // front of this one can read GS memory before (in its own kick()) and after it.
+        void setAfterKick(std::function<void(const rc::rec::KickView &)> f) { m_afterKick = std::move(f); }
 
         bool fatal() const { return !m_fatal.empty(); }
         const std::string &fatalError() const { return m_fatal; }
@@ -82,6 +85,7 @@ namespace rc::replay
         bool m_collect = false;
         std::function<void(int, const uint8_t *, uint32_t)> m_gifTap;
         std::function<const std::vector<uint8_t> *(const rc::rec::KickView &)> m_substitute;
+        std::function<void(const rc::rec::KickView &)> m_afterKick;
         uint64_t m_gifBytes = 0;
         rc::rec::Hash64 m_gif;
         bool m_path1 = false;

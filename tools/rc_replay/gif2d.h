@@ -13,13 +13,19 @@
 // It also prints the tables of RENDERER_2D_DESIGN.md section 3 counted from the reader's own draw lists ("H" lines,
 // summed by tools/gif2d_agg.py like gif2dstat's).
 //
+// (c) --vk (step 7 batch 3, gif2d_vk.h): with (b), every drawing kick is also drawn through Gs2dVk over the emulated GS's
+//     frame and Z buffers as they were before it and compared with what the emulated GS drew (RENDERER_2D_DESIGN.md
+//     10.3, the bound of D-2D-1), with the source bias off and on.
+//
 // Planted faults: reg:<cycle>:<addr> (the reader loses every write of GS register <addr>, decimal, in that cycle: (a)
 // must fail), prim:<cycle>:<n> (primitive n of the cycle left out of the encoded stream: (b)), field:<cycle>:<k>
 // (GsState field k written as 0 in every STATE from that cycle on: (b), gs2d_encode.h GsField).
 
 #include "consumer.h"
+#include "gif2d_vk.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -32,6 +38,10 @@ namespace rc::replay
         std::string faultKind;
         int64_t faultCycle = -1;
         uint32_t faultN = 0;
+        // (c)
+        bool vk = false;
+        Gif2dVkOptions vkOptions;
+        std::function<const uint8_t *()> vram; // the emulated GS memory (the emu machine behind this consumer)
     };
 
     class Gif2dCheck final : public rc::rec::Consumer
@@ -48,6 +58,10 @@ namespace rc::replay
 
         // For the emu consumer behind this one: the stream that replaces kick k, or null.
         const std::vector<uint8_t> *substitute(const rc::rec::KickView &k);
+        // (c) The emu machine has run kick k.
+        void afterKick(const rc::rec::KickView &k);
+        // (c) Brings the Vulkan device up; false (and why) when it cannot.
+        bool startVk(std::string *why);
 
         bool failed() const;
         void summary() const;

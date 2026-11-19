@@ -281,6 +281,8 @@ namespace rc::replay
                 ++m_t.substituted;
                 m_t.substitutedBytes += bytes->size();
                 m_t.gifBytes += m_gif.length();
+                if (m_afterKick)
+                    m_afterKick(k);
                 return;
             }
         // The kick as the game made it: the channel's registers, then the CHCR store. MXCSR and the VU0 FBRST the
@@ -316,6 +318,8 @@ namespace rc::replay
             }
             m_path1 = false;
         }
+        if (m_afterKick)
+            m_afterKick(k);
         if (m_opt.verify && m_exact && k.hasGifHash)
         {
             ++m_t.gifChecked;

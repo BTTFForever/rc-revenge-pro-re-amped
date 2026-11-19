@@ -33,6 +33,17 @@ namespace rc::rd
                     t.block16[y][x] = kBlock16[y][x];
                     t.block16s[y][x] = kBlock16s[y][x];
                 }
+            // The Z formats fill a page from its other half: the same arrangement with the block number's two top bits
+            // inverted (blocks 24-31 where the colour format has 0-7, 16-23 for 8-15 and so on).
+            for (int y = 0; y < 4; ++y)
+                for (int x = 0; x < 8; ++x)
+                    t.blockZ32[y][x] = static_cast<uint8_t>(kBlock32[y][x] ^ 24u);
+            for (int y = 0; y < 8; ++y)
+                for (int x = 0; x < 4; ++x)
+                {
+                    t.blockZ16[y][x] = static_cast<uint8_t>(kBlock16[y][x] ^ 24u);
+                    t.blockZ16s[y][x] = static_cast<uint8_t>(kBlock16s[y][x] ^ 24u);
+                }
             // A block is four columns of 64 bytes, a column two pixel rows (32 and 16 bit) or four (8 and 4 bit).
             // 32 bit: a column holds 16 words, two rows of 8 interleaved in pairs.
             for (uint32_t y = 0; y < 8; ++y)

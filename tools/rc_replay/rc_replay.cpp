@@ -38,7 +38,10 @@
 // --with-emu, (b) every drawing PATH3 kick is replaced by its draw list encoded back into GIF packets in front of the
 // emulated GS, whose own verification must then hold. Prints the section 3 tables from the lists (H lines);
 // --no-tables skips them. --fault reg|prim|field:<cycle>:<n> plants a lost register (every write of GS register n in the cycle), a dropped
-// primitive (n of the cycle), a zeroed GsState field (n, gs2d_encode.h GsField).
+// primitive (n of the cycle), a zeroed GsState field (n, gs2d_encode.h GsField). --vk (step 7 batch 3, gif2d_vk.h; implies
+// --with-emu): (c) every drawing PATH3 kick also drawn through Gs2dVk over the emulated frame and Z buffers and compared
+// with the emulated GS's result (RENDERER_2D_DESIGN.md 10.3 and 16), with the source bias off and on (--vk-bias);
+// --vk-fault plants the faults of 9.3 in the Vulkan path, --vk-png writes the first failing kick's planes.
 #include "chain_walk.h"
 #include "emu.h"
 #include "tex.h"
@@ -456,6 +459,7 @@ namespace
                              "                 [--fault page|kick|hw:<cycle>[:<n>]]\n"
                              "       tex: [--with-emu] [--png <dir>] [--fault transfer|kick:<cycle>:<n> | swizzle:<cycle>:<bits> | decode:0:<bits>]\n"
                              "       gif2d: [--with-emu] [--no-tables] [--fault reg|prim|field:<cycle>:<n>]\n"
+                             "              [--vk] [--vk-bias off|on|both] [--vk-fault <name>[,<name>...]] [--vk-png <dir>] [--validation]\n"
                              "       blit: [--no-gpu] [--validation] [--png <dir>] [--fault tile:<cycle>:<n> | dispfb:<cycle> | byte|gpubyte:<cycle>:<pixel>]\n");
     }
 }
@@ -504,8 +508,21 @@ namespace
         std::unique_ptr<rc::replay::Gif2dCheck> gif2d;
         if (gif2dOptions)
         {
-            gif2d = std::make_unique<rc::replay::Gif2dCheck>(*gif2dOptions);
+            rc::replay::Gif2dOptions g = *gif2dOptions;
+            g.vram = [] { return static_cast<const uint8_t *>(runtime.memory().getGSVRAM()); };
+            gif2d = std::make_unique<rc::replay::Gif2dCheck>(g);
             emu.setKickSubstitute([&gif2d](const rc::rec::KickView &k) { return gif2d->substitute(k); });
+            // (step 7 batch 3) Check (c): the emulated memory after each kick is the reference for the Vulkan replay.
+            if (g.vk)
+            {
+                emu.setAfterKick([&gif2d](const rc::rec::KickView &k) { gif2d->afterKick(k); });
+                std::string why;
+                if (!gif2d->startVk(&why))
+                {
+                    std::printf("gif2d --vk: %s\nFAIL\n", why.c_str());
+                    return 2;
+                }
+            }
             consumers.insert(consumers.begin(), gif2d.get());
         }
         if (texOptions)
@@ -646,7 +663,8 @@ namespace
 int main(int argc, char **argv)
 {
     std::string path, consumer = "stats";
-    bool verify = false, quiet = false, withEmu = false, noGpu = false, validation = false, noTables = false;
+    bool verify = false, quiet = false, withEmu = false, noGpu = false, validation = false, noTables = false, vk = false;
+    std::string vkBias = "both", vkFaults, vkPng;
     uint64_t first = 0, last = ~0ull;
     rc::replay::EmuOptions emuOptions;
     auto cycleKick = [](const char *text, int64_t &cycle, uint32_t &kick)
@@ -692,6 +710,14 @@ int main(int argc, char **argv)
             withEmu = true;
         else if (a == "--no-gpu")
             noGpu = true;
+        else if (a == "--vk")
+            vk = true;
+        else if (a == "--vk-bias" && i + 1 < argc)
+            vkBias = argv[++i];
+        else if (a == "--vk-fault" && i + 1 < argc)
+            vkFaults = argv[++i];
+        else if (a == "--vk-png" && i + 1 < argc)
+            vkPng = argv[++i];
         else if (a == "--no-tables")
             noTables = true;
         else if (a == "--validation")
@@ -786,6 +812,35 @@ int main(int argc, char **argv)
         g.faultKind = emuOptions.faultKind;
         g.faultCycle = emuOptions.faultCycle;
         g.faultN = emuOptions.faultN;
+        if (vk)
+        {
+            // (c) needs the emulated machine behind the reader.
+            withEmu = g.withEmu = g.vk = true;
+            g.vkOptions.validation = validation;
+            g.vkOptions.quiet = quiet;
+            g.vkOptions.pngDir = vkPng;
+            g.vkOptions.biasMask = vkBias == "off" ? 1u : vkBias == "on" ? 2u : 3u;
+            size_t at = 0;
+            while (at < vkFaults.size())
+            {
+                const size_t comma = vkFaults.find(',', at);
+                const std::string name = vkFaults.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
+                if (name == "texa")
+                    g.vkOptions.faultTexa = true;
+                else if (!rc::replay::gif2dVkFault(name, g.vkOptions.faults))
+                {
+                    std::fprintf(stderr, "unknown --vk-fault '%s' (atst-less, drop-fail, split-per-batch, z-gequal, fix, colour-swap, no-half-pixel, "
+                                         "bias-always, texel-row, texa)\n",
+                                 name.c_str());
+                    return 2;
+                }
+                if (comma == std::string::npos)
+                    break;
+                at = comma + 1;
+            }
+            if (!vkFaults.empty())
+                std::printf("gif2d --vk: planted fault(s) %s\n", vkFaults.c_str());
+        }
         if (withEmu)
         {
             // Behind gif2d: the planted fault is the reader's or the encoder's, not the emulated machine's.

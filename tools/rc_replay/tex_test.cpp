@@ -92,6 +92,10 @@ namespace
         case kPsmCt32: return gsAddr32(t, bp, bw, x, y) >> 2;
         case kPsmCt16: return gsAddr16(t, bp, bw, x, y) >> 1;
         case kPsmCt16s: return gsAddr16s(t, bp, bw, x, y) >> 1;
+        case kPsmZ32:
+        case kPsmZ24: return gsAddrZ32(t, bp, bw, x, y) >> 2;
+        case kPsmZ16: return gsAddrZ16(t, bp, bw, x, y) >> 1;
+        case kPsmZ16s: return gsAddrZ16s(t, bp, bw, x, y) >> 1;
         case kPsmT8: return gsAddr8(t, bp, bw, x, y);
         default: return gsNibble4(t, bp, bw, x, y);
         }
@@ -172,8 +176,8 @@ namespace
     void testLayout()
     {
         // Each format maps a page's pixels onto the page's storage one to one.
-        const uint8_t formats[] = {kPsmCt32, kPsmCt16, kPsmCt16s, kPsmT8, kPsmT4};
-        const uint32_t pageW[] = {64, 64, 64, 128, 128}, pageH[] = {32, 64, 64, 64, 128};
+        const uint8_t formats[] = {kPsmCt32, kPsmCt16, kPsmCt16s, kPsmT8, kPsmT4, kPsmZ32, kPsmZ16, kPsmZ16s};
+        const uint32_t pageW[] = {64, 64, 64, 128, 128, 64, 64, 64}, pageH[] = {32, 64, 64, 64, 128, 32, 64, 64};
         for (int f = 0; f < 5; ++f)
         {
             const uint32_t n = pageW[f] * pageH[f];

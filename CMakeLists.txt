@@ -233,7 +233,7 @@ target_link_libraries(rc_gs2d PRIVATE rc_tex rc_record)
 target_sources(rc_replay PRIVATE tools/rc_replay/gif2d.cpp)
 target_link_libraries(rc_replay PRIVATE rc_gs2d rc_tex)
 # rc_gs2d_vk (step 7 batch 2, RENDERER_2D_DESIGN.md sections 4-8): the draw list on the vendored RHI (Gs2dVk) and its
-# shaders. Linked by rc_gs2d_test only; not by the game or the oracle.
+# shaders. Linked by rc_gs2d_test and (batch 3) rc_replay; not by the game or the oracle.
 set(RC_GS2D_SHADER_HEADERS "")
 foreach(_entry "gs2d.vert|gs2d_vert" "gs2d.vert|gs2d_points_vert|-DGS2D_POINTS" "gs2d.frag|gs2d_frag" "gs2d.frag|gs2d_probe_frag|-DGS2D_PROBE"
              "gs2d_seed.vert|gs2d_seed_vert" "gs2d_seed.frag|gs2d_seed_frag")
@@ -261,6 +261,9 @@ target_link_libraries(rc_gs2d_vk PUBLIC rc_ico_rhi PRIVATE rc_gs2d rc_tex)
 add_executable(rc_gs2d_test EXCLUDE_FROM_ALL tools/rc_replay/gs2d_test.cpp)
 target_compile_options(rc_gs2d_test PRIVATE -O2 -ffp-contract=off -fno-fast-math)
 target_link_libraries(rc_gs2d_test PRIVATE rc_gs2d_vk rc_gs2d rc_tex rc_record ps2_runtime ZLIB::ZLIB)
+# (step 7 batch 3) rc_replay's gif2d --vk: check (c), the draw list through Gs2dVk over the emulated frame and Z buffers.
+target_sources(rc_replay PRIVATE tools/rc_replay/gif2d_vk.cpp)
+target_link_libraries(rc_replay PRIVATE rc_gs2d_vk rc_gs2d rc_tex)
 add_executable(rc_tex_test EXCLUDE_FROM_ALL tools/rc_replay/tex_test.cpp)
 target_compile_options(rc_tex_test PRIVATE -O2)
 target_link_libraries(rc_tex_test PRIVATE rc_tex rc_record ZLIB::ZLIB)

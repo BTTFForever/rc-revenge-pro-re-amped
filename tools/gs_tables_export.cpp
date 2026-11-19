@@ -14,6 +14,11 @@ int main(int, char **argv)
         {GSMem::PixelStorageMode::C16, 0x02, 6, 6},
         {GSMem::PixelStorageMode::P8, 0x13, 7, 6},
         {GSMem::PixelStorageMode::P4, 0x14, 7, 7},
+        // (renderer step 7 batch 3) for rc_tex_test: CT16S and the Z buffer formats (Z24 shares Z32's table).
+        {GSMem::PixelStorageMode::C16S, 0x0A, 6, 6},
+        {GSMem::PixelStorageMode::Z32, 0x30, 6, 5},
+        {GSMem::PixelStorageMode::Z16, 0x32, 6, 6},
+        {GSMem::PixelStorageMode::Z16S, 0x3A, 6, 6},
     };
     for (const auto &f : formats)
     {

@@ -76,12 +76,20 @@ namespace rc::replay
         std::map<std::string, std::map<std::string, Count>> hist;
         uint64_t largestList = 0, largestPayload = 0, cyclesWithList = 0;
 
-        explicit Impl(const Gif2dOptions &o) : opt(o), reader(makeReaderOptions(o)) {}
+        // (c)
+        std::unique_ptr<Gif2dVkCheck> vk;
+
+        explicit Impl(const Gif2dOptions &o) : opt(o), reader(makeReaderOptions(o))
+        {
+            if (o.vk)
+                vk = std::make_unique<Gif2dVkCheck>(o.vkOptions);
+        }
         static Gif2dReader::Options makeReaderOptions(const Gif2dOptions &o)
         {
             Gif2dReader::Options r;
             r.seed = true;
             r.textures = true;
+            r.faultIgnoreTexa = o.vk && o.vkOptions.faultTexa;
             if (o.faultKind == "reg")
             {
                 r.faultCycle = o.faultCycle;
@@ -244,6 +252,16 @@ namespace rc::replay
         m->cycle = cycle;
         m->faultPrimBase = 0;
         m->reader.cycleBegin(cycle);
+        if (m->vk)
+            m->vk->cycleBegin(cycle);
+    }
+
+    bool Gif2dCheck::startVk(std::string *why) { return !m->vk || m->vk->start(why); }
+
+    void Gif2dCheck::afterKick(const KickView &k)
+    {
+        if (m->vk && m->opt.vram)
+            m->vk->after(k, m->opt.vram());
     }
 
     void Gif2dCheck::kick(const KickView &k, const RamView &ram)
@@ -285,6 +303,11 @@ namespace rc::replay
         std::memcpy(before, k.regs ? k.regs : r.regs(), sizeof(before));
 
         r.kick(k, ram);
+
+        // (c) The kick's commands and the emulated GS memory before the machine runs it.
+        if (m->vk && k.channel == 2u && m->opt.vram)
+            m->vk->kick(k, r.list(), r.kickFirstCommand(), static_cast<uint32_t>(r.list().cmds.size()), r.kickPrims() != 0 && !r.kickHadTransfers(),
+                        m->opt.vram());
 
         // (b) The kick's draw list encoded back, for the emu consumer behind this one.
         m->pending.valid = false;
@@ -350,6 +373,8 @@ namespace rc::replay
     {
         m->reader.cycleEnd(info, refRgba);
         const DrawList &l = m->reader.list();
+        if (m->vk)
+            m->vk->cycleEnd(l);
         if (!l.cmds.empty())
         {
             ++m->cyclesWithList;
@@ -375,8 +400,11 @@ namespace rc::replay
     bool Gif2dCheck::failed() const
     {
         const Gif2dReader::Stats &s = m->reader.stats();
+        uint64_t guards = 0;
+        for (uint32_t g = 1; g < kGuardCount; ++g)
+            guards += s.guardPrims[g];
         return m->regMismatches != 0 || m->unrestorable != 0 || s.walkerDropped != 0 || s.absentPages != 0 ||
-               (m->opt.withEmu && m->substituted != m->encodedKicks);
+               (m->opt.withEmu && m->substituted != m->encodedKicks) || (m->vk && (m->vk->failed() || guards != 0));
     }
 
     void Gif2dCheck::summary() const
@@ -431,6 +459,8 @@ namespace rc::replay
             for (const std::string &t : m->unrestorableText)
                 std::printf("FAIL %s\n", t.c_str());
         }
+        if (m->vk)
+            m->vk->summary();
         if (m->opt.tables)
             for (const auto &[cat, keys] : m->hist)
                 for (const auto &[key, c] : keys)

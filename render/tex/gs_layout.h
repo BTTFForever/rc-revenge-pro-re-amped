@@ -11,6 +11,8 @@
 //   CT16(S)  64 x 64        16 x 8    16 bits
 //   T8       128 x 64       16 x 16   8 bits
 //   T4       128 x 128      32 x 16   4 bits
+//   Z32/24   64 x 32        8 x 8     as CT32, the blocks of a page in another order (step 7 batch 3)
+//   Z16(S)   64 x 64        16 x 8    as CT16 / CT16S, likewise
 // No dependencies, C++17.
 
 #include <cstdint>
@@ -31,6 +33,10 @@ namespace rc::rd
         kPsmCt16s = 0x0A,
         kPsmT8 = 0x13,
         kPsmT4 = 0x14,
+        kPsmZ32 = 0x30,
+        kPsmZ24 = 0x31,
+        kPsmZ16 = 0x32,
+        kPsmZ16s = 0x3A,
     };
 
     struct LayoutTables
@@ -38,6 +44,9 @@ namespace rc::rd
         uint8_t block32[4][8];   // block number inside a page by (y / 8, x / 8); T8's is the same by (y / 16, x / 16)
         uint8_t block16[8][4];   // by (y / 8, x / 16); T4's is the same by (y / 16, x / 32)
         uint8_t block16s[8][4];
+        uint8_t blockZ32[4][8];    // the Z formats (columns as their colour twins)
+        uint8_t blockZ16[8][4];
+        uint8_t blockZ16s[8][4];
         uint8_t column32[8][8];    // 32-bit word inside a block
         uint8_t column16[8][16];   // 16-bit word inside a block
         uint8_t column8[16][16];   // byte inside a block
@@ -67,6 +76,26 @@ namespace rc::rd
         const uint32_t block = (bp & 31u) + t.block16s[(y >> 3) & 7u][(x >> 4) & 3u];
         return (page << 13) + (block << 8) + (static_cast<uint32_t>(t.column16[y & 7u][x & 15u]) << 1);
     }
+    // The Z buffer formats (step 7 batch 3, check (c) reads the emulated Z buffer): Z32 and Z24 a 32-bit word as CT32
+    // (Z24: the low 24 bits), Z16 / Z16S as CT16 / CT16S, each with its own block order.
+    inline uint32_t gsAddrZ32(const LayoutTables &t, uint32_t bp, uint32_t bw, uint32_t x, uint32_t y)
+    {
+        const uint32_t page = (bp >> 5) + (y >> 5) * bw + (x >> 6);
+        const uint32_t block = (bp & 31u) + t.blockZ32[(y >> 3) & 3u][(x >> 3) & 7u];
+        return (page << 13) + (block << 8) + (static_cast<uint32_t>(t.column32[y & 7u][x & 7u]) << 2);
+    }
+    inline uint32_t gsAddrZ16(const LayoutTables &t, uint32_t bp, uint32_t bw, uint32_t x, uint32_t y)
+    {
+        const uint32_t page = (bp >> 5) + (y >> 6) * bw + (x >> 6);
+        const uint32_t block = (bp & 31u) + t.blockZ16[(y >> 3) & 7u][(x >> 4) & 3u];
+        return (page << 13) + (block << 8) + (static_cast<uint32_t>(t.column16[y & 7u][x & 15u]) << 1);
+    }
+    inline uint32_t gsAddrZ16s(const LayoutTables &t, uint32_t bp, uint32_t bw, uint32_t x, uint32_t y)
+    {
+        const uint32_t page = (bp >> 5) + (y >> 6) * bw + (x >> 6);
+        const uint32_t block = (bp & 31u) + t.blockZ16s[(y >> 3) & 7u][(x >> 4) & 3u];
+        return (page << 13) + (block << 8) + (static_cast<uint32_t>(t.column16[y & 7u][x & 15u]) << 1);
+    }
     inline uint32_t gsAddr8(const LayoutTables &t, uint32_t bp, uint32_t bw, uint32_t x, uint32_t y)
     {
         const uint32_t page = (bp >> 5) + (y >> 6) * (bw >> 1) + (x >> 7);
@@ -90,10 +119,14 @@ namespace rc::rd
     {
         switch (psm)
         {
-        case kPsmCt32: f = {8, 8, 32}; return true;
-        case kPsmCt24: f = {8, 8, 24}; return true;
+        case kPsmCt32:
+        case kPsmZ32: f = {8, 8, 32}; return true;
+        case kPsmCt24:
+        case kPsmZ24: f = {8, 8, 24}; return true;
         case kPsmCt16:
-        case kPsmCt16s: f = {16, 8, 16}; return true;
+        case kPsmCt16s:
+        case kPsmZ16:
+        case kPsmZ16s: f = {16, 8, 16}; return true;
         case kPsmT8: f = {16, 16, 8}; return true;
         case kPsmT4: f = {32, 16, 4}; return true;
         default: return false;
@@ -111,6 +144,10 @@ namespace rc::rd
         case kPsmCt16s: return (gsAddr16s(t, bp, bw, x, y) >> 8) & (kGsBlocks - 1u);
         case kPsmT8: return (gsAddr8(t, bp, bw, x, y) >> 8) & (kGsBlocks - 1u);
         case kPsmT4: return (gsNibble4(t, bp, bw, x, y) >> 9) & (kGsBlocks - 1u);
+        case kPsmZ32:
+        case kPsmZ24: return (gsAddrZ32(t, bp, bw, x, y) >> 8) & (kGsBlocks - 1u);
+        case kPsmZ16: return (gsAddrZ16(t, bp, bw, x, y) >> 8) & (kGsBlocks - 1u);
+        case kPsmZ16s: return (gsAddrZ16s(t, bp, bw, x, y) >> 8) & (kGsBlocks - 1u);
         default: return 0;
         }
     }
