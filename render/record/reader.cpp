@@ -256,6 +256,17 @@ namespace rc::rec
             m_error.clear();
         }
         m_complete = haveIndex && sawEnd && !partial;
+        // (batch 3) The tag name table.
+        for (const ChunkRef &c : m_chunks)
+        {
+            if (c.header.id != kChunkTagNames)
+                continue;
+            std::vector<uint8_t> names;
+            if (readPayload(c, names, true))
+                m_tagNames.assign(names.begin(), names.end());
+            m_error.clear();
+            break;
+        }
         return true;
     }
 
@@ -329,6 +340,7 @@ namespace rc::rec
         FileInfo info;
         info.header = m_header;
         info.path = m_path;
+        info.tagNames = m_tagNames;
         for (Consumer *c : consumers)
             c->open(info);
 
@@ -372,6 +384,32 @@ namespace rc::rec
                 {
                     // A new segment: the image starts empty (section 3.4).
                     std::fill(m_present.begin(), m_present.end(), 0u);
+                    // (batch 3) Tags made before the segment that its first kicks refer to: TAGP holds them as TAG
+                    // records. They are known to the store (a replay that starts here finds them) but not delivered
+                    // again as tag events.
+                    if (const StateChunk *tp = kf.find(kStatePendingTags))
+                        for (uint64_t at = 0; at + sizeof(RecHeader) + sizeof(RecTagBody) <= tp->bytes;)
+                        {
+                            RecHeader rh;
+                            std::memcpy(&rh, tp->data + at, sizeof(rh));
+                            if (rh.bytes < sizeof(RecHeader) + sizeof(RecTagBody) || at + rh.bytes > tp->bytes)
+                                break;
+                            RecTagBody tb;
+                            std::memcpy(&tb, tp->data + at + sizeof(RecHeader), sizeof(tb));
+                            if (rh.type == RecTag && sizeof(RecHeader) + sizeof(tb) + tb.payloadBytes <= rh.bytes && !tags.find(tb.seq))
+                            {
+                                TagView v;
+                                v.seq = tb.seq;
+                                v.kind = tb.kind;
+                                v.op = tb.op;
+                                v.depth = tb.depth;
+                                v.anchor = tb.anchor;
+                                v.parent = tb.parent;
+                                v.payloadBytes = tb.payloadBytes;
+                                tags.add(v, tp->data + at + sizeof(RecHeader) + sizeof(tb));
+                            }
+                            at += rh.bytes;
+                        }
                 }
                 for (Consumer *c : consumers)
                     c->keyframe(kf);

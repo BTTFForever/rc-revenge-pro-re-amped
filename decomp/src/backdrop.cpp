@@ -100,6 +100,8 @@ void BackdropDisplayBMP24(ptr32<void> pBmp, uint32 buffer)
 {
     RC_DIVERT_IF_CHANGED(BackdropDisplayBMP24, pBmp, buffer);
     GuestFrame frame(0xf0);
+    // Side tag: the two uploads into the frame buffer.
+    const rc::gfx::SpanKicks upload(rc::gfx::KickLabel{rc::gfx::KickBackdrop, pBmp.address, buffer, 0u});
     const uint32_t handle = frame.local<uint32_t>(0x50).address;
     store<uint32_t>(handle, 0);
     MemBlockAllocLo(ptr32<memHandle>(handle), 0xa0000);

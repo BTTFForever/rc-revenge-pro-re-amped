@@ -157,6 +157,8 @@ void FontInit()
 ptr32<char> FontPrint(int16 x, int16 y, ptr32<char> pString)
 {
     GuestFrame frame(0xb0);
+    // Side tag: this line's glyphs in the 2D packet.
+    const rc::gfx::Span2D span(rc::gfx::DrawKey{rc::gfx::DrawFont, pString.address, static_cast<uint16_t>(x), static_cast<uint16_t>(y)});
     const uint32_t frameSp = frame.local<uint8_t>(0).address;
     static const uint64_t kSavedS4 = kSpriteParams;
     const ptr32<font> fontPtr = G(fontVarG).pFont;

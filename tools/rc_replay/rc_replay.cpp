@@ -22,13 +22,17 @@
 #include "emu.h"
 #include "consumer.h"
 #include "reader.h"
+#include "../../render/gfx/tags.h"
 
 #include <algorithm>
 #include <cinttypes>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
+#include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "ps2_runtime.h"
@@ -76,6 +80,20 @@ namespace
             }
             return false;
         }
+        // (batch 3) The span's stream offset is where the walk delivers the guest address the tag names: a DMA tag's own
+        // address, or that address inside (or at the end of) a payload range.
+        bool addressMatches(uint32_t offset, uint32_t guestAddr) const
+        {
+            for (const WalkRange &r : ranges)
+            {
+                const uint32_t base = r.scratch ? 0x70000000u + r.physAddr : r.physAddr;
+                if (r.isTag && offset == r.streamOffset && guestAddr == base)
+                    return true;
+                if (!r.isTag && offset >= r.streamOffset && offset <= r.streamOffset + r.bytes && guestAddr == base + (offset - r.streamOffset))
+                    return true;
+            }
+            return false;
+        }
     };
 
     class Stats final : public Consumer
@@ -90,6 +108,61 @@ namespace
                         h.gameVersion ? "Europe" : "USA", std::string(h.elfName, strnlen(h.elfName, 16)).c_str(), h.width, h.height,
                         h.fieldRateMilliHz / 1000.0, h.gsBackend, h.build, h.formatVersion, (h.flags & kFileExact) ? ", exact" : ", plain",
                         (h.flags & kFileComplete) ? "" : ", not closed");
+            // (batch 3) The tag name table.
+            std::istringstream names(info.tagNames);
+            std::string table, name;
+            uint32_t value;
+            while (names >> table >> value >> name)
+                m_names[table + ":" + std::to_string(value)] = name;
+        }
+        std::string name(const char *table, uint32_t value) const
+        {
+            const auto it = m_names.find(std::string(table) + ":" + std::to_string(value));
+            return it != m_names.end() ? it->second : std::string(table) + std::to_string(value);
+        }
+        // A tag's class for the statistics: its kind, and for a Draw or Hud begin what it draws.
+        std::string tagClass(const TagView &t) const
+        {
+            std::string c = name("kind", t.kind);
+            if ((t.kind == rc::gfx::KindDraw || t.kind == rc::gfx::KindHud) && t.op == rc::gfx::OpBegin && t.payloadBytes >= sizeof(rc::gfx::DrawKey))
+            {
+                rc::gfx::DrawKey key;
+                std::memcpy(&key, t.payload, sizeof(key));
+                c += "/" + name("draw", key.kind);
+                if (t.kind == rc::gfx::KindHud)
+                    c += "/" + name("hud", key.part);
+            }
+            return c;
+        }
+        // What a kick is, by its innermost label (or its channel and mode without one).
+        std::string kickClass(const KickView &k) const
+        {
+            for (uint32_t i = k.labelCount; i-- > 0;)
+                if (const TagView *t = k.labels[i]; t && t->payloadBytes >= sizeof(rc::gfx::KickLabel))
+                {
+                    rc::gfx::KickLabel l;
+                    std::memcpy(&l, t->payload, sizeof(l));
+                    return name("kick", l.what);
+                }
+            return std::string("unlabelled ch") + std::to_string(k.channel) + (k.mode == 1 ? " chain" : " normal");
+        }
+        void tag(const TagView &t) override
+        {
+            ++m_tagKinds[name("kind", t.kind) + (t.op == rc::gfx::OpBegin ? " begin" : t.op == rc::gfx::OpEnd ? " end" : "")];
+            m_lastTagCycle = m_cycle;
+            // Anchored: a begin or end of a Draw or Hud span (kick spans and set tags have no anchor).
+            if (t.op != rc::gfx::OpSet && t.kind != rc::gfx::KindKick)
+            {
+                AnchoredTag a;
+                a.cycle = m_cycle;
+                a.cls = t.op == rc::gfx::OpBegin ? tagClass(t) : std::string();
+                a.op = t.op;
+                a.parent = t.parent;
+                a.anchor = t.anchor;
+                m_anchored[t.seq] = a;
+            }
+            if (t.op == rc::gfx::OpBegin)
+                m_beginClass[t.seq] = tagClass(t);
         }
         void keyframe(const Keyframe &kf) override
         {
@@ -100,7 +173,12 @@ namespace
             if (!(kf.header.flags & kKeyFinal) && (!kf.find(kStateGsMemory) || kf.find(kStateGsMemory)->bytes != kGsMemBytes))
                 fail("keyframe at cycle " + std::to_string(kf.header.cycle) + " without 4 MB of GS memory");
         }
-        void cycleBegin(uint64_t) override { m_c = Cycle{}; }
+        void cycleBegin(uint64_t cycle) override
+        {
+            m_c = Cycle{};
+            m_cycle = cycle;
+            m_lastCycle = cycle;
+        }
         void pages(uint32_t, uint32_t count, const uint8_t *) override
         {
             m_c.pages += count;
@@ -132,6 +210,39 @@ namespace
             ++m_c.kicks;
             ++m_t.kicks;
             m_sawVif1Kick |= k.channel == 1;
+            // (batch 3) Labels and spans.
+            const std::string kc = kickClass(k);
+            auto &kcs = m_kickClasses[kc];
+            ++kcs.kicks;
+            kcs.bytes += k.streamBytes;
+            for (uint32_t i = 0; i < k.spanCount; ++i)
+            {
+                const Span &sp = k.spans[i];
+                if (!sp.tag)
+                {
+                    ++m_spanUnknownTag;
+                    continue;
+                }
+                const auto it = m_anchored.find(sp.tag->seq);
+                if (it != m_anchored.end())
+                {
+                    if (it->second.resolved)
+                        ++m_spanTwice;
+                    it->second.resolved = true;
+                }
+                if (sp.op == rc::gfx::OpBegin)
+                {
+                    ++m_spansIn[tagClass(*sp.tag) + " in " + kc];
+                    // Its end in the same kick, at or after it.
+                    bool paired = false;
+                    for (uint32_t j = 0; j < k.spanCount && !paired; ++j)
+                        paired = k.spans[j].op == rc::gfx::OpEnd && k.spans[j].tag && k.spans[j].tag->parent == sp.tag->seq &&
+                                 k.spans[j].streamOffset >= sp.streamOffset && k.spans[j].streamOffset <= k.streamBytes;
+                    ++(paired ? m_pairsOk : m_pairsOpen);
+                    if (sp.streamOffset > k.streamBytes)
+                        fail("cycle " + std::to_string(k.cycle) + " kick " + std::to_string(k.index) + ": span beyond the stream");
+                }
+            }
             const int slot = std::min<int>(k.channel, 2) * 2 + (k.mode == 1 ? 1 : 0);
             ++m_c.byKind[slot];
             ++m_t.byKind[slot];
@@ -163,8 +274,15 @@ namespace
             if (w.untranslatable)
                 fail(where + ": " + std::to_string(w.untranslatable) + " untranslatable address(es)");
             for (uint32_t i = 0; i < k.spanCount; ++i)
+            {
                 if (!spans.valid(k.spans[i].streamOffset))
                     fail(where + ": tag span at stream offset " + std::to_string(k.spans[i].streamOffset) + " is not on a tag or quadword");
+                if (spans.addressMatches(k.spans[i].streamOffset, k.spans[i].guestAddr))
+                    ++m_spanAddrOk;
+                else
+                    fail(where + ": tag span at stream offset " + std::to_string(k.spans[i].streamOffset) + " does not deliver guest address " +
+                         std::to_string(k.spans[i].guestAddr));
+            }
         }
         void cycleEnd(const CycleInfo &info, const uint8_t *) override
         {
@@ -196,6 +314,52 @@ namespace
                             " end %" PRIu64 "\n",
                             m_t.hashOk, m_t.walked, m_t.tagIds[0], m_t.tagIds[1], m_t.tagIds[2], m_t.tagIds[3], m_t.tagIds[4], m_t.tagIds[5],
                             m_t.tagIds[6], m_t.tagIds[7]);
+            if (!m_tagKinds.empty() || !m_names.empty())
+            {
+                std::printf("tags:");
+                for (const auto &[k, n] : m_tagKinds)
+                    std::printf(" %s %" PRIu64 ";", k.c_str(), n);
+                std::printf("\nkicks by label:");
+                for (const auto &[k, v] : m_kickClasses)
+                    std::printf(" %s %" PRIu64 " (%.1f MB);", k.c_str(), v.kicks, v.bytes / 1048576.0);
+                std::printf("\nspans (begin marks) by tag and kick:");
+                for (const auto &[k, n] : m_spansIn)
+                    std::printf(" %s %" PRIu64 ";", k.c_str(), n);
+                // Anchored tags no kick consumed. Those of the last two cycles may be consumed after the dump ends.
+                uint64_t resolved = 0, late = 0;
+                std::map<std::string, uint64_t> unresolved;
+                for (const auto &[seq, a] : m_anchored)
+                {
+                    if (a.resolved)
+                        ++resolved;
+                    else if (a.cycle + 2u > m_lastCycle)
+                        ++late;
+                    else
+                    {
+                        std::string cls = a.cls;
+                        if (a.op == rc::gfx::OpEnd)
+                        {
+                            const auto b = m_beginClass.find(a.parent);
+                            cls = (b != m_beginClass.end() ? b->second : std::string("?")) + " end";
+                        }
+                        ++unresolved[cls];
+                    }
+                }
+                uint64_t unresolvedTotal = 0;
+                for (const auto &[c, n] : unresolved)
+                    unresolvedTotal += n;
+                std::printf("\nanchored tags: %zu made in the replayed cycles, %" PRIu64 " resolved to a kick, %" PRIu64
+                            " unresolved, %" PRIu64 " of the last two cycles not judged; begin/end pairs in one kick %" PRIu64 ", begins without "
+                            "their end in the kick %" PRIu64,
+                            m_anchored.size(), resolved, unresolvedTotal, late, m_pairsOk, m_pairsOpen);
+                for (const auto &[c, n] : unresolved)
+                    std::printf("; unresolved %s %" PRIu64, c.c_str(), n);
+                if (m_verify)
+                    std::printf("\nverify: %" PRIu64 " spans deliver the guest address their tag names at their stream offset; %" PRIu64
+                                " spans name a tag the reader does not hold, %" PRIu64 " tags resolved twice",
+                                m_spanAddrOk, m_spanUnknownTag, m_spanTwice);
+                std::printf("\n");
+            }
             std::printf("records (raw):");
             for (int t = 1; t < 9; ++t)
                 if (r.recordCount[t])
@@ -232,6 +396,25 @@ namespace
                      hashOk = 0;
             uint64_t tagIds[8] = {};
         };
+        struct AnchoredTag
+        {
+            uint64_t cycle = 0;
+            std::string cls;
+            uint8_t op = 0;
+            uint32_t parent = 0, anchor = 0;
+            bool resolved = false;
+        };
+        struct KickClass
+        {
+            uint64_t kicks = 0, bytes = 0;
+        };
+        std::map<std::string, std::string> m_names;
+        std::map<std::string, uint64_t> m_tagKinds, m_spansIn;
+        std::map<std::string, KickClass> m_kickClasses;
+        std::unordered_map<uint32_t, AnchoredTag> m_anchored;
+        std::unordered_map<uint32_t, std::string> m_beginClass;
+        uint64_t m_cycle = 0, m_lastCycle = 0, m_lastTagCycle = 0;
+        uint64_t m_pairsOk = 0, m_pairsOpen = 0, m_spanAddrOk = 0, m_spanUnknownTag = 0, m_spanTwice = 0;
         bool m_verify, m_quiet;
         bool m_sawVif1Kick = false;
         Cycle m_c;

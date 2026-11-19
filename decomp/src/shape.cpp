@@ -356,6 +356,11 @@ void TRdr_VUShape(ptr32<sRdrVUShape> pShape, ptr32<_sRdrCamera> pCamera, u32 tin
     GuestFrame frame(0xc0);
     if (!pShape || !pCamera)
         return;
+    // Side tag: everything this shape adds to the chain (its mat then pos: 12 floats, contiguous at 0x8).
+    float matrix[12];
+    if (rc::gfx::live())
+        std::memcpy(matrix, &pShape->mat, sizeof(matrix));
+    const rc::gfx::SpanChain span(rc::gfx::DrawKey{rc::gfx::DrawShape, pShape.address, 0u, 0u}, matrix);
     uint32_t envAddress = 0;
     const uint32_t mainAddress = fillTrackPacket(*pShape, *pCamera, tint, *static_cast<ee_float *>(guest_host(sym::lit4_327bec)), true, envAddress);
     const ptr32<void> mainPacket(mainAddress), envPacket(envAddress), tris = pShape->pTri.cast<void>();
@@ -573,6 +578,11 @@ void Rdr_VUSkin(ptr32<sRdrVUSkin> pSkin, ptr32<sAnimOutput> pAnimOut, ptr32<_sRd
         putw(b, 0x3c, 0x3f800000);
     }
     putf(p, 0x104, camera.vertDrawOffset + ee_float(2048.0f));
+    // Side tag: the skin's chain calls, with the root bone's placement (mat then pos, contiguous at 0x8).
+    float matrix[12];
+    if (rc::gfx::live())
+        std::memcpy(matrix, &skin.mat, sizeof(matrix));
+    const rc::gfx::SpanChain span(rc::gfx::DrawKey{rc::gfx::DrawSkin, pSkin.address, 0u, 0u}, matrix);
     Rdr_UploadProg(ptr32<u32>(kSkinProgram));
     Rdr_AddDmaCall(ptr32<void>(address + 0xf90));
     Rdr_AddDmaCall(ptr32<void>(address));

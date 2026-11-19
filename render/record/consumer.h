@@ -15,7 +15,8 @@ namespace rc::rec
     struct FileInfo
     {
         FileHeader header{};
-        std::string path; // empty live
+        std::string path;     // empty live
+        std::string tagNames; // the TNAM text ("table value name" lines; batch 3), empty when the dump has none
     };
 
     struct StateChunk
@@ -28,7 +29,7 @@ namespace rc::rec
     struct Keyframe
     {
         KeyframeHeader header{};
-        std::vector<StateChunk> chunks; // GSVR, GSPR, GSRG, VU1M, VU1R, VIF1 (and later EMUS, TAGP)
+        std::vector<StateChunk> chunks; // GSVR, GSPR, GSRG, VU1M, VU1R, VIF1, EMUS, TAGP
         const StateChunk *find(uint32_t id) const
         {
             for (const StateChunk &c : chunks)

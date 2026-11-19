@@ -102,6 +102,11 @@ set_source_files_properties(${DECOMP_SOURCES} PROPERTIES SKIP_UNITY_BUILD_INCLUS
 # The version defines reach only the hand-written code (the recompiled code is per version already).
 set_property(SOURCE ${OVERRIDE_SOURCES} ${DECOMP_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/decomp/oracle/rc_oracle.cpp"
     APPEND PROPERTY COMPILE_DEFINITIONS RC_VERSION_EU=${RC_VERSION_EU} RC_ELF_NAME="${RC_ELF_NAME}")
+# Side tags (render/gfx/tags.h, RENDERER_FRAME_RECORD.md section 5): on in the game's own build of the native and
+# override code only. The same sources compiled into rc_oracle (or any other target) keep RC_GFX_TAGS 0, so every tag
+# call compiles to nothing there.
+set_property(SOURCE ${OVERRIDE_SOURCES} ${DECOMP_SOURCES}
+    APPEND PROPERTY COMPILE_DEFINITIONS "$<$<STREQUAL:$<TARGET_PROPERTY:NAME>,rc_revenge_pro>:RC_GFX_TAGS=1>")
 
 # The track shader is compiled into the game from the same file tools/shader_check.cpp tests.
 set(RC_TRACK_SHADER "${CMAKE_CURRENT_SOURCE_DIR}/decomp/shaders/trdr_shape.vert")
@@ -158,8 +163,9 @@ target_link_libraries(rc_revenge_pro PRIVATE rc_ico_rhi)
 find_package(ZLIB REQUIRED)
 set(RC_RECORD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/render/record")
 add_library(rc_record STATIC "${RC_RECORD_DIR}/page_tracker.cpp" "${RC_RECORD_DIR}/chain_walk.cpp" "${RC_RECORD_DIR}/writer.cpp"
-    "${RC_RECORD_DIR}/reader.cpp")
+    "${RC_RECORD_DIR}/reader.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/render/gfx/tags.cpp")
 target_link_libraries(rc_record PRIVATE ZLIB::ZLIB)
+target_compile_definitions(rc_record PRIVATE RC_GFX_TAGS=1)
 target_compile_options(rc_record PRIVATE -O2)
 add_library(rc_record_emu STATIC "${RC_RECORD_DIR}/emu_state.cpp")
 target_link_libraries(rc_record_emu PRIVATE ps2_runtime)
@@ -171,7 +177,7 @@ if(NOT RC_BUILD_DESCRIBE)
 endif()
 target_sources(rc_revenge_pro PRIVATE "${RC_RECORD_DIR}/capture.cpp")
 set_source_files_properties("${RC_RECORD_DIR}/capture.cpp" PROPERTIES SKIP_UNITY_BUILD_INCLUSION TRUE COMPILE_OPTIONS "-O2"
-    COMPILE_DEFINITIONS "RC_VERSION_EU=${RC_VERSION_EU};RC_ELF_NAME=\"${RC_ELF_NAME}\";RC_BUILD_DESCRIBE=\"${RC_BUILD_DESCRIBE}\"")
+    COMPILE_DEFINITIONS "RC_VERSION_EU=${RC_VERSION_EU};RC_ELF_NAME=\"${RC_ELF_NAME}\";RC_BUILD_DESCRIBE=\"${RC_BUILD_DESCRIBE}\";RC_GFX_TAGS=1")
 target_link_libraries(rc_revenge_pro PRIVATE rc_record_emu rc_record)
 # rc_replay (tools/rc_replay): reads dumps and feeds consumers; links the runtime and the VU1 library, no recompiled
 # game code, no disc. ninja -C build-decomp rc_replay. rc_record_test: the container's round trip without the game.

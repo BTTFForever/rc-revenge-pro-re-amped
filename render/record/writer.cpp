@@ -102,6 +102,9 @@ namespace rc::rec
         m_header.indexOffset = 0;
         m_header.flags &= ~kFileComplete;
         writeChunk(kChunkFile, reinterpret_cast<const uint8_t *>(&m_header), sizeof(m_header), false);
+        // (batch 3) The tag name table, right after the header (section 5.3).
+        if (!info.tagNames.empty())
+            writeChunk(kChunkTagNames, reinterpret_cast<const uint8_t *>(info.tagNames.data()), info.tagNames.size(), false);
         std::fflush(m_file);
         m_open = true;
         m_thread = std::thread(&Writer::worker, this);

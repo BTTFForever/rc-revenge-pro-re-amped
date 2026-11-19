@@ -68,6 +68,20 @@ bool g_comparing = false; // Only the guest executor thread comes here.
 // decompiled functions; comparing those there would reuse the RAM snapshots the outer comparison still needs.
 bool g_inComparedNative = false;
 
+// Every change of the two goes through these, which also switch the side-tag channel (render/gfx/tags.h, rule 3): no
+// tag is made while the original or the native half of a comparison, or a random-input run, executes. Without
+// RC_GFX_TAGS (the oracle) the channel's half is nothing.
+inline void setComparing(bool comparing)
+{
+    g_comparing = comparing;
+    rc::gfx::detail::setComparing(g_comparing || g_inComparedNative);
+}
+inline void setInComparedNative(bool inComparedNative)
+{
+    g_inComparedNative = inComparedNative;
+    rc::gfx::detail::setComparing(g_comparing || g_inComparedNative);
+}
+
 //
 // The random test runs natives on a copy of the registers, but guest_call works on the scheduler's running context,
 // which is the game's own: its registers are put back afterwards, or the game would carry on with the test's.
@@ -82,7 +96,7 @@ void runComparedNative(Entry &entry, uint8_t *rdram, R5900Context *ctx, PS2Runti
         running = *ctx;
     // Interrupts wait, as for the original, so none runs inside the native's guest calls.
     runtime->eeScheduler().holdCheckpoints(true);
-    g_inComparedNative = true;
+    setInComparedNative(true);
     // RC_SHADOW_SELFTEST=1 runs the original in place of the native: any difference left is noise from outside the
     // function (another thread writing guest RAM between the two runs).
     static const bool selfTest = std::getenv("RC_SHADOW_SELFTEST") != nullptr;
@@ -95,7 +109,7 @@ void runComparedNative(Entry &entry, uint8_t *rdram, R5900Context *ctx, PS2Runti
     }
     else
         entry.native(rdram, ctx, runtime);
-    g_inComparedNative = false;
+    setInComparedNative(false);
     runtime->eeScheduler().holdCheckpoints(false);
     if (copy)
         running = saved;
@@ -280,7 +294,7 @@ FuzzCaseResult fuzzCase(Entry &entry, uint8_t *rdram, const R5900Context &live, 
     constexpr uint32_t kLowPage = 0x1000u;
     static uint8_t lowStart[kLowPage], lowAfter[kLowPage];
     const bool wasComparing = g_comparing;
-    g_comparing = true; // Calls nested in either run reach the recompiled originals, as in shadowCall.
+    setComparing(true); // Calls nested in either run reach the recompiled originals, as in shadowCall.
     FuzzCaseResult result;
 
     for (uint32_t pos = 0u; pos < kScratchSize; pos += 4u)
@@ -326,7 +340,7 @@ FuzzCaseResult fuzzCase(Entry &entry, uint8_t *rdram, const R5900Context &live, 
         std::memcpy(rdram, lowStart, kLowPage);
         std::memcpy(rdram + kDataStart, globalsStart.get(), kDataEnd - kDataStart);
         result.cutShort = true;
-        g_comparing = wasComparing;
+        setComparing(wasComparing);
         return result;
     }
     const uint8_t *after = entry.fuzzWholeRam ? g_expected.get() : rdram;
@@ -383,7 +397,7 @@ FuzzCaseResult fuzzCase(Entry &entry, uint8_t *rdram, const R5900Context &live, 
         std::memcpy(rdram + kScratch, scratchStart.get(), kScratchSize);
         std::memcpy(rdram + kDataStart, globalsStart.get(), kDataEnd - kDataStart);
         result.faulted = true;
-        g_comparing = wasComparing;
+        setComparing(wasComparing);
         return result;
     }
 
@@ -495,7 +509,7 @@ FuzzCaseResult fuzzCase(Entry &entry, uint8_t *rdram, const R5900Context &live, 
                          getRegU32(&inputs, 4), getRegU32(&inputs, 5), getRegU32(&inputs, 6), inputs.f[12], inputs.f[13], getRegU32(&inputs, 29),
                          (unsigned long long)GPR_U64((&originalCtx), 2), (unsigned long long)GPR_U64((&nativeCtx), 2));
     }
-    g_comparing = wasComparing;
+    setComparing(wasComparing);
     return result;
 }
 
@@ -649,9 +663,9 @@ void shadowCallRegions(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, E
         before.emplace_back(rdram + begin, rdram + end);
     g_pad.save();
     R5900Context originalCtx = *ctx;
-    g_comparing = true;
+    setComparing(true);
     runOriginal(entry, rdram, &originalCtx, runtime);
-    g_comparing = false;
+    setComparing(false);
     g_pad.keepAndRevert();
     for (size_t i = 0; i < ranges.size(); ++i)
     {
@@ -710,9 +724,9 @@ void shadowCall(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, Entry &e
                                  std::chrono::seconds(std::atoi(std::getenv("RC_SHADOW_FUZZ_DELAY") ? std::getenv("RC_SHADOW_FUZZ_DELAY") : "0"));
     if (!fuzzed && G(memVarG).pHeader && std::chrono::steady_clock::now() >= fuzzFrom)
     {
-        g_comparing = true;
+        setComparing(true);
         fuzzed = fuzzStep(rdram, *ctx, runtime, std::atoi(std::getenv("RC_SHADOW_FUZZ")));
-        g_comparing = false;
+        setComparing(false);
     }
 
     const uint64_t callIndex = entry.calls.fetch_add(1u, std::memory_order_relaxed);
@@ -752,9 +766,9 @@ void shadowCall(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, Entry &e
     // The original runs on a copy of the registers, then its writes to RAM are undone.
     g_pad.save();
     R5900Context originalCtx = *ctx;
-    g_comparing = true;
+    setComparing(true);
     runOriginal(entry, rdram, &originalCtx, runtime);
-    g_comparing = false;
+    setComparing(false);
     g_pad.keepAndRevert();
     std::memcpy(g_expected.get(), rdram, kRamSize);
     revertWrites(rdram, g_before.get(), 0u, kRamSize);
@@ -830,13 +844,13 @@ ee_float callOriginalFloat(uint32_t address, ee_float argument)
         constexpr uint32_t kReturn = 0xFFFFFFE0u; // No guest code has this address.
         SET_GPR_U32((&ctx), 31, kReturn);
         const bool comparing = g_comparing;
-        g_comparing = true; // Nested decompiled functions run their originals too.
+        setComparing(true); // Nested decompiled functions run their originals too.
         runtime->eeScheduler().holdCheckpoints(true);
         item.entry->original(g_rdram, &ctx, runtime);
         for (int resumes = 0; ctx.pc != kReturn && resumes < 1000000; ++resumes)
             runtime->lookupFunction(ctx.pc)(g_rdram, &ctx, runtime);
         runtime->eeScheduler().holdCheckpoints(false);
-        g_comparing = comparing;
+        setComparing(comparing);
         return ee_float(ctx.f[0]);
     }
     std::fprintf(stderr, "[decomp] callOriginalFloat: nothing registered at 0x%x\n", address);

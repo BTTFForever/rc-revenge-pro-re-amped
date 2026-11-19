@@ -19,6 +19,8 @@ T &mem(uint32_t address) { return *static_cast<T *>(guest_host(address)); }
 // Starts the GIF channel on a chain of tags.
 void loadImage(ptr32<u_int> tags)
 {
+    // Side tag: a movie picture's tiles.
+    const rc::gfx::SpanKicks picture(rc::gfx::KickLabel{rc::gfx::KickMovie, tags.address, 0u, 0u});
     hw_write32(kD2Tadr, tags.address & 0x0fffffffu);
     hw_write32(kD2Qwc, 0);
     hw_write32(kD2Chcr, 0x105);

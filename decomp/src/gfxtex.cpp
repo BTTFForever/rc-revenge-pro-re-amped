@@ -193,6 +193,8 @@ void GfxTex_Update()
 {
     RC_DIVERT_IF_CHANGED(GfxTex_Update);
     GuestFrame frame(0x80);
+    // Side tag: the animated textures' uploads (each also labelled by GfxP2_LoadTexMip).
+    const rc::gfx::SpanKicks uploads(rc::gfx::KickLabel{rc::gfx::KickAnimatedTexture, 0u, static_cast<uint32_t>(G(gNumAnimTextures)), 0u});
     G(framecount) = G(framecount) + 1;
     for (int32_t i = 0; i < G(gNumAnimTextures); ++i)
     {

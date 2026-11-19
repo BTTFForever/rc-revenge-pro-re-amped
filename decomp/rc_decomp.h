@@ -26,6 +26,7 @@
 #include "rc_fns.h"
 #include "rc_globals.h"
 #include "rc_types.h"
+#include "../render/gfx/tags.h" // side tags (rc::gfx); compiled to nothing unless RC_GFX_TAGS (the game only)
 
 // Guest addresses are written as symbols: sym::name or sym::name + offset (rc_addrs.h, one per version of the game).
 namespace sym = ::rc::sym;

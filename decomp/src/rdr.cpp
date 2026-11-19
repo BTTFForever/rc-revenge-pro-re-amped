@@ -99,6 +99,8 @@ uint64_t &qat(uint32_t address) { return *static_cast<uint64_t *>(guest_host(add
 // Starts VIF1's DMA on a chain of tags (its error mask set, the channel's interrupt cleared), with the cache flushed.
 void startVif1Chain(uint32_t tags)
 {
+    // Side tag: this is K2, the frame's VIF1 chain.
+    const rc::gfx::SpanKicks k2(rc::gfx::KickLabel{rc::gfx::KickK2, tags, G(gRdr).frameNumber, 0u});
     hw_write32(kVif1Err, 2);
     hw_write32(kD1Qwc, 0);
     hw_write32(kD1Tadr, tags & 0x0fffffffu);

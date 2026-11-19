@@ -6,6 +6,8 @@
 #include "picture.h"
 #include "writer.h"
 
+#include "../gfx/tags.h"
+
 #include "ps2_capture_hooks.h"
 #include "ps2_runtime.h"
 #include "runtime/ee_scheduler.h"
@@ -22,6 +24,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #ifndef RC_VERSION_EU
@@ -98,7 +101,7 @@ namespace rc::rec
             std::strncpy(dst, src, size - 1);
         }
 
-        class Capture
+        class Capture final : public rc::gfx::detail::Sink
         {
         public:
             Capture(std::string path, Trigger trigger, uint64_t keyEvery)
@@ -149,12 +152,18 @@ namespace rc::rec
                 else if (!onEe(1))
                     return;
                 ++m_kicksThisCycle;
+                const uint8_t channel = static_cast<uint8_t>(((channelBase >> 12) & 0xFu) - 8u);
+                // (batch 3) Side tags: the kick's ranges with their stream offsets, to resolve anchored tags against (also
+                // before recording starts, so the first keyframe's TAGP holds only tags no kick has consumed yet).
+                m_resolveKick = m_state != Done && !m_pendingAnchored.empty();
+                m_tagRanges.clear();
+                m_streamPos = 0;
+                m_tteBytes = (chcr & 0x40u) != 0u && channel <= 1u && ((chcr >> 2) & 3u) == 1u ? 8u : 0u;
                 if (m_state != Recording)
                     return;
                 flushPendingKick();
                 flushDeferred();
                 m_kickStart = Clock::now();
-                const uint8_t channel = static_cast<uint8_t>(((channelBase >> 12) & 0xFu) - 8u);
                 if (channel == 0u)
                     emitOdd(ps2x::capture::OddVif0Kick, channelBase, chcr);
                 m_kick = KickView{};
@@ -178,6 +187,14 @@ namespace rc::rec
                     m_gifHash = Hash64{};
                     m_inGif = true;
                 }
+                // The kick spans open now label the kick (outermost first).
+                m_labelViews.clear();
+                for (const uint32_t seq : m_openLabels)
+                    if (const auto it = m_tags.find(seq); it != m_tags.end())
+                        m_labelViews.push_back(&it->second->view);
+                m_kick.labels = m_labelViews.data();
+                m_kick.labelCount = static_cast<uint32_t>(m_labelViews.size());
+                m_labelledKicks += m_labelViews.empty() ? 0u : 1u;
                 m_tracker->beginKick();
                 m_ranges.clear();
                 m_inKick = true;
@@ -185,6 +202,11 @@ namespace rc::rec
 
             void kickTouch(uint32_t physAddr, uint32_t bytes, bool scratchpad, bool isTag)
             {
+                if (m_resolveKick && std::this_thread::get_id() == m_ee)
+                {
+                    m_tagRanges.push_back({m_streamPos, scratchpad ? 0x70000000u + physAddr : physAddr, bytes, isTag});
+                    m_streamPos += isTag ? m_tteBytes : bytes;
+                }
                 if (!m_inKick || !onEe(2))
                     return;
                 m_tracker->touch(physAddr, bytes, scratchpad);
@@ -194,6 +216,13 @@ namespace rc::rec
 
             void kickEnd(const uint8_t *flat, uint32_t flatBytes, uint32_t dmaTags)
             {
+                if (m_resolveKick && std::this_thread::get_id() == m_ee)
+                {
+                    m_resolveKick = false;
+                    resolveTags();
+                    if (!m_inKick)
+                        dropResolved(); // not recording: nothing refers to them
+                }
                 if (!m_inKick || !onEe(3))
                     return;
                 m_inKick = false;
@@ -252,8 +281,12 @@ namespace rc::rec
                 }
                 PS2Memory &memory = m_runtime->memory();
                 const RamView live{memory.getRDRAM(), memory.getScratchpad(), nullptr, nullptr};
+                m_kick.spans = m_spans.data();
+                m_kick.spanCount = static_cast<uint32_t>(m_spans.size());
                 for (Consumer *c : m_consumers)
                     c->kick(m_kick, live);
+                m_spans.clear();
+                dropResolved();
                 ++m_kickIndex;
                 m_cycleHookNs += nsSince(t0);
             }
@@ -327,6 +360,62 @@ namespace rc::rec
                 m_scene = scene;
             }
 
+            // (batch 3) A side tag from native code (render/gfx/tags.cpp), on the EE thread.
+            void tag(const rc::gfx::detail::Event &e) override
+            {
+                if (m_state == Done)
+                    return;
+                if (m_eeKnown && std::this_thread::get_id() != m_ee)
+                {
+                    m_foreign.fetch_add(1, std::memory_order_relaxed);
+                    return;
+                }
+                ++m_tagsMade[std::min<uint32_t>(e.kind, 8u)];
+                TagView v;
+                v.seq = e.seq;
+                v.kind = e.kind;
+                v.op = e.op;
+                v.depth = e.depth;
+                v.anchor = e.anchor;
+                v.parent = e.parent;
+                v.payload = e.payload;
+                v.payloadBytes = e.payloadBytes;
+                if (m_state == Recording)
+                {
+                    flushPendingKick();
+                    flushDeferred();
+                    for (Consumer *c : m_consumers)
+                        c->tag(v);
+                    ++m_tagsRecorded;
+                }
+                const bool anchored = e.anchorKind != rc::gfx::AnchorKind::None;
+                if (anchored && e.anchor == 0u)
+                {
+                    ++m_tagsUnanchorable;
+                    return;
+                }
+                if (!anchored && !(e.kind == rc::gfx::KindKick))
+                    return;
+                if (e.kind == rc::gfx::KindKick && e.op == rc::gfx::OpEnd)
+                {
+                    // A kick span closes: it labels no later kick.
+                    m_openLabels.erase(std::remove(m_openLabels.begin(), m_openLabels.end(), e.parent), m_openLabels.end());
+                    m_tags.erase(e.parent);
+                    return;
+                }
+                auto entry = std::make_unique<TagEntry>();
+                entry->view = v;
+                entry->payload.assign(static_cast<const uint8_t *>(e.payload), static_cast<const uint8_t *>(e.payload) + e.payloadBytes);
+                entry->view.payload = entry->payload.data();
+                entry->cycle = m_cycle;
+                entry->anchored = anchored;
+                if (anchored)
+                    m_pendingAnchored.push_back(e.seq);
+                else
+                    m_openLabels.push_back(e.seq);
+                m_tags[e.seq] = std::move(entry);
+            }
+
         private:
             enum State
             {
@@ -345,6 +434,133 @@ namespace rc::rec
                 uint32_t address;
                 uint64_t value;
             };
+            // (batch 3) A tag kept until a kick consumes it: an anchored begin or end not yet resolved, or an open kick span.
+            struct TagEntry
+            {
+                TagView view;
+                std::vector<uint8_t> payload;
+                uint64_t cycle = 0; // made in this display cycle
+                bool anchored = false;
+                bool resolved = false;
+            };
+            struct TagRange // one range of the kick's stream (as kickTouch reports them, in order)
+            {
+                uint32_t streamOffset;
+                uint32_t base; // TAG.anchor encoding: RDRAM offset, or 0x70000000 + scratchpad offset
+                uint32_t bytes;
+                bool isTag;
+            };
+
+            // Resolution at the kick (section 5.1): an anchored tag whose anchor lies in one of the kick's ranges gets
+            // that range's stream offset plus the distance into it. A DMA tag matches only its own address; a payload
+            // range [base, base + bytes] including its end (an end mark after the last packet, an empty span at the
+            // end). The first visit in stream order wins; a later visit inside another range is counted as a repeat.
+            void resolveTags()
+            {
+                if (m_pendingAnchored.empty() || m_tagRanges.empty())
+                    return;
+                struct Cand
+                {
+                    uint32_t anchor, seq;
+                    TagEntry *entry;
+                    uint32_t interiorHits;
+                };
+                std::vector<Cand> cands;
+                cands.reserve(m_pendingAnchored.size());
+                for (const uint32_t seq : m_pendingAnchored)
+                    if (const auto it = m_tags.find(seq); it != m_tags.end() && !it->second->resolved)
+                        cands.push_back({it->second->view.anchor, seq, it->second.get(), 0u});
+                std::sort(cands.begin(), cands.end(), [](const Cand &a, const Cand &b)
+                          { return a.anchor != b.anchor ? a.anchor < b.anchor : a.seq < b.seq; });
+                for (const TagRange &r : m_tagRanges)
+                {
+                    const uint32_t last = r.isTag ? r.base : r.base + r.bytes; // inclusive
+                    auto it = std::lower_bound(cands.begin(), cands.end(), r.base, [](const Cand &c, uint32_t a) { return c.anchor < a; });
+                    for (; it != cands.end() && it->anchor <= last; ++it)
+                    {
+                        const bool interior = r.isTag || it->anchor < r.base + r.bytes;
+                        if (interior && ++it->interiorHits > 1u)
+                            ++m_tagRepeats;
+                        if (it->entry->resolved)
+                            continue;
+                        it->entry->resolved = true;
+                        ++m_tagsResolved;
+                        if (m_inKick)
+                            m_spans.push_back({r.isTag ? r.streamOffset : r.streamOffset + (it->anchor - r.base), it->anchor, &it->entry->view,
+                                               it->entry->view.op});
+                    }
+                }
+                std::sort(m_spans.begin(), m_spans.end(), [](const Span &a, const Span &b)
+                          { return a.streamOffset != b.streamOffset ? a.streamOffset < b.streamOffset : a.tag->seq < b.tag->seq; });
+            }
+
+            // Forgets resolved tags once the KICK that refers to them has gone out.
+            void dropResolved()
+            {
+                size_t keep = 0;
+                for (size_t i = 0; i < m_pendingAnchored.size(); ++i)
+                {
+                    const auto it = m_tags.find(m_pendingAnchored[i]);
+                    if (it == m_tags.end())
+                        continue;
+                    if (it->second->resolved)
+                        m_tags.erase(it);
+                    else
+                        m_pendingAnchored[keep++] = m_pendingAnchored[i];
+                }
+                m_pendingAnchored.resize(keep);
+            }
+
+            // At a cycle close: anchored tags no kick consumed two cycle closes after they were made are dropped.
+            void expireTags()
+            {
+                size_t keep = 0;
+                for (size_t i = 0; i < m_pendingAnchored.size(); ++i)
+                {
+                    const auto it = m_tags.find(m_pendingAnchored[i]);
+                    if (it == m_tags.end())
+                        continue;
+                    if (m_cycle >= it->second->cycle + 2u)
+                    {
+                        if (m_state == Recording)
+                            ++m_tagsExpired;
+                        m_tags.erase(it);
+                    }
+                    else
+                        m_pendingAnchored[keep++] = m_pendingAnchored[i];
+                }
+                m_pendingAnchored.resize(keep);
+            }
+
+            // TAGP: the tags a later kick may still refer to (unresolved anchored tags, open kick spans), as TAG records.
+            std::vector<uint8_t> pendingTagRecords() const
+            {
+                std::vector<uint8_t> out;
+                auto add = [&](const TagEntry &e)
+                {
+                    const TagView &v = e.view;
+                    const uint32_t payload = static_cast<uint32_t>(sizeof(RecTagBody)) + v.payloadBytes;
+                    const RecHeader h{RecTag, 0u, static_cast<uint32_t>(sizeof(RecHeader) + payload + pad8(payload))};
+                    const RecTagBody b{v.seq, v.kind, v.op, v.depth, v.anchor, v.parent, v.payloadBytes, 0u};
+                    const size_t at = out.size();
+                    out.resize(at + h.bytes, 0u);
+                    std::memcpy(out.data() + at, &h, sizeof(h));
+                    std::memcpy(out.data() + at + sizeof(h), &b, sizeof(b));
+                    if (v.payloadBytes)
+                        std::memcpy(out.data() + at + sizeof(h) + sizeof(b), v.payload, v.payloadBytes);
+                };
+                std::vector<const TagEntry *> list;
+                for (const uint32_t seq : m_openLabels)
+                    if (const auto it = m_tags.find(seq); it != m_tags.end())
+                        list.push_back(it->second.get());
+                for (const uint32_t seq : m_pendingAnchored)
+                    if (const auto it = m_tags.find(seq); it != m_tags.end() && !it->second->resolved)
+                        list.push_back(it->second.get());
+                std::sort(list.begin(), list.end(), [](const TagEntry *a, const TagEntry *b) { return a->view.seq < b->view.seq; });
+                for (const TagEntry *e : list)
+                    add(*e);
+                return out;
+            }
 
             bool onEe(uint32_t what)
             {
@@ -419,6 +635,14 @@ namespace rc::rec
                 if (state.gsMemory.empty())
                     state.gsMemory.assign(kGsMemBytes, 0u);
                 kf.chunks = state.chunks(final);
+                std::vector<uint8_t> pendingTags;
+                if (!final && m_tagsAttached)
+                {
+                    pendingTags = pendingTagRecords();
+                    kf.chunks.push_back({kStatePendingTags, pendingTags.data(), pendingTags.size()});
+                    kf.header.stateChunkCount = static_cast<uint32_t>(kf.chunks.size());
+                    m_tagpRecords += pendingTags.empty() ? 0u : 1u;
+                }
                 for (Consumer *c : m_consumers)
                     c->keyframe(kf);
                 if (!final)
@@ -474,6 +698,11 @@ namespace rc::rec
                 h.emuStateVersion = emuStateVersion();
                 if (m_exact)
                     h.flags |= kFileExact | (m_refEvery ? kFilePictures : 0u);
+                if (m_tagsAttached)
+                {
+                    h.flags |= kFileTags;
+                    info.tagNames = rc::gfx::nameTable();
+                }
                 m_picture.assign(static_cast<size_t>(h.width) * h.height * 4u, 0u);
                 m_width = h.width;
                 m_height = h.height;
@@ -523,12 +752,32 @@ namespace rc::rec
                              m_hookNsTotal / cycles / 1e6, m_hookNsMax / 1e6, m_keyNs / std::max<double>(1.0, m_keyframes) / 1e6,
                              m_keyMaxNs / 1e6, static_cast<unsigned long long>(m_oddRecorded),
                              static_cast<unsigned long long>(m_foreign.load()));
+                {
+                    static const char *kinds[9] = {"?", "Scene", "View", "Pass", "Draw", "Hud", "Kick", "Label", "Cut"};
+                    std::string made;
+                    for (int k = 1; k < 9; ++k)
+                        if (m_tagsMade[k])
+                            made += std::string(" ") + kinds[k] + " " + std::to_string(m_tagsMade[k]);
+                    std::fprintf(stderr,
+                                 "[frame-record] side tags (since the recorder attached):%s; recorded %llu; anchored resolved %llu, dropped "
+                                 "unconsumed %llu (while recording), repeats %llu, unanchorable %llu; kicks with labels %llu\n",
+                                 made.empty() ? " none" : made.c_str(), static_cast<unsigned long long>(m_tagsRecorded),
+                                 static_cast<unsigned long long>(m_tagsResolved), static_cast<unsigned long long>(m_tagsExpired),
+                                 static_cast<unsigned long long>(m_tagRepeats), static_cast<unsigned long long>(m_tagsUnanchorable),
+                                 static_cast<unsigned long long>(m_labelledKicks));
+                }
                 if (m_exact)
                     std::fprintf(stderr, "[frame-record] exact mode: %llu reference pictures stored, %llu GIF bytes outside any kick\n",
                                  static_cast<unsigned long long>(m_pictures), static_cast<unsigned long long>(m_strayGifTotal));
                 m_consumers.clear();
                 m_writer.reset();
                 m_tracker.reset();
+                // Tags are of no use any more: detach the channel (call sites go back to one test of a byte).
+                rc::gfx::detail::attach(nullptr);
+                m_tagsAttached = false;
+                m_tags.clear();
+                m_pendingAnchored.clear();
+                m_openLabels.clear();
             }
 
             void resetCycleStats()
@@ -592,6 +841,7 @@ namespace rc::rec
                 m_kicksThisCycle = 0;
                 m_kickIndex = 0;
                 m_lastCloseFbp = fbp;
+                expireTags();
                 if (m_state == Recording)
                 {
                     if (m_recorded >= m_trigger.count)
@@ -662,6 +912,21 @@ namespace rc::rec
             std::vector<Deferred> m_deferred;
             std::atomic<bool> m_hasDeferred{false};
 
+            // Side tags (batch 3).
+        public:
+            bool m_tagsAttached = false;
+
+        private:
+            std::unordered_map<uint32_t, std::unique_ptr<TagEntry>> m_tags;
+            std::vector<uint32_t> m_pendingAnchored, m_openLabels;
+            std::vector<TagRange> m_tagRanges;
+            std::vector<Span> m_spans;
+            std::vector<const TagView *> m_labelViews;
+            bool m_resolveKick = false;
+            uint32_t m_streamPos = 0, m_tteBytes = 0;
+            uint64_t m_tagsMade[9] = {}, m_tagsRecorded = 0, m_tagsResolved = 0, m_tagsExpired = 0, m_tagRepeats = 0, m_tagsUnanchorable = 0,
+                     m_labelledKicks = 0, m_tagpRecords = 0;
+
             uint64_t m_cycleHookNs = 0, m_cyclePages = 0, m_hookNsTotal = 0, m_hookNsMax = 0;
             uint64_t m_keyNs = 0, m_keyMaxNs = 0, m_keyframes = 0, m_oddRecorded = 0;
         };
@@ -692,6 +957,13 @@ namespace rc::rec
             const char *key = std::getenv("RC_FRAME_RECORD_KEY");
             g_capture = new Capture(path, parseTrigger(std::getenv("RC_FRAME_RECORD_AT")), key ? std::strtoull(key, nullptr, 10) : 300u);
             ps2x::capture::install(&kHooks);
+            // (batch 3) The side-tag channel feeds the capture from now on; RC_FRAME_RECORD_TAGS=0 leaves it detached.
+            const char *tags = std::getenv("RC_FRAME_RECORD_TAGS");
+            if (!tags || std::strcmp(tags, "0") != 0)
+            {
+                rc::gfx::detail::attach(g_capture);
+                g_capture->m_tagsAttached = true;
+            }
             return true;
         }();
     }

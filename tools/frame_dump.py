@@ -4,7 +4,8 @@
 Usage:
   frame_dump.py info <dump>                  header, segments, cycles, sizes by chunk and record type
   frame_dump.py list <dump> [cycle]          the events, one line each (all cycles, or one by its number)
-  frame_dump.py tags <dump> <cycle>          the side tags of a cycle
+  frame_dump.py tags <dump> <cycle>          the side tags of a cycle (names from TNAM, payloads decoded), every kick's
+                                             labels and resolved spans, begin/end pairs, unresolved anchored tags
   frame_dump.py kick <dump> <cycle> <index>  a kick's registers, spans, and the first stream bytes from the rebuilt pages
   frame_dump.py png <dump> <cycle> <out.png> [--opaque]   the cycle's reference picture (exact-mode dumps)
   frame_dump.py verify <dump>                chunk CRCs, record sizes, the index against a scan
@@ -80,6 +81,17 @@ class Dump:
         if zlib.crc32(body) != crc:
             raise ValueError(f'{cid} at {at}: CRC mismatch')
         return body
+
+    def tag_names(self):
+        """The TNAM table as {(table, value): name}."""
+        names = {}
+        for c in self.chunks:
+            if c[1] == 'TNAM':
+                for line in self.payload(c).decode('utf-8', 'replace').splitlines():
+                    parts = line.split()
+                    if len(parts) == 3:
+                        names[(parts[0], int(parts[1]))] = parts[2]
+        return names
 
     def complete(self):
         return self.saw_end and self.header['indexOffset'] != 0 and not self.partial
@@ -222,18 +234,114 @@ def cmd_list(d, which=None):
     return 0
 
 
+def parse_tag(b):
+    seq, kind, op, depth, anchor, parent, nbytes, _ = TAG.unpack_from(b)
+    return {'seq': seq, 'kind': kind, 'op': op, 'depth': depth, 'anchor': anchor, 'parent': parent,
+            'payload': bytes(b[TAG.size:TAG.size + nbytes])}
+
+
+def tag_text(t, names):
+    """One tag in words: kind, op and the payload decoded (render/gfx/tags.h)."""
+    n = lambda table, v: names.get((table, v), f'{table}{v}')  # noqa: E731
+    kind, op, p = t['kind'], t['op'], t['payload']
+    text = f'#{t["seq"]} {n("kind", kind)} {n("op", op)}'
+    if op == 2:
+        return text + f' (of #{t["parent"]})'
+    if kind == 1 and len(p) >= 24:
+        gf, rf, scene, flags, _ = struct.unpack_from('<QIIII', p)
+        text += f' game frame {gf} rdr frame {rf} scene {scene:04x}'
+    elif kind == 2 and len(p) >= 104:
+        v = struct.unpack_from('<I4if3f9f5fIII', p)
+        text += (f' view {v[0]} scissor {v[1]},{v[2]}-{v[3]},{v[4]} y offset {v[5]:g} camera {v[24]:#x} at '
+                 f'({v[6]:.1f}, {v[7]:.1f}, {v[8]:.1f}) dVal {v[18]:g} z {v[21]:g}-{v[22]:g} angle {v[23]:#x}')
+    elif kind in (4, 5) and len(p) >= 16:
+        dk, obj, part, ordinal = struct.unpack_from('<IIII', p)
+        text += f' {n("draw", dk)} object {obj:#x} part {part} ordinal {ordinal}'
+        if kind == 5 and len(p) >= 40:
+            element, anchor = struct.unpack_from('<II', p, 16)
+            text += f' hud {n("hud", element)} anchor {n("anchor", anchor)}'
+        if kind == 4 and len(p) >= 72 and struct.unpack_from('<I', p, 20)[0]:
+            m = struct.unpack_from('<12f', p, 24)
+            text += f' at ({m[9]:.1f}, {m[10]:.1f}, {m[11]:.1f})'
+    elif kind == 6 and len(p) >= 16:
+        what, obj, a, b2 = struct.unpack_from('<IIII', p)
+        text += f' {n("kick", what)} object {obj:#x} a {a:#x} b {b2:#x}'
+    elif kind == 7:
+        text += ' "' + p.rstrip(b'\0').decode('utf-8', 'replace') + '"'
+    if t['anchor']:
+        text += f' anchor {t["anchor"]:#x}'
+    return text + f' depth {t["depth"]}'
+
+
 def cmd_tags(d, which):
+    names = d.tag_names()
+    known = {}  # seq -> tag, from TAGP and every cycle up to `which` + 2
+    cycles = []
     for kind, c, info in d.cycles():
-        if kind == 'CYCL' and info[0] == which:
-            n = 0
-            for t, b in info[1]:
-                if t in (4, 5):
-                    print('  ' + describe(t, b))
-                    n += t == 5
-            print(f'{n} tag(s) in cycle {which}')
-            return 0
-    print(f'no cycle {which}')
-    return 1
+        if kind == 'KEYF':
+            kh, states = d.keyframe(d.payload(c))
+            for s in states:
+                if s[0] == 'TAGP':
+                    for t, b in d.records(s[4]):
+                        if t == 5:
+                            tg = parse_tag(b)
+                            known.setdefault(tg['seq'], tg)
+            continue
+        number, recs = info
+        if number is None or number > which + 2:
+            break
+        for t, b in recs:
+            if t == 5:
+                tg = parse_tag(b)
+                tg['cycle'] = number
+                known[tg['seq']] = tg
+        cycles.append((number, recs))
+    target = [r for n, r in cycles if n == which]
+    if not target:
+        print(f'no cycle {which}')
+        return 1
+    resolved = set()
+    for number, recs in cycles:
+        for t, b in recs:
+            if t == 4:
+                k = KICK.unpack_from(b)
+                for i in range(k[16]):
+                    resolved.add(struct.unpack_from('<IIIB', b, KICK.size + i * 16)[2])
+    ntags = 0
+    pairs_ok = pairs_open = 0
+    for t, b in target[0]:
+        if t == 5:
+            ntags += 1
+            print('  TAG  ' + tag_text(parse_tag(b), names))
+        elif t == 4:
+            k = KICK.unpack_from(b)
+            ch, mode, nbytes = k[8], k[9], k[12]
+            labels = [struct.unpack_from('<I', b, KICK.size + k[16] * 16 + 4 * i)[0] for i in range(k[17])]
+            label_text = ', '.join(tag_text(known[s], names).split(' depth')[0] if s in known else f'#{s} (not held)' for s in labels)
+            print(f'  KICK #{k[0]} ch{ch} {"chain" if mode == 1 else "normal"}: {nbytes} bytes'
+                  + (f'; labels: {label_text}' if labels else '; no label'))
+            spans = [struct.unpack_from('<IIIB', b, KICK.size + i * 16) for i in range(k[16])]
+            for so, ga, seq, op in spans:
+                tg = known.get(seq)
+                desc = tag_text(tg, names).split(' anchor')[0] if tg else f'#{seq} (not held)'
+                if tg and op == 2 and tg['parent'] in known:
+                    desc += ': ' + tag_text(known[tg['parent']], names).split(' anchor')[0].split(' ', 1)[1]
+                print(f'      span stream +{so:#x} of {nbytes:#x} guest {ga:#x}: {desc}')
+                if op == 1:
+                    if any(o == 2 and s2 in known and known[s2]['parent'] == seq and o2 >= so
+                           for o2, _, s2, o in spans):
+                        pairs_ok += 1
+                    else:
+                        pairs_open += 1
+    made_here = [tg for tg in known.values() if tg.get('cycle') == which and tg['anchor'] and tg['op'] in (1, 2)
+                 and tg['kind'] != 6]
+    unresolved = [tg for tg in made_here if tg['seq'] not in resolved]
+    print(f'{ntags} tag(s) in cycle {which}; {pairs_ok} begin/end pair(s) resolved in one kick, {pairs_open} begin(s) without '
+          f'their end in the kick; {len(made_here)} anchored tag(s) made in this cycle, {len(unresolved)} not resolved by a kick '
+          f'up to cycle {which + 2}' + ('' if cycles[-1][0] >= which + 2 else ' (the dump ends before it)'))
+    for tg in unresolved[:20]:
+        print('  unresolved ' + tag_text(tg, names))
+    return 0
 
 
 def cmd_kick(d, which, index):

@@ -41,7 +41,11 @@ void GfxP2_SwapBuffers()
     guest_call(kSceGsSetHalfOffset, draw, 0x800, 0x800, static_cast<int16_t>(field ^ 1));
 
     G(swapTime1) = hw_read32(kT0Count);
-    guest_call(kSceGsSwapDBuff, guest_addr(&dbuff), rdr.frameNumber);
+    {
+        // Side tag: the flip (DISPFB2, which closes the display cycle) and the next frame's draw environment and clear.
+        const rc::gfx::SpanKicks flip(rc::gfx::KickLabel{rc::gfx::KickFlip, guest_addr(&dbuff), rdr.frameNumber, 0u});
+        guest_call(kSceGsSwapDBuff, guest_addr(&dbuff), rdr.frameNumber);
+    }
 
     const uint32_t now = hw_read32(kT0Count);
     const uint32_t flipStart = G(swapTime1);
@@ -125,6 +129,8 @@ void GfxP2_RenderDmaSendActual()
     if (gfx.buffIdx >= 6)
     {
         guest_call(sym::FlushCache, 0);
+        // Side tag: the kick sceDmaSendN makes is K1 (the 2D packet).
+        const rc::gfx::SpanKicks k1(rc::gfx::KickLabel{rc::gfx::KickK1, full, static_cast<uint32_t>(gfx.buffIdx), 0u});
         guest_call(sym::sceDmaSendN, gfx.pDmaGif.address, wasBuff0 ? G(gpGfx_DmaBuff0).address : G(gpGfx_DmaBuff1).address, gfx.buffIdx);
     }
     gfx.buffIdx = 0;
@@ -134,8 +140,10 @@ void GfxP2_RenderDmaSendActual()
 namespace {
 // GfxP2_LoadTex and GfxP2_LoadTexMip: one image (a mip level) uploaded to texAddr (bits 8-23: the GS block) through
 // path 2 and waited for. The buffer width is the image's in 64-pixel units, at least 1.
-void loadImage(const GuestFrame &frame, u32 texAddr, uint32_t tex, int32_t wd, int32_t ht, uint32_t bitmap)
+void loadImage(const GuestFrame &frame, u32 texAddr, uint32_t tex, int32_t wd, int32_t ht, uint32_t bitmap, uint32_t levelFrame)
 {
+    // Side tag: the upload's kick.
+    const rc::gfx::SpanKicks upload(rc::gfx::KickLabel{rc::gfx::KickTextureUpload, tex, (texAddr >> 8) & 0xffffu, levelFrame});
     const int32_t blocks = (wd >= 0 ? wd : wd + 63) >> 6;
     guest_call(sym::sceGsSetDefLoadImage, frame.local<uint8_t>(0).address, static_cast<int32_t>(texAddr << 8) >> 16,
                static_cast<int16_t>(blocks > 0 ? blocks : 1), mem<int16_t>(tex + 0x10u), 0, 0, static_cast<int16_t>(wd), static_cast<int16_t>(ht));
@@ -149,6 +157,8 @@ void GfxP2_LoadTex(u32 texAddr, ptr32<_sGfxTexture> pGfxTex)
 {
     GuestFrame frame(0x80);
     const uint32_t tex = pGfxTex.address;
+    // Side tag: the upload's kick.
+    const rc::gfx::SpanKicks upload(rc::gfx::KickLabel{rc::gfx::KickTextureUpload, tex, (texAddr >> 8) & 0xffffu, 0u});
     // The height is read as a halfword, the width as a word.
     const int32_t wd = mem<int32_t>(tex + 8u);
     const int32_t blocks = (wd >= 0 ? wd : wd + 63) >> 6;
@@ -166,7 +176,8 @@ void GfxP2_LoadTexMip(u32 texAddr, ptr32<_sGfxTexture> pGfxTex, s32 level, s32 f
     GuestFrame stack(0xa0);
     const uint32_t tex = pGfxTex.address;
     const int32_t wd = mem<int32_t>(tex + 8u) >> (level & 31), ht = mem<int32_t>(tex + 0xcu) >> (level & 31);
-    loadImage(stack, texAddr, tex, wd, ht, mem<uint32_t>(tex + 0x48u + (static_cast<uint32_t>(frame) * 7u + static_cast<uint32_t>(level)) * 4u));
+    loadImage(stack, texAddr, tex, wd, ht, mem<uint32_t>(tex + 0x48u + (static_cast<uint32_t>(frame) * 7u + static_cast<uint32_t>(level)) * 4u),
+              (static_cast<uint32_t>(level) & 0xffu) | static_cast<uint32_t>(frame) << 8);
 }
 
 } // namespace rc

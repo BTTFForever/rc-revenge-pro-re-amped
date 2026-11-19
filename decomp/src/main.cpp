@@ -79,6 +79,37 @@ uint32_t &frames() { return at<uint32_t>(kMain + 0x354u); }
 uint32_t &frameTime() { return at<uint32_t>(kMain + 0x358u); }
 uint32_t &gameTime() { return at<uint32_t>(kMain + 0x1cu); }
 
+// Side tag: the view the frame loop renders next, right after SetFrameWindow made it current (its camera is
+// gRdr.pCamera; the scissor is the one SetFrameWindow set, the vertical offset gRdrPolyOffset). Reads only.
+void viewTag(uint32_t index)
+{
+    if (!rc::gfx::live())
+        return;
+    rc::gfx::ViewTag tag{};
+    tag.index = index;
+    const int32_t split = splitScreen() != 0 ? 1 : 0;
+    tag.scissor[0] = 3;
+    tag.scissor[1] = split && index == 1 ? 0x70 : 3;
+    tag.scissor[2] = 0x27d;
+    tag.scissor[3] = split && index == 0 ? 0x6f : 0xed;
+    std::memcpy(&tag.yOffset, guest_host(kFrameMode), 4);
+    const uint32_t camera = G(gRdr).pCamera.address;
+    tag.camera = camera;
+    if (camera)
+    {
+        const _sRdrCamera &c = *G(gRdr).pCamera;
+        std::memcpy(tag.position, &c.pos, sizeof(tag.position));
+        std::memcpy(tag.rotation, &c.mat, sizeof(tag.rotation));
+        std::memcpy(&tag.dVal, &c.dVal, 4);
+        std::memcpy(&tag.dValX, &c.dValX, 4);
+        std::memcpy(&tag.dValY, &c.dValY, 4);
+        std::memcpy(&tag.minZ, &c.minZ, 4);
+        std::memcpy(&tag.maxZ, &c.maxZ, 4);
+        tag.viewAngle = c.viewAngle;
+    }
+    rc::gfx::view(tag);
+}
+
 // View3dDefine3dDeviceWindow(window, -160, -120, 160, 120, 160, 120, -160, then five on the stack): the
 // window's place on the screen (its last five arguments, as words in the stack's 8-byte slots).
 void defineWindow(const GuestFrame &frame, uint32_t window, int32_t s0, int32_t s8, int32_t s10, int32_t s18, int32_t s20)
@@ -472,6 +503,7 @@ void MainGameProcess()
             at<uint32_t>(kMain + 0x378u) = 0;
             SetFrameWindow(0, static_cast<tTime>(t));
         }
+        viewTag(0);
         if (level() != 0x61)
             call(kLsRenderWorld);
         else
@@ -499,6 +531,7 @@ void MainGameProcess()
                 at<uint32_t>(kMain + 0x378u) = 1;
                 SetFrameWindow(1, static_cast<tTime>(t));
             }
+            viewTag(1);
             if (level() != 0x61)
                 call(kLsRenderWorld);
             else

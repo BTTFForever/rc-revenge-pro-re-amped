@@ -14,6 +14,7 @@
 #include "runtime/gs/gs_survey.h"
 #include "ps2_capture_hooks.h"
 #include "ps2_stubs.h"
+#include "../render/gfx/tags.h"
 #include "../decomp/oracle/ram_dump.h"
 // The addresses and recompiled functions of the version being built (tools/gen_addrs.py, decomp/generated/<version>/).
 #include "rc_addrs.h"
@@ -526,6 +527,20 @@ namespace
             const uint32_t scene = (mode & 0xfu) << 12 | static_cast<uint32_t>(rdram[(kMain + 0x34au) & PS2_RAM_MASK]) << 4 |
                                    (rdram[(kMain + 0x368u) & PS2_RAM_MASK] ? 2u : 0u);
             capture->gameFrame(gameFrame, g_levelStarted.load() ? levelFrame : ~0ull, scene);
+        }
+        // Side tag (render/gfx/tags.h): the game frame that ends here and its scene. Reads only.
+        if (rc::gfx::live())
+        {
+            constexpr uint32_t kMain = sym::mainVarG;
+            uint32_t mode, rdrFrame;
+            std::memcpy(&mode, rdram + ((kMain + 8u) & PS2_RAM_MASK), 4u);
+            std::memcpy(&rdrFrame, rdram + ((sym::gRdr + 4u) & PS2_RAM_MASK), 4u); // gRdr.frameNumber
+            rc::gfx::SceneTag tag{};
+            tag.gameFrame = gameFrame;
+            tag.rdrFrame = rdrFrame;
+            tag.scene = (mode & 0xfu) << 12 | static_cast<uint32_t>(rdram[(kMain + 0x34au) & PS2_RAM_MASK]) << 4 |
+                        (rdram[(kMain + 0x368u) & PS2_RAM_MASK] ? 2u : 0u);
+            rc::gfx::scene(tag);
         }
         g_inputClock.fetch_add(1u, std::memory_order_relaxed);
         static const auto swapBuffers = rc::decompOr(rc::fns::GfxP2_SwapBuffers);

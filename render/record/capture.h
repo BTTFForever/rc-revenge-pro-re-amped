@@ -22,6 +22,11 @@
 // on the EE thread (ps2x::capture::exactCapable) and RC_TRACK_SHADER is not 1: then each KICK carries the GS register
 // file before it and the hash of the GIF bytes it produced, each END the hash of the picture at DISPFB2 (and REFI the
 // picture), and keyframes exact GS memory. Every keyframe carries EMUS (ps2x::savestate::saveGraphics) in both modes.
+// Side tags (batch 3; render/gfx/tags.h): while installed, the capture is the tag channel's consumer (RC_FRAME_RECORD_TAGS=0
+// leaves the channel detached). Tags go into the dump as TAG records in emission order; an anchored tag is resolved at
+// the first kick whose stream reaches its anchor (KICK spans), kick spans open at a kick become its labels; anchored tags
+// no kick consumed are dropped two cycle closes after they were made; each keyframe carries the ones still waiting
+// (TAGP), and the file the name table (TNAM).
 // No ring, key or state-load handling yet (batch 4).
 
 namespace rc::rec

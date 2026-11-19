@@ -26,6 +26,7 @@ namespace rc::rec
         const std::vector<IndexSegment> &segments() const { return m_segments; }
         const std::vector<IndexCycle> &cycles() const { return m_cycles; }
         uint64_t fileBytes() const { return m_fileBytes; }
+        const std::string &tagNames() const { return m_tagNames; } // the TNAM chunk's text, empty without one
 
         // Replays from the start of the last segment whose first cycle is not after `firstCycle`, through `lastCycle`
         // (END.cycle numbers). Events of cycles before firstCycle only update the RAM image. False on a read error
@@ -67,6 +68,7 @@ namespace rc::rec
         std::vector<IndexCycle> m_cycles;
         std::vector<ChunkRef> m_chunks; // every whole chunk after RCFR, in file order
         std::string m_error;
+        std::string m_tagNames;
 
         // The rebuilt image.
         std::unique_ptr<uint8_t[]> m_ram, m_scratch;
