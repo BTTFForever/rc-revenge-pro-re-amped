@@ -221,6 +221,15 @@ target_compile_options(rc_blit_vk PRIVATE -O2)
 target_link_libraries(rc_blit_vk PUBLIC rc_ico_rhi)
 target_sources(rc_replay PRIVATE tools/rc_replay/blit.cpp tools/rc_replay/gif2d_survey.cpp)
 target_link_libraries(rc_replay PRIVATE rc_blit rc_blit_vk rc_tex)
+# rc_gs2d (render/gs2d; renderer plan P1 step 7, RENDERER_2D_DESIGN.md): the 2D packet's reader, draw list, plan and
+# GIF re-encoder, on rc_tex (TexShadow, GifWalker, TextureCache). Linked by rc_replay (the gif2d consumer); not by the
+# game or the oracle.
+set(RC_GS2D_DIR "${CMAKE_CURRENT_SOURCE_DIR}/render/gs2d")
+add_library(rc_gs2d STATIC EXCLUDE_FROM_ALL "${RC_GS2D_DIR}/gif2d_reader.cpp" "${RC_GS2D_DIR}/gs_plan.cpp" "${RC_GS2D_DIR}/gs2d_encode.cpp")
+target_compile_options(rc_gs2d PRIVATE -O2)
+target_link_libraries(rc_gs2d PRIVATE rc_tex rc_record)
+target_sources(rc_replay PRIVATE tools/rc_replay/gif2d.cpp)
+target_link_libraries(rc_replay PRIVATE rc_gs2d rc_tex)
 add_executable(rc_tex_test EXCLUDE_FROM_ALL tools/rc_replay/tex_test.cpp)
 target_compile_options(rc_tex_test PRIVATE -O2)
 target_link_libraries(rc_tex_test PRIVATE rc_tex rc_record ZLIB::ZLIB)

@@ -266,6 +266,23 @@ namespace rc::replay
         m_path1 = static_cast<int64_t>(k.cycle) == m_opt.path1Cycle && k.index == m_opt.path1Kick;
         m_path1Bytes.clear();
 
+        if (m_substitute)
+            if (const std::vector<uint8_t> *bytes = m_substitute(k))
+            {
+                // (step 7, check (b)) Another stream in place of the kick: PATH3 packets straight to the GS.
+                const uint32_t savedCsr = _mm_getcsr();
+                m_gif = Hash64{};
+                m_collect = true;
+                _mm_setcsr(k.mxcsr);
+                if (!bytes->empty())
+                    mem.submitGifPacket(GifPathId::Path3, bytes->data(), static_cast<uint32_t>(bytes->size()));
+                _mm_setcsr(savedCsr);
+                m_collect = false;
+                ++m_t.substituted;
+                m_t.substitutedBytes += bytes->size();
+                m_t.gifBytes += m_gif.length();
+                return;
+            }
         // The kick as the game made it: the channel's registers, then the CHCR store. MXCSR and the VU0 FBRST the
         // VU1 start reads are the recorded ones; the DMAC is on (the recorder sees only kicks that passed its test).
         const uint32_t base = 0x10008000u + static_cast<uint32_t>(k.channel) * 0x1000u;
@@ -385,6 +402,9 @@ namespace rc::replay
         std::printf("emu: %" PRIu64 " cycles, %" PRIu64 " kicks replayed (%.1f MB of GIF output), %" PRIu64 " keyframes loaded, %" PRIu64
                     " stores and %" PRIu64 " pages applied; replay digest %016" PRIx64 "\n",
                     m_t.cycles, m_t.kicks, m_t.gifBytes / 1048576.0, m_t.keyframesLoaded, m_t.hwApplied, m_t.pagesApplied, m_digest);
+        if (m_t.substituted)
+            std::printf("emu: %" PRIu64 " kicks replaced by substitute streams (%" PRIu64 " bytes; their recorded GIF hashes not checked)\n",
+                        m_t.substituted, m_t.substitutedBytes);
         if (m_opt.verify && m_exact)
             std::printf("verify: GIF output %" PRIu64 "/%" PRIu64 " kicks; register files %" PRIu64 "/%" PRIu64 "; picture hashes %" PRIu64 "/%" PRIu64
                         "; stored pictures %" PRIu64 "/%" PRIu64 " bit for bit; GS memory at keyframes %" PRIu64 "/%" PRIu64 ", final %" PRIu64 "/%" PRIu64 "\n",

@@ -1,6 +1,6 @@
 // rc_replay: feeds a frame record dump (.rcfr, RENDERER_FRAME_RECORD.md) to consumers.
 //
-//   rc_replay <dump> [--consumer stats|emu|tex|blit|gif2dstat] [--cycles a-b] [--verify] [--quiet]
+//   rc_replay <dump> [--consumer stats|emu|tex|blit|gif2d|gif2dstat] [--cycles a-b] [--verify] [--quiet]
 //             [--png <dir>] [--picture-before <cycle>:<kick> <out.png>] [--path1 <cycle>:<kick> <out.bin>] [--kick-hashes]
 //             [--fault page|kick|hw:<cycle>[:<n>]]
 //             [--with-emu] [--fault transfer|kick|swizzle|decode:<cycle>:<n>] (tex)
@@ -32,11 +32,19 @@
 // bit (REFI or END.refHash), and the GPU's read-back the reference with alpha 255 (the presentation transform).
 // --no-gpu skips the GPU; --fault plants a dropped tile, a wrong DISPFB2, a flipped byte (CPU and GPU, or GPU only).
 // One build replays both versions' dumps.
+//
+// gif2d (gif2d.cpp; renderer plan P1 step 7, RENDERER_2D_DESIGN.md section 10): the 2D reader (render/gs2d) builds a
+// draw list per cycle. With --verify: (a) every register it knows equals the kick's recorded register file; with
+// --with-emu, (b) every drawing PATH3 kick is replaced by its draw list encoded back into GIF packets in front of the
+// emulated GS, whose own verification must then hold. Prints the section 3 tables from the lists (H lines);
+// --no-tables skips them. --fault reg|prim|field:<cycle>:<n> plants a lost register (every write of GS register n in the cycle), a dropped
+// primitive (n of the cycle), a zeroed GsState field (n, gs2d_encode.h GsField).
 #include "chain_walk.h"
 #include "emu.h"
 #include "tex.h"
 #include "blit.h"
 #include "gif2d_survey.h"
+#include "gif2d.h"
 #include "consumer.h"
 #include "reader.h"
 #include "../../render/gfx/tags.h"
@@ -443,10 +451,11 @@ namespace
 
     void usage()
     {
-        std::fprintf(stderr, "usage: rc_replay <dump.rcfr> [--consumer stats|emu|tex|blit|gif2dstat] [--cycles a-b] [--verify] [--quiet] [--png <dir>]\n"
+        std::fprintf(stderr, "usage: rc_replay <dump.rcfr> [--consumer stats|emu|tex|blit|gif2d|gif2dstat] [--cycles a-b] [--verify] [--quiet] [--png <dir>]\n"
                              "                 [--picture-before <cycle>:<kick> <out.png>] [--path1 <cycle>:<kick> <out.bin>] [--kick-hashes]\n"
                              "                 [--fault page|kick|hw:<cycle>[:<n>]]\n"
                              "       tex: [--with-emu] [--png <dir>] [--fault transfer|kick:<cycle>:<n> | swizzle:<cycle>:<bits> | decode:0:<bits>]\n"
+                             "       gif2d: [--with-emu] [--no-tables] [--fault reg|prim|field:<cycle>:<n>]\n"
                              "       blit: [--no-gpu] [--validation] [--png <dir>] [--fault tile:<cycle>:<n> | dispfb:<cycle> | byte|gpubyte:<cycle>:<pixel>]\n");
     }
 }
@@ -454,7 +463,7 @@ namespace
 namespace
 {
     int runEmu(Reader &reader, const std::string &path, rc::replay::EmuOptions options, bool verify, bool quiet, uint64_t first, uint64_t last,
-               const rc::replay::TexOptions *texOptions = nullptr, bool gif2dSurvey = false)
+               const rc::replay::TexOptions *texOptions = nullptr, bool gif2dSurvey = false, const rc::replay::Gif2dOptions *gif2dOptions = nullptr)
     {
         options.verify = verify;
         options.quiet = quiet;
@@ -491,6 +500,14 @@ namespace
             survey = std::make_unique<rc::replay::Gif2dSurvey>(&runtime);
             consumers.insert(consumers.begin(), survey.get());
         }
+        // (step 7) The gif2d reader in front of the machine: its draw lists replace the drawing PATH3 kicks (check (b)).
+        std::unique_ptr<rc::replay::Gif2dCheck> gif2d;
+        if (gif2dOptions)
+        {
+            gif2d = std::make_unique<rc::replay::Gif2dCheck>(*gif2dOptions);
+            emu.setKickSubstitute([&gif2d](const rc::rec::KickView &k) { return gif2d->substitute(k); });
+            consumers.insert(consumers.begin(), gif2d.get());
+        }
         if (texOptions)
         {
             tex = std::make_unique<rc::replay::TexCheck>(*texOptions, &runtime);
@@ -508,6 +525,8 @@ namespace
             tex->summary();
         if (survey)
             survey->summary();
+        if (gif2d)
+            gif2d->summary();
         if (!reader.complete())
             std::printf("note: the dump was not closed (%s); read up to its last whole chunk\n",
                         reader.truncated() ? "a partial chunk at the end" : "no index");
@@ -518,7 +537,7 @@ namespace
         }
         if (verify && (h.flags & kFileExact))
         {
-            const bool failed = emu.failed() || (tex && tex->failed());
+            const bool failed = emu.failed() || (tex && tex->failed()) || (gif2d && gif2d->failed());
             std::printf("%s\n", failed ? "FAIL" : "PASS");
             return failed ? 1 : 0;
         }
@@ -557,6 +576,37 @@ namespace
 
 namespace
 {
+    int runGif2d(Reader &reader, const std::string &path, const rc::replay::Gif2dOptions &options, uint64_t first, uint64_t last)
+    {
+        const FileHeader &h = reader.header();
+        std::printf("dump %s\n  %s, %ux%u, recorded with %.16s, build %.40s, %s%s\n", path.c_str(), h.gameVersion ? "Europe" : "USA", h.width,
+                    h.height, h.gsBackend, h.build, (h.flags & kFileExact) ? "exact" : "plain", (h.flags & kFileComplete) ? "" : ", not closed");
+        rc::replay::Gif2dCheck gif2d(options);
+        // The shadow needs every upload since the segment's keyframe.
+        uint64_t from = 0;
+        for (const IndexSegment &seg : reader.segments())
+            if (seg.firstCycle <= first)
+                from = seg.firstCycle;
+        const bool ok = reader.run({&gif2d}, from, last);
+        gif2d.summary();
+        if (!reader.complete())
+            std::printf("note: the dump was not closed (%s); read up to its last whole chunk\n",
+                        reader.truncated() ? "a partial chunk at the end" : "no index");
+        if (!ok)
+        {
+            std::printf("read error: %s\n", reader.error().c_str());
+            return 2;
+        }
+        if (options.verify)
+        {
+            if (!(h.flags & kFileExact))
+                std::printf("note: the dump is not exact (no recorded register files): check (a) compared nothing\n");
+            std::printf("%s\n", gif2d.failed() ? "FAIL" : "PASS");
+            return gif2d.failed() ? 1 : 0;
+        }
+        return 0;
+    }
+
     int runBlit(Reader &reader, const std::string &path, const rc::replay::BlitOptions &options, uint64_t first, uint64_t last)
     {
         const FileHeader &h = reader.header();
@@ -596,7 +646,7 @@ namespace
 int main(int argc, char **argv)
 {
     std::string path, consumer = "stats";
-    bool verify = false, quiet = false, withEmu = false, noGpu = false, validation = false;
+    bool verify = false, quiet = false, withEmu = false, noGpu = false, validation = false, noTables = false;
     uint64_t first = 0, last = ~0ull;
     rc::replay::EmuOptions emuOptions;
     auto cycleKick = [](const char *text, int64_t &cycle, uint32_t &kick)
@@ -642,6 +692,8 @@ int main(int argc, char **argv)
             withEmu = true;
         else if (a == "--no-gpu")
             noGpu = true;
+        else if (a == "--no-tables")
+            noTables = true;
         else if (a == "--validation")
             validation = true;
         else if (a == "--verify")
@@ -683,9 +735,9 @@ int main(int argc, char **argv)
         survey.summary();
         return ok ? 0 : 2;
     }
-    if (consumer != "stats" && consumer != "emu" && consumer != "tex" && consumer != "blit")
+    if (consumer != "stats" && consumer != "emu" && consumer != "tex" && consumer != "blit" && consumer != "gif2d")
     {
-        std::fprintf(stderr, "consumer '%s' is not built yet (stats, emu, tex, blit)\n", consumer.c_str());
+        std::fprintf(stderr, "consumer '%s' is not built yet (stats, emu, tex, blit, gif2d, gif2dstat)\n", consumer.c_str());
         return 2;
     }
     Reader reader;
@@ -723,6 +775,24 @@ int main(int argc, char **argv)
         blitOptions.faultN = emuOptions.faultN;
         // Pictures are compared only from the first cycle asked for; the shadow replays from its keyframe.
         return runBlit(reader, path, blitOptions, first, last);
+    }
+    if (consumer == "gif2d")
+    {
+        rc::replay::Gif2dOptions g;
+        g.verify = verify;
+        g.quiet = quiet;
+        g.withEmu = withEmu;
+        g.tables = !noTables;
+        g.faultKind = emuOptions.faultKind;
+        g.faultCycle = emuOptions.faultCycle;
+        g.faultN = emuOptions.faultN;
+        if (withEmu)
+        {
+            // Behind gif2d: the planted fault is the reader's or the encoder's, not the emulated machine's.
+            emuOptions.faultKind.clear();
+            return runEmu(reader, path, emuOptions, verify, true, first, last, nullptr, false, &g);
+        }
+        return runGif2d(reader, path, g, first, last);
     }
     if (consumer == "emu")
         return runEmu(reader, path, emuOptions, verify, quiet, first, last);

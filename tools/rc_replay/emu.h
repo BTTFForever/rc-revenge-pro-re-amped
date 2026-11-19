@@ -57,6 +57,10 @@ namespace rc::replay
         void gifPacket(int path, const uint8_t *data, uint32_t bytes);
         // (step 5) Every GIF packet a replayed kick submits, with its path, for a consumer running behind this one.
         void setGifTap(std::function<void(int, const uint8_t *, uint32_t)> tap) { m_gifTap = std::move(tap); }
+        // (step 7) A consumer in front of this one can replace a kick: when the function returns bytes, they are
+        // submitted to the GS as PATH3 packets (under the kick's MXCSR) in place of the DMA transfer, and the kick's
+        // recorded GIF hash is not checked (it is counted as substituted). Everything else is verified as usual.
+        void setKickSubstitute(std::function<const std::vector<uint8_t> *(const rc::rec::KickView &)> f) { m_substitute = std::move(f); }
 
         bool fatal() const { return !m_fatal.empty(); }
         const std::string &fatalError() const { return m_fatal; }
@@ -77,6 +81,7 @@ namespace rc::replay
 
         bool m_collect = false;
         std::function<void(int, const uint8_t *, uint32_t)> m_gifTap;
+        std::function<const std::vector<uint8_t> *(const rc::rec::KickView &)> m_substitute;
         uint64_t m_gifBytes = 0;
         rc::rec::Hash64 m_gif;
         bool m_path1 = false;
@@ -92,6 +97,7 @@ namespace rc::replay
             uint64_t refHashChecked = 0, refHashOk = 0, picturesChecked = 0, picturesOk = 0;
             uint64_t keyframesChecked = 0, keyframesOk = 0, finalChecked = 0, finalOk = 0, keyframesLoaded = 0, keyframesAfterLoad = 0;
             uint64_t hwApplied = 0, pagesApplied = 0;
+            uint64_t substituted = 0, substitutedBytes = 0;
         } m_t;
         uint64_t m_digest = 0; // all replayed picture hashes, folded: equal digests = identical replays
     };
