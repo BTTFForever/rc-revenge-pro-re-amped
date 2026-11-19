@@ -293,6 +293,25 @@ After step 1: fold its answers into this plan's open questions.
 6. Uploads into the frame buffer and the flip (Opus): logos, movies, backdrops match the GS path. Movies and the
    loading splash are one IMAGE per 16x16 tile (640x240 pictures in both versions) into FBP 0x0/0x50, flipped through
    DISPFB2 from the vertical blank handler; ignore DISPLAY2's position (Europe's screen-adjust option moves it).
+   **Done 2026-11-20** (`RENDERER_FRAME_RECORD.md` section 18; usage: NOTES.md, "Uploads into the frame buffer and the
+   flip"). `render/blit/`: `FrameBlit` (a consumer on step 5's `TexShadow`/`GsMemory`: DISPFB2 from the stores, the
+   displayed 640 x H rectangle read at the flip, and per word of GS memory whether a draw may have written it, so a
+   picture is classed upload-only or not applicable without a rasteriser) and `BlitPresenter` (the picture through the
+   RHI: upload, a texelFetch draw with the presentation transform R, G, B as stored and alpha 255, read back; headless
+   Vulkan). `rc_replay --consumer blit`. Nothing is linked into the game or the oracle.
+   - Check, RTX 2060, both versions: every upload-only picture equals the reference bit for bit on the CPU and through
+     the RHI. New full-reference dumps (`boot`, a level-17 load): USA 261 and Europe 260 pictures against `REFI`'s
+     bytes; step 5's 55 dumps (hash only): USA 416 and Europe 357; step 4's key dumps 30 + 30. DISPFB2's FBP equals
+     the recorded one in every cycle (43,960 cycles of those dumps). 0 validation errors. Not applicable (a draw may be in the
+     picture): every cycle with K1, K2 or another draw over the shown buffer; every cycle without any drawing was
+     upload-only.
+   - Upload-only pictures: legal screen and logos, the publisher movie, the loading splash (every level load and the
+     demo race's restart), the front end's load.
+   - Planted faults fail where they should (a dropped movie tile, DISPFB2's FBP xor 0x50, a byte flipped in memory, a
+     byte flipped in the GPU upload only, which fails only the GPU check); a dropped tile that a later upload of the
+     same cycle rewrites does not, as designed.
+   - For steps 7-9: upload-only is a property of the picture, which the live presenter can use to show an uploaded
+     picture directly; the RHI runs headless in `rc_replay`, so the Vulkan pictures of steps 7-9 can be checked there.
 7. GIF reader and the 2D packet (Opus, blend/alpha rules by Fable): front end and menus usable; per-state pixel tests
    against a CPU model of the GS blend. The 2D path needs the alpha-test split (AFAIL RGB_ONLY with Z write on, 3.5 M
    primitives in the survey); its other states are plain fixed function (survey, "Draw states").

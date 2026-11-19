@@ -752,7 +752,7 @@ a `tedit_walk.py` pad (120 cycles); USA only, a split-screen attract demo if a `
 | step | consumer | checks |
 |---|---|---|
 | 5 shadow texture memory (built: section 17) | `tex`: starts from a keyframe's `GSVR`, applies every host-to-local transfer of the PATH3 kicks through its own write swizzles | at every later keyframe and the final one, the shadow equals `GSVR` on all texture blocks (0x1e00 up) bit for bit, on dumps that include a level load (CT32 tiles), a race (PSMT8/PSMT4 animated frames) and the front end; decode against `tools/track_viewer` on the same level's BBK as planned; the alpha histogram (texels above 0x80) per level |
-| 6 uploads into the frame buffer, flip | `blit` | on cycles made only of uploads and a flip (logos, movie pictures, the splash) the picture it builds equals `REFI` bit for bit, on the CPU and through the RHI's read-back |
+| 6 uploads into the frame buffer, flip (built: section 18) | `blit` | on cycles made only of uploads and a flip (logos, movie pictures, the splash) the picture it builds equals `REFI` bit for bit, on the CPU and through the RHI's read-back |
 | 7 GIF reader and 2D | `gif2d` | (a) its register file after each PATH3 kick equals the next kick's recorded `regs`; (b) in front of the emulated GS (section 7): the picture equals `REFI` bit for bit, proving the parse; (c) Vulkan: K1 drawn over `--picture-before <cycle>:<K1>` (the emulated frame buffer just before K1, so the 3D needs no mask) against `REFI`, exact where the blend is integer-exact, otherwise within the bounds step 7's blend design states; the per-state pixel tests against the CPU blend model stay as planned |
 | 8 VIF chain reader with the references | `vif` | (a) `walkChain` hashes (already A1); (b) per K2 kick the GIF bytes from the reader and references equal the emulated VU1's (`gifHash`, and byte for byte against `--path1`); (c) in front of the emulated GS: `REFI` bit for bit on levels 5, 17, 18, 20; (d) Vulkan pictures of the same cycles against `REFI` with difference statistics, feeding DIVERGENCES |
 | 9 shader batches | `vk` with batches | against step 8's own pictures of the same dumps; `RamView::generation` shows which static pages ever change |
@@ -1328,3 +1328,125 @@ granularity ever matters (it does not at these sizes), `GsMemory::blockSerial` i
 - **CSA other than 0, CSM2, 16-bit palettes, CT24 and CT16S** are implemented from the GS's rules and the emulated
   GS's code and covered by `rc_tex_test` only: RC never uses them, so nothing in a dump can check them.
 - **Cache eviction and the texture count on the GPU** (entries of a level that is gone) are step 9's.
+
+## 18. Step 6 as built (2026-11-20): uploads into the frame buffer and the flip
+
+Renderer plan P1 step 6, test plan 10.2's `blit` row. Built: `render/blit/` (libraries `rc_blit`, CPU, on `rc_tex`;
+`rc_blit_vk`, the GPU half on the vendored RHI; namespace `rc::rd`), word origins in `render/tex/gs_memory`
+(`GsMemory::trackOrigins`), `rc_replay --consumer blit` (`tools/rc_replay/blit.{h,cpp}`). Usage: `NOTES.md`,
+"Uploads into the frame buffer and the flip". Nothing of it is linked into the game or the oracle (`ninja -n
+rc_revenge_pro rc_oracle` has nothing to do after the change, both versions), the runtime and every game function are
+untouched, so normal play and the oracle cannot have changed and were not re-run. Nothing found conflicts with
+option C.
+
+### 18.1 Design
+
+```
+render/blit/frame_blit.{h,cpp}      FrameBlit: the rc::rec::Consumer that keeps GS memory from uploads and DISPFB2, builds
+                                    the displayed picture at each cycle's close and says whether a draw may be in it
+render/blit/blit_presenter.{h,cpp}  BlitPresenter: the picture through the RHI (upload, draw, read back)
+render/blit/blit.vert, blit.frag    a covering triangle; texelFetch at the target pixel, R G B as stored, alpha 1
+tools/rc_replay/blit.{h,cpp}        BlitCheck: FrameBlit + a headless Vulkan device + BlitPresenter, the checks, faults
+```
+
+- **Memory and transfers are step 5's.** `FrameBlit` owns a `TexShadow` (so `GsMemory` and `GifWalker`), which already
+  applied uploads into frame memory; nothing about the transfers is duplicated. The shadow starts from the first
+  keyframe's `GSVR` (and one after a save-state load); later keyframes are ignored (they hold the draws too).
+- **The flip.** DISPFB2 is taken from the `HW` events (64-bit stores, or either 32-bit half), starting from the
+  keyframe's `GSPR`. The cycle closes at the DISPFB2 store (section 3.5), whose `HW` event comes first, so at
+  `cycleEnd` the consumer reads what the store shows: the 640 x H rectangle at FBP, FBW, DBX/DBY, read through
+  `gs_layout`'s CT32 addressing (made independently of `record/picture.h`, which the recorder used for the reference).
+  DISPLAY2 is ignored (its position moves with Europe's screen adjust; movies set 512 lines); PMODE is always circuit 2
+  only. A DISPFB2 in another format is "unsupported display" (never seen).
+- **Upload-only, without a rasteriser.** `GsMemory` keeps one origin byte per 32-bit word when asked: loaded (keyframe
+  or clear), uploaded (a CT32 transfer wrote all of it; the 16-, 8- and 4-bit formats write parts of words and leave
+  the mark), drawn. `FrameBlit` marks drawn, conservatively: on a PATH3 vertex kick (XYZ2/XYZF2) the pages of the
+  context's frame buffer inside its scissor (unless FBMSK masks every bit) and of its Z buffer (unless ZMSK), the
+  context from PRIM or PRMODE as PRMODECONT says; on a PATH3 vertex kick when any of those registers is unknown, and
+  on every VIF1 kick (PATH1 output needs step 8), all of GS memory. Registers are known from the keyframe's `GSRG` and
+  PATH3's own writes (the shadow's observer), and become unknown at a VIF1 kick (PATH1 could write them). A picture
+  with no drawn word is **upload-only**; otherwise **not applicable** (steps 7-9 draw it), never a failure.
+- **The GPU half.** `BlitPresenter` needs a device from `rhi_init` (the tool makes it headless: `sdlWindow` null, no
+  swapchain, which the RHI supports), uploads the RGBA8 picture through an upload buffer into an `RGBA8_UNORM`
+  texture, draws one triangle into an `RGBA8_UNORM` target of the picture's size with `texelFetch` at
+  `gl_FragCoord` (no filtering or coordinate arithmetic, so exactness does not depend on the GPU's interpolation), and
+  reads the target back (`rhi_readback_texture`); it can also read the uploaded texture back. It is the live
+  presenter's path minus the letterbox: the live renderer draws the same texture into its swapchain image.
+- **The presentation transform** is the runtime's (step 4's A3): R, G, B as stored, alpha 255 (the GS alpha, 0x80 for
+  opaque, is not shown). The CPU picture keeps the stored alpha and is compared with `REFI` in all four bytes; the GPU
+  target is compared with `REFI`'s R, G, B and alpha 255; the GPU's uploaded texture with the CPU picture in all four.
+
+### 18.2 Checks and results
+
+`rc_replay <dump> --consumer blit --verify` on every exact dump: for every cycle, DISPFB2's FBP must be `END.refFbp`;
+for every upload-only cycle with a reference, the CPU picture must equal `REFI` byte for byte where the dump stores it
+and otherwise hash to `END.refHash` (the recorder's Hash64 of the same 640 x H x 4 bytes), and through the RHI the
+displayed read-back must equal the reference with alpha 255 (where the dump keeps only the hash, the CPU picture that
+hashed equal stands for it) and the uploaded texture the CPU picture. RTX 2060 by PRIME offload, headless; the
+validation layer (`--validation`, synchronisation validation on) on the four full-reference dumps.
+
+New dumps with every reference picture stored (`RC_FRAME_RECORD_REF=1`, exact mode), in
+`build-decomp/frame-dumps/s6/` and `build-eu/frame-dumps/s6/`: `boot` (`boot+900`: legal screen and logos, the
+publisher movie, title, front end; 332 / 329 MB) and `load17` (`RC_BOOT_LEVEL=17`, `boot+400`: the level load with
+its splash; 192 / 199 MB).
+
+| dumps | cycles | upload-only (no drawing in the cycle / drawing elsewhere) | not applicable (equal anyway) | CPU = reference | GPU displayed = reference; GPU upload = CPU | DISPFB2 FBP |
+|---|---|---|---|---|---|---|
+| USA s6 `boot` + `load17` (REFI every cycle) | 1,300 | 261 (256 / 5) | 1,039 (2) | 261 of 261, REFI bytes | 261 / 261; 261 / 261 | 1,300 / 1,300 |
+| Europe s6 `boot` + `load17` | 1,300 | 260 (255 / 5) | 1,040 (2) | 260 of 260, REFI bytes | 260 / 260; 260 / 260 | 1,300 / 1,300 |
+| USA s5, 28 dumps (hash only) | 22,000 | 416 (396 / 20) | 21,584 (44) | 416 of 416, hash | 416 / 416; 416 / 416 | 22,000 / 22,000 |
+| Europe s5, 27 dumps | 19,300 | 357 (326 / 31) | 18,943 (51) | 357 of 357, hash | 357 / 357; 357 / 357 | 19,300 / 19,300 |
+| step 4's `b4-key` (USA, Europe; REFI) | 30 + 30 | 30 + 30 (all no drawing) | 0 | 30 + 30, REFI bytes | 30 + 30 | 60 / 60 |
+| step 4's exact `b4-x2-*` (CPU only) | 744 + 715 | 3 + 2 | the rest | 3 + 2, hash | not run | all |
+
+0 validation errors or warnings. Every cycle with no drawing at all is upload-only (USA s5 396 of 396, Europe 326 of
+326, s6 all). The tracked PATH3 registers equal the recorded register files at every kick where they were known
+(USA s5 3,772,556 values, Europe 3,344,935, s6 all). Step 4's 14 plain dumps have no references; they classify the
+same way (their boot dumps: 256 upload-only cycles each).
+
+Where the upload-only cycles are: boot cycles 0-256 (legal screen and logos as 640x128 halves, 4 transfers a
+picture; the publisher movie, 600 16x16 tiles a picture, with the 1,280-tile 640x512 clears at its start), the
+loading splash (2,560 tiles of two clears and the 600-tile splash, then a 600-tile picture: cycles 0-2 or 0-1 of each
+level dump; in the boot dumps the attract demo's level load, USA cycles 880-881 (s5) or 888-889 (s6), Europe 768) and the splash of the demo race's restart (four or two cycles near the end of
+most level dumps; four times in `l17long`), and the front end's load. The "drawing elsewhere" cycles are splash cycles
+with the clear sprite of the flip's draw environment or a 2D packet drawn before the tiles replaced every word. The
+"equal anyway" not-applicable cycles are pictures a draw could have touched but did not change (the conservative
+marking: a K1 packet drawn while the context was unknown marks everything).
+
+**The checks can fail** (`--fault`, the s6 `boot` dumps, cycle 100 is a movie picture):
+
+| planted | USA | Europe |
+|---|---|---|
+| `tile:100:37` (one 16x16 movie tile dropped) | cycle 100 fails, CPU and GPU: 256 pixels from (32,112) | 256 pixels from (32,120) |
+| `dispfb:100` (DISPFB2's FBP xor 0x50) | FBP check fails (0x0, recorded 0x50), picture 78,569 pixels, CPU and GPU | the same |
+| `byte:100:1000` (a byte of displayed pixel 1000 flipped in the shadow) | cycle 100 fails, 1 pixel, CPU and GPU | fails at cycle 100 and at every later picture of that buffer up to the title (76 pictures): Europe's 640x240 movie sits 8 lines down in the 640x256 buffer, so row 1 is never uploaded again |
+| `gpubyte:100:1000` (the byte flipped in the GPU upload only) | CPU passes; GPU displayed and GPU upload fail, 1 pixel | the same |
+| as designed, no failure: `tile:888:100`, `tile:888:2561` (USA) | a tile of the first of two 640x512 clears that the second rewrites, and a transfer outside frame memory | |
+| `tile:889:599` (the splash's last tile) | cycle 889 fails, 256 pixels from (624,224) | |
+
+**Cost** (one core; the GPU path synchronous with its read-back, so not a frame-time figure): building the picture
+with its origin count 0.6-0.75 ms a cycle; upload, draw and two read-backs 2.4-6.8 ms a picture. Live, the presenter
+would only upload and draw (no read-back), and the CPU picture is needed only when the picture is upload-only.
+
+### 18.3 What it changed in the plan, and notes for steps 7-9
+
+1. **Upload-only is a property of the picture, not of the cycle.** The test plan's "cycles made only of uploads and a
+   flip" is answered per word of the displayed rectangle: a splash cycle that draws the flip's clear sprite before its
+   tiles is still upload-only, a cycle that draws nothing can show a buffer drawn earlier (none did in these dumps).
+   The live renderer can ask the same question to present an uploaded picture directly and the render target
+   otherwise; steps 7-9 replace the conservative "drawn" marks with their own draws.
+2. **Uploads into frame memory are applied by the shadow**, as step 5 left them; the live renderer will copy the
+   uploaded rectangle into its render target (or present the texture) rather than keep frame memory, once draws are
+   on the GPU. In RC the uploads cover whole buffers (logos as halves, movie tiles, clears), so the copy is per picture.
+3. **K1 runs before the flip's draw environment**, so with PATH1 not read, PATH3's context is unknown for every 2D
+   packet (195,400 of 197,002 PATH3 vertex kicks in USA `boot`). Step 7's reader keeps one register file across paths
+   and makes this exact; it does not change any result here.
+4. **The RHI runs headless** for checks: `rhi_init` with no window, `rhi_wait_frame` per picture, off-screen targets and
+   `rhi_readback_texture`. Steps 7-9 can check their Vulkan pictures the same way in `rc_replay`.
+
+### 18.4 Open
+
+- The intro movie's audio and the host movie player (plan item 6 of "Beyond graphics") are not this step's: the
+  pictures arrive as uploads, so the renderer shows whatever the runtime's MPEG/IPU stubs decode.
+- The swapchain present itself (letterbox, aspect) is the live presenter's (`platform/vk_host.cpp`); only the
+  off-screen equivalent is checked bit for bit.

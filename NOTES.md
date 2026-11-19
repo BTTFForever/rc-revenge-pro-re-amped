@@ -626,6 +626,32 @@ The host's copy of GS texture memory and the texture decode the Vulkan renderer 
   draw a vertex alpha above 0x80 (the GS survey's count of those was its counter's artefact), and the PABE states'
   alpha test discards every pixel PABE would blend, so PABE needs no special handling in the Vulkan renderer.
 
+### Uploads into the frame buffer and the flip (2026-11-20, renderer P1 step 6)
+The displayed picture built from host-to-local transfers into frame memory and DISPFB2, on the CPU and through the
+RHI (`render/blit/`, libraries `rc_blit` and `rc_blit_vk`), and `rc_replay`'s `blit` consumer that checks it on dumps.
+Design and results: `RENDERER_FRAME_RECORD.md` section 18. Nothing of it is linked into the game or the oracle.
+- **What it is:** `FrameBlit` (a consumer on step 5's shadow of GS memory) follows DISPFB2 and at each cycle's close
+  reads the 640 x H rectangle it shows, R G B A as stored. `GsMemory::trackOrigins` keeps, per 32-bit word, whether it
+  was loaded, uploaded (CT32) or possibly drawn (FrameBlit marks a PATH3 draw's frame and Z pages, or all memory for a
+  VIF1 kick or a draw whose context is unknown), so a picture is *upload-only* (logos, movie pictures, the loading
+  splash) or *not applicable* (steps 7-9). `BlitPresenter` uploads the picture into an RHI texture, draws it one texel
+  a pixel with the presentation transform (R, G, B as stored, alpha 255) into an off-screen target and reads it back.
+- **Check on a dump** (exact dumps are judged): `ninja -C build-decomp rc_replay`, then
+  `__NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only build-decomp/rc_replay <dump> --consumer blit
+  --verify --quiet [--validation]`: every upload-only picture must equal `REFI` byte for byte (or `END.refHash` where
+  the dump kept only hashes), the GPU's read-back the reference with alpha 255, the GPU's uploaded texture the CPU
+  picture, and DISPFB2's FBP the recorded one in every cycle; it prints the classes, the runs of cycles
+  (`U` upload-only, `-` not applicable), the cost, and must end `PASS`. A few seconds a dump (a headless Vulkan device
+  on the RTX 2060; `--no-gpu` for the CPU alone; `--validation` loads the Khronos layer, 0 errors expected). Without
+  `--quiet` each cycle's transfers, draws and picture origins are printed; `--png <dir>` writes the upload-only
+  pictures (and the reference and the GPU's picture on a mismatch).
+- **Planted faults:** `--fault tile:<cycle>:<n>` (transfer n of the cycle dropped: a movie tile), `dispfb:<cycle>`
+  (DISPFB2's FBP xor 0x50), `byte:<cycle>:<pixel>` (a displayed byte flipped in the shadow's memory),
+  `gpubyte:<cycle>:<pixel>` (flipped in the GPU's upload only).
+- **Dumps:** step 5's (`frame-dumps/s5/`, hash references) and two per version with every reference picture
+  (`frame-dumps/s6/`: `RC_FRAME_RECORD_REF=1 RC_FRAME_RECORD_AT=boot+900 tools/frame_record.sh`, and the same with
+  `RC_BOOT_LEVEL=17` and `boot+400`; 0.2-0.33 GB each, not committed). All pass on both versions (section 18.2).
+
 ### Level testing (2026-11-09)
 `RC_BOOT_LEVEL=<n> tools/play.sh` skips the intro and menus and loops the attract-mode demo on level n. `RC_SKIP_INTRO=1` skips only the legal screen, movie and Dolby screen and starts in the front end (for menu tests: `PS2X_PAD_REPLAY=<file>` plays a pad script of `epoch frame buttons axes` lines). `tools/level_sweep.sh <first> <last> <seconds> [VAR=value ...]` prints each level's frame rate.
 Sweep of levels 1-24 on the God of War renderer at 3x: 1, 3, 4, 10, 15, 16 and 22 hold about 55-60 fps; 6, 8, 9, 12, 17, 18 and 24 ran about 25-35 fps before the blend and palette fixes. On level 18 the default renderer reaches 35-43 fps with VU1 87% busy at 14.5 ms per field, so those levels are limited by VU1 on both renderers. About half the VU time is one block of program C3952C0FAEB52EAD; its cost is spread evenly over its instructions.
