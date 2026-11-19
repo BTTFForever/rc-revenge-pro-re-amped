@@ -1,4 +1,5 @@
 #include "runtime/ps2_save_state.h"
+#include "ps2_capture_hooks.h"
 
 #include "ps2_runtime.h"
 #include "ps2x/iop/iop_subsystem.h"
@@ -199,6 +200,27 @@ namespace ps2x::savestate
 
 struct GSStateAccess
 {
+    // RC frame record keyframes (ps2_capture_hooks.h, ps2x::capture::snapshotGs): GS memory and the register file.
+    static bool captureSnapshot(GS &gs, std::vector<uint8_t> &vram, uint64_t regs[ps2x::capture::kGsRegCount])
+    {
+        // The presentation latch (GS::latchHostPresentationFrame, main thread) takes the backend lifetime mutex and
+        // then the state mutex; taking them the other way round here deadlocked against it.
+        std::lock_guard<std::mutex> lifetime(gs.m_backendLifetimeMutex);
+        std::lock_guard<std::recursive_mutex> lock(gs.m_stateMutex);
+        // As a save state takes it (serialize below): Flush, then the backend's own copy.
+        if (gs.m_backend)
+        {
+            gs.m_backend->Flush();
+            gs.m_backend->SnapshotVram(vram);
+        }
+        else if (gs.m_localMemoryStorage)
+            vram.assign(gs.m_localMemoryStorage, gs.m_localMemoryStorage + gs.m_localMemorySize);
+        else
+            return false;
+        std::memcpy(regs, ps2x::capture::g_gsRawRegs, sizeof(ps2x::capture::g_gsRawRegs));
+        return !vram.empty();
+    }
+
     template <typename Ar>
     static void serialize(GS &gs, Ar &ar)
     {
@@ -246,6 +268,12 @@ struct GSStateAccess
         }
     }
 };
+
+bool ps2x::capture::snapshotGs(PS2Runtime &runtime, std::vector<uint8_t> &vram, uint64_t regs[kGsRegCount])
+{
+    ps2x::asyncvif::sync(runtime.memory());
+    return GSStateAccess::captureSnapshot(runtime.gs(), vram, regs);
+}
 
 struct PS2VfsStateAccess
 {

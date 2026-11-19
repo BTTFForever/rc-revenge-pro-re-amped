@@ -22,6 +22,7 @@
 #include "ps2_iop_host.h"
 #include "ps2_host_input.h"
 #include "ps2_host_platform.h"
+#include "ps2_capture_hooks.h"
 #include "ps2x/iop/iop_subsystem.h"
 
 #include <iostream>
@@ -936,6 +937,9 @@ bool PS2Runtime::initialize(const char *title)
             return false;
         }
         SetTargetFPS(60);
+        // RC: the frame record (ps2_capture_hooks.h) observes this runtime from here on.
+        if (const ps2x::capture::Hooks *capture = ps2x::capture::g_hooks; capture && capture->attach)
+            capture->attach(this);
         // RC: the debug panel draws through raylib (rlImGui), so it is off with a host platform.
         if (m_debugUiInitCallback && !ps2_host_platform::hooks())
         {
@@ -2347,6 +2351,8 @@ void PS2Runtime::Store32(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr, uint
         return;
     if (ps2x::gssurvey::enabled())
         ps2x::gssurvey::noteStoreCaller(getRegU32(ctx, 31));
+    if (ps2x::capture::g_hooks)
+        ps2x::capture::g_storeCallerRa = getRegU32(ctx, 31);
     ps2TraceGuestWrite(rdram, vaddr, 4u, value, 0u, "WRITE32", ctx);
     try
     {
@@ -2363,6 +2369,8 @@ void PS2Runtime::Store64(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr, uint
 {
     if (ps2x::gssurvey::enabled())
         ps2x::gssurvey::noteStoreCaller(getRegU32(ctx, 31));
+    if (ps2x::capture::g_hooks)
+        ps2x::capture::g_storeCallerRa = getRegU32(ctx, 31);
     ps2TraceGuestWrite(rdram, vaddr, 8u, value, 0u, "WRITE64", ctx);
     try
     {
@@ -2410,11 +2418,15 @@ void PS2Runtime::kickGifDmaChainFromMMIO(uint8_t *rdram,
     ps2TraceGuestWrite(rdram, GIF_CHCR, 4u, chcr, 0u, "WRITE32", ctx);
     if (m_memory.tryProcessNativeGifImageUploadChain(m_gs, tadr, chcr))
     {
+        if (const ps2x::capture::Hooks *capture = ps2x::capture::g_hooks; capture && capture->odd)
+            capture->odd(ps2x::capture::OddNativeGifPath, tadr, chcr);
         drainCompletedDmacHandlers(rdram);
         return;
     }
     if (m_memory.tryProcessNativeGifPackedChain(m_gs, tadr, chcr))
     {
+        if (const ps2x::capture::Hooks *capture = ps2x::capture::g_hooks; capture && capture->odd)
+            capture->odd(ps2x::capture::OddNativeGifPath, tadr, chcr);
         drainCompletedDmacHandlers(rdram);
         return;
     }

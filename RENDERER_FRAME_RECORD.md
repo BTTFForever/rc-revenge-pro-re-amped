@@ -1,7 +1,8 @@
 # Frame record, dump format, replay tool and side tags (renderer plan P1 step 4: design)
 
-Designed 2026-11-19 for `RENDERER_PLAN.md` step 4. Nothing here is built yet; "Build batches" at the end is the
-work order. Read with `RENDERER_SURVEY.md` (what the kicks carry) and `ICO_RENDER_STUDY.md` section 2 (where the
+Designed 2026-11-19 for `RENDERER_PLAN.md` step 4; "Build batches" at the end is the work order. **Batch 1 (capture
+and container) built 2026-11-19**: what it changed in this design is marked "(batch 1)" where it applies and listed in
+section 13 with the reasons; its measurements are in sections 2 and 6.3. Read with `RENDERER_SURVEY.md` (what the kicks carry) and `ICO_RENDER_STUDY.md` section 2 (where the
 game builds its packets). Paths are relative to the repository; the runtime is `third_party/ps2recomp/ps2xRuntime`
 (`RT/` below).
 
@@ -84,6 +85,25 @@ One contiguous range of level data is 2.6-8.0 MB of each race stream; the rest i
 level 1 shrinks the touched ranges to about 30%. What changes per frame outside the rings (polygon channels, alpha
 triangles, at the top of the heap) could not be measured from single-frame dumps: batch 1 measures it.
 
+**Measured by batch 1** (plain-mode dumps of 120 cycles, the segment's first cycle left out; a page counts once per kick
+that finds it changed; the rings are the survey's ranges, read from the oracle RAM dump of the same level and version:
+`gRdr`'s tag array and packet rings, `g_RdrStateDmaBlocks`, `gpGfx_DmaBuff0/1`. The heap layout is the same in both runs:
+every K2 TADR in the frame dumps is one of that dump's two tag-array halves):
+
+| dump | changed pages a cycle | in the rings | outside the rings | outside: where |
+|---|---|---|---|---|
+| level 17 USA | 113 (452 KB) | 41 (163 KB) | 72 (290 KB) | two alternately rewritten buffers at 0x617000 and 0x696000 (30-36 pages each, about 15 pages of each a cycle), read by K2; one page at 0xff000 re-captured whole 14-17 times a cycle (channel 2 uploads read it, and it changes between them: the animated-texture upload headers); a few scattered pages (two 7-page runs at 0xee2000 / 0xfc2000, about 2 a cycle each) |
+| level 18 USA | 135 (540 KB) | 63 (253 KB) | 72 (287 KB) | the same buffers (35-36 pages, 11-12 a cycle each), 0xff000 14 times |
+| level 17 Europe | 122 (489 KB) | 41 (166 KB) | 81 (324 KB) | the same buffers (43-44 pages, 18 a cycle each), 0xff000 17 times |
+| level 18 Europe | 132 (526 KB) | 51 (206 KB) | 80 (321 KB) | the same buffers (42-43 pages, 17 a cycle each), 0xff000 14 times |
+| front end USA | 73 (290 KB) | 39 (155 KB) | 34 (136 KB) | a 30-page run at 0xd4f000 and 9 pages at 0xde4000 (4-5 a cycle each), 0xff000 4 times, smaller runs |
+| front end Europe | 84 (338 KB) | 48 (191 KB) | 37 (146 KB) | the same kind |
+
+So per-frame data outside the rings is as large as inside them (about 0.3 MB a race cycle), but it is a small fixed
+set of pages; the level's static lists never change between keyframes. The page at 0xff000 is the one case where
+whole-page capture is wasteful: each re-capture is made for the 96-byte header kick of an animated-texture upload
+(14-17 x 4 KB raw a race cycle); a finer unit for re-captures is a possible later saving, not needed for the budget.
+
 ## 3. The kick record
 
 ### 3.1 Events
@@ -150,14 +170,14 @@ the end. Chunking never changes the result. Uses:
 A dump is a sequence of **segments**; each starts with a keyframe and is replayable alone. At a keyframe the page
 shadow is emptied, so the segment re-emits the static pages on first touch (about 2-4 MB compressed per keyframe).
 
-Keyframe contents, taken on the EE thread at a cycle close after `ps2x::asyncvif::sync`, the backend's `Flush` and
-`Sync(GSSyncReason::DebugReadback)`:
+Keyframe contents, taken on the EE thread at a cycle close after `ps2x::asyncvif::sync` and the backend's `Flush`
+(batch 1: no `Sync(GSSyncReason::DebugReadback)`; GS memory is taken as a save state takes it, see 13):
 
 | chunk | contents | used by |
 |---|---|---|
 | `GSVR` | GS local memory, 4 MB as the runtime stores it (`SnapshotVram`) | texture memory at segment start (steps 5, 7, 8), the `emu` consumer |
 | `GSPR` | `GSRegisters` (the privileged registers), 160 bytes | flip and display state |
-| `GSRG` | the general register file: `u64[0x63]` indexed by GS register address (PRIM, RGBAQ, ST, UV, TEX0/1, CLAMP, MIPTBP, XYOFFSET, PRMODECONT, PRMODE, TEXCLUT, SCANMSK, TEXA, FOGCOL, SCISSOR, ALPHA, DIMX, DTHE, COLCLAMP, TEST, PABE, FBA, FRAME, ZBUF, BITBLTBUF, TRXPOS, TRXREG, TRXDIR, both contexts), re-encoded from `GS::getDebugSnapshot()` | the readers' register file at segment start |
+| `GSRG` | the general register file: `u64[0x63]` indexed by GS register address (PRIM, RGBAQ, ST, UV, TEX0/1, CLAMP, MIPTBP, XYOFFSET, PRMODECONT, PRMODE, TEXCLUT, SCANMSK, TEXA, FOGCOL, SCISSOR, ALPHA, DIMX, DTHE, COLCLAMP, TEST, PABE, FBA, FRAME, ZBUF, BITBLTBUF, TRXPOS, TRXREG, TRXDIR, both contexts). (batch 1) Not re-encoded from `GS::getDebugSnapshot()`: the GS front end keeps the values as written (`ps2x::capture::g_gsRawRegs`, PACKED vertex data in register form), see 13 | the readers' register file at segment start |
 | `VU1M` | VU1 micro memory then data memory (16 KB each) | the VIF reader and the C++ references (data memory persists between runs) |
 | `VU1R` | VF[32][4], VI[16], ACC, Q, P, I as plain values | the C++ references ("a program can store registers it left set in an earlier run") |
 | `VIF1` | the runtime's `VIFRegisters` for VIF1 plus ROW and COL | the VIF reader (CYCLE, MODE, MASK, BASE, OFST, TOPS persist across kicks) |
@@ -238,10 +258,20 @@ struct Hooks {
     void (*odd)(int kind, uint32_t address, uint64_t value);
     void (*stateLoaded)();
     void (*hotkey)();                                                    // F10, from either host loop
+    // (batch 1) PS2Runtime::initialize finished: the runtime the capture reads keyframes from.
+    void (*attach)(PS2Runtime *runtime);                                 // (first in the struct as built)
+    // (batch 1) The game's GfxP2_SwapBuffers override: game frame, frames since the level started (all ones before
+    // the first level start), the survey's scene id. Feeds the game:/level:/scene: triggers until Scene tags exist.
+    void (*gameFrame)(uint64_t frame, uint64_t levelFrame, uint32_t scene);
 };
 inline const Hooks *g_hooks = nullptr;
+inline uint32_t g_storeCallerRa = 0;                                     // (batch 1) set by Store32/Store64
 }
 ```
+(batch 1) The header also declares the GS register shadow (`g_gsRawRegs`) and `snapshotGs` (keyframes; defined in
+`ps2_save_state.cpp`, where the GS's friend struct lives). It is not included by `ps2_runtime.h`: a change to a header
+that file includes recompiles all the recompiled game code (15 minutes per version), so nothing was added to
+`GS`, `PS2Memory` or `PS2Runtime` themselves.
 
 Sites (all beside an existing `gssurvey` hook, which stays): `writeIORegister` (begin; `kickTouch` in the chain loop
 after each tag is read and in `appendData`, and for the two `enqueueTransfer` calls; end; done), `submitGifPacket`,
@@ -277,11 +307,13 @@ struct Consumer {
     virtual void open(const FileInfo &) {}
     virtual void keyframe(const Keyframe &) {}
     virtual void cycleBegin(uint64_t cycle) {}
-    virtual void hw(uint32_t address, uint32_t width, uint64_t value) {}
+    virtual void pages(uint32_t firstPage, uint32_t count, const uint8_t *data) {} // (batch 1) PAGE events
+    virtual void hw(uint32_t address, uint32_t width, uint64_t value, uint32_t callerRa) {} // (batch 1) + callerRa
     virtual void crt(int interlaced, int mode, int ffmd) {}
     virtual void tag(const TagView &) {}             // every tag, in emission order
     virtual void kick(const KickView &, const RamView &) {}
     virtual void odd(int kind, uint32_t address, uint64_t value) {}
+    virtual void note(const std::string &text) {}    // (batch 1) NOTE events
     virtual void cycleEnd(const CycleInfo &, const uint8_t *refRgba) {} // refRgba null without a picture
     virtual void close() {}
     virtual ~Consumer() = default;
@@ -291,7 +323,11 @@ struct Consumer {
 
 All calls are made on one thread, in event order: the EE thread live (inside the hook), the tool's thread off-line.
 A live consumer must not block on the GPU or on another thread's work. The file writer and the ring are consumers
-too; `capture.cpp` owns the page tracker and the list of consumers.
+too; `capture.cpp` owns the page tracker and the list of consumers. (batch 1) Being a consumer, the writer needs the
+`PAGE` and `NOTE` events and each store's caller, which the interface above lacked: `pages`, `note` and `hw`'s
+`callerRa` were added. Off-line, `pages` is called after the reader has copied the pages into the RAM view. As built,
+`KickView` also carries `cycle` (64-bit) and `hasGifHash`, `RamView` a `pageOf(offset, scratch)` helper, and
+`render/record/consumer.h` is the exact interface.
 
 `rc::rec::walkChain(const KickView &, const RamView &, Visitor &)` in `chain_walk.cpp` mirrors the runtime's walk
 exactly (tag ids 0-7, the two-deep ASR stack, IRQ with TIE, the TTE bytes on VIF channels, wrap at the end of RAM,
@@ -416,11 +452,12 @@ closed draw lists (section 9).
 
 ```
 RC_FRAME_RECORD=<file>          write a dump (".rcfr"; "%d" numbers successive dumps of one run)
-RC_FRAME_RECORD_AT=<trigger>    when; default "key"
+RC_FRAME_RECORD_AT=<trigger>    when; default "key" (batch 1, until key exists: "boot+120")
     boot[+count]                from the first kick
     cycle:<n>[+count]           display cycles since boot
     game:<n>[+count]            game frames since boot (the override's counter)
-    level:<n>[+count]           game frames since the level started (as RC_RAMDUMP_FRAME counts)
+    level:<n>[+count]           game frames since the level started (as RC_RAMDUMP_FRAME counts; batch 1: only once
+                                a level has started, so a long boot or front end cannot fire it early)
     scene:<hex>[+count]         the first cycle of a scene id
     key[+count]                 F10 starts, F10 or count stops (default count 120)
     ring:<n>                    keep the last n cycles; F10 writes them and goes on
@@ -447,6 +484,34 @@ A recording starts and stops at cycle closes. `count` is in cycles. Both version
 
 So 120 race cycles with pictures are roughly 30-50 MB, 600 cycles 150-250 MB (with `REF=10`: 60-120 MB). Ring of
 300 cycles, hashes only: about 3 segments x (4 + 9 + 120 x 0.5 MB) = 220 MB of memory, uncompressed until written.
+
+**Measured (batch 1, plain mode, 2026-11-19).** Dumps taken with `tools/play.sh` (default renderer: God of War
+backend, GS and VU1 threads on) on the RTX 2060: levels 17 and 18 (`RC_BOOT_LEVEL`, `level:300+120`), the front end
+(`RC_SKIP_INTRO=1`, `game:600+120`) and boot (`boot+900`: legal screen, logos, the publisher movie, title and front
+end), both versions. Raw is the records as written, stored is after zlib level 1. USA / Europe:
+
+| part | raw | stored |
+|---|---|---|
+| keyframe: `GSVR` + state | 4.1 MB | 1.2-1.4 MB (39 KB at power-on, GS memory still empty) |
+| segment's first cycle (static pages re-emitted on first touch) | race 4.9 / 5.6 MB (level 17), 10.0 / 9.1 MB (level 18); front end 4.5 / 5.0 MB | 1.5-2.9 MB; front end 1.3-1.4 MB |
+| race cycle | 457 / 494 KB (level 17), 544 / 530 KB (level 18); largest 812 KB | 86 / 93, 95 / 102 KB |
+| of which outside the game's rings | about 290 / 320 KB (section 2) | |
+| front-end cycle | 292 / 340 KB | 63 / 75 KB |
+| movie or splash picture (254 a boot) | 350 / 367 KB, largest 2.6 MB | 93 / 94 KB |
+| other boot cycles (title, front end, attract) | 301 / 347 KB | 66 / 78 KB |
+| `KICK` records (no register files) | 3.5 KB a race cycle (37 kicks), 1 KB front end | |
+| exact-mode extras (register files, pictures) | batch 2 | |
+
+Files: 120 race cycles 13.9 / 15.0 MB (level 17), 17.1 / 17.6 MB (level 18), front end 11.3 / 12.8 MB, `boot+900`
+71.8 / 79.5 MB (three segments of 300 cycles). The estimates above held: a race cycle is 0.46-0.54 MB raw,
+0.09-0.10 MB stored.
+
+**Recorder time** (EE thread, inside the kick hooks: page compare and copy, the stream hash, building the records;
+compression and disc writes run on the writer's own thread): 3.3 / 4.1 ms a cycle on average on level 17, 5.4 / 6.8 ms
+on level 18, 3.5 / 4.0 ms front end, 2.6 / 3.0 ms over boot; largest single cycle 10-28 ms (a segment's first, which
+copies every static page). Keyframes 7-32 ms (GS memory read back from the God of War backend and the VU1/VIF1 state).
+This is above the 1-2 ms estimated in 3.2, which left out the stream hash: measured hot-cache, `Hash64` costs about
+1.5 ms and the page compare about 1.2 ms per 10 MB of stream. The ring's memory is measured with batch 4.
 
 ### 6.4 The file
 
@@ -601,7 +666,7 @@ a `tedit_walk.py` pad (120 cycles); USA only, a split-screen attract demo if a `
 
 | # | check | pass |
 |---|---|---|
-| A1 | `rc_replay --consumer stats --verify` | every stream hash reproduced by `walkChain`; no absent page read; no `ODD` event; `frame_dump.py verify` clean |
+| A1 | `rc_replay --consumer stats --verify` | every stream hash reproduced by `walkChain`; no absent page read; no `ODD` event (batch 1: but `GfxP2_Init`'s two start-up stores into the VIF1 FIFO, which the survey found and which carry no GS data; `rc_replay` counts them apart while no VIF1 kick has been seen, see 13); `frame_dump.py verify` clean |
 | A2 | `rc_replay --consumer emu --verify` | every `gifHash`, every reference picture (100% of cycles, bit for bit) and all of GS memory at every keyframe and at the end |
 | A3 | the reference is what the game showed | on one static screen per version (legal screen or a paused menu) a `PS2X_SCREENSHOT_DIR` screenshot of a field inside the cycle equals that cycle's `REFI` in RGB after the runtime's presentation transform (the builder states it) |
 | A4 | off costs nothing | `RC_FRAME_RECORD` unset: `playtest2` replays follow the default scene log (frames, clocks, scenes) at 60.0 / 50.0 fps; `tools/oracle.sh --all` counts unchanged on both versions |
@@ -637,7 +702,7 @@ a `tedit_walk.py` pad (120 cycles); USA only, a split-screen attract demo if a `
 
 ## 12. Build batches (Opus), each with its check
 
-1. **Capture and container.** `ps2_capture_hooks.h` and the hook sites; `render/record` (format, page tracker,
+1. **Capture and container.** (Built 2026-11-19; section 13.) `ps2_capture_hooks.h` and the hook sites; `render/record` (format, page tracker,
    writer, reader, consumer interface, `walkChain`, capture with cycles and the `boot` / `cycle` / `game` / `level`
    / `scene` triggers, plain mode, keyframes with the plain state chunks); `rc_replay` with `stats`;
    `tools/frame_dump.py`; `.gitignore`. *Check:* a unit test that writes a synthetic dump and reads it back (no
@@ -656,3 +721,60 @@ a `tedit_walk.py` pad (120 cycles); USA only, a split-screen attract demo if a `
    `play.sh` session replays through `stats --verify` and, taken in exact mode, through `emu --verify`.
 
 Batches 1 and 2 are the dependency of steps 5-8; 3 and 4 can follow step 5 if the builds are busy.
+
+## 13. Batch 1 as built (2026-11-19): changes to this design and why
+
+Built: `third_party/ps2recomp/ps2xRuntime/include/ps2_capture_hooks.h` and its sites (`ps2_memory.cpp`: the kick with
+its ranges, the GS privileged, VIF1 and GIF register stores, FIFO stores, PATH2, `submitGifPacket`; `ps2_runtime.cpp`:
+`attach`, the store caller, the native GIF paths; `System.cpp`: `SetGsCrt`; `gs_frontend.cpp`: the register shadow,
+`GS::writeRegister`, local->host; `ps2_save_state.cpp`: `snapshotGs`), `render/record/` (format, consumer, page
+tracker, chain walker, writer, reader, capture, plain keyframe state in `emu_state`), `tools/rc_replay/` (`rc_replay`
+with `stats`; `rc_record_test`, the synthetic round trip), `tools/frame_dump.py`, the `*.rcfr` rule in `.gitignore`.
+How to use them: `NOTES.md`, "Frame record". Results of batch 1's check: `RENDERER_PLAN.md` step 4.
+
+Changes, each the smallest that worked:
+
+1. **Consumer interface** (4.2): `pages()`, `note()` and `hw(..., callerRa)` added. The writer is a consumer (6.1) and
+   could not write `PAGE`, `NOTE` or a store's caller without them.
+2. **Two more hooks** (4.1): `attach(PS2Runtime *)`, called at the end of `PS2Runtime::initialize`, because the capture
+   needs the runtime for keyframes and is installed before it exists; `gameFrame(frame, levelFrame, scene)`, called by
+   the `GfxP2_SwapBuffers` override, because the `game:`, `level:` and `scene:` triggers need the game's counters and
+   the `Scene` tag that will carry them comes with batch 3. The override now counts frames since the level start in
+   every run (the RAM dump's semantics are unchanged) and passes all ones until a level has started, so `level:n`
+   cannot fire during boot or the front end.
+3. **Nothing added to `GS`, `PS2Memory` or `PS2Runtime`** (4.1): their headers are included by every recompiled file
+   (via `ps2_runtime.h`), so adding a member or a method rebuilds the whole game twice over. The hook table, the
+   store caller (`g_storeCallerRa`) and the GS register shadow are globals declared in `ps2_capture_hooks.h`, and the
+   keyframe's GS copy is a static member of the save-state code's existing friend struct (`GSStateAccess`).
+4. **`GSRG` from a register shadow** (3.4): `GS::getDebugSnapshot()` holds the registers decoded and not all of them (no RGBAQ,
+   ST, UV, PRMODECONT, FOG or TEX2), so a re-encoding could not give the values written. The GS
+   front end now stores every register write in `ps2x::capture::g_gsRawRegs[0x63]` (one store per write, always on;
+   PACKED RGBAQ/ST/UV/XYZ/FOG re-encoded in their register form, Q of RGBAQ from the last PACKED ST). Batch 2's
+   per-kick register files read the same array.
+5. **Keyframe GS memory as a save state takes it** (3.4): `Flush` then `SnapshotVram`, no `Sync(DebugReadback)`, and
+   the backend-lifetime mutex taken before the state mutex. The first version took them the other way round (as
+   upstream's `GSStateAccess::serialize` does) and deadlocked within one frame against the presentation latch
+   (`GS::latchHostPresentationFrame`, main thread), which takes lifetime then state. Upstream's save-state code keeps
+   its order and can in principle deadlock the same way (not changed here; F5 has not been seen to hang).
+6. **Cycle close** (3.1): a 64-bit store to DISPFB2 or a 32-bit store to its low word; a store to the high word alone
+   does not close a cycle. All recorded closes were 64-bit stores.
+7. **Tags in `kickTouch`** (4.1): every tag is reported as its 16 bytes, also when only its upper 8 enter the stream or
+   none do: the replay's walker reads the whole tag.
+8. **A1's "no ODD event"** (10.1): both boot dumps hold exactly two `ODD` events, the survey's two start-up stores
+   into the VIF1 FIFO (`GfxP2_Init`, before `sceGsResetGraph`, whose VIF1 reset is recorded as `HW`). They are counted
+   apart while the dump has shown no VIF1 kick; any other `ODD` fails `--verify`. Their 16 data bytes are not in the
+   record (`ODD` keeps an address and 64 bits); since VIF1 is reset after them, a replay from boot does not need them.
+9. **Default trigger** (6.2): `boot+120` until batch 4 brings `key`. `RC_FRAME_RECORD_REF` and `RC_FRAME_RECORD_STRICT`
+   are not read yet (batch 2).
+10. **Format details fixed by the code** (6.4, normative in `render/record/format.h`): `FileHeader` is 144 bytes (a
+    4-byte pad before `indexOffset`); `KEYF` is `KeyframeHeader` (32 bytes) then each state chunk with its own chunk
+    header (compressed one by one); `GSPR` is the runtime's 20-register order (160 bytes), `VU1R` 624 bytes, `VIF1` the
+    runtime's `VIFRegisters` plus a pad (96 bytes); `INDX` is `{segmentCount, cycleCount}` then the segments and cycles.
+    A dump that was not closed has no index; the reader rebuilds it from a scan and reads each segment's first cycle
+    number from its first `END`, so a cut dump still starts at the right segment.
+11. **Recorder time** (3.2, 6.3): 2.6-6.8 ms a cycle, not 1-2 ms; the estimate left out the stream hash. Acceptable for
+    a development tool; if the ring of batch 4 is to stay on during play, hashing only on demand or a cheaper hash for
+    the flattened chain are the first savings.
+12. **`callerRa` of native stores**: kicks and stores that native code makes through `hw_write32` carry the running
+    guest context's `$ra`, which says nothing about the native caller (most K1 and upload kicks show 0xfffffff0). Batch
+    3's `Kick` labels are what identifies those kicks.

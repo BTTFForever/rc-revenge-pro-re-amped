@@ -150,6 +150,45 @@ set_source_files_properties(platform/vk_host.cpp PROPERTIES SKIP_UNITY_BUILD_INC
     INCLUDE_DIRECTORIES "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(rc_revenge_pro PRIVATE rc_ico_rhi)
 
+# The frame record (renderer plan P1 step 4, RENDERER_FRAME_RECORD.md; NOTES.md "Frame record"). rc_record: the format,
+# page shadow, chain walker, writer and reader (needs only zlib); rc_record_emu: keyframe state <-> the runtime. The game
+# links both and render/record/capture.cpp, which installs the runtime's capture hooks only when RC_FRAME_RECORD is set.
+# The oracle links none of it. No usage requirements leak into the game's other sources (their compile lines stay
+# as they were): include folders are set per source.
+find_package(ZLIB REQUIRED)
+set(RC_RECORD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/render/record")
+add_library(rc_record STATIC "${RC_RECORD_DIR}/page_tracker.cpp" "${RC_RECORD_DIR}/chain_walk.cpp" "${RC_RECORD_DIR}/writer.cpp"
+    "${RC_RECORD_DIR}/reader.cpp")
+target_link_libraries(rc_record PRIVATE ZLIB::ZLIB)
+target_compile_options(rc_record PRIVATE -O2)
+add_library(rc_record_emu STATIC "${RC_RECORD_DIR}/emu_state.cpp")
+target_link_libraries(rc_record_emu PRIVATE ps2_runtime)
+target_compile_options(rc_record_emu PRIVATE -O2)
+execute_process(COMMAND git describe --always --dirty WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    OUTPUT_VARIABLE RC_BUILD_DESCRIBE OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(NOT RC_BUILD_DESCRIBE)
+    set(RC_BUILD_DESCRIBE "unknown")
+endif()
+target_sources(rc_revenge_pro PRIVATE "${RC_RECORD_DIR}/capture.cpp")
+set_source_files_properties("${RC_RECORD_DIR}/capture.cpp" PROPERTIES SKIP_UNITY_BUILD_INCLUSION TRUE COMPILE_OPTIONS "-O2"
+    COMPILE_DEFINITIONS "RC_VERSION_EU=${RC_VERSION_EU};RC_ELF_NAME=\"${RC_ELF_NAME}\";RC_BUILD_DESCRIBE=\"${RC_BUILD_DESCRIBE}\"")
+target_link_libraries(rc_revenge_pro PRIVATE rc_record_emu rc_record)
+# rc_replay (tools/rc_replay): reads dumps and feeds consumers; links the runtime and the VU1 library, no recompiled
+# game code, no disc. ninja -C build-decomp rc_replay. rc_record_test: the container's round trip without the game.
+add_executable(rc_replay EXCLUDE_FROM_ALL tools/rc_replay/rc_replay.cpp)
+target_include_directories(rc_replay PRIVATE "${RC_RECORD_DIR}")
+target_link_libraries(rc_replay PRIVATE rc_record rc_record_emu ps2_runtime)
+if(TARGET rc_vu1_code)
+    target_link_libraries(rc_replay PRIVATE -Wl,--whole-archive rc_vu1_code -Wl,--no-whole-archive)
+endif()
+add_executable(rc_record_test EXCLUDE_FROM_ALL tools/rc_replay/record_test.cpp)
+target_include_directories(rc_record_test PRIVATE "${RC_RECORD_DIR}")
+target_link_libraries(rc_record_test PRIVATE rc_record)
+foreach(t rc_record rc_record_emu)
+    target_include_directories(${t} PRIVATE "${RC_RECORD_DIR}")
+endforeach()
+set_property(SOURCE "${RC_RECORD_DIR}/capture.cpp" APPEND PROPERTY INCLUDE_DIRECTORIES "${RC_RECORD_DIR}")
+
 # Profile-guided build. RC_PGO=generate builds an instrumented executable; running it (a scripted game run, for
 # example tools/play.sh replay) writes a profile, and RC_PGO=use rebuilds with it in the same build folder.
 # Only the runtime and VU1 code are instrumented: they hold the hot paths, and the game code

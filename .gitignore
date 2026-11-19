@@ -25,3 +25,5 @@ imgui.ini
 *.log
 dump_*.txt
 __pycache__/
+# Frame record dumps (RC_FRAME_RECORD, RENDERER_FRAME_RECORD.md): game data
+*.rcfr

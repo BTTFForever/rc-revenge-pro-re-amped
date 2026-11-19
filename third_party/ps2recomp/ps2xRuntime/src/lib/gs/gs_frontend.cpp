@@ -1,4 +1,5 @@
 #include "runtime/gs/gs_survey.h"
+#include "ps2_capture_hooks.h"
 #include "runtime/gs/gs_track_batch.h"
 #include "runtime/gs/gs_frontend.h"
 #include "runtime/gs/gs_cpu_backend.h"
@@ -1007,8 +1008,58 @@ bool GS::tryProcessNativeImageUploadPacket(const uint8_t *data, uint32_t sizeByt
     return true;
 }
 
+namespace ps2x::capture
+{
+    uint64_t g_gsRawRegs[kGsRegCount] = {};
+}
+
+namespace
+{
+    // The frame record's register file (ps2_capture_hooks.h): PACKED vertex data in the registers' own encoding.
+    uint32_t g_packedQBits = 0x3f800000u; // Q of the last PACKED ST, which a PACKED RGBAQ carries into RGBAQ
+
+    inline void shadowPackedRegister(uint8_t regDesc, uint64_t lo, uint64_t hi)
+    {
+        uint64_t *const regs = ps2x::capture::g_gsRawRegs;
+        const uint64_t x = lo & 0xFFFFu, y = (lo >> 32) & 0xFFFFu;
+        const bool adc = ((hi >> 47) & 1u) != 0u;
+        switch (regDesc)
+        {
+        case 0x01:
+            regs[GS_REG_RGBAQ] = (lo & 0xFFu) | ((lo >> 32) & 0xFFu) << 8 | (hi & 0xFFu) << 16 | ((hi >> 32) & 0xFFu) << 24 |
+                                 static_cast<uint64_t>(g_packedQBits) << 32;
+            break;
+        case 0x02:
+            regs[GS_REG_ST] = lo;
+            g_packedQBits = static_cast<uint32_t>(hi);
+            break;
+        case 0x03:
+            regs[GS_REG_UV] = (lo & 0x3FFFu) | ((lo >> 32) & 0x3FFFu) << 16;
+            break;
+        case 0x04:
+            regs[adc ? GS_REG_XYZF3 : GS_REG_XYZF2] = x | y << 16 | ((hi >> 4) & 0xFFFFFFu) << 32 | ((hi >> 36) & 0xFFu) << 56;
+            break;
+        case 0x05:
+            regs[adc ? GS_REG_XYZ3 : GS_REG_XYZ2] = x | y << 16 | (hi & 0xFFFFFFFFu) << 32;
+            break;
+        case 0x0A:
+            regs[GS_REG_FOG] = ((hi >> 36) & 0xFFu) << 56;
+            break;
+        case 0x0C:
+            regs[GS_REG_XYZF3] = x | y << 16 | ((hi >> 4) & 0xFFFFFFu) << 32 | ((hi >> 36) & 0xFFu) << 56;
+            break;
+        case 0x0D:
+            regs[GS_REG_XYZ3] = x | y << 16 | (hi & 0xFFFFFFFFu) << 32;
+            break;
+        default:
+            break; // the rest go through writeRegisterUnlocked
+        }
+    }
+}
+
 void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
 {
+    shadowPackedRegister(regDesc, lo, hi);
     switch (regDesc)
     {
     case 0x00:
@@ -1195,6 +1246,8 @@ void GS::writeRegister(uint8_t regAddr, uint64_t value)
 {
     if (ps2x::gssurvey::enabled())
         ps2x::gssurvey::eeRegisterWrite(regAddr, value);
+    if (const ps2x::capture::Hooks *capture = ps2x::capture::g_hooks; capture && capture->odd)
+        capture->odd(ps2x::capture::OddGsDirectWrite, regAddr, value);
     std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
     writeRegisterUnlocked(regAddr, value);
 }
@@ -1214,6 +1267,8 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
         return;
     }
 #endif
+    if (regAddr < ps2x::capture::kGsRegCount)
+        ps2x::capture::g_gsRawRegs[regAddr] = value;
     const bool interestingReg =
         regAddr == GS_REG_PRIM ||
         regAddr == GS_REG_RGBAQ ||
@@ -1532,6 +1587,9 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
     case GS_REG_TRXDIR:
     {
         m_trxdir = static_cast<uint32_t>(value & 0x3);
+        if (m_trxdir == 1u)
+            if (const ps2x::capture::Hooks *capture = ps2x::capture::g_hooks; capture && capture->odd)
+                capture->odd(ps2x::capture::OddLocalToHost, GS_REG_TRXDIR, value);
         if (std::FILE *trace = gsTraceFile(m_privRegs))
             traceTransfer(trace, m_bitbltbuf, m_trxpos, m_trxreg, m_trxdir);
 

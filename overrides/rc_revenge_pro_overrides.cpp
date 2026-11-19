@@ -12,6 +12,7 @@
 #include "ps2_runtime_macros.h"
 #include "runtime/ee_scheduler.h"
 #include "runtime/gs/gs_survey.h"
+#include "ps2_capture_hooks.h"
 #include "ps2_stubs.h"
 #include "../decomp/oracle/ram_dump.h"
 // The addresses and recompiled functions of the version being built (tools/gen_addrs.py, decomp/generated/<version>/).
@@ -65,6 +66,7 @@ namespace
 {
     std::atomic<uint64_t> g_gameFrames{0};
     std::atomic<uint64_t> g_levelFrames{0}; // since the last level start, for RC_RAMDUMP_FRAME
+    std::atomic<bool> g_levelStarted{false}; // a level has started (the frame record's level: trigger)
 
     constexpr uint32_t kSceCdSearchFileAddr = sym::sceCdSearchFile;
     constexpr uint32_t kSectorSize = 2048u;
@@ -389,6 +391,7 @@ namespace
         static const auto levelInit = rc::decompOr(rc::fns::MainGameLevelInit);
         levelInit(rdram, ctx, runtime);
         g_levelFrames.store(0u);
+        g_levelStarted.store(true);
         g_inputClock.store(((g_inputClock.load() >> 32) + 1u) << 32);
     }
 
@@ -506,11 +509,24 @@ namespace
     {
         if (ps2x::gssurvey::enabled())
             gsSurveyFrame(rdram);
-        sceneLogFrame(rdram, runtime, g_gameFrames.fetch_add(1u, std::memory_order_relaxed) + 1u);
+        const uint64_t gameFrame = g_gameFrames.fetch_add(1u, std::memory_order_relaxed) + 1u;
+        sceneLogFrame(rdram, runtime, gameFrame);
         static const char *dumpPath = std::getenv("RC_RAMDUMP");
         static const uint64_t dumpFrame = std::getenv("RC_RAMDUMP_FRAME") ? std::strtoull(std::getenv("RC_RAMDUMP_FRAME"), nullptr, 10) : 600u;
-        if (dumpPath && g_levelFrames.fetch_add(1u, std::memory_order_relaxed) + 1u >= dumpFrame)
+        const uint64_t levelFrame = g_levelFrames.fetch_add(1u, std::memory_order_relaxed) + 1u;
+        if (dumpPath && levelFrame >= dumpFrame)
             writeRamDump(dumpPath, ctx, runtime);
+        // The frame record (RC_FRAME_RECORD, render/record/capture.cpp): its game: / level: / scene: triggers. Reads
+        // the scene id as the survey does; writes nothing.
+        if (const ps2x::capture::Hooks *capture = ps2x::capture::g_hooks; capture && capture->gameFrame)
+        {
+            constexpr uint32_t kMain = sym::mainVarG;
+            uint32_t mode;
+            std::memcpy(&mode, rdram + ((kMain + 8u) & PS2_RAM_MASK), 4u);
+            const uint32_t scene = (mode & 0xfu) << 12 | static_cast<uint32_t>(rdram[(kMain + 0x34au) & PS2_RAM_MASK]) << 4 |
+                                   (rdram[(kMain + 0x368u) & PS2_RAM_MASK] ? 2u : 0u);
+            capture->gameFrame(gameFrame, g_levelStarted.load() ? levelFrame : ~0ull, scene);
+        }
         g_inputClock.fetch_add(1u, std::memory_order_relaxed);
         static const auto swapBuffers = rc::decompOr(rc::fns::GfxP2_SwapBuffers);
         swapBuffers(rdram, ctx, runtime);

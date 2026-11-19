@@ -1,4 +1,5 @@
 #include "runtime/gs/gs_survey.h"
+#include "ps2_capture_hooks.h"
 #include "runtime/ps2_async_vif.h"
 #include "runtime/ps2_memory.h"
 #include "runtime/ps2_address.h"
@@ -55,6 +56,17 @@ namespace
     {
         return (addr >= 0x10003000u && addr < 0x10003100u) || (addr >= 0x10003C00u && addr < 0x10004000u) ||
                (addr >= 0x10005000u && addr < 0x10007000u);
+    }
+
+    // Frame record (ps2_capture_hooks.h): a GS privileged register store, with the register's value after it.
+    inline void captureGsPrivStore(const GSRegisters &gs, uint32_t address, uint32_t width, uint64_t fallback, const uint64_t *reg)
+    {
+        const ps2x::capture::Hooks *h = ps2x::capture::g_hooks;
+        if (!h || !h->hwStore)
+            return;
+        const uint32_t regOff = (address - PS2_GS_PRIV_REG_BASE) & ~0x7u;
+        const uint64_t value = regOff == 0x1000u ? gs.csr.load(std::memory_order_relaxed) : (reg ? *reg : fallback);
+        h->hwStore(address, width, value, ps2x::capture::g_storeCallerRa);
     }
 
     inline uint64_t *gsRegPtr(GSRegisters &gs, uint32_t addr)
@@ -1067,6 +1079,8 @@ void PS2Memory::write32(uint32_t address, uint32_t value)
             const uint64_t *reg = gsRegPtr(gs_regs, address);
             ps2x::gssurvey::privWrite(regOff, reg ? *reg : value);
         }
+        if (ps2x::capture::g_hooks)
+            captureGsPrivStore(gs_regs, address, 32u, value, gsRegPtr(gs_regs, address));
         return;
     }
 
@@ -1128,6 +1142,8 @@ void PS2Memory::write64(uint32_t address, uint64_t value)
         }
         if (ps2x::gssurvey::enabled())
             ps2x::gssurvey::privWrite(regOff, value);
+        if (ps2x::capture::g_hooks)
+            captureGsPrivStore(gs_regs, address, 64u, value, gsRegPtr(gs_regs, address));
         return;
     }
 
@@ -1177,6 +1193,8 @@ void PS2Memory::write128(uint32_t address, __m128i value)
 
     if (ps2x::gssurvey::enabled() && !scratch && physAddr >= 0x10004000u && physAddr < 0x10006000u)
         ps2x::gssurvey::fifoWrite(physAddr);
+    if (ps2x::capture::g_hooks && ps2x::capture::g_hooks->odd && !scratch && physAddr >= 0x10004000u && physAddr < 0x10007000u)
+        ps2x::capture::g_hooks->odd(ps2x::capture::OddFifoStore, physAddr, 0u);
     if (!scratch && physAddr == 0x10004000u) // VIF0_FIFO
     {
         alignas(16) uint8_t fifoData[16];
@@ -1242,6 +1260,8 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
 {
     if (ps2x::gssurvey::enabled() && address >= 0x10004000u && address < 0x10007000u)
         ps2x::gssurvey::fifoWrite(address);
+    if (ps2x::capture::g_hooks && ps2x::capture::g_hooks->odd && address >= 0x10004000u && address < 0x10007000u)
+        ps2x::capture::g_hooks->odd(ps2x::capture::OddFifoStore, address, value);
     if (isAsyncVifRegister(address))
         ps2x::asyncvif::sync(*this);
     size_t timerIndex = 0u;
@@ -1329,6 +1349,8 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
             const uint64_t *reg = gsRegPtr(gs_regs, address);
             ps2x::gssurvey::privWrite(regOff, reg ? *reg : value);
         }
+        if (ps2x::capture::g_hooks)
+            captureGsPrivStore(gs_regs, address, 32u, value, gsRegPtr(gs_regs, address));
         return true;
     }
 
@@ -1374,6 +1396,9 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
     {
         m_gifStatWritten = true;
     }
+    if (ps2x::capture::g_hooks && ps2x::capture::g_hooks->hwStore &&
+        ((address >= 0x10003000u && address < 0x10003100u) || (address >= 0x10003C00u && address < 0x10003D00u)))
+        ps2x::capture::g_hooks->hwStore(address, 32u, value, ps2x::capture::g_storeCallerRa);
 
     if (address >= 0x10003C00u && address < 0x10003E00u)
     {
@@ -1473,10 +1498,40 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
 
             if ((channelBase == 0x1000A000u || channelBase == 0x10009000u || channelBase == 0x10008000u) && (m_gsVRAM || channelBase == 0x10008000u))
             {
+                // Frame record (ps2_capture_hooks.h): the kick, every byte range its stream is read from, then the end.
+                const ps2x::capture::Hooks *const capture = ps2x::capture::g_hooks;
+                if (capture && capture->kickBegin)
+                    capture->kickBegin(channelBase, value, madr, qwc, startTadr, m_ioRegisters[channelBase + 0x40],
+                                       m_ioRegisters[channelBase + 0x50], ps2x::capture::g_storeCallerRa);
                 auto enqueueTransfer = [&](uint32_t srcAddr, uint32_t qwCount)
                 {
                     if (qwCount == 0)
                         return;
+                    if (capture && capture->kickTouch)
+                    {
+                        // The ranges processPendingTransfers will read: from the translated address, wrapping at the
+                        // end of RDRAM or the scratchpad; nothing when the address does not translate.
+                        try
+                        {
+                            const bool fromScratch = isScratchpad(srcAddr);
+                            uint32_t src = translateAddress(srcAddr);
+                            const uint32_t limit = fromScratch ? PS2_SCRATCHPAD_SIZE : PS2_RAM_SIZE;
+                            const uint64_t total64 = static_cast<uint64_t>(qwCount) * 16ull;
+                            uint32_t left = total64 > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(total64);
+                            while (left > 0u)
+                            {
+                                if (src >= limit)
+                                    src = 0u;
+                                const uint32_t chunk = std::min(left, limit - src);
+                                capture->kickTouch(src, chunk, fromScratch, false);
+                                left -= chunk;
+                                src += chunk;
+                            }
+                        }
+                        catch (const std::exception &)
+                        {
+                        }
+                    }
                     const bool scratch = isScratchpad(srcAddr);
                     PendingTransfer pt;
                     pt.fromScratchpad = scratch;
@@ -1539,6 +1594,8 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
                                 chunk = maxSz2 - src;
                             if (chunk == 0)
                                 break;
+                            if (capture && capture->kickTouch)
+                                capture->kickTouch(src, chunk, scratch, false);
                             chainBuf.insert(chainBuf.end(), base2 + src, base2 + src + chunk);
                             bytes -= chunk;
                             src += chunk;
@@ -1606,6 +1663,8 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
                         ++tagsProcessed;
                         if (ps2x::gssurvey::enabled())
                             ps2x::gssurvey::chainTag(id, addr, tagQwc);
+                        if (capture && capture->kickTouch)
+                            capture->kickTouch(physTag, 16u, tagInSPR, true);
 
                         uint32_t dataAddr = 0;
                         bool hasPayload = (tagQwc > 0);
@@ -1699,6 +1758,8 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
                     m_ioRegisters[channelBase + 0x00] = chcr;
 
                     chainSizeHint = std::max(chainSizeHint, chainBuf.size());
+                    if (capture && capture->kickEnd)
+                        capture->kickEnd(chainBuf.data(), static_cast<uint32_t>(chainBuf.size()), static_cast<uint32_t>(tagsProcessed));
                     if (!chainBuf.empty())
                     {
                         PendingTransfer pt;
@@ -1728,6 +1789,8 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
                 {
                     enqueueTransfer(madr, qwc);
                 }
+                if (mode != 1u && capture && capture->kickEnd)
+                    capture->kickEnd(nullptr, 0u, 0u);
 
                 if (ps2x::gssurvey::enabled())
                 {
@@ -1743,6 +1806,8 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
                 {
                     processPendingTransfers();
                 }
+                if (capture && capture->kickDone)
+                    capture->kickDone();
             }
         }
         return true;
@@ -2167,6 +2232,13 @@ void PS2Memory::submitGifPacket(GifPathId pathId, const uint8_t *data, uint32_t 
 {
     if (ps2x::gssurvey::enabled())
         ps2x::gssurvey::gifPacket(static_cast<int>(pathId), data, sizeBytes);
+    if (const ps2x::capture::Hooks *capture = ps2x::capture::g_hooks)
+    {
+        if (capture->gifPacket)
+            capture->gifPacket(static_cast<int>(pathId), data, sizeBytes);
+        if (pathId == GifPathId::Path2 && capture->odd)
+            capture->odd(ps2x::capture::OddPath2, 0u, sizeBytes);
+    }
     if (!data || sizeBytes < 16)
         return;
 

@@ -1,4 +1,5 @@
 #include "runtime/gs/gs_survey.h"
+#include "ps2_capture_hooks.h"
 #include "Common.h"
 #include "runtime/ee_scheduler.h"
 #include "System.h"
@@ -12,6 +13,8 @@ namespace ps2_syscalls
         int frameMode = getRegU32(ctx, 6);  // $a2 - 0=field, 1=frame
         if (ps2x::gssurvey::enabled())
             ps2x::gssurvey::setCrt(interlaced, videoMode, frameMode);
+        if (const ps2x::capture::Hooks *capture = ps2x::capture::g_hooks; capture && capture->setCrt)
+            capture->setCrt(interlaced, videoMode, frameMode);
 
         if (runtime)
         {
