@@ -18,6 +18,8 @@ namespace rc::rd
         ++m_serial;
         std::fill(m_blockSerial.get(), m_blockSerial.get() + kGsBlocks, m_serial);
         std::fill(m_pageSerial, m_pageSerial + kGsPages, m_serial);
+        if (m_origin)
+            std::memset(m_origin.get(), kOriginLoaded, kGsBytes / 4u);
         m_open = false;
     }
 
@@ -27,7 +29,32 @@ namespace rc::rd
         ++m_serial;
         std::fill(m_blockSerial.get(), m_blockSerial.get() + kGsBlocks, m_serial);
         std::fill(m_pageSerial, m_pageSerial + kGsPages, m_serial);
+        if (m_origin)
+            std::memset(m_origin.get(), kOriginLoaded, kGsBytes / 4u);
         m_open = false;
+    }
+
+    void GsMemory::trackOrigins(bool on)
+    {
+        if (!on)
+            m_origin.reset();
+        else if (!m_origin)
+        {
+            m_origin.reset(new uint8_t[kGsBytes / 4u]);
+            std::memset(m_origin.get(), kOriginLoaded, kGsBytes / 4u);
+        }
+    }
+
+    void GsMemory::markDrawnPage(uint32_t page)
+    {
+        if (m_origin)
+            std::memset(m_origin.get() + (page & (kGsPages - 1u)) * (kGsPageBytes / 4u), kOriginDrawn, kGsPageBytes / 4u);
+    }
+
+    void GsMemory::markAllDrawn()
+    {
+        if (m_origin)
+            std::memset(m_origin.get(), kOriginDrawn, kGsBytes / 4u);
     }
 
     void GsMemory::setTransferRegisters(uint64_t bitbltbuf, uint64_t trxpos, uint64_t trxreg, uint64_t trxdir)
@@ -151,6 +178,8 @@ namespace rc::rd
             while (done < total && bytes - at >= 4u)
             {
                 const uint32_t a = gsAddr32(t, m_dbp, m_dbw, (m_dsax + x) & 0x7FFu, (m_dsay + y) & 0x7FFu) & kMask;
+                if (m_origin)
+                    m_origin[a >> 2] = kOriginUploaded;
                 if (std::memcmp(mem + a, data + at, 4) != 0)
                 {
                     std::memcpy(mem + a, data + at, 4);

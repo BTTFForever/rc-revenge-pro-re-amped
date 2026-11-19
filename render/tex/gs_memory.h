@@ -70,6 +70,23 @@ namespace rc::rd
         // For planting a fault: the transfer with this ordinal (stats().transfers after it began) loses its data.
         void dropTransferForTests(uint64_t ordinal) { m_dropAt = ordinal; }
 
+        // Where each 32-bit word's value came from (renderer plan P1 step 6; render/blit): off until trackOrigins(true),
+        // then one byte a word (1 MB). clear() and load() make every word kOriginLoaded; a CT32 transfer makes the words
+        // it writes kOriginUploaded (the other formats write parts of words and leave the mark as it was); the owner
+        // marks what draws may have written with markDrawnPage(s), since the shadow does not rasterise. A displayed
+        // picture whose words hold no kOriginDrawn is made of uploads (and the loaded image) alone.
+        enum : uint8_t
+        {
+            kOriginLoaded = 0,
+            kOriginUploaded = 1,
+            kOriginDrawn = 2,
+        };
+        void trackOrigins(bool on);
+        const uint8_t *origins() const { return m_origin.get(); } // per word (byte address / 4), null when off
+        uint8_t originAt(uint32_t byteAddr) const { return m_origin ? m_origin[(byteAddr & (kGsBytes - 1u)) >> 2] : kOriginLoaded; }
+        void markDrawnPage(uint32_t page);                        // 2,048 words
+        void markAllDrawn();
+
         // Dirty tracking.
         uint64_t serial() const { return m_serial; }                        // of the newest transfer (or load)
         uint64_t blockSerial(uint32_t block) const { return m_blockSerial[block & (kGsBlocks - 1u)]; }
@@ -92,6 +109,7 @@ namespace rc::rd
 
         std::unique_ptr<uint8_t[]> m_mem;
         std::unique_ptr<uint64_t[]> m_blockSerial;
+        std::unique_ptr<uint8_t[]> m_origin;
         uint64_t m_pageSerial[kGsPages] = {};
         uint64_t m_serial = 0;
         uint64_t m_bitbltbuf = 0, m_trxpos = 0, m_trxreg = 0, m_trxdir = 3;

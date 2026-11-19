@@ -1,9 +1,10 @@
 // rc_replay: feeds a frame record dump (.rcfr, RENDERER_FRAME_RECORD.md) to consumers.
 //
-//   rc_replay <dump> [--consumer stats|emu|tex] [--cycles a-b] [--verify] [--quiet]
+//   rc_replay <dump> [--consumer stats|emu|tex|blit] [--cycles a-b] [--verify] [--quiet]
 //             [--png <dir>] [--picture-before <cycle>:<kick> <out.png>] [--path1 <cycle>:<kick> <out.bin>] [--kick-hashes]
 //             [--fault page|kick|hw:<cycle>[:<n>]]
 //             [--with-emu] [--fault transfer|kick|swizzle|decode:<cycle>:<n>] (tex)
+//             [--no-gpu] [--validation] [--fault tile|dispfb|byte|gpubyte:<cycle>[:<n>]] (blit)
 //
 // stats: per cycle and in total, kicks by channel and mode, stream bytes, DMA tags by id, pages and bytes by record
 // type, odd events. With --verify: the host's chain walker (render/record/chain_walk) over the rebuilt RAM image
@@ -24,10 +25,17 @@
 // the final one. --with-emu runs it behind emu: texture memory compared after every kick, every texture any path draws
 // with decoded and compared with the emulated GS's own sampling, the alpha histogram by draw state. --png writes the
 // decoded textures. --fault plants a dropped transfer or a layout error.
+//
+// blit (blit.cpp; renderer plan P1 step 6): the displayed picture built from uploads into the frame buffer and DISPFB2
+// (render/blit), on the CPU and through the RHI on Vulkan (headless). Each cycle is upload-only (no word of its picture
+// may have been drawn) or not applicable; with --verify every upload-only picture must equal the reference bit for
+// bit (REFI or END.refHash), and the GPU's read-back the reference with alpha 255 (the presentation transform).
+// --no-gpu skips the GPU; --fault plants a dropped tile, a wrong DISPFB2, a flipped byte (CPU and GPU, or GPU only).
 // One build replays both versions' dumps.
 #include "chain_walk.h"
 #include "emu.h"
 #include "tex.h"
+#include "blit.h"
 #include "consumer.h"
 #include "reader.h"
 #include "../../render/gfx/tags.h"
@@ -434,10 +442,11 @@ namespace
 
     void usage()
     {
-        std::fprintf(stderr, "usage: rc_replay <dump.rcfr> [--consumer stats|emu|tex] [--cycles a-b] [--verify] [--quiet] [--png <dir>]\n"
+        std::fprintf(stderr, "usage: rc_replay <dump.rcfr> [--consumer stats|emu|tex|blit] [--cycles a-b] [--verify] [--quiet] [--png <dir>]\n"
                              "                 [--picture-before <cycle>:<kick> <out.png>] [--path1 <cycle>:<kick> <out.bin>] [--kick-hashes]\n"
                              "                 [--fault page|kick|hw:<cycle>[:<n>]]\n"
-                             "       tex: [--with-emu] [--png <dir>] [--fault transfer|kick:<cycle>:<n> | swizzle:<cycle>:<bits> | decode:0:<bits>]\n");
+                             "       tex: [--with-emu] [--png <dir>] [--fault transfer|kick:<cycle>:<n> | swizzle:<cycle>:<bits> | decode:0:<bits>]\n"
+                             "       blit: [--no-gpu] [--validation] [--png <dir>] [--fault tile:<cycle>:<n> | dispfb:<cycle> | byte|gpubyte:<cycle>:<pixel>]\n");
     }
 }
 
@@ -536,10 +545,48 @@ namespace
     }
 }
 
+namespace
+{
+    int runBlit(Reader &reader, const std::string &path, const rc::replay::BlitOptions &options, uint64_t first, uint64_t last)
+    {
+        const FileHeader &h = reader.header();
+        std::printf("dump %s\n  %s, %ux%u, recorded with %.16s, build %.40s, %s%s\n", path.c_str(), h.gameVersion ? "Europe" : "USA", h.width,
+                    h.height, h.gsBackend, h.build, (h.flags & kFileExact) ? "exact" : "plain", (h.flags & kFileComplete) ? "" : ", not closed");
+        rc::replay::BlitCheck blit(options);
+        if (!blit.startGpu())
+        {
+            blit.stopGpu();
+            return 2;
+        }
+        // The shadow needs every upload since the segment's keyframe.
+        uint64_t from = 0;
+        for (const IndexSegment &seg : reader.segments())
+            if (seg.firstCycle <= first)
+                from = seg.firstCycle;
+        const bool ok = reader.run({&blit}, from, last);
+        blit.stopGpu();
+        blit.summary();
+        if (!reader.complete())
+            std::printf("note: the dump was not closed (%s); read up to its last whole chunk\n",
+                        reader.truncated() ? "a partial chunk at the end" : "no index");
+        if (!ok)
+        {
+            std::printf("read error: %s\n", reader.error().c_str());
+            return 2;
+        }
+        if (options.verify)
+        {
+            std::printf("%s\n", blit.failed() ? "FAIL" : "PASS");
+            return blit.failed() ? 1 : 0;
+        }
+        return 0;
+    }
+}
+
 int main(int argc, char **argv)
 {
     std::string path, consumer = "stats";
-    bool verify = false, quiet = false, withEmu = false;
+    bool verify = false, quiet = false, withEmu = false, noGpu = false, validation = false;
     uint64_t first = 0, last = ~0ull;
     rc::replay::EmuOptions emuOptions;
     auto cycleKick = [](const char *text, int64_t &cycle, uint32_t &kick)
@@ -583,6 +630,10 @@ int main(int argc, char **argv)
         }
         else if (a == "--with-emu")
             withEmu = true;
+        else if (a == "--no-gpu")
+            noGpu = true;
+        else if (a == "--validation")
+            validation = true;
         else if (a == "--verify")
             verify = true;
         else if (a == "--quiet")
@@ -607,9 +658,9 @@ int main(int argc, char **argv)
         usage();
         return 2;
     }
-    if (consumer != "stats" && consumer != "emu" && consumer != "tex")
+    if (consumer != "stats" && consumer != "emu" && consumer != "tex" && consumer != "blit")
     {
-        std::fprintf(stderr, "consumer '%s' is not built yet (stats, emu, tex)\n", consumer.c_str());
+        std::fprintf(stderr, "consumer '%s' is not built yet (stats, emu, tex, blit)\n", consumer.c_str());
         return 2;
     }
     Reader reader;
@@ -633,6 +684,20 @@ int main(int argc, char **argv)
         emuOptions.pngDir.clear();
         emuOptions.faultKind.clear();
         return runEmu(reader, path, emuOptions, verify, true, first, last, &texOptions);
+    }
+    if (consumer == "blit")
+    {
+        rc::replay::BlitOptions blitOptions;
+        blitOptions.verify = verify;
+        blitOptions.quiet = quiet;
+        blitOptions.gpu = !noGpu;
+        blitOptions.validation = validation;
+        blitOptions.pngDir = emuOptions.pngDir;
+        blitOptions.faultKind = emuOptions.faultKind;
+        blitOptions.faultCycle = emuOptions.faultCycle;
+        blitOptions.faultN = emuOptions.faultN;
+        // Pictures are compared only from the first cycle asked for; the shadow replays from its keyframe.
+        return runBlit(reader, path, blitOptions, first, last);
     }
     if (consumer == "emu")
         return runEmu(reader, path, emuOptions, verify, quiet, first, last);
