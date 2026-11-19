@@ -10,10 +10,6 @@
 # iteration 317 (low memory 0xeb0 written by the native, 0x10000eb0 a timer register for the original). The harness does
 # not capture hardware register state, so these remain listed; without the list all seven passed 300 inputs on seeds 0,
 # 4242, 4243, 11, 12 on both versions except that one input.
-RdrState_PkForceApplyStateBlock wild packet pointer beyond RAM (live random test differs on the same input)
-RdrZedsWriteOff random channel index beyond RAM (live random test differs on the same input)
+# 2026-11-19: the six other entries (RdrState_PkForceApplyStateBlock, RdrZedsWriteOff, sceVif1PkRet, sceVif1PkAddCode,
+# sceVif1PkAddUpkData32, sceVif1PkOpenUpkCode) removed at the user's request, as they no longer failed on any seed.
 sceVif1PkTerminate wild packet pointer beyond RAM (live random test differs on the same input)
-sceVif1PkRet wild packet pointer beyond RAM (live random test differs on the same inputs)
-sceVif1PkAddCode wild packet pointer beyond RAM
-sceVif1PkAddUpkData32 wild packet pointer beyond RAM
-sceVif1PkOpenUpkCode wild packet pointer beyond RAM

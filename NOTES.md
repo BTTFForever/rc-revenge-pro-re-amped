@@ -309,8 +309,9 @@ optionally saved as PNG/PPM. `tools/rhi_triangle/run.sh build-rhi` runs it on th
 and synchronisation validation and fails on any validation message or another device. First run: RTX 2060, 120
 frames, 0 wrong pixels, 0 validation errors or warnings, clean shutdown. Things learnt: the RHI's clip space is
 y-up (it flips the Vulkan viewport), and its binding numbers are slot + 16 for textures, + 32 for samplers. The
-validation layer is not installed system-wide here (no `vulkan-validation-layers` package); the run used Steam's
-copy through `RC_VVL_LIB` (the script writes a manifest for it into the build folder).
+validation layer comes from the system package `vulkan-validation-layers` (installed 2026-11-19; the first runs used
+another copy of the layer through `RC_VVL_LIB`, which still works where the package is missing: the script writes a
+manifest for it into the build folder).
 
 ### RC_RENDERER=vk: SDL3 window and input (2026-11-19, renderer P0 step 3)
 `RC_RENDERER=vk tools/play.sh [record|replay <name>]` (any run of the game binary; `RC_VERSION=eu` as usual) opens an
