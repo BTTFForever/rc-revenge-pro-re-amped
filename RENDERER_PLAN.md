@@ -357,8 +357,55 @@ After step 1: fold its answers into this plan's open questions.
      error (82.3 M differing channels against 93.0 M, |d| <= L against 2L), the bias off the one-signed one that
      favours text. Planted faults of 9.3 fail (c) but the split-per-batch, bias and TEXA ones, as expected; FIX off by
      one fails on only 265 pixels under the widened bound. Next: the batch 4 review (bias default, U1).
+   - **Batch 4, the review, 2026-11-20** (`RENDERER_2D_DESIGN.md` section 17). The bias is on for the fixed-function
+     blend (smaller bound, 11% fewer differing channels, a third of the net brightening; right or no worse on any
+     blender). **U1 is built now, in a cheaper form:** the RTX 2060 has dynamic-rendering local read and the vendored
+     RHI drives it (`RhiLimits.localRead`, ico-pc's DATE path), so the fractional blend forms read the target as an
+     input attachment with a barrier before each group of non-overlapping primitives (the groups the alpha-test
+     split already makes); the depth test stays fixed function, the integer-exact forms stay on the blender.
+     Measured: at most 119 such groups in a menu or Track Editor kick, 4 in a race. Check (c) then becomes equality
+     in every plane, with no L and no bound, and the same mode serves step 8's pictures. Fixed function remains for
+     a device without local read (D-2D-1 applies there only). Specification: section 18 (**batch 4b**, Opus).
+     Order after it: step 8's design, step 8's first batch (the off-line VIF reader, which gives K1 the registers
+     it inherits from PATH1), step 7 batch 5 (live 2D), then K2 on Vulkan.
 8. VIF chain reader with the C++ VU references (Opus): races draw correctly (slowly); GIF bytes equal the emulated
    VU1's for recorded frames; full screenshots on levels 5, 17, 18, 20.
+   **Order and design (step 7's batch 4 review, 2026-11-20, `RENDERER_2D_DESIGN.md` 17.4).** Step 8 starts before
+   step 7's live batch, because K1 inherits registers only PATH1 writes and they come out of the VU1 programs'
+   packets. It needs a short design first (Fable, `RENDERER_3D_DESIGN.md`), then batches: (1) the reader and the
+   references off-line; then step 7 batch 5 (live 2D); (2) K2 through Vulkan off-line; (3) live. The frame record's
+   test row (`RENDERER_FRAME_RECORD.md` 10.2 row 8) fixes checks (a)-(d); the design must settle:
+   - **The VIF1 walk on the host:** the DMA tags and VIF codes the chains use (measured first with a counting
+     consumer, `vifstat`, as `gif2dstat` was for step 7): UNPACK formats, masks, modes and write cycles, STCYCL,
+     OFFSET/BASE/ITOP and the TOPS double buffer, MPG, MSCAL/MSCALF/MSCNT, FLUSH, and that there is no DIRECT.
+   - **The VU1 state between calls:** data memory (it persists across calls, kicks and frames), the vector and
+     integer registers a program starts with (`decomp/vu1/vu1_ref.h` takes them as an argument "because the output
+     packets carry components the program never writes"), what MSCNT continues from, and what a keyframe of the
+     dump must hold so a replay can start in the middle of a session (`VU1M` has both memories; the registers and
+     the VIF1 registers are inside the opaque `EMUS` only, so a readable chunk for them may be needed).
+   - **Which program is which:** the table from uploaded microcode (MPG payload hash) and start address to a C++
+     reference; the six references exist (`trdr`, `env`, `water`, `skin`, `terdr`, `rdr`) and are checked live by
+     `RC_VU1_REF`; the design lists every program and entry point the dumps call and what happens for one with no
+     reference (stop with a named guard; no VU interpreter in the renderer).
+   - **Floating point:** the references must give the emulated VU1's bytes; which VU float behaviours they
+     reproduce (clamping, rounding, MXCSR at the kick, as step 7's substitution needed) and how check (b) reports the
+     first differing packet rather than a kick's hash.
+   - **PATH1's registers:** the reader's register file after each VIF1 kick equals the recorded one with no
+     register left unknown (step 7's `path1Writes` set disappears); this is all step 7 batch 5 needs.
+   - **The draw list for K2:** step 8 emits the GIF reader's primitives (`SCREEN_PRIMS`, thousands a kick; the
+     record is 44 words a primitive) and leaves `SHAPE_BATCH` to step 9; sizes and the cost on the EE thread.
+   - **Drawing K2 with step 7's path:** the plans and guards for PATH1's states (4.2's table already lists them;
+     ZTST GEQUAL, strips and fans, perspective Q, the two mipmapped textures, ALPHA 0x44 with PABE as a discard,
+     TEXA from PATH1 for PATH3's CT16), which of the reference rasteriser's code paths K2 takes and whether the K1
+     shader's arithmetic covers them, the scissor and guard band, and the count of reading groups (barriers) per
+     K2 kick for the exact blend (`RENDERER_2D_DESIGN.md` 18; about 2.7% of PATH1's primitives use a fractional
+     blend form). The count decides whether the local read serves K2 or the interlock form is needed.
+   - **Checks on pictures:** per kick as step 7's check (c) (seeded, equality in every plane with the exact
+     blend), then the chained replay no earlier step could run: GS memory seeded once at a keyframe, every kick
+     through Vulkan (uploads, the clear, K2, K1, the flip), every flipped picture equal to `REFI` on levels 5, 17,
+     18, 20, the front end and the Track Editor.
+   - **Live:** whether the emulated VU1 and GS keep running beside the reader in `vk` mode (they are the reference
+     and the oracle's machine; the cost is P2's), and the thread the references run on.
 
 ### P2: speed and parity
 9. Shader batches (Fable: state and blend design; Opus: plumbing): track, polygons and alpha in one shader, then env,

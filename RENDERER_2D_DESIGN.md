@@ -9,7 +9,18 @@ from. Nothing here touches a game function or the runtime.
 
 ## Decisions for the user
 
-**U1. Exact integer blending by destination read: not in step 7 (recommended), or built now.** Fixed-function
+**U1, revised by the batch 4 review (2026-11-20, section 17.2): build the exact blend now, as a local read with
+barriers, not as the interlock mode described below.** Recommendation, reversible (an option; fixed function stays
+as the fallback and for every integer-exact form), and not a change of architecture, so the orchestrator may take
+it as it took the first U1; it is listed here because it reverses that decision. Reasons in 17.2, the build
+specification in section 18. What changed since the paragraph below was written: the RTX 2060's blender is 8-bit,
+so fixed function is -1..+2 a layer, not 0..+1 (15.3); the check it leaves cannot see a one-unit blend fault
+(16.3); and the device has `VK_KHR_dynamic_rendering_local_read`, which the vendored RHI already drives
+(`RhiLimits.localRead`), so the destination can be read as an input attachment with the fixed-function depth test
+kept: no storage images, no Z test in the shader.
+
+**U1 as first put (2026-11-20, superseded). Exact integer blending by destination read: not in step 7
+(recommended), or built now.** Fixed-function
 blending is exact for RC's add and subtract forms and, with the source bias of 4.3, for the lerps and `Cd*F+Cs`
 wherever the source term is at least half a level; elsewhere it can be one level above the GS per blended layer
 (never below, never more: 4.4). Making that zero needs the fragment shader to read the destination. The vendored RHI
@@ -699,7 +710,7 @@ Per cycle with a K1 kick, `gif2d --with-emu --vk` (the consumer sits in front of
 |---|---|
 | alpha | Vulkan = reference |
 | depth (where read back) | Vulkan depth * 2^24 = reference Z24 |
-| R, G, B | `0 <= Vulkan - reference <= L(x, y)` (4.4); in particular equal wherever no inexactly blended K1 primitive's box covers the pixel. **As built:** `-L <= d <= 2L` (bias off), `-L <= d <= L` (bias on), L by coverage (16.1) |
+| R, G, B | `0 <= Vulkan - reference <= L(x, y)` (4.4); in particular equal wherever no inexactly blended K1 primitive's box covers the pixel. **As built:** `-L <= d <= 2L` (bias off), `-L <= d <= L` (bias on), L by coverage (16.1). **With the exact blend (section 18): Vulkan = reference, no L** |
 | guards | none fired on a primitive that covers a pixel; no default or seeded register but those of 10.1 |
 
 and over a dump, reported: the histogram of `Vulkan - reference` by draw state (expected: 0 on the great majority,
@@ -731,6 +742,10 @@ menu screen equals `gif2d --vk` of the same cycle drawn over the clear only.
    *Built 2026-11-20: section 16.*
 4. **Review point (Fable):** the report of batch 3 against the bounds here, before the live half; decision U1 is
    revisited with real numbers.
+   *Done 2026-11-20: section 17. Outcome: batch 4b below; the bias on for the fixed-function fallback; batch 5
+   after step 8's first batch.*
+
+   4b. **The exact blend by local read (Opus).** Section 18 is the specification and the check.
 5. **Live.** The reader in the capture's consumer list (EE thread), the draw list published at the cycle close
    (section 8 of the frame record), the presenter replaying clear + uploads + K1 into the targets and presenting
    `target[DISPFB2.FBP]`; `NOTES.md` and the as-built section. *Check:* the front end and menus readable in a
@@ -738,16 +753,20 @@ menu screen equals `gif2d --vk` of the same cycle drawn over the clear only.
    unchanged (the game binary now links `rc_gs2d`: `playtest2` scene log and frame rate, `tools/oracle.sh --all`,
    both versions).
 
-Batches 1 and 2 are independent of each other; 3 needs both.
+Batches 1 and 2 are independent of each other; 3 needs both. Order from here (17.4): 4b, then step 8's design and
+its first batch (the VIF reader and the references off-line: PATH1's register writes), then batch 5.
 
 ## 12. Divergences this design accepts or inherits (for P2 step 10's list)
 
 Drafted for `DIVERGENCES` (P2 step 10) after batch 3; numbers from check (c) on the 67 exact dumps (16.2).
+**After the batch 4 review (17):** D-2D-1 and D-2D-2 describe the fixed-function blend only, which becomes the
+fallback for a device without local read (and an option); with the exact blend of section 18, the default wherever
+the device has local read (the RTX 2060 and the Vega do), neither exists. D-2D-2 is decided: the bias is on.
 
 | | what | size | where |
 |---|---|---|---|
-| D-2D-1 (as drafted after batch 3) | fixed-function blend of the forms with a fractional factor (`Cd*F+Cs`, the lerps `(Cd-Cs)*F+Cs`, `(Cs-Cd)*F+Cd`, `(Cd-Cs)*f` with 0 < F < 0x80): the blender rounds where the GS floors, and on the RTX 2060 it takes the shader's source term and the dual-source factor at 8 bits (15.3), so neither the 127/256 bias nor a flat source makes it exact | per inexact layer -1..+2 levels per channel without the bias, -1..+1 with it; per pixel `-L..+2L` / `-L..+L`, L the inexact primitives covering it (largest 7 in the 67 dumps; 0-3 on 97% of the pixels with L > 0). Measured over 14.5 G pixel-kicks: 0.21% (bias off) / 0.19% (on) of all colour channels differ, never alpha or Z; of the pixels under an inexact layer 52% / 56% are equal (16.2) | K1's text (`0x09`), panels (`0x01`), dimming boxes and fades (`0x21` FIX 0x20, 0x3f, 0x40); in the race only the HUD's text and panels. Removed by U1's exact mode (destination read) |
-| D-2D-2 (batch 3) | the source bias setting changes the sign of D-2D-1's error: off, the error is upward (+1, rarely +2) and the text equal on 80% of its blended pixels (77% with the bias); on, it is two-sided, smaller in total (11% fewer differing channels) and largest on the panels' lerp, but text is darker by one level on 5.8 M channels | see 16.2's table | the default is the batch 4 review's decision |
+| D-2D-1 (fixed-function fallback only, once section 18 is built) | fixed-function blend of the forms with a fractional factor (`Cd*F+Cs`, the lerps `(Cd-Cs)*F+Cs`, `(Cs-Cd)*F+Cd`, `(Cd-Cs)*f` with 0 < F < 0x80): the blender rounds where the GS floors, and on the RTX 2060 it takes the shader's source term and the dual-source factor at 8 bits (15.3), so neither the 127/256 bias nor a flat source makes it exact | per inexact layer -1..+2 levels per channel without the bias, -1..+1 with it; per pixel `-L..+2L` / `-L..+L`, L the inexact primitives covering it (largest 7 in the 67 dumps; 0-3 on 97% of the pixels with L > 0). Measured over 14.5 G pixel-kicks: 0.21% (bias off) / 0.19% (on) of all colour channels differ, never alpha or Z; of the pixels under an inexact layer 52% / 56% are equal (16.2) | K1's text (`0x09`), panels (`0x01`), dimming boxes and fades (`0x21` FIX 0x20, 0x3f, 0x40); in the race only the HUD's text and panels. Removed by the exact blend (section 18). The stacking bound is measured, not proved, for an 8-bit blender (16.5) |
+| D-2D-2 (batch 3) | the source bias setting changes the sign of D-2D-1's error: off, the error is upward (+1, rarely +2) and the text equal on 80% of its blended pixels (77% with the bias); on, it is two-sided, smaller in total (11% fewer differing channels) and largest on the panels' lerp, but text is darker by one level on 5.8 M channels | see 16.2's table | **decided (17.1): on.** Applies to the fixed-function fallback only |
 | I-1 (inherited from the reference, reproduced on purpose) | one-colour Gouraud primitives shaded one level low on about 6% of their pixels | 1 level before the texture function | every flat-coloured K1 quad; a real GS presumably shades them exactly |
 | I-2 (inherited) | bilinear filtering with float weights rounded to nearest; a real GS uses 4-bit weights and truncates | up to 1 level | every textured K1 pixel |
 | I-3 (inherited) | lines by Bresenham between truncated end points, both end pixels drawn | whole pixels at line ends | the Track Editor's lines |
@@ -764,6 +783,9 @@ be checked tightly.
 - The hardware's behaviour for I-1 to I-3 (no PS2 capture in this project).
 - Depth read-back of a `D32F` texture through the RHI (`RhiLimits`): if it is not available the depth plane is
   checked only through its effect on later draws and through check (b)'s GS memory comparison.
+- The fixed-function blend on a device with a blender wider than 8 bits (the Vega was not run: graphics tests are
+  kept on the RTX 2060): there the bias should give 4.3's 0..+1; `rc_gs2d_test` T1 says which when such a device is
+  the target.
 - Sampling the K1 fragment shader at more than one sample per pixel (P3): the record and the weights are
   resolution independent (`e_i` at a fractional sample point), the coverage guard is not.
 
@@ -1170,3 +1192,277 @@ and 1167 (Europe).
 - The design's 4.4 argument that a later layer only scales an earlier excess holds empirically under the widened
   bound (no pixel out of it at L up to 7); it is not proved for the 8-bit blender.
 - The live half (batch 5) and scenes not in the dumps (13).
+
+## 17. Batch 4: review (2026-11-20)
+
+Section 11 item 4. Reviewed: sections 14-16 against sections 3-13, the code of `render/gs2d` and
+`tools/rc_replay/gif2d_vk.cpp` where a decision depended on it, the vendored RHI's destination-read interface, and
+the device (`vulkaninfo`, the RHI's device line). Run for evidence, on the RTX 2060: check (c) on USA `s5/front`,
+`s5/boot`, `s5/tedit`, `s5/l17` and `b4-key-1` with a temporary counter in `Gs2dVk::build` (reverted, not
+committed; all five `PASS` as before). Nothing was built.
+
+**Outcome.** (1) The bias is on, for the fixed-function blend. (2) U1 is built now, in a cheaper form than the one
+batches 2 and 3 weighed: the destination is read as an input attachment under local read, with a barrier before
+each group of non-overlapping primitives; depth stays fixed function. Section 18 specifies it as batch 4b. (3) The
+order is 4b, step 8's design, step 8's first batch (off-line), then batch 5; the orchestrator's order (step 8
+before batch 5) is confirmed with one refinement (17.4).
+
+### 17.1 The bias default: on
+
+| | bias off | bias on |
+|---|---|---|
+| per layer; per pixel | -1..+2; `-L..+2L` | -1..+1; `-L..+L` |
+| channels differing (67 dumps) | 92.95 M | 82.32 M (11% fewer) |
+| signed sum of the differences (16.2's table) | about +93 M (everything upward) | about +31 M (text -5.7 M, panels -0.5 M, boxes +36.9 M, `0x21` FIX 0x3f +0.3 M) |
+| pixels under an inexact layer that are equal | 51.9% | 56.3% |
+| text (`0x09`) | +1 on 4.55 M channels | -1 on 5.76 M, +1 on 0.07 M |
+
+On, because: the worst case is halved, which is also the tighter bound for the check that remains on this path;
+the total error and the net brightening are smaller (a stack of layers drifts upward by a third as much); and on a
+blender wider than 8 bits the bias is the setting that gives 4.3's near-exact result, where off gives +1 on 35-47%
+of the triples (15.1 item 10), so on is right or no worse on every device, and off is right on none. Against it
+stands only the text: 28% more differing channels (5.83 M against 4.55 M), each one level on a glyph's blended
+edge, of the opposite sign. That is not visible and not a reason to keep the larger bound. The design's rule "T1
+fails with the bias, so switch it off" (4.3) was written for a blender that would be exact without ties; it does
+not apply to an 8-bit one and is withdrawn.
+
+This decides the fixed-function path only. After batch 4b that path is the fallback for a device without local
+read and an option for comparison; the default path does not use the bias at all.
+
+### 17.2 U1: build the exact blend now, by local read
+
+**What is wrong with staying on fixed function.** Not the picture: one level on 0.2% of the channels is invisible.
+The check is the cost. This project's renderer steps have each been closed by a bit-exact comparison, and those
+comparisons have found real errors that a tolerance would have passed (1/Q one ULP off on 4% of pixels, 15.1 item 5;
+a single lost RGBAQ write worth 14 pixels, 14.1 item 10). With D-2D-1 the colour criterion over every blended pixel
+is a band of width 3L+1 or 2L+1, and 16.3 shows what that hides: FIX off by one changes 13.97 M pixels on the front
+end and 265 of them leave the band. An error of one unit in a blend factor, a selector that is wrong only where it
+moves the result by a level, or a wrong layer order between two near-equal layers would pass. And the bound itself
+is measured, not proved, for an 8-bit blender (16.5), and is a property of one driver: another device may round
+differently, and the check would then fail or pass for reasons unrelated to the renderer.
+
+**What batches 2 and 3 did not consider.** They weighed the interlock form (target and depth as storage images, Z
+test in the shader), because the RHI reports "rasterization-order attachment read no". But the RHI has a third
+form, used by ico-pc for DATE: under `VK_KHR_dynamic_rendering_local_read` a pass may read its own colour
+attachment as an input attachment, and sees every earlier write once a by-region barrier has been issued inside
+the pass (`RhiLimits.localRead`, `RhiColorAttachment.readable`, `RHI_BIND_INPUT_ATTACHMENT`,
+`rhi_cmd_local_read_barrier`). The RTX 2060 has it (device line: `local read yes`; the Vega too). What it needs
+that raster-order access does not is that no pixel is written twice between two barriers, and K1 already has that
+structure: `Gs2dVk` cuts split batches into groups of primitives that cannot overlap (15.1 item 4). So:
+
+- the depth test, depth write and the alpha-test split stay exactly as built and tested (T3, T4, T5);
+- the integer-exact forms stay on fixed function (equal on 14.36 G pixel-kicks) and need no barrier;
+- only the fractional forms change: blend disabled, the shader reads Cd and computes the GS rule in integers.
+
+**Cost, measured.** Groups of inexactly blended primitives per drawing kick, by the grouping rule as built:
+
+| dump (USA) | kicks with an inexact primitive | inexact primitives | groups | largest in a kick |
+|---|---|---|---|---|
+| `s5/front` | 743 | 146,344 | 69,572 | 115 |
+| `s5/boot` | 630 | 150,822 | 71,673 | 115 |
+| `s5/tedit` | 700 | 102,624 | 47,843 | 119 |
+| `b4-key-1` | 100 | 19,454 | 9,223 | 116 |
+| `s5/l17` (race HUD) | 349 | 2,792 | 1,396 | 4 |
+
+2.1 primitives a group: a group is one rectangle, because a batch is nearly always one rectangle. So at most about
+120 barriers in a menu frame and 4 in a race frame (512 for the largest K1 the survey saw, 1,024 primitives). On a
+desktop GPU a by-region barrier inside a pass costs microseconds; no effect on the frame rate is expected, and
+18.5 has the acceptance figure. The build is one Opus batch on the existing structure (one more blend
+configuration, 64 pipelines, one shader build, a flag per draw), smaller than the interlock form's estimate.
+
+**Step 8 and after.** The 3D path has the same forms: `0x09` 0.8%, `0x01` 1.3%, `0x29` FIX 0x7f 0.6% of PATH1's
+primitives (survey, "Draw states"), about 240 primitives of the 8,900 in an average cycle, and they are effects
+that overlap one another, so about one barrier each: a few hundred a frame, the range PCSX2's hardware renderer
+works in with the same technique. With the exact blend, step 8's Vulkan check (frame record 10.2 row 8 (d),
+"pictures against `REFI` with difference statistics") can be equality, and a whole dump can be replayed without
+reseeding and compared picture by picture (17.3 item 6), which fixed function cannot offer. Whether K2's default
+at speed (P2 step 9) is the exact blend or fixed function is step 9's decision with step 8's barrier counts; the
+interlock form remains the reserve if they are too high, and is not built now. P3 (scaling, GPU interpolation)
+gives up equality with the reference anyway and can use either; local read works at any resolution and the device
+reports it for multisampled attachments.
+
+**Why now and not at P2 or P3.** Batch 5 and step 8 are both judged by pictures. Built before them, the exact
+blend makes those judgements equalities and removes L, the two bias runs and the bound from every later check;
+built after, each of those steps is accepted on a band and has to be re-verified later. Nothing in the end-state
+goal argues against it: the GS's blend rule is the game's picture, not hardware emulation, and the mode reads no
+emulated state.
+
+**Never** is the wrong answer for the reasons above; **later** saves one Opus batch now and costs weaker checks on
+two steps.
+
+### 17.3 Other findings in batches 1-3
+
+1. **Sound.** Checks (a) and (b) are exact and complete on the 67 dumps; the model and T2-T7 are bit-exact against
+   the emulated GS; the planted faults fail where the design says. The three changes of criterion (per kick, L by
+   coverage, the widened bound) are justified in 16.1. No correctness error found in the as-built sections or in
+   the code read.
+2. **`build-eu/rc_replay` is stale** (06:11 on 2026-11-20, before batch 1: its usage line has no `gif2d`). The
+   Europe dumps of 14.2 and 16.2 were run with `build-decomp/rc_replay`, which is correct (the tool does not depend
+   on the game version) but is not what "both trees" suggests. Batch 4b: either build `rc_replay` and
+   `rc_gs2d_test` in `build-eu` as well or say in `NOTES.md` that the tools are built in `build-decomp` only.
+3. **A stale reference in the code:** `gs2d_vk.h`'s comment on `sourceBias` cites "RENDERER_2D_DESIGN.md 14.7";
+   it is 15.3. Batch 4b changes that option and corrects the comment.
+4. **Drift between `planState` and check (c):** the plan still classifies by 4.3's premise (`flatSourceExact`: the
+   dimming boxes "exact", 14.3), which 15.3 disproved; check (c) rightly ignores it (16.1 item 2). After 4b the
+   function has no user in the default path; it should be removed or marked as holding only for a blender wider
+   than 8 bits, so step 9 does not reuse it.
+5. **Faults are planted on one dump** (USA `s5/front`) and TEXA is not exercised by any dump (14.4, 16.3: no
+   picture depends on it; T6 covers the decode). Acceptable; 18.4 re-runs the faults with the exact criterion, and
+   adds the Track Editor for the two new ones.
+6. **Check (c) reseeds before every kick,** so it never tests two kicks in a row through Vulkan: the clear followed
+   by K1, textures and state carried across kicks, the two targets alternating. Between the clear and K1 of one
+   buffer lies the 3D kick, so a chained check needs step 8. It is the natural final check there, and only
+   possible with the exact blend: seed GS memory once at a keyframe, replay every kick through Vulkan, and compare
+   every flipped picture with `REFI`. Added to step 8's outline (RENDERER_PLAN.md item 8).
+7. **Scenes not in the dumps** (13: split screen, podium, results, memory card screens, the Track Editor's race)
+   are still unrecorded. The guards report a new state at once in a live session, but the exact check wants dumps:
+   record them when batch 5 gives a session that reaches them, before step 7 is called closed.
+8. **4.4's argument is not a proof for an 8-bit blender** (16.5). It no longer carries the default path's check;
+   D-2D-1 now says the fallback's bound is measured.
+
+### 17.4 Order of the remaining work, and step 8
+
+**Confirmed: step 8's reader before batch 5.** 14.1 item 9 is right that K1 inherits registers only PATH1 writes
+(ZBUF_1 on the race HUD and the USA front-end backdrop; SCISSOR_1, TEST_1 and TEX1_1 in the Track Editor; FBA, PABE
+and CLAMP harmlessly), and the alternative, seeding from the runtime's register shadow (`g_gsRawRegs`), is exact
+only while the emulated GS is synchronous with the EE and makes the new renderer read emulated hardware state, the
+opposite of where the plan is going. PATH1's register values come out of the VU1 programs' packets (the state
+packets and each program's GIF tag prefix), so there is no shortcut that reads them from the VIF chain without
+running the references: it needs step 8's reader.
+
+**Refinement: batch 5 needs only step 8's first batch,** the off-line reader (VIF chain, VU memory, the C++
+references, GIF bytes equal to the emulated VU1's) with check (a) extended across VIF1 kicks. It does not need K2
+drawn by Vulkan. Doing batch 5 at that point (2D over black in races, complete menus) exercises the live plumbing
+(the reader on the EE thread, the list published at the cycle close, the presenter) that step 8's own live half
+then reuses, instead of meeting it for the first time with the 3D on top.
+
+1. **Step 7 batch 4b** (Opus): the exact blend by local read, section 18. Independent re-check as usual.
+2. **Step 8 design** (Fable; a short document, `RENDERER_3D_DESIGN.md`): outline in RENDERER_PLAN.md item 8. It is
+   needed: the reader's VU side has choices the frame record's test row does not settle (below), and the K2 state
+   table of 4.2 has to be turned into plans and guards before anything is drawn.
+3. **Step 8 batch 1** (Opus): the VIF reader with the references, off-line; frame record 10.2 row 8 (a), (b) and
+   (c), and `gif2d`'s check (a) with no register left unknown after a VIF1 kick.
+4. **Step 7 batch 5** (Opus): live 2D as section 11 item 5, PATH1's registers from the live VIF reader.
+5. **Step 8 batches 2 and on:** K2 through Vulkan off-line (check (c) per kick, then the chained replay), then live.
+
+What step 8's design must settle is listed in RENDERER_PLAN.md item 8.
+
+## 18. The exact blend by local read (batch 4b: specification)
+
+For the Opus build agent. Read with sections 4, 5.2, 9, 10.3, 15 and 16. Scope: `render/gs2d/gs2d_vk.{h,cpp}`,
+`gs2d.frag` (one more build of it), `gs_model` (a function at most), `rc_gs2d_test`, `tools/rc_replay/gif2d_vk.*`
+and `rc_replay.cpp`'s options. Not in scope: the reader, the draw list, the encoder, anything live, K2, the game,
+the runtime. The fixed-function blend and the bias stay, as the fallback and for comparison.
+
+### 18.1 The mechanism
+
+A draw's fragment shader may read its own pixel of colour attachment 0 as an input attachment when the pass was
+begun with that attachment readable; it then sees every write made before the last barrier inside the pass, and
+its own write to the same pixel is defined. So if (i) a barrier is issued before a group of reading primitives
+whenever anything has been drawn in the pass since the previous barrier, and (ii) no two primitives of the group
+write the same pixel, every reading fragment sees exactly the frame buffer the GS would have at that primitive.
+
+RHI, all present (no vendored edit is expected; if one proves necessary, mark it `RC:` and list it in
+`VENDORED.md` as U2's was):
+
+- the two colour targets created with `RHI_TEX_INPUT_ATTACHMENT` as well; the pass begun with
+  `pass.color[0].readable = true`, the target in `RHI_STATE_RENDER_TARGET_READ`;
+- a bind slot `RHI_BIND_INPUT_ATTACHMENT` holding the target (one bind group per target), in the reading
+  pipelines' layout (group 0 is empty today; the builder chooses the place);
+- `rhi_cmd_local_read_barrier(cl, RHI_LOCAL_READ_COLOR)`; add `RHI_LOCAL_READ_BACK` if the validation layer asks
+  for the read-to-write ordering;
+- the reading pipelines have `dstRead = RHI_DST_READ_NONE` (`RHI_DST_READ_ATTACHMENT` is the rasterization-order
+  form and fails on this device), blend disabled, one colour output.
+
+The condition is `RhiLimits.localRead`. ico-pc's use of the same path is DATE's setup draw (`rhi.h`, the comment
+on `rhi_cmd_local_read_barrier`).
+
+### 18.2 What changes in `Gs2dVk`
+
+- **Option.** `Options::blend`: `kBlendAuto` (default: the read where `localRead`, else fixed function), `kBlendFixed`,
+  `kBlendRead` (`create()` fails with a reason without `localRead`). `Options::sourceBias` default becomes true and
+  applies to fixed function only (17.1); the bias flag is not set on a reading record.
+- **Which plans read.** Those with `blend != kBlendOff && !exactBlend` (4.2's rows with a fractional factor: `0x09`,
+  `0x29` FIX f, `0x01`, `0x21` FIX f, `0x44` without PABE, `0xa1` FIX f). Everything else is drawn as today,
+  through the fixed-function pipelines, in the same pass. A plan whose guard `BLEND_FORM` fired (a destination
+  coefficient fixed function cannot express) or that uses C = Ad may be drawn by the read as well, since the
+  shader below is the general rule; then the guard does not fire in this mode. Optional, and only with its T1 rows.
+- **The shader** (`GS2D_DSTREAD` build of `gs2d.frag`, for triangles and for points): everything up to the alpha
+  test unchanged. Then, in integers: `Cd = ivec4(subpassLoad(dst) * 255.0 + 0.5)`; per colour channel
+  `Cv = clamp((((A - B) * C) >> 7) + D, 0, 255)` with A, B, D chosen from Cs, Cd, 0 and C from As, Cd.a, FIX by the
+  ALPHA selectors already in the record (word 36, `abcd` and `fix`), the shift arithmetic on a signed int;
+  `out0 = vec4(vec3(Cv) / 255.0, alpha / 255.0)`. Alpha is As, except for an `alphaByBlend` plan (RGB_ONLY, no
+  depth write), where a failing pixel writes `Cd.a` (so this mode has no `SRC1_ALPHA` variant). `gl_FragDepth` as
+  now.
+- **Groups and barriers.** Every batch of a reading plan is cut into groups by the rule the split uses (scissored
+  boxes pairwise disjoint, the second half of a rectangle pair allowed to touch the first; for points, distinct
+  pixels), whether or not the plan splits; a split plan keeps its two draws per group (they write disjoint pixels:
+  no barrier between them). The first draw of each reading group carries "barrier before", issued unless nothing
+  has been drawn in the pass since the last barrier or the pass began. Draws that do not read never need one.
+- **Pipelines.** One more configuration, `READ`: {triangles, points} x depth compare (4) x depth write (2) x
+  colour mask (4) = 64, made at `create()` with the others when `localRead`.
+- **Depth, the seed, the clear, lines, textures, read-back:** unchanged. The depth attachment is not readable.
+- **Stats:** reading primitives, reading groups, barriers issued, per list and in total.
+
+### 18.3 The model and `rc_gs2d_test`
+
+`gs_model` already has `gsBlend`; the mode's expected value is `gsBlend`, nothing else. `rc_gs2d_test --blend
+read|ff|both` (default both where the device has local read):
+
+- **T1, read:** every row of 4.2 (and of the optional forms, if drawn) x every As or FIX of the present T1 x Cs, Cd
+  0..255: Vulkan = `gsBlend` = emulated on every channel of all 44.2 M pixels; stored alpha = As.
+- **T1, fixed function:** the criterion becomes D-2D-1's measured one (per channel -1..+1 with the bias, -1..+2
+  without; the integer-exact rows equal), so a plain run ends `PASS` and `--no-design-bound` goes.
+- **T2-T6, read:** all planes emulated = model = Vulkan, T2's stacks included (no L). T3 gains the panels' state
+  (`0x01`, LEQUAL 1, RGB_ONLY, Z write on) on its textured alpha ramp and overlapping rectangles: the split and
+  the read together.
+- **T8 (new), order:** (i) at least 16 mutually overlapping rectangles of a reading state in one batch, colours and
+  alphas chosen so that every order gives a different picture; (ii) the same pixels drawn by an alternation of
+  fixed-function and reading states (`0x29` FIX 0x80, `0x01`, `0xa1` FIX 0x80, `0x09`, blend off) in separate and
+  in shared batches; (iii) a reading batch of 256 non-overlapping rectangles (one group) over a patterned
+  destination; (iv) both targets alternately. Emulated = model = Vulkan in all planes.
+- **Planted faults:** the barrier left out, and a reading batch drawn as one group, each must fail T8 (i); FIX off
+  by one must fail T1's reading rows as well as the integer-exact ones. The bias fault does not apply to this mode.
+- The validation layer on for the run: 0 errors.
+
+### 18.4 Check (c)
+
+`rc_replay ... --consumer gif2d --vk [--vk-blend read|ff|both]`, default `read` where the device has local read,
+else `ff`; `--vk-bias` applies to `ff` and defaults to `on`.
+
+**Pass, read:** for every judged kick, every one of the 640 x 256 pixels equal to the reference in R, G, B, A and
+Z. No L, no bound. On all 67 exact dumps of both versions, validation layer on, 0 errors. Reported per dump: kicks,
+pixels compared, pixels differing (0), reading primitives, groups and barriers (total, largest in a kick), GPU
+time per kick beside the fixed-function figure. A first failure prints what 16.1 item 6 prints.
+
+**Fixed function** keeps 16.1's criterion (bias on: `-L..+L`) and is run on eight dumps as the fallback's
+regression: `s5/front`, `s5/boot`, `s5/tedit`, `s5/l17` of each version.
+
+**Faults, read mode,** on USA `s5/front` (and `s5/tedit` for the two new ones): atst-less, drop-fail, z-gequal,
+no-half-pixel, fix, colour-swap, texel-row must each fail; `fix` on more than a million pixels (16.3: 13.97 M
+pixels differ under it), which is the point of the batch; no-barrier and one-group must fail on the front end
+(panels over the backdrop, text over panels). split-per-batch and TEXA remain T3's and T6's.
+
+### 18.5 Cost: expectation and acceptance
+
+Measured in the review (17.2): at most 119 reading groups in a kick on the menu and Track Editor dumps, 4 in a
+race; 2.1 primitives a group. Expected: GPU time per kick in check (c) within 10% of fixed function's (it is
+dominated by the seed and the read-back), and well under 0.5 ms a frame live. **Acceptance:** the figures are
+reported; if a kick's GPU time in read mode is more than twice fixed function's, stop and report rather than
+optimise (the first lever would be to continue a group across batches whose states both read).
+
+### 18.6 Fallbacks
+
+1. No `localRead`: fixed function with the bias on, one log line naming D-2D-1; `kBlendAuto` selects it.
+2. If the device or the validation layer objects to dual-source pipelines drawing in a readable pass: draw every
+   blended plan through `READ` (the shader is the general rule), leaving blend-off plans as they are; say so in the
+   as-built section. Splitting the pass at each change of kind is the second choice (a pass per run).
+3. The interlock form of the first U1 is not built. It is reconsidered only if step 8 measures K2 barrier counts
+   that make the local read too slow for the 3D (17.2).
+
+### 18.7 Also in the batch
+
+17.3 items 2, 3 and 4; the as-built section (19) with the results, 3.3's "as built" rows for the exact mode,
+D-2D-1 reworded to "devices without local read, or `kBlendFixed`", `NOTES.md` ("The 2D packet on Vulkan", "Check
+(c)"), RENDERER_PLAN.md item 7. The game links nothing new (`Gs2dVk` is not in it yet): show it as 16.4 does; run
+the oracle and `playtest2` only if a game object is rebuilt.
