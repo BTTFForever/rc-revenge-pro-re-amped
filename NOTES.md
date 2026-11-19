@@ -225,6 +225,9 @@ Debugging:
 - `PS2X_SCREENSHOT_DIR` and `PS2X_SCREENSHOT_FIELDS` save frames; `PS2X_AUDIO_STATS=1` prints audio rates.
 - `PS2X_PAD_SCRIPT` plays scripted input as comma-separated `start[v]:BTN+BTN[:hold]`, where `v` means fields rather than seconds.
 - `PS2X_DEBUG_PANEL=1` shows the debugger.
+- `RC_RENDERER=vk`: SDL3 window and input, Vulkan presentation, raylib audio only (section "RC_RENDERER=vk" below);
+  unset or `gs`, the raylib window as always. `RC_SCENE_LOG=<file>` writes a line at each scene change (game frame,
+  input clock, field, seconds, scene) to compare two runs of a recording.
 - `RC_GS_SURVEY=<file>` records every DMA kick and GS register write by path, per frame and scene (`RENDERER_SURVEY.md`); use it with `RC_TRACK_SHADER=0 PS2X_MTVU=0` (tools/play.sh passes both through), read with `tools/gs_survey.py`.
 - `eeCycle` in the dump is not a reliable speed gauge. Use `gameframes`.
 - In zsh, unquoted variables do not word-split, so pass env settings one by one.
@@ -246,6 +249,7 @@ All are in `third_party/ps2recomp/` (against upstream d06a4ab; see "The runtime"
 - `iop_spu2.*`, `iop_emulator.cpp`: SPU2 IRQ address, which the streamed music relies on.
 - `iop_pad.h`: missing `<cstddef>`. `state_io.h`: a form Clang also accepts. `ps2_debug_panel.h`: `PS2X_DEBUG_PANEL=0` hides the debugger.
 - `gs/gs_survey.cpp` (2026-11-19, renderer P0 step 1): the GS usage survey, on with `RC_GS_SURVEY=<file>`; hooks in `ps2_memory.cpp` (DMA kicks, chain tags, `submitGifPacket`, the native GIF fast paths, GS privileged register and FIFO stores), `gs_frontend.cpp` (`GS::writeRegister`), `System.cpp` (`SetGsCrt`), `ps2_runtime.cpp` (`Store32/64`: the caller's address). Unset, each hook is one test of a false global. Findings and the record format: `RENDERER_SURVEY.md`; summariser `tools/gs_survey.py`.
+- `include/ps2_host_platform.h`, `ps2_runtime.cpp` (`initialize`, `run`, `runHostPlatformLoop`, `UploadFrame`), `ps2_host_input.cpp` (2026-11-19, renderer P0 step 3): host platform hooks. Null unless the game installs them (`platform/vk_host.cpp` for `RC_RENDERER=vk`); then no raylib window, a std::chrono host loop and input through the hooks in raylib's codes. With no hooks every path is the old one (one test of a null pointer per call).
 - `ps2_runtime.cpp` (`Store32`): `g_ps2HardwareStoreHook`, null except in the offline oracle, sees each 32-bit store sent to a hardware register and can drop it (the oracle logs them so both runs' DMA kicks are compared).
 - Experimental, off by default: God of War's render-target renderer (`gs_hw_backend.cpp`, `gs_texture_store.*`, `gs_gpu_helpers.h`,
   `gs_tri_groups.h`, `gs_upload24.h`, `gs_colour_runs.h`, additions to `gs_gl.h`, `gs_gl_api_load.inl` and `ps2_gs_memory.*`).
@@ -305,6 +309,62 @@ frames, 0 wrong pixels, 0 validation errors or warnings, clean shutdown. Things 
 y-up (it flips the Vulkan viewport), and its binding numbers are slot + 16 for textures, + 32 for samplers. The
 validation layer is not installed system-wide here (no `vulkan-validation-layers` package); the run used Steam's
 copy through `RC_VVL_LIB` (the script writes a manifest for it into the build folder).
+
+### RC_RENDERER=vk: SDL3 window and input (2026-11-19, renderer P0 step 3)
+`RC_RENDERER=vk tools/play.sh [record|replay <name>]` (any run of the game binary; `RC_VERSION=eu` as usual) opens an
+SDL3 window with a Vulkan swapchain made by the RHI (`third_party/ico_rhi`) instead of the raylib window. Unset or
+`RC_RENDERER=gs`: unchanged.
+- **How:** the runtime has host platform hooks (`third_party/ps2recomp/ps2xRuntime/include/ps2_host_platform.h`),
+  null by default. `platform/vk_host.cpp`, linked into the game only (not the oracle), installs them from a static
+  initializer when `RC_RENDERER=vk`. The runtime then skips `InitWindow` (and the debug UI), still calls
+  `InitAudioDevice`, and runs `runHostPlatformLoop` in place of the raylib loop: latest GS picture -> `present`, hold
+  the loop to 1/60 s with std::chrono (raylib's `SetTargetFPS(60)`/`EndDrawing` wait; raylib's timer needs its window),
+  pump SDL events, `ps2_host_input::sample()`, F5/F9/F11. `ps2_host_input.cpp` reads keys, mouse and pads through the
+  hooks in raylib's codes (`GetFrameTime` from the loop's own clock), so `PS2X_BIND_*`, pad scripts, `PS2X_PAD_RECORD`
+  and `PS2X_PAD_REPLAY` are the same code in both modes. Game pacing (`EeScheduler`, `PS2X_EE_HOST_PACING`) never
+  used raylib and is untouched.
+- **What it shows:** not blind after all: the emulated GS still renders (its GL backend makes its own EGL context, on
+  the RTX 2060), and the runtime's latched presentation frame (the image the raylib window shows) is uploaded each
+  new field into an RHI texture and drawn letterboxed at the display aspect (`platform/present.vert/.frag`, compiled
+  by glslangValidator at build time). That is a stand-in until the P1 renderer draws the frame itself.
+- **Input:** SDL3 keyboard (scancodes for raylib's key codes, US positions as GLFW), mouse (relative mode for the
+  runtime's mouse capture) and up to 4 gamepads in raylib's slot order (lowest free slot at connection; SDL gamepad
+  buttons for raylib's face/shoulder/middle/thumb buttons, triggers as buttons above raylib's 0.1 threshold on the
+  -1..1 axis, sticks -1..1, no dead zone as raylib).
+- **Switches:** `RC_VK_VSYNC=0` (FIFO by default; the host loop is 60/s either way), the RHI's `ICO_VK_*` (e.g.
+  `ICO_VK_DEVICE`). `RC_VK_VALIDATION=1 [RC_VVL_LIB=<libVkLayer_khronos_validation.so>] tools/play.sh ...` loads the
+  Khronos layer with synchronisation validation (play.sh writes the manifest as `tools/rhi_triangle/run.sh` does); on
+  close the game logs `[vk-host] closed: N presents, N picture uploads, N skipped; N validation error(s)`.
+- **Not in vk mode (stubbed or left out):** the debug panel (`PS2X_DEBUG_PANEL`, rlImGui), the performance overlay's
+  drawing (F3), the save-state on-screen message (F5/F9 still save and load), `PS2X_FRAME_TIMES`, the window's
+  start-maximised option, the God of War renderer's shared GL presentation (Windows only anyway).
+  `PS2X_SCREENSHOT_DIR` saves the GS picture at its own size (e.g. 1280x480 at HW scale 2) rather than the window.
+  ESC does not quit in either mode (raylib's exit key is off); closing the window or SIGINT (SDL's quit event) ends the
+  run cleanly. Do not combine with `PS2X_GS_VK=1`: port_engine and the RHI share one volk, whose global device
+  table each would load.
+- **Build:** the game target links `rc_ico_rhi` (SDL3 from the system, Vulkan-Headers and port_engine's `volk::volk`,
+  so the program has one volk; `RC_VOLK_TARGET` in `third_party/ico_rhi/CMakeLists.txt`). Adding it changed the game
+  target's compile line, so the first build after it recompiles all the recompiled code once.
+- **Checks (2026-11-19, RTX 2060 by PRIME offload; RHI log "NVIDIA GeForce RTX 2060 ... device 10de:1f15", GS GL
+  "EGL: NVIDIA GeForce RTX 2060"):** `tools/play.sh replay playtest2`, 180 s, `RC_SCENE_LOG`, `RC_DEBUG_DUMP`,
+  `PS2X_AUDIO_STATS=1`, default and vk on both versions.
+  Scene logs: identical frames, input clocks and scenes in all six runs of a version (USA: frame 1 boot, 5 front end
+  at clock 0:255, 657 at 0:907, race scene 3020 at frame 658, clock 1:0; fields of the race start 1520 and 1517 in two
+  default runs, 1515 and 1512 in two vk runs. Europe: frames 1, 5, 1166, race at 1167; race field 2013 default, 2009
+  vk). Screenshots at field 3000 show the same race moment in both modes; at field 10000 the idle camera differs
+  between two default runs as much as between default and vk. Frame rate (`tools/fps.py`): 60.0 every 5 s sample
+  in USA, 50.0-50.2 in Europe, both modes. Audio (48 kHz): mean 47,846 produced/s default vs 47,845 vk (USA),
+  47,870 vs 47,883 (Europe); 7-9 underruns per run in both modes, all around loads. Validation: 140 s vk run with
+  the layer (mapped into the process), 0 errors and 0 warnings; 8,035 presents.
+  Live input, no physical pad attached: a uinput virtual Xbox 360 pad and a uinput keyboard (the keys sent only while
+  the game logged keyboard focus), recorded with `play.sh record`: all 16 buttons, both triggers, the d-pad and the
+  left stick from the pad, and every default key binding plus play.sh's E/R overrides from the keyboard, arrived as
+  the expected pad bits and axes.
+  Default mode after the change: the default replays above (60.0 / 50.0 fps, same scene logs); the oracle links the
+  runtime and overrides, so `--all` with new seeds: USA seed 5150 1632 ok, 0 FAIL, 98 without a setup; Europe seed
+  5151 1563 ok, 0 FAIL, 90 without a setup (8 dumps).
+- Known, not new: `playtest2` is all epoch 0 and the level load at frame 658 moves the clock to epoch 1, so the replay's
+  driving inputs are skipped and the player sits on the grid (both modes); a later recording needs a fresh `record`.
 
 ### Level testing (2026-11-09)
 `RC_BOOT_LEVEL=<n> tools/play.sh` skips the intro and menus and loops the attract-mode demo on level n. `RC_SKIP_INTRO=1` skips only the legal screen, movie and Dolby screen and starts in the front end (for menu tests: `PS2X_PAD_REPLAY=<file>` plays a pad script of `epoch frame buttons axes` lines). `tools/level_sweep.sh <first> <last> <seconds> [VAR=value ...]` prints each level's frame rate.

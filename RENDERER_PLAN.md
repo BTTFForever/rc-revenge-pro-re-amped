@@ -75,6 +75,24 @@ in `AGENT_USAGE.md`, as for the decompilation.
    playing, the game running blind; pad scripts and frame pacing unchanged. The survey checked raylib audio without a
    window (it plays); raylib's timer does not run without one, so the runtime's `WaitTime` (`ps2_runtime.cpp`) and
    `GetFrameTime` (`ps2_host_input.cpp`) need host replacements in `vk` mode.
+   **Done 2026-11-19** (NOTES.md, "RC_RENDERER=vk"): runtime host platform hooks (`ps2_host_platform.h`, null by
+   default), `platform/vk_host.cpp` (SDL3 window, keyboard, mouse, gamepads; RHI device and swapchain; installed only
+   for `RC_RENDERER=vk`), a std::chrono host loop at 60/s. The game is not blind: the emulated GS's latched picture is
+   uploaded and drawn letterboxed. playtest2 replays on both versions follow the default run's scene log exactly,
+   60/50 fps, audio as default, 0 validation messages over 140 s; keyboard and pad input checked with uinput devices.
+   For later steps:
+   - The present path is `present(pixels, w, h, aspect)` once per host frame on the main thread, after the runtime's
+     `UploadFrame` latch (which also syncs the VU1 thread). P1's frame record should replace what `present` draws, not
+     the hook shape: the RHI device, swapchain, bind-group layouts and resize handling are in `vk_host.cpp` to grow
+     into `rc::rd`'s presenter. The GS emulation still runs in `vk` mode (its own EGL context); turning it off is a
+     P1/P2 decision once the reader draws.
+   - Input stays in raylib's codes behind the hooks; a binding layer/virtual DualShock 2 (Beyond graphics, item 1) can
+     replace `ps2_host_input.cpp`'s tables later without touching the runtime loop.
+   - Audio is still raylib/miniaudio (works without its window, no conflict with SDL3 in one process); moving it to
+     SDL3 is a separate later batch, as planned.
+   - One volk in the program: the RHI links port_engine's `volk::volk`, so `PS2X_GS_VK=1` and `RC_RENDERER=vk` must
+     not run together (both would load the global device table).
+   - Missing in `vk` mode: debug panel, perf overlay drawing, save-state message, `PS2X_FRAME_TIMES`.
 After step 1: fold its answers into this plan's open questions.
 
 ### P1: the reader and the frame record (option A)
