@@ -1651,6 +1651,8 @@ static bool vkr_create_device(void)
         const char *noVs = getenv("ICO_VK_FAKE_NO_VERTEX_STORES");
         const bool fakeNoVs = noVs && noVs[0] && noVs[0] != '0';
         g_vkr.vertexStores = avail.vertexPipelineStoresAndAtomics == VK_TRUE && !fakeNoVs;
+        /* RC: shaderFloat64 enabled where offered (RhiLimits.shaderFloat64) */
+        g_vkr.shaderFloat64 = avail.shaderFloat64 == VK_TRUE;
         if (!g_vkr.vertexStores) {
             VKR_LOG("no vertexPipelineStoresAndAtomics%s: the VU record is drawn into render "
                     "targets and copied",
@@ -2458,6 +2460,8 @@ static bool vkr_create_device(void)
                 /* with shaderFloat16 (above): the upscaler's 16-bit shader
                  * permutations declare the Int16 capability */
                 .shaderInt16 = extInt16,
+                /* RC: 64-bit floats in shaders where offered (RhiLimits.shaderFloat64) */
+                .shaderFloat64 = g_vkr.shaderFloat64 ? VK_TRUE : VK_FALSE,
             },
     };
 #ifdef ICO_RHI_MOLTENVK
@@ -2816,6 +2820,7 @@ static void vkr_fill_limits(void)
     o->rasterOrderOff = g_vkr.rasterOrderOff[0] ? g_vkr.rasterOrderOff : NULL;
     /* the vertex shaders' stores (vkr_create_device) */
     o->vertexStores = g_vkr.vertexStores;
+    o->shaderFloat64 = g_vkr.shaderFloat64; /* RC: */
     o->validationLayer = g_vkr.validationOn;
     o->moltenvk = g_vkr.moltenvk;
     /* v0.7.10: the device profile's facts (rhi.h) */

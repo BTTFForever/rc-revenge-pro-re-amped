@@ -461,6 +461,7 @@ typedef struct VkrState {
     bool rasterOrder;
     /* vertexPipelineStoresAndAtomics enabled (RhiLimits.vertexStores) */
     bool vertexStores;
+    bool shaderFloat64; /* RC: the feature enabled (RhiLimits.shaderFloat64) */
     /* the attachment read the device has but is not offered on (Qualcomm's
      * own driver, rhi_driver_is_qualcomm_proprietary; ICO_VK_FAKE_ADRENO=1
      * takes that branch, ICO_VK_ATTACHMENT_READ=1 offers it anyway): why,

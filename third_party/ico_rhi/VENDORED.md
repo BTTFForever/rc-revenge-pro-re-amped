@@ -25,8 +25,15 @@ under ico-pc's `tools/toolchain/deps`).
 
 ## Local changes
 
-- **Source files: none.** Every `.c`/`.h` file is upstream's. Keep it that way where possible; if one must change,
-  mark the edit with an `RC:` comment and list it here.
+- **Source files:** every `.c`/`.h` file is upstream's but for the edits below. Keep it that way where possible; if one
+  must change, mark the edit with an `RC:` comment and list it here.
+  - **`shaderFloat64` (2026-11-20, `RENDERER_2D_DESIGN.md` decision U2, renderer P1 step 7 batch 2):** the device is
+    created with Vulkan's `shaderFloat64` feature where the physical device offers it, and `RhiLimits.shaderFloat64`
+    reports it (the 2D shader, `render/gs2d/gs2d.frag`, computes the software GS's interpolation weights in doubles).
+    `rhi.h`: the field at the end of `RhiLimits`; `vk/vk_internal.h`: `g_vkr.shaderFloat64`; `vk/vk_device.c`: set
+    from the features next to `vertexStores`, passed in `VkPhysicalDeviceFeatures2.features`, copied in
+    `vkr_fill_limits`. Each line is marked `RC:`. Nothing else changes: a shader without 64-bit arithmetic is
+    unaffected by the feature being on.
 - **`CMakeLists.txt`: written for RC** (not upstream's). Two static C libraries as upstream's `ico_rhi_vulkan` and
   `ico_rhi`: `rc_ico_rhi_vulkan` (the backend, compiled with `RHI_BACKEND_PREFIX=vk`, `VK_NO_PROTOTYPES`,
   `ICO_RHI_HAVE_SDL=1`, and `ICO_RHI_DEBUG_DEFAULT=1` in Debug builds, as upstream) and `rc_ico_rhi` (the dispatcher,

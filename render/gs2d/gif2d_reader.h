@@ -57,6 +57,7 @@ namespace rc::rd
             bool textures = true;       // emit TEXTURE commands (decode through the cache)
             int64_t faultCycle = -1;    // planted fault: every write of GS register faultN in this cycle lost (check (a)
             uint32_t faultN = 0;        // must fail where the register's value changed)
+            bool faultIgnoreTexa = false; // planted fault (rc_gs2d_test T6): textures decoded as if TEXA were TA0 0, TA1 0x80, AEM 0
         };
         struct Stats
         {
@@ -106,6 +107,11 @@ namespace rc::rd
 
         // The GsState the next draw would have (for tests).
         GsState currentState();
+
+        // Tests (rc_gs2d_test): start on blank GS memory without a keyframe, and walk PATH3 bytes directly (a kick of
+        // their own: register writes, transfers and draws, in the current cycle's list).
+        void startBlank();
+        void feedPath3(const uint8_t *data, uint32_t bytes);
 
     private:
         // GifSink (through the shadow's observer)

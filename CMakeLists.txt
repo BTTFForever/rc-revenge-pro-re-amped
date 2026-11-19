@@ -225,11 +225,42 @@ target_link_libraries(rc_replay PRIVATE rc_blit rc_blit_vk rc_tex)
 # GIF re-encoder, on rc_tex (TexShadow, GifWalker, TextureCache). Linked by rc_replay (the gif2d consumer); not by the
 # game or the oracle.
 set(RC_GS2D_DIR "${CMAKE_CURRENT_SOURCE_DIR}/render/gs2d")
-add_library(rc_gs2d STATIC EXCLUDE_FROM_ALL "${RC_GS2D_DIR}/gif2d_reader.cpp" "${RC_GS2D_DIR}/gs_plan.cpp" "${RC_GS2D_DIR}/gs2d_encode.cpp")
-target_compile_options(rc_gs2d PRIVATE -O2)
+add_library(rc_gs2d STATIC EXCLUDE_FROM_ALL "${RC_GS2D_DIR}/gif2d_reader.cpp" "${RC_GS2D_DIR}/gs_plan.cpp" "${RC_GS2D_DIR}/gs2d_encode.cpp"
+    "${RC_GS2D_DIR}/gs_model.cpp")
+# gs_model reproduces the software GS's float expressions operator by operator (no contraction), as the runtime is built.
+target_compile_options(rc_gs2d PRIVATE -O2 -ffp-contract=off -fno-fast-math)
 target_link_libraries(rc_gs2d PRIVATE rc_tex rc_record)
 target_sources(rc_replay PRIVATE tools/rc_replay/gif2d.cpp)
 target_link_libraries(rc_replay PRIVATE rc_gs2d rc_tex)
+# rc_gs2d_vk (step 7 batch 2, RENDERER_2D_DESIGN.md sections 4-8): the draw list on the vendored RHI (Gs2dVk) and its
+# shaders. Linked by rc_gs2d_test only; not by the game or the oracle.
+set(RC_GS2D_SHADER_HEADERS "")
+foreach(_entry "gs2d.vert|gs2d_vert" "gs2d.vert|gs2d_points_vert|-DGS2D_POINTS" "gs2d.frag|gs2d_frag" "gs2d.frag|gs2d_probe_frag|-DGS2D_PROBE"
+             "gs2d_seed.vert|gs2d_seed_vert" "gs2d_seed.frag|gs2d_seed_frag")
+    string(REPLACE "|" ";" spec "${_entry}")
+    list(GET spec 0 _file)
+    list(GET spec 1 _name)
+    list(LENGTH spec _n)
+    set(_def "")
+    if(_n GREATER 2)
+        list(GET spec 2 _def)
+    endif()
+    set(_src "${RC_GS2D_DIR}/${_file}")
+    set(_out "${CMAKE_CURRENT_BINARY_DIR}/generated/${_name}.h")
+    add_custom_command(OUTPUT "${_out}"
+        COMMAND ${RC_GLSLANG} -V --target-env vulkan1.0 ${_def} --vn spv_${_name} -o "${_out}" "${_src}"
+        DEPENDS "${_src}" COMMENT "glslangValidator ${_name}" VERBATIM)
+    list(APPEND RC_GS2D_SHADER_HEADERS "${_out}")
+endforeach()
+add_library(rc_gs2d_vk STATIC EXCLUDE_FROM_ALL "${RC_GS2D_DIR}/gs2d_vk.cpp" ${RC_GS2D_SHADER_HEADERS})
+target_include_directories(rc_gs2d_vk PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_compile_options(rc_gs2d_vk PRIVATE -O2 -ffp-contract=off -fno-fast-math)
+target_link_libraries(rc_gs2d_vk PUBLIC rc_ico_rhi PRIVATE rc_gs2d rc_tex)
+# rc_gs2d_test (tools/rc_replay/gs2d_test.cpp, RENDERER_2D_DESIGN.md 9): the model's self-check and tests T1-T7 through
+# the emulated GS (the runtime's software GS, alone), gs_model and Gs2dVk.
+add_executable(rc_gs2d_test EXCLUDE_FROM_ALL tools/rc_replay/gs2d_test.cpp)
+target_compile_options(rc_gs2d_test PRIVATE -O2 -ffp-contract=off -fno-fast-math)
+target_link_libraries(rc_gs2d_test PRIVATE rc_gs2d_vk rc_gs2d rc_tex rc_record ps2_runtime ZLIB::ZLIB)
 add_executable(rc_tex_test EXCLUDE_FROM_ALL tools/rc_replay/tex_test.cpp)
 target_compile_options(rc_tex_test PRIVATE -O2)
 target_link_libraries(rc_tex_test PRIVATE rc_tex rc_record ZLIB::ZLIB)

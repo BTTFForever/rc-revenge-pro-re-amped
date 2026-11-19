@@ -886,6 +886,11 @@ typedef struct RhiLimits {
      * occlusionQueryPrecise); without it a count is exact only as zero or
      * not zero (rhi_cmd_begin_occlusion; false elsewhere) */
     bool occlusionPrecise;
+    /* RC: 64-bit floats in shaders (Vulkan shaderFloat64), enabled where the
+     * device offers it (vk_device.c); RC's 2D shader computes the software
+     * GS's interpolation weights in doubles (RENDERER_2D_DESIGN.md 6.2,
+     * decision U2).  false elsewhere. */
+    bool shaderFloat64;
 } RhiLimits;
 
 /* The window's part in a driver call that may take long (rhi_set_wait_hooks):

@@ -145,6 +145,26 @@ namespace rc::rd
             m_shadow.path3(data, bytes);
     }
 
+    void Gif2dReader::startBlank()
+    {
+        std::memset(m_prov, 0, sizeof(m_prov));
+        m_queued = 0;
+        m_stateDirty = true;
+        m_started = true;
+    }
+
+    void Gif2dReader::feedPath3(const uint8_t *data, uint32_t bytes)
+    {
+        if (!m_started)
+            return;
+        closePrims();
+        m_kickFirstCmd = static_cast<uint32_t>(m_list.cmds.size());
+        m_kickPrims = m_kickDropped = m_kickTransfers = 0;
+        ++m_stats.kicks;
+        feed(data, bytes);
+        closePrims();
+    }
+
     void Gif2dReader::kick(const KickView &k, const RamView &ram)
     {
         if (!m_started)
@@ -420,7 +440,7 @@ namespace rc::rd
                 ++m_stats.cldOther;
             if (!missing)
             {
-                const CachedTexture &e = m_cache.get(t, Texa::unpack(s.texa));
+                const CachedTexture &e = m_cache.get(t, m_opt.faultIgnoreTexa ? Texa::unpack(0x80ull << 32) : Texa::unpack(s.texa));
                 if (e.valid)
                 {
                     s.texture = textureId(&e);
