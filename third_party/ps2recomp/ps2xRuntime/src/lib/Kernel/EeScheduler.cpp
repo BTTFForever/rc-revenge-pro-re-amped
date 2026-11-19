@@ -700,9 +700,27 @@ bool EeScheduler::checkpointDue(uint32_t cycles) noexcept
     return false;
 }
 
+void EeScheduler::freezeClock(bool freeze) noexcept
+{
+    m_clockFrozen += freeze ? 1 : -1;
+    if (m_clockFrozen <= 0)
+    {
+        m_clockFrozen = 0;
+        m_frozenCycles = 0u;
+    }
+}
+
 void EeScheduler::accountCycles(uint32_t cycles) noexcept
 {
     const uint64_t elapsed = std::max<uint64_t>(1u, cycles);
+    if (m_clockFrozen > 0 && m_frozenCycles < kFrozenCycleLimit)
+    {
+        m_frozenCycles += elapsed;
+        if (m_frozenCycles >= kFrozenCycleLimit)
+            std::fprintf(stderr, "[EeScheduler] frozen clock ran %llu cycles: letting time pass again\n",
+                         static_cast<unsigned long long>(m_frozenCycles));
+        return;
+    }
     m_eeCycle += elapsed;
     m_pendingEeTimerInterrupts |= m_runtime.memory().advanceEeTimers(elapsed);
     m_runtime.advanceIopEeCycles(elapsed);

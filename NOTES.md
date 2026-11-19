@@ -278,6 +278,9 @@ All are in `third_party/ps2recomp/` (against upstream d06a4ab; see "The runtime"
   the game's newlib does for conversions newlib lacks: `%a`, `%A`, `%F` and unknown characters print the character
   (padded to the width) and take no argument. Upstream read a double for `%a`/`%F` and copied unknown specs whole. See
   "FrontEndProcess, seed 7170".
+- `EeScheduler.cpp`, `ee_scheduler.h` (`freezeClock`, 2026-11-19): while frozen, cycles advance neither the EE clock,
+  the EE timers nor the IOP (cap 10 s of EE time). The live shadow comparison freezes it around both runs; see "Frame
+  record", the Europe shadow stall.
 - `ps2_runtime.cpp` (`Store32`): `g_ps2HardwareStoreHook`, null except in the offline oracle, sees each 32-bit store sent to a hardware register and can drop it (the oracle logs them so both runs' DMA kicks are compared).
 - `include/ps2_capture_hooks.h` (2026-11-19, renderer P1 step 4 batch 1): the frame record's hooks, null unless `RC_FRAME_RECORD` installs them (one null test per site): `ps2_memory.cpp` (each DMA kick on channels 0-2 with every byte range its stream is read from, GS privileged, VIF1 and GIF register stores, FIFO stores, PATH2 packets, `submitGifPacket`), `ps2_runtime.cpp` (`attach` at the end of `initialize`, the store caller in `Store32/64`, the native GIF fast paths), `System.cpp` (`SetGsCrt`), `gs_frontend.cpp` (`GS::writeRegister`, local->host transfers, and `g_gsRawRegs`: every GS register write kept as written, always on), `ps2_save_state.cpp` (`snapshotGs`: GS memory and registers for keyframes, as a save state takes them). See "Frame record".
 - `ps2_save_state.cpp`, `include/ps2_capture_hooks.h` (2026-11-19, renderer P1 step 4 batch 2): `ps2x::savestate::saveGraphics` / `loadGraphics` (the graphics machine's state but GS memory as one versioned blob: GS front end including a GIF tag in progress, which upstream's save state leaves out, backend state, privileged registers and the register shadow, VU1 memory and registers, VIF1 and DMA registers, PATH3 mask and FIFO, pending transfers, the I/O register map) and `ps2x::capture::exactCapable` (bare software GS and no VU1/GIF thread), for the frame record's exact mode and `rc_replay --consumer emu`. Nothing changes when they are not called.
@@ -473,11 +476,30 @@ adds side tags (below); ring/F10 come with batch 4.
   picture's read-out), `render/gfx/tags.{h,cpp}` (the tag channel, in `rc_record`) and `decomp/rc_gfx_tags.cpp` (the
   game's anchor readers), `tools/rc_replay/` (`emu.cpp`: the emu consumer), the runtime's
   `include/ps2_capture_hooks.h` (above, "Local changes to the runtime"). The oracle links none of it.
-- **Open (found by batch 3's check, not caused by it):** the Europe build's sampled shadow run
-  (`RC_VERSION=eu RC_SHADOW_RATE=20 RC_SHADOW_FIRST=1 tools/shadow.sh 17 115 0`) stops at the level-load movie after
-  about 140 compares (last log line the movie's `sceMpegAddBs` and a texture load), with the batch 3 build and with
-  the commit before it (72dfa43) alike; it ran to 2,603 compares on 2026-11-18. USA is unaffected, as are Europe's
-  normal and exact-mode runs.
+- **Europe shadow stall at the level-load movie (found by batch 3's check; fixed 2026-11-19).** The Europe sampled
+  shadow run (`RC_VERSION=eu RC_SHADOW_RATE=20 RC_SHADOW_FIRST=1 tools/shadow.sh 17 115 0`) stopped after about 140
+  compares (last log line the movie's `sceMpegAddBs`); it ran to 2,594 on 2026-11-18 (TEDIT part 2). Culprit:
+  LEFTOVERS (cc8964c), which made `BBLoad` native; with `RC_DECOMP_SKIP=BBLoad` (or `uncompress`) HEAD ran normally,
+  with any other LEFTOVERS function skipped it still stalled. Cause: a shadow-harness problem, not a native difference.
+  The game had not frozen in the movie: gdb showed the game thread in `FrontEndInit` -> `CarouselSetUp` -> a compared
+  `ObjectCreate`'s original, spinning in `TaskCachedInsert` with checkpoints held, inserting a task at time -554
+  (`gameTimer.time`) below the list's header (-1), so the backward search circles the list for ever. The clock had gone
+  backwards: (1) `BBLoad`'s `uncompress` call is compared; the comparison runs the original with checkpoints held,
+  and the scheduler still counted its cycles, so timer 0 ran about 0.55 s past its compare while its interrupt
+  waited. (2) The native `BBLoad` and the native front-end code after it reach no scheduling point, so the interrupt
+  was still pending when `FrontEndInit`'s `TimerSetup` read the clock. (3) In Europe `SysTimerGet` is a changed
+  function and runs recompiled: it reads the count and `tickTime`, then calls `__divdi3`, a scheduling point where the
+  late interrupt ran; `SysTimerHandler` adds only the compare value to `tickTime` and zeroes the count, dropping the
+  overrun, so `TimerSetup` saw 1554 ms and the `TimerGet` right after it 1000 ms. USA's native `SysTimerGet` has no
+  scheduling point inside, and before LEFTOVERS the recompiled `BBLoad` serviced the interrupt right after the
+  comparison. Fix: a live comparison takes no emulated time. The runtime's `EeScheduler::freezeClock` (nested) stops
+  `accountCycles` from advancing the EE clock, the EE timers and the IOP; `runOriginal` and `runComparedNative` in
+  `rc_decomp.cpp` freeze it in the game (not in the offline oracle) while they run with checkpoints held. A frozen
+  stretch over 10 s of EE time (code waiting for time to pass) lets time pass again with a warning. After the fix:
+  Europe 2,551 compares, USA 2,539 (2,565 before), only the known `TaskProcess`, `InputSnapshot` and `AIControl`
+  (`svGlob`'s pad byte) artefacts; `--all --seed 8282` USA 1632 ok, 0 FAIL; Europe `--seed 8283` 1563 ok, 0 FAIL (8
+  dumps). The `playtest2` replays were not re-run (stopped for a reboot); without `RC_SHADOW` no comparison runs, so
+  the clock is never frozen and normal play is unchanged.
 - **Sizes and cost** (plain mode, both versions; details in `RENDERER_FRAME_RECORD.md` 6.3): a race cycle 0.46-0.54 MB
   raw, 86-102 KB stored; front end 0.29-0.34 MB / 63-75 KB; a movie picture 0.35 MB / 93 KB; a keyframe 4.1 MB raw,
   1.2-1.4 MB stored; 120 race cycles 14-18 MB on disc, `boot+900` 72-80 MB. The recorder costs the EE thread 2.6-6.8 ms

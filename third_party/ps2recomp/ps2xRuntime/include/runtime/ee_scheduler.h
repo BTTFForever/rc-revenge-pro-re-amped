@@ -303,6 +303,14 @@ public:
     // While held, checkpoints still count cycles but never cut guest code short; events wait until the hold ends.
     // For running a non-blocking function to completion from native code (the decompilation's comparison).
     void holdCheckpoints(bool hold) noexcept { m_holdCheckpoints = hold; }
+    // While frozen (nested calls count), cycles advance neither the EE clock nor the EE timers nor the IOP: for code
+    // whose run the game must not see at all, such as the decompilation's live comparison, which runs a recompiled
+    // original and then the native from one state, with checkpoints held, and keeps only the native's memory. Without
+    // it the comparison's cycles move timer 0 past its compare while its interrupt waits for the hold to end, and the
+    // late interrupt drops the ticks counted past the compare. A frozen stretch longer than kFrozenCycleLimit (code
+    // waiting for time to pass) lets time pass again, with a warning.
+    void freezeClock(bool freeze) noexcept;
+    static constexpr uint64_t kFrozenCycleLimit = 10ull * 294912000ull; // 10 s of EE time
     void accountCycles(uint32_t cycles) noexcept;
     uint64_t skipIdleCycles() noexcept;
     [[nodiscard]] bool isExecutingGuest() const noexcept;
@@ -548,6 +556,8 @@ private:
     bool m_rescheduleRequested = false;
     bool m_unwinding = false;
     bool m_holdCheckpoints = false;
+    int m_clockFrozen = 0;
+    uint64_t m_frozenCycles = 0;
     bool m_sharedVu0RandomValid = false;
     __m128 m_sharedVu0Random{};
     bool m_timeSliceExpired = false;

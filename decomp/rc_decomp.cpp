@@ -82,6 +82,29 @@ inline void setInComparedNative(bool inComparedNative)
     rc::gfx::detail::setComparing(g_comparing || g_inComparedNative);
 }
 
+// In the game, a comparison takes no emulated time: while the original and the native run with checkpoints held, the
+// clock, the EE timers and the IOP stand still (EeScheduler::freezeClock). The game sees only the native's effects, and
+// an interrupt that falls due meanwhile cannot come late. Otherwise the original's cycles (an uncompress of a level
+// section is about half a second) ran timer 0 past its compare with the interrupt held; the late interrupt then lost
+// the ticks past the compare and the game's clock went backwards (NOTES.md, "Frame record", the Europe shadow stall).
+// The offline oracle runs no game, so its clock is left as it was.
+struct FrozenClock
+{
+    explicit FrozenClock(PS2Runtime *runtime) : scheduler(g_offline ? nullptr : &runtime->eeScheduler())
+    {
+        if (scheduler)
+            scheduler->freezeClock(true);
+    }
+    ~FrozenClock()
+    {
+        if (scheduler)
+            scheduler->freezeClock(false);
+    }
+    FrozenClock(const FrozenClock &) = delete;
+    FrozenClock &operator=(const FrozenClock &) = delete;
+    EeScheduler *scheduler;
+};
+
 //
 // The random test runs natives on a copy of the registers, but guest_call works on the scheduler's running context,
 // which is the game's own: its registers are put back afterwards, or the game would carry on with the test's.
@@ -95,6 +118,7 @@ void runComparedNative(Entry &entry, uint8_t *rdram, R5900Context *ctx, PS2Runti
     if (copy)
         running = *ctx;
     // Interrupts wait, as for the original, so none runs inside the native's guest calls.
+    const FrozenClock frozen(runtime);
     runtime->eeScheduler().holdCheckpoints(true);
     setInComparedNative(true);
     // RC_SHADOW_SELFTEST=1 runs the original in place of the native: any difference left is noise from outside the
@@ -133,6 +157,7 @@ void runOriginal(Entry &entry, uint8_t *rdram, R5900Context *ctx, PS2Runtime *ru
     const R5900Context saved = copy ? running : R5900Context{};
     if (copy)
         running = *ctx;
+    const FrozenClock frozen(runtime);
     scheduler.holdCheckpoints(true);
     entry.original(rdram, &running, runtime);
     for (int resumes = 0; running.pc != returnAddress && resumes < 1000000; ++resumes)
