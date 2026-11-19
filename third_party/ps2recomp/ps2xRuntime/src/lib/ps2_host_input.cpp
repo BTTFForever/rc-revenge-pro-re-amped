@@ -1,6 +1,7 @@
 #include "ps2_host_input.h"
 #include "runtime/ps2_input_options.h"
 #include "ps2_host_backend.h"
+#include "ps2_host_platform.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -25,6 +26,47 @@ namespace ps2_host_input
         using ps2x::iop::PadInputState;
         using ps2x::iop::PadPressure;
         namespace PadButton = ps2x::iop::PadButton;
+
+        // RC: input from raylib's window, or from the host platform when one is installed (ps2_host_platform.h,
+        // RC_RENDERER=vk). Both take raylib's codes, so every binding below means the same key in both modes.
+        const ps2_host_platform::Hooks *platform() { return ps2_host_platform::hooks(); }
+        bool hostKeyDown(int key) { return platform() ? platform()->keyDown(key) : IsKeyDown(key); }
+        bool hostKeyPressed(int key) { return platform() ? platform()->keyPressed(key) : IsKeyPressed(key); }
+        bool hostMouseButtonDown(int button) { return platform() ? platform()->mouseButtonDown(button) : IsMouseButtonDown(button); }
+        bool hostMouseButtonPressed(int button) { return platform() ? platform()->mouseButtonPressed(button) : IsMouseButtonPressed(button); }
+        bool hostWindowFocused() { return platform() ? platform()->focused() : IsWindowFocused(); }
+        void hostEnableCursor()
+        {
+            if (platform())
+                platform()->setMouseCaptured(false);
+            else
+                EnableCursor();
+        }
+        void hostDisableCursor()
+        {
+            if (platform())
+                platform()->setMouseCaptured(true);
+            else
+                DisableCursor();
+        }
+        Vector2 hostMouseDelta()
+        {
+            if (!platform())
+                return GetMouseDelta();
+            Vector2 delta{};
+            platform()->mouseDelta(&delta.x, &delta.y);
+            return delta;
+        }
+        float hostFrameTime() { return platform() ? ps2_host_platform::g_frameSeconds.load(std::memory_order_relaxed) : GetFrameTime(); }
+        bool hostGamepadAvailable(int gamepad) { return platform() ? platform()->gamepadAvailable(gamepad) : IsGamepadAvailable(gamepad); }
+        bool hostGamepadButtonDown(int gamepad, int button)
+        {
+            return platform() ? platform()->gamepadButtonDown(gamepad, button) : IsGamepadButtonDown(gamepad, button);
+        }
+        float hostGamepadAxis(int gamepad, int axis)
+        {
+            return platform() ? platform()->gamepadAxis(gamepad, axis) : GetGamepadAxisMovement(gamepad, axis);
+        }
 
         enum class BindingKind
         {
@@ -398,8 +440,8 @@ namespace ps2_host_input
 
         uint8_t keyAxis(int negative, int positive)
         {
-            const bool low = IsKeyDown(negative);
-            const bool high = IsKeyDown(positive);
+            const bool low = hostKeyDown(negative);
+            const bool high = hostKeyDown(positive);
             if (low == high)
                 return 0x80u;
             return low ? 0x00u : 0xFFu;
@@ -446,13 +488,13 @@ namespace ps2_host_input
             switch (binding.kind)
             {
             case BindingKind::Keyboard:
-                return IsKeyDown(binding.code);
+                return hostKeyDown(binding.code);
             case BindingKind::Mouse:
-                return g_mouseLocked && binding.code != g_ignoredMouseButton && IsMouseButtonDown(binding.code);
+                return g_mouseLocked && binding.code != g_ignoredMouseButton && hostMouseButtonDown(binding.code);
             case BindingKind::Shift:
-                return IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+                return hostKeyDown(KEY_LEFT_SHIFT) || hostKeyDown(KEY_RIGHT_SHIFT);
             case BindingKind::Control:
-                return IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
+                return hostKeyDown(KEY_LEFT_CONTROL) || hostKeyDown(KEY_RIGHT_CONTROL);
             default:
                 return false;
             }
@@ -499,16 +541,16 @@ namespace ps2_host_input
             if (!g_mouseCameraEnabled.load(std::memory_order_relaxed))
             {
                 if (g_mouseLocked)
-                    EnableCursor();
+                    hostEnableCursor();
                 g_mouseLocked = false;
                 g_ignoredMouseButton = -1;
                 recordMouseCameraInput({}, false);
                 return;
             }
-            if (!IsWindowFocused() || IsKeyPressed(KEY_ESCAPE))
+            if (!hostWindowFocused() || hostKeyPressed(KEY_ESCAPE))
             {
                 if (g_mouseLocked)
-                    EnableCursor();
+                    hostEnableCursor();
                 g_mouseLocked = false;
                 g_ignoredMouseButton = -1;
                 recordMouseCameraInput({}, false);
@@ -517,15 +559,15 @@ namespace ps2_host_input
             if (!g_mouseLocked)
             {
                 int button = -1;
-                if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+                if (hostMouseButtonPressed(MOUSE_BUTTON_LEFT))
                     button = MOUSE_BUTTON_LEFT;
-                else if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT))
+                else if (hostMouseButtonPressed(MOUSE_BUTTON_RIGHT))
                     button = MOUSE_BUTTON_RIGHT;
-                else if (IsMouseButtonPressed(MOUSE_BUTTON_MIDDLE))
+                else if (hostMouseButtonPressed(MOUSE_BUTTON_MIDDLE))
                     button = MOUSE_BUTTON_MIDDLE;
                 if (button != -1)
                 {
-                    DisableCursor();
+                    hostDisableCursor();
                     g_mouseLocked = true;
                     g_ignoredMouseButton = button;
                     g_skipMouseDelta = true;
@@ -533,7 +575,7 @@ namespace ps2_host_input
                 recordMouseCameraInput({}, g_mouseLocked);
                 return;
             }
-            if (g_ignoredMouseButton != -1 && !IsMouseButtonDown(g_ignoredMouseButton))
+            if (g_ignoredMouseButton != -1 && !hostMouseButtonDown(g_ignoredMouseButton))
                 g_ignoredMouseButton = -1;
             if (g_skipMouseDelta)
             {
@@ -542,14 +584,14 @@ namespace ps2_host_input
                 return;
             }
 
-            const Vector2 delta = GetMouseDelta();
+            const Vector2 delta = hostMouseDelta();
             recordMouseCameraInput(delta, true);
             if (!g_mouseStickEnabled.load(std::memory_order_relaxed))
                 return;
             const float distance = std::hypot(delta.x, delta.y);
             if (distance <= 0.0f)
                 return;
-            const float frameTime = std::max(GetFrameTime(), 1.0f / 240.0f);
+            const float frameTime = std::max(hostFrameTime(), 1.0f / 240.0f);
             const float scale = mouseSensitivity() / (frameTime * 900.0f);
             const Vector2 stick = mouseStick({delta.x * scale, delta.y * scale * mouseVerticalSensitivity()});
             g_mouseRightX = stick.x;
@@ -582,7 +624,7 @@ namespace ps2_host_input
         {
             PadInputState state;
             const int gamepad = static_cast<int>(port);
-            const bool gamepadAvailable = IsGamepadAvailable(gamepad);
+            const bool gamepadAvailable = hostGamepadAvailable(gamepad);
             const bool keyboard = port == 0u;
             state.connected = gamepadAvailable || keyboard;
             if (!state.connected)
@@ -596,18 +638,18 @@ namespace ps2_host_input
             for (size_t i = 0; i < kButtons.size(); ++i)
             {
                 const ButtonBinding &binding = kButtons[i];
-                const bool padDown = gamepadAvailable && IsGamepadButtonDown(gamepad, binding.gamepadButton);
+                const bool padDown = gamepadAvailable && hostGamepadButtonDown(gamepad, binding.gamepadButton);
                 const bool keyDown = keyboard && isHostBindingDown(hostBindings[i]);
                 if (padDown || keyDown)
                     state.buttons |= binding.button;
             }
             if (gamepadAvailable)
             {
-                state.leftX = axisToByte(GetGamepadAxisMovement(gamepad, GAMEPAD_AXIS_LEFT_X));
-                state.leftY = axisToByte(GetGamepadAxisMovement(gamepad, GAMEPAD_AXIS_LEFT_Y));
+                state.leftX = axisToByte(hostGamepadAxis(gamepad, GAMEPAD_AXIS_LEFT_X));
+                state.leftY = axisToByte(hostGamepadAxis(gamepad, GAMEPAD_AXIS_LEFT_Y));
                 const uint32_t invert = rightStickInvert();
-                const float rightX = GetGamepadAxisMovement(gamepad, GAMEPAD_AXIS_RIGHT_X);
-                const float rightY = GetGamepadAxisMovement(gamepad, GAMEPAD_AXIS_RIGHT_Y);
+                const float rightX = hostGamepadAxis(gamepad, GAMEPAD_AXIS_RIGHT_X);
+                const float rightY = hostGamepadAxis(gamepad, GAMEPAD_AXIS_RIGHT_Y);
                 state.rightX = axisToByte((invert & kInvertRightX) != 0u ? -rightX : rightX);
                 state.rightY = axisToByte((invert & kInvertRightY) != 0u ? -rightY : rightY);
             }
@@ -688,7 +730,7 @@ namespace ps2_host_input
     void releaseMouse()
     {
         if (g_mouseLocked)
-            EnableCursor();
+            hostEnableCursor();
         g_mouseLocked = false;
         g_ignoredMouseButton = -1;
         g_mouseMoved = false;

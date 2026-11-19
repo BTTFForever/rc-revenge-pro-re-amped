@@ -21,6 +21,7 @@
 #include "ps2_host_backend.h"
 #include "ps2_iop_host.h"
 #include "ps2_host_input.h"
+#include "ps2_host_platform.h"
 #include "ps2x/iop/iop_subsystem.h"
 
 #include <iostream>
@@ -69,8 +70,15 @@ namespace ps2_host_display
 
     void updateWindowAspect()
     {
-        const int width = GetScreenWidth();
-        const int height = GetScreenHeight();
+        int width = 0;
+        int height = 0;
+        if (const ps2_host_platform::Hooks *platform = ps2_host_platform::hooks())
+            platform->windowSize(&width, &height);
+        else
+        {
+            width = GetScreenWidth();
+            height = GetScreenHeight();
+        }
         if (width > 0 && height > 0)
             windowAspect.store(static_cast<float>(width) / static_cast<float>(height), std::memory_order_relaxed);
     }
@@ -529,14 +537,21 @@ namespace
     }
 }
 
-static void UploadFrame(Texture2D &tex, PS2Runtime *rt, uint32_t &outWidth, uint32_t &outHeight,
-                        bool hashImages, GSSharedPresent::Frame &diagnostic)
+// tex null (RC: a host platform presents, ps2_host_platform.h): no raylib texture; *pixels then points at the
+// latest picture (RGBA8, outWidth x outHeight) and *fresh says whether it was copied in this call.
+static void UploadFrame(Texture2D *tex, PS2Runtime *rt, uint32_t &outWidth, uint32_t &outHeight,
+                        bool hashImages, GSSharedPresent::Frame &diagnostic,
+                        const std::vector<uint8_t> **pixels = nullptr, bool *fresh = nullptr)
 {
     static uint64_t s_lastPresentationTick = std::numeric_limits<uint64_t>::max();
     static uint32_t s_lastWidth = 0u;
     static uint32_t s_lastHeight = 0u;
     static std::vector<uint8_t> s_scratch;
     static uint64_t s_lastHash = 0u;
+    if (pixels)
+        *pixels = &s_scratch;
+    if (fresh)
+        *fresh = false;
     diagnostic.contentHash = s_lastHash;
     diagnostic.hashValid = hashImages && s_lastWidth != 0u && s_lastHeight != 0u;
 
@@ -568,16 +583,19 @@ static void UploadFrame(Texture2D &tex, PS2Runtime *rt, uint32_t &outWidth, uint
         return;
     }
 
-    if (tex.id == 0 || static_cast<uint32_t>(tex.width) != width || static_cast<uint32_t>(tex.height) != height)
+    if (fresh)
+        *fresh = true;
+    if (tex && (tex->id == 0 || static_cast<uint32_t>(tex->width) != width || static_cast<uint32_t>(tex->height) != height))
     {
-        if (tex.id != 0)
-            UnloadTexture(tex);
+        if (tex->id != 0)
+            UnloadTexture(*tex);
         Image image = GenImageColor(static_cast<int>(width), static_cast<int>(height), BLACK);
-        tex = LoadTextureFromImage(image);
+        *tex = LoadTextureFromImage(image);
         UnloadImage(image);
-        SetTextureFilter(tex, TEXTURE_FILTER_BILINEAR);
+        SetTextureFilter(*tex, TEXTURE_FILTER_BILINEAR);
     }
-    UpdateTexture(tex, s_scratch.data());
+    if (tex)
+        UpdateTexture(*tex, s_scratch.data());
     if (hashImages)
     {
         const auto mix = [](uint32_t value)
@@ -877,13 +895,27 @@ bool PS2Runtime::initialize(const char *title)
 #if defined(PLATFORM_VITA)
         InitWindow(HOST_WINDOW_WIDTH, HOST_WINDOW_HEIGHT, title); // raylib vita does not support audio
 #else
-        SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_ALWAYS_RUN);
-        if (ps2_host_display::headless)
-            SetConfigFlags(FLAG_WINDOW_HIDDEN);
-        InitWindow(HOST_WINDOW_WIDTH, HOST_WINDOW_HEIGHT, title);
-        if (ps2_host_display::startMaximized && !ps2_host_display::headless)
-            MaximizeWindow();
-        SetExitKey(KEY_NULL);
+        // RC: with a host platform (ps2_host_platform.h) it makes the window and raylib opens none; raylib's audio
+        // device still plays without one (RENDERER_SURVEY.md).
+        const ps2_host_platform::Hooks *platform = ps2_host_platform::hooks();
+        if (platform)
+        {
+            if (!platform->open(title))
+            {
+                std::cerr << "Failed to open the host platform's window" << std::endl;
+                return false;
+            }
+        }
+        else
+        {
+            SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_ALWAYS_RUN);
+            if (ps2_host_display::headless)
+                SetConfigFlags(FLAG_WINDOW_HIDDEN);
+            InitWindow(HOST_WINDOW_WIDTH, HOST_WINDOW_HEIGHT, title);
+            if (ps2_host_display::startMaximized && !ps2_host_display::headless)
+                MaximizeWindow();
+            SetExitKey(KEY_NULL);
+        }
         if (ps2_host_display::headless)
         {
             m_audioBackend.setAudioReady(false);
@@ -893,7 +925,8 @@ bool PS2Runtime::initialize(const char *title)
             InitAudioDevice();
             m_audioBackend.setAudioReady(IsAudioDeviceReady());
         }
-        GSSharedPresent::CaptureHostContext();
+        if (!platform)
+            GSSharedPresent::CaptureHostContext();
 #endif
         const bool coreReady = syncCoreSubsystems();
         GSSharedPresent::RestoreHostContext();
@@ -903,7 +936,8 @@ bool PS2Runtime::initialize(const char *title)
             return false;
         }
         SetTargetFPS(60);
-        if (m_debugUiInitCallback)
+        // RC: the debug panel draws through raylib (rlImGui), so it is off with a host platform.
+        if (m_debugUiInitCallback && !ps2_host_platform::hooks())
         {
             m_debugUiInitCallback(*this, m_debugUiUserData);
             m_debugUiInitialized = true;
@@ -2575,6 +2609,93 @@ void PS2Runtime::HandleIntegerOverflow(R5900Context *ctx)
     raiseCop0Exception(ctx, EXCEPTION_INTEGER_OVERFLOW);
 }
 
+// RC (renderer plan P0 step 3): the host loop with a host platform (ps2_host_platform.h) in place of raylib's window.
+// The same steps as the raylib loop in run(): take the latest picture, present it, hold the loop to 60 per second
+// (raylib's SetTargetFPS(60) and EndDrawing's wait, timed with std::chrono since raylib's timer needs its window),
+// poll events, sample input, the F5/F9/F11 keys. The game itself is paced by the EeScheduler as before. Not here:
+// the debug panel, the performance overlay's drawing (F3), the save-state message and PS2X_FRAME_TIMES; screenshots
+// (PS2X_SCREENSHOT_DIR) are the GS picture at its own size rather than the window.
+static void runHostPlatformLoop(PS2Runtime &runtime, const ps2_host_platform::Hooks &platform,
+                                const std::atomic<bool> &gameThreadFinished, std::vector<uint64_t> &screenshotFields,
+                                bool hashImages)
+{
+    using Clock = std::chrono::steady_clock;
+    const auto frameTarget = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / 60.0));
+    auto previous = Clock::now();
+    auto lastPresent = previous;
+    uint64_t presentedSequence = 0u;
+    while (!runtime.isStopRequested() && !gameThreadFinished.load(std::memory_order_acquire))
+    {
+        if (platform.minimized())
+        {
+            if (!platform.pumpEvents())
+            {
+                runtime.requestStop();
+                break;
+            }
+            ps2_host_input::sample();
+            std::this_thread::sleep_for(std::chrono::duration<double>(1.0 / 120.0)); // raylib loop: WaitTime(1.0 / 120.0)
+            previous = lastPresent = Clock::now();
+            continue;
+        }
+        ps2_host_display::updateWindowAspect();
+        uint32_t width = 0u;
+        uint32_t height = 0u;
+        GSSharedPresent::Frame frame;
+        const std::vector<uint8_t> *pixels = nullptr;
+        bool fresh = false;
+        UploadFrame(nullptr, &runtime, width, height, hashImages, frame, &pixels, &fresh);
+        const bool havePicture = pixels && width != 0u && height != 0u && pixels->size() >= static_cast<size_t>(width) * height * 4u;
+        platform.present(havePicture && fresh ? pixels->data() : nullptr, havePicture ? width : 0u, havePicture ? height : 0u,
+                         ps2_host_display::aspect());
+        if (!screenshotFields.empty() && runtime.eeScheduler().currentVSyncTick() >= screenshotFields.back())
+        {
+            const char *directory = std::getenv("PS2X_SCREENSHOT_DIR");
+            if (directory && havePicture)
+            {
+                const auto path = std::filesystem::path(directory) / ("field-" + std::to_string(runtime.eeScheduler().currentVSyncTick()) + ".png");
+                Image image{const_cast<uint8_t *>(pixels->data()), static_cast<int>(width), static_cast<int>(height), 1,
+                            PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
+                ExportImage(image, path.string().c_str());
+            }
+            screenshotFields.pop_back();
+        }
+        {
+            const auto presented = Clock::now();
+            presentedSequence = std::max(presentedSequence, frame.sequence);
+            ps2x::perfoverlay::recordPresent(std::chrono::duration<double>(presented - lastPresent).count(),
+                                             runtime.eeScheduler().currentVSyncTick(), false, presentedSequence);
+            lastPresent = presented;
+        }
+        // EndDrawing's frame time control: wait out the rest of 1/60 s since the last frame ended.
+        auto now = Clock::now();
+        if (now - previous < frameTarget)
+        {
+            std::this_thread::sleep_for(frameTarget - (now - previous));
+            now = Clock::now();
+        }
+        ps2_host_platform::g_frameSeconds.store(std::chrono::duration<float>(now - previous).count(), std::memory_order_relaxed);
+        previous = now;
+        const bool open = platform.pumpEvents();
+        if (platform.keyPressed(KEY_F11))
+        {
+            ps2_host_input::releaseMouse();
+            platform.toggleFullscreen();
+        }
+        ps2_host_input::sample();
+        if (platform.keyPressed(KEY_F5))
+            ps2x::savestate::requestQuickSave();
+        if (platform.keyPressed(KEY_F9))
+            ps2x::savestate::requestQuickLoad();
+        if (!open)
+        {
+            RUNTIME_LOG("[run] window close requested, breaking out of loop");
+            runtime.requestStop();
+            break;
+        }
+    }
+}
+
 void PS2Runtime::run()
 {
     m_stopRequested.store(false, std::memory_order_relaxed);
@@ -2658,7 +2779,10 @@ void PS2Runtime::run()
     uint32_t lastHashWidth = 0u;
     uint32_t lastHashHeight = 0u;
     bool hadHash = false;
-    while (!isStopRequested() && !gameThreadFinished.load(std::memory_order_acquire))
+    const ps2_host_platform::Hooks *platform = ps2_host_platform::hooks();
+    if (platform)
+        runHostPlatformLoop(*this, *platform, gameThreadFinished, screenshotFields, hashImages);
+    while (!platform && !isStopRequested() && !gameThreadFinished.load(std::memory_order_acquire))
     {
         if (IsWindowMinimized())
         {
@@ -2710,7 +2834,7 @@ void PS2Runtime::run()
         uint32_t presentWidth = 0u;
         uint32_t presentHeight = 0u;
         GSSharedPresent::Frame sharedFrame;
-        UploadFrame(frameTex, this, presentWidth, presentHeight, hashImages, sharedFrame);
+        UploadFrame(&frameTex, this, presentWidth, presentHeight, hashImages, sharedFrame);
         Texture2D displayTex = frameTex;
         const bool shared = GSSharedPresent::Active();
         if (shared)
@@ -2856,7 +2980,10 @@ void PS2Runtime::run()
         UnloadTexture(frameTex);
     GSSharedPresent::ShutdownHost();
     ps2_host_input::releaseMouse();
-    CloseWindow();
+    if (platform)
+        platform->close();
+    else
+        CloseWindow();
 
     RUNTIME_LOG("[run] exiting loop");
 }

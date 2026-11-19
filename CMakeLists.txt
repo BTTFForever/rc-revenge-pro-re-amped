@@ -125,6 +125,31 @@ target_sources(rc_revenge_pro PRIVATE third_party/port_engine/rc_backend.cpp)
 set_source_files_properties(third_party/port_engine/rc_backend.cpp PROPERTIES SKIP_UNITY_BUILD_INCLUSION TRUE COMPILE_OPTIONS "-w")
 target_link_libraries(rc_revenge_pro PRIVATE rc_port_engine)
 
+# RC_RENDERER=vk (renderer plan P0 step 3, NOTES.md "RC_RENDERER=vk"): an SDL3 window and input and the vendored RHI
+# (third_party/ico_rhi, Vulkan) presenting, in place of the runtime's raylib window. platform/vk_host.cpp installs
+# the runtime's host platform hooks only when RC_RENDERER=vk, so the default run is unchanged. The game only: the
+# oracle neither links it nor installs hooks. The RHI uses port_engine's Vulkan-Headers and volk (one volk).
+include(FetchContent)
+FetchContent_GetProperties(vulkan_headers)
+FetchContent_GetProperties(volk)
+set(RC_VULKAN_INCLUDE_DIR "${vulkan_headers_SOURCE_DIR}/include")
+set(RC_VOLK_DIR "${volk_SOURCE_DIR}")
+set(RC_VOLK_TARGET volk::volk)
+add_subdirectory(third_party/ico_rhi EXCLUDE_FROM_ALL)
+set(RC_PLATFORM_SHADER_HEADERS "")
+foreach(stage vert frag)
+    set(_src "${CMAKE_CURRENT_SOURCE_DIR}/platform/present.${stage}")
+    set(_out "${CMAKE_CURRENT_BINARY_DIR}/generated/present_${stage}.h")
+    add_custom_command(OUTPUT "${_out}"
+        COMMAND ${RC_GLSLANG} -V --target-env vulkan1.0 --vn spv_present_${stage} -o "${_out}" "${_src}"
+        DEPENDS "${_src}" COMMENT "glslangValidator present.${stage}" VERBATIM)
+    list(APPEND RC_PLATFORM_SHADER_HEADERS "${_out}")
+endforeach()
+target_sources(rc_revenge_pro PRIVATE platform/vk_host.cpp ${RC_PLATFORM_SHADER_HEADERS})
+set_source_files_properties(platform/vk_host.cpp PROPERTIES SKIP_UNITY_BUILD_INCLUSION TRUE
+    INCLUDE_DIRECTORIES "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_link_libraries(rc_revenge_pro PRIVATE rc_ico_rhi)
+
 # Profile-guided build. RC_PGO=generate builds an instrumented executable; running it (a scripted game run, for
 # example tools/play.sh replay) writes a profile, and RC_PGO=use rebuilds with it in the same build folder.
 # Only the runtime and VU1 code are instrumented: they hold the hot paths, and the game code

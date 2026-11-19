@@ -471,12 +471,42 @@ namespace
         ps2x::gssurvey::frameBoundary(frameNumber, scene, counters, static_cast<int>(std::size(counters)));
     }
 
+    // RC_SCENE_LOG=<file>: one line each time the scene (the survey's mode, level and split screen, from mainVarG)
+    // changes: game frame, input clock (epoch:frame), vsync field, seconds since the first frame, scene. Two replays
+    // of one recording that took the same path give the same lines but for the timing columns (renderer plan P0 step 3
+    // compares the raylib and RC_RENDERER=vk runs with it).
+    void sceneLogFrame(const uint8_t *rdram, PS2Runtime *runtime, uint64_t gameFrame)
+    {
+        static std::FILE *const file = []() -> std::FILE *
+        {
+            const char *path = std::getenv("RC_SCENE_LOG");
+            return path && *path ? std::fopen(path, "w") : nullptr;
+        }();
+        if (!file)
+            return;
+        static uint32_t last = 0xffffffffu;
+        static const auto start = std::chrono::steady_clock::now();
+        uint32_t mode;
+        std::memcpy(&mode, rdram + ((sym::mainVarG + 8u) & PS2_RAM_MASK), 4u);
+        const uint32_t scene = (mode & 0xfu) << 12 | static_cast<uint32_t>(rdram[(sym::mainVarG + 0x34au) & PS2_RAM_MASK]) << 4 |
+                               (rdram[(sym::mainVarG + 0x368u) & PS2_RAM_MASK] ? 2u : 0u);
+        if (scene == last)
+            return;
+        last = scene;
+        const uint64_t clock = g_inputClock.load(std::memory_order_relaxed);
+        std::fprintf(file, "frame %llu clock %llu:%llu field %llu t %.2f scene %04x\n", static_cast<unsigned long long>(gameFrame),
+                     static_cast<unsigned long long>(clock >> 32), static_cast<unsigned long long>(clock & 0xffffffffull),
+                     static_cast<unsigned long long>(runtime->eeScheduler().currentVSyncTick()),
+                     std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(), scene);
+        std::fflush(file);
+    }
+
     // Counts real game frames for RC_DEBUG_DUMP.
     void countGameFrame(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         if (ps2x::gssurvey::enabled())
             gsSurveyFrame(rdram);
-        g_gameFrames.fetch_add(1u, std::memory_order_relaxed);
+        sceneLogFrame(rdram, runtime, g_gameFrames.fetch_add(1u, std::memory_order_relaxed) + 1u);
         static const char *dumpPath = std::getenv("RC_RAMDUMP");
         static const uint64_t dumpFrame = std::getenv("RC_RAMDUMP_FRAME") ? std::strtoull(std::getenv("RC_RAMDUMP_FRAME"), nullptr, 10) : 600u;
         if (dumpPath && g_levelFrames.fetch_add(1u, std::memory_order_relaxed) + 1u >= dumpFrame)

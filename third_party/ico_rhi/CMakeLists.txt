@@ -9,7 +9,9 @@
 # Dependencies:
 #   Vulkan-Headers and volk: FetchContent at the same pins as third_party/port_engine (the backend loads
 #     libvulkan at run time through volk, so nothing links a Vulkan library). Targets or variables already made
-#     by the including project are used as they are: RC_VULKAN_INCLUDE_DIR, RC_VOLK_DIR.
+#     by the including project are used as they are: RC_VULKAN_INCLUDE_DIR, RC_VOLK_DIR; RC_VOLK_TARGET names a volk
+#     library target the including project already builds (the game: third_party/port_engine's volk::volk), so
+#     the program has one volk and volk.c is not compiled here.
 #   SDL3: the window surface (SDL_Vulkan_CreateSurface), window size, mutexes. A system SDL3 (find_package)
 #     when there is one, else FetchContent at RC_SDL3_TAG. RC_RHI_FETCH_SDL3=ON skips the system search.
 cmake_minimum_required(VERSION 3.21)
@@ -60,7 +62,12 @@ set(_rc_rhi_vk_sources
     rhi_adapter.c rhi_bind_cache.c rhi_driver_version.c
     vk/vk_cmd.c vk/vk_device.c vk/vk_memory.c vk/vk_native.c vk/vk_pipeline.c vk/vk_present_mode.c
     vk/vk_renderpass.c vk/vk_resource.c vk/vk_swapchain.c vk/vk_sync.c)
-add_library(rc_ico_rhi_vulkan STATIC ${_rc_rhi_vk_sources} "${RC_VOLK_DIR}/volk.c")
+if(RC_VOLK_TARGET)
+    add_library(rc_ico_rhi_vulkan STATIC ${_rc_rhi_vk_sources})
+    target_link_libraries(rc_ico_rhi_vulkan PRIVATE ${RC_VOLK_TARGET})
+else()
+    add_library(rc_ico_rhi_vulkan STATIC ${_rc_rhi_vk_sources} "${RC_VOLK_DIR}/volk.c")
+endif()
 target_include_directories(rc_ico_rhi_vulkan
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}"
     PRIVATE "${RC_VOLK_DIR}" "${RC_VULKAN_INCLUDE_DIR}")

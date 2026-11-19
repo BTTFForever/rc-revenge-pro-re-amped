@@ -35,7 +35,9 @@ under ico-pc's `tools/toolchain/deps`).
 - **Dependencies, found differently from upstream:**
   - Vulkan-Headers `v1.4.363` and volk `vulkan-sdk-1.4.363.0`: FetchContent (sources only; `volk.c` is compiled into
     the backend as upstream does), the same pins as `third_party/port_engine`. An including project can pass
-    `RC_VULKAN_INCLUDE_DIR` / `RC_VOLK_DIR` instead.
+    `RC_VULKAN_INCLUDE_DIR` / `RC_VOLK_DIR` instead, and `RC_VOLK_TARGET` to link a volk library it already builds
+    instead of compiling `volk.c` (the game passes port_engine's `volk::volk`, so the program has one volk; added
+    2026-11-19 for `RC_RENDERER=vk`).
   - SDL3: the system's (`find_package(SDL3 CONFIG)`, e.g. pacman `sdl3`), else FetchContent of `RC_SDL3_TAG`
     (default `release-3.4.20`); `RC_RHI_FETCH_SDL3=ON` forces the source build.
   - The backend loads `libvulkan` at run time through volk; nothing links a Vulkan library.

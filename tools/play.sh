@@ -30,6 +30,19 @@ fi
 if nvidia-smi -L >/dev/null 2>&1; then
     export __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only __GLX_VENDOR_LIBRARY_NAME=nvidia
 fi
+# RC_RENDERER=vk (NOTES.md): SDL3 window and input, Vulkan presentation through the RHI. RC_VK_VALIDATION=1 adds the
+# Khronos validation layer with synchronisation validation (its messages go to session.log as "rhi_vk validation
+# error/warning"); with no layer installed, RC_VVL_LIB=<libVkLayer_khronos_validation.so> names one, as for
+# tools/rhi_triangle/run.sh.
+if [ "${RC_VK_VALIDATION:-0}" = 1 ]; then
+    export ICO_VK_VALIDATION=1 VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true
+    if [ -n "${RC_VVL_LIB:-}" ]; then
+        mkdir -p "$RC_GAME_BUILD/vvl"
+        lib="$(cd "$(dirname "$RC_VVL_LIB")" && pwd)/$(basename "$RC_VVL_LIB")"
+        printf '{"file_format_version": "1.2.0", "layer": {"name": "VK_LAYER_KHRONOS_validation", "type": "GLOBAL", "library_path": "%s", "api_version": "1.4.300", "implementation_version": "1", "description": "Khronos validation layer (manifest written by tools/play.sh)"}}\n' "$lib" > "$RC_GAME_BUILD/vvl/VkLayer_khronos_validation.json"
+        export VK_ADD_LAYER_PATH="$RC_GAME_BUILD/vvl${VK_ADD_LAYER_PATH:+:$VK_ADD_LAYER_PATH}"
+    fi
+fi
 cd "$root"
 exec env PS2X_DEBUG_PANEL=0 PS2X_GS_GPU=1 PS2X_GS_HW=1 PS2X_GS_HW_SCALE="${PS2X_GS_HW_SCALE:-2}" PS2X_GS_THREAD=1 PS2X_MTVU="${PS2X_MTVU:-1}" PS2X_VU1_TIMING=0 \
     PS2X_EE_HOST_PACING=1 PS2X_GS_SHADER_PRELOAD="${PS2X_GS_SHADER_PRELOAD:-0}" PS2X_GS_SHADER_CACHE=1 PS2X_GS_SHADER_CACHE_DIR="$RC_GAME_BUILD/shader-cache" \
