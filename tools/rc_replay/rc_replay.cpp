@@ -1,15 +1,25 @@
 // rc_replay: feeds a frame record dump (.rcfr, RENDERER_FRAME_RECORD.md) to consumers.
 //
-//   rc_replay <dump> [--consumer stats] [--cycles a-b] [--verify] [--quiet]
+//   rc_replay <dump> [--consumer stats|emu] [--cycles a-b] [--verify] [--quiet]
+//             [--png <dir>] [--picture-before <cycle>:<kick> <out.png>] [--path1 <cycle>:<kick> <out.bin>] [--kick-hashes]
+//             [--fault page|kick|hw:<cycle>[:<n>]]
 //
 // stats: per cycle and in total, kicks by channel and mode, stream bytes, DMA tags by id, pages and bytes by record
 // type, odd events. With --verify: the host's chain walker (render/record/chain_walk) over the rebuilt RAM image
 // reproduces every kick's stream hash, length and tag count, reads no page the image lacks, every resolved tag span
 // lies on a DMA tag or a quadword of its range, and the dump holds no ODD event (but GfxP2_Init's two start-up VIF1
 // FIFO stores, which are counted apart). Exit 0 pass, 1 a check failed,
-// 2 unusable dump. The emu consumer (bit-exact replay through the runtime's VIF1, VU1 and software GS) comes with
-// batch 2. One build replays both versions' dumps.
+// 2 unusable dump.
+//
+// emu (emu.cpp): a headless runtime replays every recorded store and kick through its own VIF1, VU1 and software GS.
+// With --verify on an exact-mode dump every kick's GIF output, every GS register file before a kick, every reference
+// picture and GS memory at every later keyframe and the final one must come out bit for bit. --png writes the replayed
+// pictures (and on a mismatch the reference and a difference image); --picture-before writes the frame buffer just
+// before a kick; --path1 the GIF bytes a kick produced; --kick-hashes prints a GS memory hash after every kick;
+// --fault plants one fault (a flipped page byte, a dropped kick, a wrong store) to show the checks catch it.
+// One build replays both versions' dumps.
 #include "chain_walk.h"
+#include "emu.h"
 #include "consumer.h"
 #include "reader.h"
 
@@ -20,6 +30,18 @@
 #include <cstring>
 #include <string>
 #include <vector>
+
+#include "ps2_runtime.h"
+
+#if RC_HAVE_VU1_CODE
+void registerGeneratedVu1Programs();
+#endif
+
+// No recompiled game code is linked: the runtime's function table is empty (the emu machine runs no guest code).
+extern const uint32_t g_ps2RecompiledFunctionTableBase = 0u;
+extern const uint32_t g_ps2RecompiledFunctionTableEnd = 0u;
+extern const uint32_t g_ps2RecompiledFunctionTableSlotCount = 0u;
+PS2Runtime::RecompiledFunction g_ps2RecompiledFunctionTable[1] = {};
 
 using namespace rc::rec;
 
@@ -219,7 +241,62 @@ namespace
 
     void usage()
     {
-        std::fprintf(stderr, "usage: rc_replay <dump.rcfr> [--consumer stats] [--cycles a-b] [--verify] [--quiet]\n");
+        std::fprintf(stderr, "usage: rc_replay <dump.rcfr> [--consumer stats|emu] [--cycles a-b] [--verify] [--quiet] [--png <dir>]\n"
+                             "                 [--picture-before <cycle>:<kick> <out.png>] [--path1 <cycle>:<kick> <out.bin>] [--kick-hashes]\n"
+                             "                 [--fault page|kick|hw:<cycle>[:<n>]]\n");
+    }
+}
+
+namespace
+{
+    int runEmu(Reader &reader, const std::string &path, rc::replay::EmuOptions options, bool verify, bool quiet, uint64_t first, uint64_t last)
+    {
+        options.verify = verify;
+        options.quiet = quiet;
+        options.pngFirst = first;
+        // The machine the oracle builds (no window, no ELF, no game code): memory and the GS/VIF/VU1 plumbing, forced
+        // to the synchronous software GS.
+        rc::replay::prepareEmuEnvironment();
+        static PS2Runtime runtime;
+        if (!runtime.memory().initialize() || !runtime.syncCoreSubsystems())
+        {
+            std::fprintf(stderr, "rc_replay: could not set up the runtime\n");
+            return 2;
+        }
+#if RC_HAVE_VU1_CODE
+        registerGeneratedVu1Programs();
+#endif
+        rc::replay::Emu emu(runtime, options);
+        const FileHeader &h = reader.header();
+        std::printf("dump %s\n  %s, %ux%u, recorded with %.16s, build %.40s, %s%s\n", path.c_str(), h.gameVersion ? "Europe" : "USA", h.width,
+                    h.height, h.gsBackend, h.build, (h.flags & kFileExact) ? "exact" : "plain", (h.flags & kFileComplete) ? "" : ", not closed");
+        // The emulated machine needs every kick since the segment's keyframe: replay from there, write pictures only
+        // for the cycles asked for.
+        uint64_t from = 0;
+        for (const IndexSegment &seg : reader.segments())
+            if (seg.firstCycle <= first)
+                from = seg.firstCycle;
+        const bool ok = reader.run({&emu}, from, last);
+        if (emu.fatal())
+        {
+            std::printf("unusable for emu: %s\n", emu.fatalError().c_str());
+            return 2;
+        }
+        emu.summary();
+        if (!reader.complete())
+            std::printf("note: the dump was not closed (%s); read up to its last whole chunk\n",
+                        reader.truncated() ? "a partial chunk at the end" : "no index");
+        if (!ok)
+        {
+            std::printf("read error: %s\n", reader.error().c_str());
+            return 2;
+        }
+        if (verify && (h.flags & kFileExact))
+        {
+            std::printf("%s\n", emu.failed() ? "FAIL" : "PASS");
+            return emu.failed() ? 1 : 0;
+        }
+        return 0;
     }
 }
 
@@ -228,11 +305,46 @@ int main(int argc, char **argv)
     std::string path, consumer = "stats";
     bool verify = false, quiet = false;
     uint64_t first = 0, last = ~0ull;
+    rc::replay::EmuOptions emuOptions;
+    auto cycleKick = [](const char *text, int64_t &cycle, uint32_t &kick)
+    {
+        const char *colon = std::strchr(text, ':');
+        cycle = std::strtoll(text, nullptr, 10);
+        kick = colon ? static_cast<uint32_t>(std::strtoul(colon + 1, nullptr, 10)) : 0u;
+    };
     for (int i = 1; i < argc; ++i)
     {
         const std::string a = argv[i];
         if (a == "--consumer" && i + 1 < argc)
             consumer = argv[++i];
+        else if (a == "--png" && i + 1 < argc)
+            emuOptions.pngDir = argv[++i];
+        else if (a == "--picture-before" && i + 2 < argc)
+        {
+            cycleKick(argv[++i], emuOptions.beforeCycle, emuOptions.beforeKick);
+            emuOptions.beforeOut = argv[++i];
+        }
+        else if (a == "--path1" && i + 2 < argc)
+        {
+            cycleKick(argv[++i], emuOptions.path1Cycle, emuOptions.path1Kick);
+            emuOptions.path1Out = argv[++i];
+        }
+        else if (a == "--kick-hashes")
+            emuOptions.kickHashes = true;
+        else if (a == "--fault" && i + 1 < argc)
+        {
+            const std::string f = argv[++i];
+            const size_t c1 = f.find(':');
+            emuOptions.faultKind = f.substr(0, c1);
+            if (c1 != std::string::npos)
+            {
+                int64_t cycle;
+                uint32_t n;
+                cycleKick(f.c_str() + c1 + 1, cycle, n);
+                emuOptions.faultCycle = cycle;
+                emuOptions.faultN = n;
+            }
+        }
         else if (a == "--verify")
             verify = true;
         else if (a == "--quiet")
@@ -257,9 +369,9 @@ int main(int argc, char **argv)
         usage();
         return 2;
     }
-    if (consumer != "stats")
+    if (consumer != "stats" && consumer != "emu")
     {
-        std::fprintf(stderr, "consumer '%s' is not built yet (only stats; emu comes with batch 2)\n", consumer.c_str());
+        std::fprintf(stderr, "consumer '%s' is not built yet (stats, emu)\n", consumer.c_str());
         return 2;
     }
     Reader reader;
@@ -268,6 +380,8 @@ int main(int argc, char **argv)
         std::fprintf(stderr, "%s: %s\n", path.c_str(), reader.error().c_str());
         return 2;
     }
+    if (consumer == "emu")
+        return runEmu(reader, path, emuOptions, verify, quiet, first, last);
     Stats stats(verify, quiet);
     const bool ok = reader.run({&stats}, first, last);
     stats.summary(reader);

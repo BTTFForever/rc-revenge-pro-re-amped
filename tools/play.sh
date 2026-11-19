@@ -2,8 +2,9 @@
 # Plays the decomp build from a clean memory card, optionally recording or replaying the controller.
 #   tools/play.sh                 plays (no recording)
 #   tools/play.sh record <name>   writes decomp/recordings/<name>.pad
-#   tools/play.sh replay <name>   plays it back
+#   tools/play.sh replay <name>   plays it back (<name> with a / in it: that .pad file)
 # The game's output goes to <build folder>/play/session.log.
+# PS2X_GS_GPU, PS2X_GS_HW, PS2X_GS_THREAD, PS2X_MTVU, RC_TRACK_SHADER and RC_VU1_REF can be overridden (tools/frame_record.sh does).
 # RC_VERSION=eu plays the Europe version (build-eu); the default is usa (build-decomp). See tools/version.sh.
 # Any real run of a VU1 program not yet compared in the game is checked as it happens; see <build folder>/play/session.log.
 set -u
@@ -12,6 +13,7 @@ source "$root/tools/version.sh"
 mode="${1:-play}"
 [ "$mode" = play ] || name="${2:?recording name}"
 pad="$root/decomp/recordings/${name:-}.pad"
+case "${name:-}" in */*) pad="$name" ;; esac # a path to a .pad file outside decomp/recordings
 sandbox="$RC_GAME_BUILD/play"
 rc_make_sandbox "$sandbox"
 [ -x "${PLAY_BINARY:-$RC_GAME_BUILD/rc_revenge_pro}" ] || { echo "no game build at $RC_GAME_BUILD: run tools/setup.sh first" >&2; exit 1; }
@@ -44,7 +46,7 @@ if [ "${RC_VK_VALIDATION:-0}" = 1 ]; then
     fi
 fi
 cd "$root"
-exec env PS2X_DEBUG_PANEL=0 PS2X_GS_GPU=1 PS2X_GS_HW=1 PS2X_GS_HW_SCALE="${PS2X_GS_HW_SCALE:-2}" PS2X_GS_THREAD=1 PS2X_MTVU="${PS2X_MTVU:-1}" PS2X_VU1_TIMING=0 \
+exec env PS2X_DEBUG_PANEL=0 PS2X_GS_GPU="${PS2X_GS_GPU:-1}" PS2X_GS_HW="${PS2X_GS_HW:-1}" PS2X_GS_HW_SCALE="${PS2X_GS_HW_SCALE:-2}" PS2X_GS_THREAD="${PS2X_GS_THREAD:-1}" PS2X_MTVU="${PS2X_MTVU:-1}" PS2X_VU1_TIMING=0 \
     PS2X_EE_HOST_PACING=1 PS2X_GS_SHADER_PRELOAD="${PS2X_GS_SHADER_PRELOAD:-0}" PS2X_GS_SHADER_CACHE=1 PS2X_GS_SHADER_CACHE_DIR="$RC_GAME_BUILD/shader-cache" \
     PS2X_BIND_CIRCLE=E PS2X_BIND_SQUARE=R RC_TRACK_SHADER="${RC_TRACK_SHADER:-1}" RC_VU1_REF="${RC_VU1_REF:-2}" "$input" \
     "${PLAY_BINARY:-$RC_GAME_BUILD/rc_revenge_pro}" "$sandbox/disc/$RC_ELF" > "$sandbox/session.log" 2>&1

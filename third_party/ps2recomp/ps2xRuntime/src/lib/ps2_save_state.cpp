@@ -5,6 +5,7 @@
 #include "ps2x/iop/iop_subsystem.h"
 #include "runtime/ee_scheduler.h"
 #include "runtime/gs/gs_backend_state.h"
+#include "runtime/gs/gs_cpu_backend.h"
 #include "runtime/ps2_async_vif.h"
 #include "Kernel/Stubs/CD.h"
 #include "Kernel/Stubs/SIF.h"
@@ -221,6 +222,60 @@ struct GSStateAccess
         return !vram.empty();
     }
 
+    static bool bareCpuBackend(GS &gs)
+    {
+        std::lock_guard<std::mutex> lifetime(gs.m_backendLifetimeMutex);
+        return gs.m_backend && dynamic_cast<GSCpuBackend *>(gs.m_backend.get()) != nullptr;
+    }
+
+    // RC frame record (batch 2): the front end and backend state of ps2x::savestate::saveGraphics, GS memory apart.
+    // As serialize below, plus the GIF tag in progress (m_gifProgress, a local change serialize does not know), and the
+    // locks in the presentation latch's order (lifetime, then state; see captureSnapshot).
+    template <typename Ar>
+    static void serializeGraphics(GS &gs, Ar &ar, const uint8_t *vram, size_t vramBytes)
+    {
+        using namespace ps2x::state;
+        std::lock_guard<std::mutex> lifetime(gs.m_backendLifetimeMutex);
+        std::lock_guard<std::recursive_mutex> lock(gs.m_stateMutex);
+        ar.section(fourcc("GGFE"));
+        fields(ar, gs.m_ctx, gs.m_prim, gs.m_primRegister, gs.m_prmodeRegister, gs.m_curR, gs.m_curG, gs.m_curB, gs.m_curA, gs.m_curQ,
+               gs.m_curS, gs.m_curT, gs.m_curU, gs.m_curV, gs.m_curFog, gs.m_fogR, gs.m_fogG, gs.m_fogB, gs.m_prmodecont, gs.m_pabe,
+               gs.m_scanmsk, gs.m_dimx, gs.m_dthe, gs.m_colclamp, gs.m_texa, gs.m_texclut, gs.m_bitbltbuf, gs.m_trxpos, gs.m_trxreg,
+               gs.m_trxdir, gs.m_vtxQueue, gs.m_vtxCount, gs.m_vtxIndex, gs.m_lastDisplayBaseBytes, gs.m_preferredDisplaySourceFrame,
+               gs.m_preferredDisplayDestFbp, gs.m_hasPreferredDisplaySource, gs.m_gifProgress);
+        ar.section(fourcc("GGBE"));
+        GSBackendState backendState;
+        auto *access = dynamic_cast<GSBackendStateAccess *>(gs.m_backend.get());
+        if constexpr (!Ar::kLoading)
+        {
+            if (gs.m_backend)
+            {
+                gs.m_backend->Flush();
+                if (access)
+                    access->ExportState(backendState);
+            }
+        }
+        fields(ar, backendState.clut, backendState.clutCbp, backendState.cachePageBase, backendState.cacheBytes, backendState.transfer,
+               backendState.transferState, backendState.localToHost, backendState.localToHostReadPos);
+        if constexpr (Ar::kLoading)
+        {
+            if (!gs.m_localMemoryStorage || !vram || vramBytes != gs.m_localMemorySize)
+                throw Error("GS memory size does not match");
+            std::memcpy(gs.m_localMemoryStorage, vram, vramBytes);
+            if (gs.m_backend)
+            {
+                gs.m_backend->Initialize(gs.m_localMemoryStorage, gs.m_localMemorySize);
+                if (access)
+                    access->ImportState(backendState);
+            }
+        }
+        else
+        {
+            (void)vram;
+            (void)vramBytes;
+        }
+    }
+
     template <typename Ar>
     static void serialize(GS &gs, Ar &ar)
     {
@@ -273,6 +328,63 @@ bool ps2x::capture::snapshotGs(PS2Runtime &runtime, std::vector<uint8_t> &vram, 
 {
     ps2x::asyncvif::sync(runtime.memory());
     return GSStateAccess::captureSnapshot(runtime.gs(), vram, regs);
+}
+
+bool ps2x::capture::exactCapable(PS2Runtime &runtime)
+{
+    return !ps2x::asyncvif::active(runtime.memory()) && GSStateAccess::bareCpuBackend(runtime.gs());
+}
+
+namespace
+{
+    // RC frame record (batch 2): ps2x::savestate::saveGraphics / loadGraphics. Version 1.
+    template <typename Ar>
+    void serializeGraphicsState(PS2Runtime &rt, Ar &ar, const uint8_t *vram, size_t vramBytes)
+    {
+        using namespace ps2x::state;
+        PS2Memory &mem = rt.memory();
+        ar.section(fourcc("GGPR"));
+        ar.raw(&mem.gs_regs, sizeof(GSRegisters));
+        ar.raw(ps2x::capture::g_gsRawRegs, sizeof(ps2x::capture::g_gsRawRegs));
+        GSStateAccess::serializeGraphics(rt.gs(), ar, vram, vramBytes);
+        ar.section(fourcc("GGVU"));
+        ar.raw(mem.getVU1Code(), PS2_VU1_CODE_SIZE);
+        ar.raw(mem.getVU1Data(), PS2_VU1_DATA_SIZE);
+        if constexpr (Ar::kLoading)
+        {
+            loadVuState(rt.vu1(), ar);
+            mem.markVU1CodeModified();
+        }
+        else
+            saveVuState(rt.vu1(), ar);
+        ar.section(fourcc("GGIF"));
+        fields(ar, mem.vif1_regs, mem.dma_regs, mem.m_ioRegisters, mem.m_path3Masked, mem.m_vif1PendingPath2ImageQwc,
+               mem.m_vif1PendingPath2DirectHl, mem.m_path3MaskedFifo, mem.m_pendingGifTransfers, mem.m_pendingVif1Transfers,
+               mem.m_gifStatWritten, mem.m_seenGifCopy);
+        ar.section(fourcc("GEND"));
+    }
+}
+
+uint32_t ps2x::savestate::graphicsStateVersion()
+{
+    return 1u;
+}
+
+void ps2x::savestate::saveGraphics(PS2Runtime &runtime, std::vector<uint8_t> &out)
+{
+    ps2x::asyncvif::sync(runtime.memory());
+    ps2x::state::Writer writer;
+    serializeGraphicsState(runtime, writer, nullptr, 0u);
+    out = std::move(writer.data());
+}
+
+void ps2x::savestate::loadGraphics(PS2Runtime &runtime, const uint8_t *blob, size_t blobBytes, const uint8_t *vram, size_t vramBytes)
+{
+    ps2x::asyncvif::sync(runtime.memory());
+    ps2x::state::Reader reader(blob, blobBytes);
+    serializeGraphicsState(runtime, reader, vram, vramBytes);
+    if (reader.remaining() != 0u)
+        throw ps2x::state::Error("graphics state has trailing bytes");
 }
 
 struct PS2VfsStateAccess

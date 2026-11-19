@@ -12,6 +12,7 @@
 //
 // This header is deliberately not included by ps2_runtime.h, so changing it rebuilds only the runtime files that use it.
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -79,4 +80,24 @@ namespace ps2x::capture
     // internals): waits for the VU1/GIF threads and the backend, then copies GS local memory (4 MB, as the backend
     // stores it) and the register file above. False when the GS has no memory yet.
     bool snapshotGs(PS2Runtime &runtime, std::vector<uint8_t> &vram, uint64_t regs[kGsRegCount]);
+
+    // (Batch 2, exact mode) True when the GS backend is the bare software rasteriser (GSCpuBackend, no GS thread, no
+    // GPU backend) and VU1/GIF run on the calling thread (ps2x::asyncvif inactive): then GS memory is final at every
+    // hook and the picture can be read from runtime.memory().getGSVRAM(). Defined in ps2_save_state.cpp.
+    bool exactCapable(PS2Runtime &runtime);
+}
+
+namespace ps2x::savestate
+{
+    // (RC frame record batch 2) The graphics machine's whole state but GS memory, as an opaque blob: the GS front end
+    // (contexts, vertex queue, a GIF tag in progress, transfer state), the backend's state (CLUT, texture cache page,
+    // transfer), the privileged registers, the register shadow (ps2x::capture::g_gsRawRegs), VU1 memory and
+    // registers, VIF1 and DMA registers, the PATH3 mask and its FIFO, pending transfers and the I/O register map. Cut
+    // from EeScheduler::serializeMachine. The layout is versioned by graphicsStateVersion(); a blob of another version
+    // must not be loaded. Waits for the VU1/GIF threads first. Defined in ps2_save_state.cpp.
+    uint32_t graphicsStateVersion();
+    void saveGraphics(PS2Runtime &runtime, std::vector<uint8_t> &out);
+    // Loads a blob made by saveGraphics plus GS memory (vramBytes must be the GS's 4 MB). Throws ps2x::state::Error
+    // (a std::runtime_error) on a malformed blob.
+    void loadGraphics(PS2Runtime &runtime, const uint8_t *blob, size_t blobBytes, const uint8_t *vram, size_t vramBytes);
 }

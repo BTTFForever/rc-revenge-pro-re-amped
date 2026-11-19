@@ -14,9 +14,15 @@
 //                                   level has started)
 //       scene:<hex>[+count]         the first cycle with that GS-survey scene id
 //   RC_FRAME_RECORD_KEY=<n>         cycles per segment (a keyframe every n cycles; default 300)
+//   RC_FRAME_RECORD_REF=<n>|hash|off  exact mode: a stored reference picture every n-th cycle (default 1), only its
+//                                   hash, or neither
+//   RC_FRAME_RECORD_STRICT=1        stop the run when exact mode is not possible
 //
-// Batch 1 records in plain mode only (no reference pictures, register files or GIF hashes; batch 2) and has no
-// ring, key or state-load handling (batch 4).
+// Exact mode (batch 2; tools/frame_record.sh) is on when the GS is the bare software rasteriser with VU1 and the GIF
+// on the EE thread (ps2x::capture::exactCapable) and RC_TRACK_SHADER is not 1: then each KICK carries the GS register
+// file before it and the hash of the GIF bytes it produced, each END the hash of the picture at DISPFB2 (and REFI the
+// picture), and keyframes exact GS memory. Every keyframe carries EMUS (ps2x::savestate::saveGraphics) in both modes.
+// No ring, key or state-load handling yet (batch 4).
 
 namespace rc::rec
 {

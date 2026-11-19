@@ -20,6 +20,8 @@ namespace rc::rec
             out.push_back({kStateVu1Memory, vu1Memory.data(), vu1Memory.size()});
             out.push_back({kStateVu1Regs, reinterpret_cast<const uint8_t *>(&vu1Regs), sizeof(vu1Regs)});
             out.push_back({kStateVif1, reinterpret_cast<const uint8_t *>(&vif1), sizeof(vif1)});
+            if (!emu.empty())
+                out.push_back({kStateEmu, emu.data(), emu.size()});
         }
         return out;
     }
@@ -53,6 +55,29 @@ namespace rc::rec
         static_assert(sizeof(VIFRegisters) == offsetof(Vif1Regs, pad));
         std::memcpy(&out.vif1, &v, sizeof(VIFRegisters));
         out.vif1.pad = 0;
+        ps2x::savestate::saveGraphics(runtime, out.emu);
+        return true;
+    }
+
+    uint32_t emuStateVersion() { return ps2x::savestate::graphicsStateVersion(); }
+
+    bool loadKeyframeState(PS2Runtime &runtime, const Keyframe &kf, std::string &error)
+    {
+        const StateChunk *emu = kf.find(kStateEmu), *vram = kf.find(kStateGsMemory);
+        if (!emu || !vram)
+        {
+            error = "the keyframe has no EMUS or GSVR chunk";
+            return false;
+        }
+        try
+        {
+            ps2x::savestate::loadGraphics(runtime, emu->data, emu->bytes, vram->data, vram->bytes);
+        }
+        catch (const std::exception &e)
+        {
+            error = std::string("EMUS does not load: ") + e.what();
+            return false;
+        }
         return true;
     }
 }

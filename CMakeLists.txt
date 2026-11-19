@@ -175,10 +175,11 @@ set_source_files_properties("${RC_RECORD_DIR}/capture.cpp" PROPERTIES SKIP_UNITY
 target_link_libraries(rc_revenge_pro PRIVATE rc_record_emu rc_record)
 # rc_replay (tools/rc_replay): reads dumps and feeds consumers; links the runtime and the VU1 library, no recompiled
 # game code, no disc. ninja -C build-decomp rc_replay. rc_record_test: the container's round trip without the game.
-add_executable(rc_replay EXCLUDE_FROM_ALL tools/rc_replay/rc_replay.cpp)
+add_executable(rc_replay EXCLUDE_FROM_ALL tools/rc_replay/rc_replay.cpp tools/rc_replay/emu.cpp)
 target_include_directories(rc_replay PRIVATE "${RC_RECORD_DIR}")
-target_link_libraries(rc_replay PRIVATE rc_record rc_record_emu ps2_runtime)
+target_link_libraries(rc_replay PRIVATE rc_record rc_record_emu ps2_runtime ZLIB::ZLIB)
 if(TARGET rc_vu1_code)
+    target_compile_definitions(rc_replay PRIVATE RC_HAVE_VU1_CODE=1)
     target_link_libraries(rc_replay PRIVATE -Wl,--whole-archive rc_vu1_code -Wl,--no-whole-archive)
 endif()
 add_executable(rc_record_test EXCLUDE_FROM_ALL tools/rc_replay/record_test.cpp)

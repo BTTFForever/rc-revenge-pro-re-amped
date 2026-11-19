@@ -3,6 +3,7 @@
 
 #include "emu_state.h"
 #include "page_tracker.h"
+#include "picture.h"
 #include "writer.h"
 
 #include "ps2_capture_hooks.h"
@@ -103,6 +104,19 @@ namespace rc::rec
             Capture(std::string path, Trigger trigger, uint64_t keyEvery)
                 : m_path(std::move(path)), m_trigger(std::move(trigger)), m_keyEvery(keyEvery ? keyEvery : 300)
             {
+                // RC_FRAME_RECORD_REF=<n>|hash|off (exact mode): a picture every n-th cycle (default 1), only the hash,
+                // or neither. RC_FRAME_RECORD_STRICT=1: stop the run when exact mode is not possible.
+                if (const char *ref = std::getenv("RC_FRAME_RECORD_REF"); ref && *ref)
+                {
+                    if (std::strcmp(ref, "hash") == 0)
+                        m_refEvery = 0;
+                    else if (std::strcmp(ref, "off") == 0)
+                        m_refEvery = 0, m_refHash = false;
+                    else
+                        m_refEvery = std::max<uint64_t>(1u, std::strtoull(ref, nullptr, 10));
+                }
+                const char *strict = std::getenv("RC_FRAME_RECORD_STRICT");
+                m_strict = strict && *strict && std::strcmp(strict, "0") != 0;
                 const size_t pct = m_path.find("%d");
                 if (pct != std::string::npos)
                     m_path.replace(pct, 2, "0");
@@ -137,6 +151,7 @@ namespace rc::rec
                 ++m_kicksThisCycle;
                 if (m_state != Recording)
                     return;
+                flushPendingKick();
                 flushDeferred();
                 m_kickStart = Clock::now();
                 const uint8_t channel = static_cast<uint8_t>(((channelBase >> 12) & 0xFu) - 8u);
@@ -155,6 +170,14 @@ namespace rc::rec
                 m_kick.asr0 = asr0;
                 m_kick.asr1 = asr1;
                 m_kick.callerRa = callerRa;
+                if (m_exact)
+                {
+                    // The GS register file before the kick (everything before it has been drawn: exact mode is synchronous).
+                    std::memcpy(m_regs, ps2x::capture::g_gsRawRegs, sizeof(m_regs));
+                    m_kick.regs = m_regs;
+                    m_gifHash = Hash64{};
+                    m_inGif = true;
+                }
                 m_tracker->beginKick();
                 m_ranges.clear();
                 m_inKick = true;
@@ -196,13 +219,59 @@ namespace rc::rec
                 m_kick.streamHash = hash.finish();
                 m_kick.field = memory.gs().vsyncTick.load(std::memory_order_relaxed);
                 m_kick.mxcsr = _mm_getcsr();
-                m_kick.fbrst = m_runtime->cpu().vu0_fbrst;
-                const RamView live{ram, spr, nullptr, nullptr};
+                // As the runtime's VU1 start callback reads it: the running guest thread's context, else the runtime's.
+                {
+                    R5900Context *ctx = m_runtime->eeScheduler().currentContext();
+                    m_kick.fbrst = (ctx ? ctx : &m_runtime->cpu())->vu0_fbrst;
+                }
+                m_cycleHookNs += nsSince(m_kickStart);
+                // (batch 2) The KICK record goes out at kickDone, after the runtime processed the stream, so that it can
+                // carry the hash of the GIF bytes the kick produced.
+                m_kickPending = true;
+            }
+
+            void kickDone()
+            {
+                if (!m_kickPending || !onEe(6))
+                    return;
+                flushPendingKick();
+            }
+
+            void flushPendingKick()
+            {
+                if (!m_kickPending)
+                    return;
+                m_kickPending = false;
+                const Clock::time_point t0 = Clock::now();
+                if (m_inGif)
+                {
+                    m_inGif = false;
+                    m_kick.hasGifHash = true;
+                    m_kick.gifHash = m_gifHash.finish();
+                    m_kick.gifBytes = static_cast<uint32_t>(m_gifHash.length());
+                }
+                PS2Memory &memory = m_runtime->memory();
+                const RamView live{memory.getRDRAM(), memory.getScratchpad(), nullptr, nullptr};
                 for (Consumer *c : m_consumers)
                     c->kick(m_kick, live);
                 ++m_kickIndex;
-                const uint64_t ns = nsSince(m_kickStart);
-                m_cycleHookNs += ns;
+                m_cycleHookNs += nsSince(t0);
+            }
+
+            void gifPacket(int, const uint8_t *data, uint32_t bytes)
+            {
+                // Exact mode only: then every GIF packet is submitted on the EE thread, inside the kick that made it.
+                if (!m_exact || m_state != Recording || !data)
+                    return;
+                if (std::this_thread::get_id() != m_ee)
+                {
+                    onEe(7);
+                    return;
+                }
+                if (m_inGif)
+                    m_gifHash.update(data, bytes);
+                else
+                    m_strayGifBytes += bytes;
             }
 
             void hwStore(uint32_t address, uint32_t width, uint64_t value, uint32_t callerRa)
@@ -211,6 +280,7 @@ namespace rc::rec
                     return;
                 if (m_state == Recording)
                 {
+                    flushPendingKick();
                     flushDeferred();
                     for (Consumer *c : m_consumers)
                         c->hw(address, width, value, callerRa);
@@ -341,7 +411,8 @@ namespace rc::rec
                 kf.header.cycle = m_cycle;
                 kf.header.gameFrame = m_gameFrame;
                 kf.header.field = m_runtime->memory().gs().vsyncTick.load(std::memory_order_relaxed);
-                kf.header.flags = (final ? kKeyFinal : 0u); // plain mode: GS memory as the backend gives it
+                // Plain mode: GS memory as the backend gives it; exact mode: the software GS's own memory.
+                kf.header.flags = (final ? kKeyFinal : 0u) | (m_exact ? kKeyVramExact : 0u);
                 if (!captureKeyframeState(*m_runtime, state))
                     std::fprintf(stderr, "[frame-record] keyframe at cycle %llu: the GS has no memory yet\n",
                                  static_cast<unsigned long long>(m_cycle));
@@ -371,6 +442,22 @@ namespace rc::rec
                     m_state = Done;
                     return;
                 }
+                m_exact = false;
+                std::string why;
+                if (!ps2x::capture::exactCapable(*m_runtime))
+                    why = "the GS is not the synchronous software rasteriser (needs PS2X_GS_GPU=0 PS2X_GS_HW=0 PS2X_GS_THREAD=0 PS2X_MTVU=0)";
+                else if (const char *track = std::getenv("RC_TRACK_SHADER"); track && track[0] == '1')
+                    why = "RC_TRACK_SHADER=1 replaces VU1 programs";
+                else
+                    m_exact = true;
+                if (!m_exact && m_strict)
+                {
+                    std::fprintf(stderr, "[frame-record] RC_FRAME_RECORD_STRICT: exact mode is not possible: %s; stopping\n", why.c_str());
+                    std::fflush(stderr);
+                    std::_Exit(3);
+                }
+                std::fprintf(stderr, "[frame-record] %s\n", m_exact ? "exact mode: reference pictures, register files and GIF hashes"
+                                                                    : ("plain mode: " + why).c_str());
                 m_writer = std::move(writer);
                 m_consumers = {m_writer.get()};
                 m_tracker = std::make_unique<PageTracker>();
@@ -384,6 +471,12 @@ namespace rc::rec
                 h.scratchpadBytes = kScratchpadBytes;
                 h.pageBytes = kPageBytes;
                 h.gsMemBytes = kGsMemBytes;
+                h.emuStateVersion = emuStateVersion();
+                if (m_exact)
+                    h.flags |= kFileExact | (m_refEvery ? kFilePictures : 0u);
+                m_picture.assign(static_cast<size_t>(h.width) * h.height * 4u, 0u);
+                m_width = h.width;
+                m_height = h.height;
                 copyName(h.elfName, sizeof(h.elfName), RC_ELF_NAME);
                 copyName(h.gsBackend, sizeof(h.gsBackend), backendName().c_str());
                 copyName(h.build, sizeof(h.build), RC_BUILD_DESCRIBE);
@@ -430,6 +523,9 @@ namespace rc::rec
                              m_hookNsTotal / cycles / 1e6, m_hookNsMax / 1e6, m_keyNs / std::max<double>(1.0, m_keyframes) / 1e6,
                              m_keyMaxNs / 1e6, static_cast<unsigned long long>(m_oddRecorded),
                              static_cast<unsigned long long>(m_foreign.load()));
+                if (m_exact)
+                    std::fprintf(stderr, "[frame-record] exact mode: %llu reference pictures stored, %llu GIF bytes outside any kick\n",
+                                 static_cast<unsigned long long>(m_pictures), static_cast<unsigned long long>(m_strayGifTotal));
                 m_consumers.clear();
                 m_writer.reset();
                 m_tracker.reset();
@@ -445,6 +541,7 @@ namespace rc::rec
             {
                 if (m_state == Recording)
                 {
+                    flushPendingKick();
                     const GSRegisters &g = m_runtime->memory().gs();
                     CycleInfo info;
                     RecEndBody &e = info.end;
@@ -458,8 +555,34 @@ namespace rc::rec
                     e.refFbp = fbp;
                     e.kickCount = m_kickIndex;
                     info.index = static_cast<uint32_t>(m_recorded);
+                    const uint8_t *picture = nullptr;
+                    if (m_exact && m_refHash)
+                    {
+                        // The reference: the frame buffer the closing store shows, read now (section 3.5).
+                        const Clock::time_point t0 = Clock::now();
+                        PS2Memory &memory = m_runtime->memory();
+                        readPicture(memory.getGSVRAM(), kGsMemBytes, fbp, 10u, m_width, m_height, m_picture.data());
+                        e.refWidth = m_width;
+                        e.refHeight = m_height;
+                        e.refHash = Hash64::of(m_picture.data(), m_picture.size());
+                        if (m_refEvery && m_recorded % m_refEvery == 0u)
+                        {
+                            e.hasImage = 1u;
+                            picture = m_picture.data();
+                            ++m_pictures;
+                        }
+                        m_cycleHookNs += nsSince(t0);
+                    }
+                    if (m_strayGifBytes)
+                    {
+                        const std::string text = std::to_string(m_strayGifBytes) + " GIF bytes outside any kick in this cycle";
+                        for (Consumer *c : m_consumers)
+                            c->note(text);
+                        m_strayGifTotal += m_strayGifBytes;
+                        m_strayGifBytes = 0;
+                    }
                     for (Consumer *c : m_consumers)
-                        c->cycleEnd(info, nullptr);
+                        c->cycleEnd(info, picture);
                     m_hookNsTotal += m_cycleHookNs;
                     m_hookNsMax = std::max(m_hookNsMax, m_cycleHookNs);
                     ++m_recorded;
@@ -523,8 +646,15 @@ namespace rc::rec
             uint64_t m_recorded = 0, m_inSegment = 0, m_firstCycle = 0;
             Clock::time_point m_segmentStart = Clock::now();
 
-            bool m_inKick = false;
+            bool m_inKick = false, m_kickPending = false;
             KickView m_kick{};
+            // Exact mode (batch 2).
+            bool m_exact = false, m_strict = false, m_refHash = true, m_inGif = false;
+            uint64_t m_refEvery = 1, m_pictures = 0, m_strayGifBytes = 0, m_strayGifTotal = 0;
+            uint64_t m_regs[kGsRegCount] = {};
+            Hash64 m_gifHash;
+            std::vector<uint8_t> m_picture;
+            uint32_t m_width = 640, m_height = 240;
             std::vector<Range> m_ranges;
             Clock::time_point m_kickStart{};
 
@@ -544,8 +674,8 @@ namespace rc::rec
             { g_capture->kickBegin(base, chcr, madr, qwc, tadr, asr0, asr1, ra); },
             [](uint32_t phys, uint32_t bytes, bool scratch, bool isTag) { g_capture->kickTouch(phys, bytes, scratch, isTag); },
             [](const uint8_t *flat, uint32_t bytes, uint32_t tags) { g_capture->kickEnd(flat, bytes, tags); },
-            nullptr, // kickDone: exact mode (batch 2)
-            nullptr, // gifPacket: exact mode (batch 2)
+            []() { g_capture->kickDone(); },
+            [](int path, const uint8_t *data, uint32_t bytes) { g_capture->gifPacket(path, data, bytes); },
             [](uint32_t address, uint32_t width, uint64_t value, uint32_t ra) { g_capture->hwStore(address, width, value, ra); },
             [](int interlaced, int mode, int ffmd) { g_capture->setCrt(interlaced, mode, ffmd); },
             [](int kind, uint32_t address, uint64_t value) { g_capture->odd(kind, address, value); },
