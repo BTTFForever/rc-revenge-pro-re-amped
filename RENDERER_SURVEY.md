@@ -213,6 +213,10 @@ and As as a dual-source factor (`SRC1_ALPHA` = As*255/128, exact while As <= 0x8
 Cases fixed function cannot express exactly, with where they are used:
 
 1. **PABE + ALPHA 0x44 with As > 0x80** (default 3D state of every scene: track, scenery, cars, front-end world).
+   *(Corrected by step 5, `RENDERER_FRAME_RECORD.md` 17.3: this is not a case. The state's alpha test, A<=0x2f KEEP,
+   discards every pixel PABE would blend, so it is blend off with a discard; the "vertex alpha above 0x80" counts
+   below and in the tables are an artefact of this survey's counter, one primitive per swap cycle taking the flip's
+   clear sprite's alpha 0xff; and no texture has a texel alpha above 0x80.)*
    0.016% of its primitives had a vertex alpha above 0x80, in every capture (a few hundred per run, 3,000-3,800 in
    the Track Editor). Texture alpha also feeds As (TCC 1, MODULATE) and was not measured; step 5's decode should
    histogram it. Options for step 7/9 (Fable's blend design): treat the state as blend off and log the divergence,

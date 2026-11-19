@@ -249,6 +249,47 @@ After step 1: fold its answers into this plan's open questions.
    frames), so the shadow needs those write swizzles too; formats sampled are T4/T8 with CT32 palettes (CSM1, CSA 0,
    CLD 1), CT32 and CT16; about 20 animated textures are re-uploaded every frame (~80 KB). Also histogram the texture
    alpha: whether any texel has alpha above 0x80 decides the PABE question of step 7/9.
+   **Done 2026-11-20** (design, every check and the cost: `RENDERER_FRAME_RECORD.md` section 17; usage: NOTES.md,
+   "Shadow texture memory and decode"). `render/tex/` (library `rc_tex`, not yet linked into the game or the oracle):
+   the GS memory layout from its own formulas, `GsMemory` (host-to-local transfers in CT32/24/16/16S, T8, T4; a write
+   serial per 256-byte block, bumped only when a transfer changes the block), `GifWalker`, TEX0/CLUT/TEXA decode to
+   RGBA8 with raw GS alpha and mip levels, `TextureCache` (decodes an entry again only when a block of its texels or
+   palette changed; a `generation` per entry for the incremental Vulkan upload), `TexShadow` (the consumer that
+   applies the PATH3 kicks). `rc_replay --consumer tex [--with-emu]`, `rc_tex_test`, `tools/tex_check.py`. Check:
+   - New exact-mode dumps, 27 per version (boot with logos, movie, title and an attract demo; the front end from its
+     load; levels 1-24 from their load through 11 seconds of the demo race; the Track Editor), 19,300 cycles each
+     version: `tex --verify` PASS on all 54 alone and behind `emu`. Texture memory (blocks 0x1e00 up) equals `GSVR`
+     at 54 of 54 later keyframes and 27 of 27 final ones per version; the transfer registers before every kick and
+     texture memory against the emulated GS after every kick, 681,563 of 681,563 kicks (USA) and 707,323 of 707,323
+     (Europe); every decoded texture against the emulated GS's own sampling (a point-sampled DECAL sprite read back),
+     11,433 of 11,433 textures / 32.1 M texels (USA) and 13,182 of 13,182 / 36.0 M (Europe): T4, T8, CT32, the mip
+     levels of the two mipmapped textures, the CT16 texture. Step 4's 22 dumps pass too (the plain ones' GPU-backend
+     `GSVR` included).
+   - Decode against the track viewer on the level files: 8,980 (USA) and 9,004 (Europe) textures of 49 files each,
+     byte for byte. `rc_tex_test` PASS (layout against the runtime's tables, uploads, the walker, CLD, the cache).
+   - Planted faults fail where they should: a swapped column-table entry (32, 8, 4 bit) at the next keyframe, a
+     dropped load-time transfer at keyframe 300, a skipped kick at the next kick's registers and the final keyframe,
+     a dropped animated upload at that kick behind `emu` (it heals at the next cycle), a decode-only layout error in
+     the comparison with the emulated sampling (61-209 of 213 textures).
+   - **The alpha histogram** (all 54 dumps, 477 M primitives; the texture's alpha as decoded when drawn with): **no
+     texture has a texel alpha above 0x80**, on either path, in any level, the front end, the title or the Track
+     Editor (0 of 11,419 textures USA, 0 of 13,168 Europe, summed over the dumps; nine in ten have alpha 0 in every
+     texel); the level files agree (0 of 8,980 / 9,004). No vertex alpha above 0x80 either, outside the flip's clear:
+     the survey's 204,744 such primitives were its counter's artefact (one per swap cycle, the clear sprite's alpha
+     carried into the next primitive). The largest source alpha of any draw is 0x80.
+   - **PABE is settled, and not by the histogram alone:** both states that set PABE (ALPHA 0x44, and 0x21 FIX 0x80)
+     also set an alpha test that discards every pixel with As above 0x2f / 0x3f (ATE, LEQUAL, AFAIL KEEP), and PABE
+     blends only at As 0x80 or more: no pixel it would blend is ever written. Those states are **blend off with the
+     alpha test as a discard**. Steps 7 and 9 need no destination read and no logged divergence for PABE; the reader
+     checks the precondition when it records a state (PABE 1 implies ATE on, LESS or LEQUAL, AREF below 0x80, AFAIL
+     KEEP) and logs if a state ever breaks it.
+   - Cost (one core): walking and applying a race cycle's uploads (13-23 transfers, 52-124 KB) 0.32-0.43 ms; the
+     animated textures change memory only every third cycle, and then 2-7 of the drawn textures are decoded again
+     (16-31 thousand texels, about 0.1 ms); a level's first frame decodes 196-345 textures in 2.5-5.4 ms; a full
+     decode of everything cached (324-517 textures, 3.6-5.6 MB of RGBA, on the three levels timed) 4.3-6.4 ms. Over
+     all levels the cache holds 281-703 textures, 3.2-6.7 MB.
+   - Not recorded for this step: split screen, the podium and results screens, the Track Editor's race (the shadow
+     and decode do not depend on the scene; their alpha histogram is missing).
 6. Uploads into the frame buffer and the flip (Opus): logos, movies, backdrops match the GS path. Movies and the
    loading splash are one IMAGE per 16x16 tile (640x240 pictures in both versions) into FBP 0x0/0x50, flipped through
    DISPFB2 from the vertical blank handler; ignore DISPLAY2's position (Europe's screen-adjust option moves it).
@@ -260,8 +301,10 @@ After step 1: fold its answers into this plan's open questions.
 
 ### P2: speed and parity
 9. Shader batches (Fable: state and blend design; Opus: plumbing): track, polygons and alpha in one shader, then env,
-   skin, TERdr, water. The default 3D state (ALPHA 0x44 with PABE, two thirds of all primitives) is "blend off" while
-   As <= 0x80; the rare draws above it (0.016% by vertex alpha) need a destination read or a logged divergence. No
+   skin, TERdr, water. The default 3D state (ALPHA 0x44 with PABE, two thirds of all primitives) is blend off with
+   its alpha test (A<=0x2f, fail KEEP) as a discard: the test removes every pixel PABE would blend, and no draw has a
+   source alpha above 0x80 anyway (step 5). The cache's alpha range per texture lets the alpha planner drop the test
+   for the nine textures in ten whose alpha is 0 throughout. No
    fog; real mip levels on two textures only. K2 walks the level's static triangle lists by reference every frame
    (5-12 MB), so uploading them once is where the speed is.
 10. Pipelines built at start-up, performance pass on the heavy levels (18, 17, 24, 6, 8, 9, 12), a DIVERGENCES list.
@@ -388,11 +431,13 @@ oracle/shadow tooling stays available against the recompiled reference as a sepa
   start-up quadwords into the VIF1 FIFO (no GS data).
 - **Frame order:** confirmed (3D of N-1 under 2D of N) in 208,305 of 208,355 swap cycles; the 50 others are cycles in
   which the loading splash flipped the display itself.
-- **Blend cases fixed function can't match:** ALPHA 0x44 + PABE when As > 0x80 (rare; texture alpha to be checked in
-  step 5); AFAIL RGB_ONLY with Z write on in the 2D path needs a split draw. Nothing uses DATE, FBA, dithering, fog,
+- **Blend cases fixed function can't match:** not ALPHA 0x44 + PABE after all (step 5: its alpha test discards
+  every pixel PABE would blend, no texture has a texel alpha above 0x80, and the survey's vertex alphas above 0x80
+  were a counting artefact); AFAIL RGB_ONLY with Z write on in the 2D path needs a split draw. Nothing uses DATE, FBA, dithering, fog,
   Ad as a factor, FIX > 0x80, COLCLAMP 0 or context 2.
 - **raylib audio without its window:** plays; its timer functions do not (step 3).
 - **Buffer high-water marks:** 2D buffer 136,720 of 327,680 bytes; frame tags 354 of 1000; state packets 50 of 256;
   shape 101 of 360; skin 150 of 384; Track Editor 85 of 384; water 4 of 32 (most in one frame).
 - Still open: the podium and post-race results screens were not reached by any capture (the same paths draw them;
-  survey them when a recording gets there); texture alpha above 0x80 (step 5).
+  survey them when a recording gets there). Texture alpha above 0x80: none (step 5); those screens' and split
+  screen's alpha histograms are still to take when a dump reaches them (`rc_replay --consumer tex --with-emu`).

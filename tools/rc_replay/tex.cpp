@@ -187,6 +187,10 @@ namespace rc::replay
         std::map<const CachedTexture *, MipUse> mips;
         MipUse *mipUse = nullptr;
         uint64_t draws = 0, tex2Writes = 0, noKickVertices = 0, undecodable = 0;
+        // The GS survey's vertex-alpha count (gs_survey.cpp), kept to compare with it: a primitive's range there starts
+        // from the RGBAQ in force when the previous primitive was drawn, whatever path and state that one had.
+        uint32_t surveyMaxA = 0;
+        uint64_t surveyHigh = 0, surveyHighPabe = 0;
         std::set<uint32_t> scenes;
 
         // Per cycle, for the cost figures.
@@ -257,6 +261,7 @@ namespace rc::replay
             vertexAlpha[0] = vertexAlpha[1];
             vertexAlpha[1] = vertexAlpha[2];
             vertexAlpha[2] = static_cast<uint8_t>(regs[1] >> 24);
+            surveyMaxA = std::max<uint32_t>(surveyMaxA, vertexAlpha[2]);
             ++vertexCount;
             const uint32_t attrs = attributes();
             bool complete = false;
@@ -280,6 +285,12 @@ namespace rc::replay
             if (attrs & 8u) // Gouraud: any corner's alpha can reach a pixel
                 for (uint32_t i = 1; i < corners; ++i)
                     a = std::max(a, vertexAlpha[2 - i]);
+            if (surveyMaxA > 0x80u)
+            {
+                ++surveyHigh;
+                surveyHighPabe += (regs[0x49] & 1u) && (attrs & 0x40u);
+            }
+            surveyMaxA = vertexAlpha[2];
             ++draws;
             ++combo->prims;
             ++combo->byVertexAlpha[a];
@@ -891,8 +902,9 @@ namespace rc::replay
                     sh.untranslatable);
         if (s.draws)
             std::printf("  scan: %" PRIu64 " primitives, %zu state and texture pairs, %" PRIu64 " TEX2 writes, %" PRIu64 " vertices without a kick, %" PRIu64
-                        " draws with a texture format the decoder lacks\n",
-                        s.draws, s.combos.size(), s.tex2Writes, s.noKickVertices, s.undecodable);
+                        " draws with a texture format the decoder lacks; counted the GS survey's way, %" PRIu64 " primitives have a vertex alpha "
+                        "above 0x80 (%" PRIu64 " in PABE states)\n",
+                        s.draws, s.combos.size(), s.tex2Writes, s.noKickVertices, s.undecodable, s.surveyHigh, s.surveyHighPabe);
         // Cost.
         if (!s.costs.empty())
         {

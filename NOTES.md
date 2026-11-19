@@ -580,6 +580,52 @@ adds side tags (below); batch 4 the F10 key, the in-memory ring and the segment 
   2.9-4.2 ms on the EE thread a cycle on average (largest 14 ms), `ring:300` 22-37 MB of memory (peak 44 MB), no frame
   rate lost (60.0 / 50.0 fps).
 
+### Shadow texture memory and decode (2026-11-20, renderer P1 step 5)
+The host's copy of GS texture memory and the texture decode the Vulkan renderer will draw from (`render/tex/`, library
+`rc_tex`), and `rc_replay`'s `tex` consumer that proves them on dumps. Design, results and what it changed in the plan:
+`RENDERER_FRAME_RECORD.md` section 17; the alpha histogram and the PABE answer: `RENDERER_PLAN.md`, step 5.
+- **What it is:** `GsMemory` holds 4 MB in the GS's own layout and takes host-to-local transfers (BITBLTBUF, TRXPOS,
+  TRXREG, TRXDIR, IMAGE data) in CT32, CT24, CT16/16S, T8 and T4; each 256-byte block remembers the last transfer that
+  changed it. `TexShadow` is the `rc::rec::Consumer` that feeds it from the PATH3 kicks (DMA channel 2, normal mode or
+  chain) through `GifWalker`. `decodeTexels` / `Clut` turn a TEX0 (and MIPTBP level) into RGBA8 with the GS's raw
+  alpha; `TextureCache` keys textures by place, format, size and palette and decodes one again only when a block of
+  its texels or palette changed (its `generation` tells an uploader what to refresh). Nothing of it is linked into the
+  game or the oracle yet.
+- **Self test:** `ninja -C build-decomp rc_tex_test && build-decomp/rc_tex_test decomp/generated/gs_tables.bin` (the
+  layout against the runtime's tables, 600 random uploads in six formats against a model built from those tables, the
+  GIF walker, CLD, decode of every format, mip levels, the cache; must end `PASS`). `rc_tex_test bench` times a 64x64
+  upload and decode per format.
+- **Shadow check on a dump** (any dump; exact-mode ones are judged):
+  `build-decomp/rc_replay <dump> --consumer tex --verify --quiet` applies every transfer and must equal `GSVR` on all
+  texture blocks (0x1e00 up, 2,228,224 bytes) at every later keyframe and the final one, and have the recorded
+  BITBLTBUF/TRXPOS/TRXREG/TRXDIR before every kick; it takes a few seconds. Without `--quiet` it prints each
+  cycle's transfers, how many changed memory, and the textures decoded.
+- **Behind the emulated GS:** add `--with-emu` (it replays the dump as `--consumer emu` does, about 10 cycles a
+  second): texture memory is compared with the emulated GS's after every kick, every texture a draw of any path names
+  is decoded, and at the end each decoded texture (mip levels too) is compared texel for texel with what the emulated
+  rasteriser samples from it (a point-sampled DECAL sprite into the emulated frame buffer, read back). It prints the
+  alpha summary (textures with a texel alpha above 0x80, as decoded when drawn with), the draw states with how many
+  primitives could put a source alpha of 0x80 or more on the colour output, the mipmapped textures, and the cost per
+  cycle. `--png <dir>` writes the decoded textures.
+- **Decode against the track viewer:** `python3 -I tools/tex_check.py game/usa/disc decomp/generated/gs_tables.bin
+  build-decomp/rc_tex_test` (`game/eu/disc` for Europe): every texture the level files' worlds and placed objects list,
+  decoded by `tools/bbk_export.py` and by `render/tex` from the file's GS memory image, byte for byte; also each
+  level's textures with alpha above 0x80.
+- **Planted faults** (`--fault`, to show the checks fail): `transfer:<cycle>:<n>` (transfer n of the cycle loses its
+  data), `kick:<cycle>:<n>` (the shadow skips a kick), `swizzle:<cycle>:<bits>` (two entries of the 32/16/8/4-bit
+  column table swapped from that cycle on), `decode:0:<bits>` (the same swap made only before the final decode, with
+  `--with-emu`). A dropped animated-texture upload heals at the next cycle (the game uploads it again), so it shows
+  only in the per-kick comparison of `--with-emu` or at the dump's last cycle; a dropped load-time transfer stays.
+- **Dumps used** (exact mode, `RC_FRAME_RECORD_REF=hash`, both versions, in `build-decomp/frame-dumps/s5/` and
+  `build-eu/frame-dumps/s5/`): `RC_BOOT_LEVEL=<1..24> RC_FRAME_RECORD_AT=boot+700` (the level load with its splash, then
+  the demo race; keyframes at 300 and 600), `RC_SKIP_INTRO=1 RC_FRAME_RECORD_AT=boot+900` (the front end from its load),
+  `RC_FRAME_RECORD_AT=boot+900` (logos, the publisher movie, the title, the first attract demo), the Track Editor
+  (`RC_SKIP_INTRO=1 RC_FRAME_RECORD_AT=game:1900+700 tools/frame_record.sh replay <pad>` with a `tools/tedit_walk.py 1
+  7000 [eu]` pad). 4.8 GB in all; they are not committed and can be deleted (each takes about a minute to record).
+- **Result:** all 54 dumps pass alone and behind `emu`; no texture has a texel alpha above 0x80 when drawn with and no
+  draw a vertex alpha above 0x80 (the GS survey's count of those was its counter's artefact), and the PABE states'
+  alpha test discards every pixel PABE would blend, so PABE needs no special handling in the Vulkan renderer.
+
 ### Level testing (2026-11-09)
 `RC_BOOT_LEVEL=<n> tools/play.sh` skips the intro and menus and loops the attract-mode demo on level n. `RC_SKIP_INTRO=1` skips only the legal screen, movie and Dolby screen and starts in the front end (for menu tests: `PS2X_PAD_REPLAY=<file>` plays a pad script of `epoch frame buttons axes` lines). `tools/level_sweep.sh <first> <last> <seconds> [VAR=value ...]` prints each level's frame rate.
 Sweep of levels 1-24 on the God of War renderer at 3x: 1, 3, 4, 10, 15, 16 and 22 hold about 55-60 fps; 6, 8, 9, 12, 17, 18 and 24 ran about 25-35 fps before the blend and palette fixes. On level 18 the default renderer reaches 35-43 fps with VU1 87% busy at 14.5 ms per field, so those levels are limited by VU1 on both renderers. About half the VU time is one block of program C3952C0FAEB52EAD; its cost is spread evenly over its instructions.

@@ -6,7 +6,7 @@ section 13 with the reasons; its measurements are in sections 2 and 6.3. **Batch
 replay) built 2026-11-19**: its changes are marked "(batch 2)" and listed in section 14. **Batch 3 (side tags) built
 2026-11-19**: its changes are marked "(batch 3)" and listed in section 15. **Batch 4 (ring, F10, save-state loads,
 write-up) built 2026-11-20**: its changes are marked "(batch 4)" and listed in section 16; the measured budget (A9) is in
-6.3. Read with `RENDERER_SURVEY.md` (what the kicks carry) and `ICO_RENDER_STUDY.md` section 2 (where the
+6.3. **Step 5 (shadow texture memory and decode, the `tex` consumer) built 2026-11-20**: section 17. Read with `RENDERER_SURVEY.md` (what the kicks carry) and `ICO_RENDER_STUDY.md` section 2 (where the
 game builds its packets). Paths are relative to the repository; the runtime is `third_party/ps2recomp/ps2xRuntime`
 (`RT/` below).
 
@@ -668,6 +668,9 @@ kick); every `refHash` equal, and every stored picture equal byte for byte; at e
 one, all 4 MB of GS memory equal `GSVR`. `--png` writes its pictures (and, on a mismatch, the reference and a
 difference image). On a dump that is not exact it replays and writes pictures without verifying.
 
+(step 5) **`tex`** (`--consumer tex [--with-emu]`): the host's shadow of GS texture memory and the texture decode,
+alone or behind `emu`; section 17.
+
 Later consumers plug into the same loop (section 8). Two of them reuse `emu` as a back end, which is what lets each
 reader be proved without a Vulkan rasteriser in the comparison:
 
@@ -748,7 +751,7 @@ a `tedit_walk.py` pad (120 cycles); USA only, a split-screen attract demo if a `
 
 | step | consumer | checks |
 |---|---|---|
-| 5 shadow texture memory | `tex`: starts from a keyframe's `GSVR`, applies every host-to-local transfer of the PATH3 kicks through its own write swizzles | at every later keyframe and the final one, the shadow equals `GSVR` on all texture blocks (0x1e00 up) bit for bit, on dumps that include a level load (CT32 tiles), a race (PSMT8/PSMT4 animated frames) and the front end; decode against `tools/track_viewer` on the same level's BBK as planned; the alpha histogram (texels above 0x80) per level |
+| 5 shadow texture memory (built: section 17) | `tex`: starts from a keyframe's `GSVR`, applies every host-to-local transfer of the PATH3 kicks through its own write swizzles | at every later keyframe and the final one, the shadow equals `GSVR` on all texture blocks (0x1e00 up) bit for bit, on dumps that include a level load (CT32 tiles), a race (PSMT8/PSMT4 animated frames) and the front end; decode against `tools/track_viewer` on the same level's BBK as planned; the alpha histogram (texels above 0x80) per level |
 | 6 uploads into the frame buffer, flip | `blit` | on cycles made only of uploads and a flip (logos, movie pictures, the splash) the picture it builds equals `REFI` bit for bit, on the CPU and through the RHI's read-back |
 | 7 GIF reader and 2D | `gif2d` | (a) its register file after each PATH3 kick equals the next kick's recorded `regs`; (b) in front of the emulated GS (section 7): the picture equals `REFI` bit for bit, proving the parse; (c) Vulkan: K1 drawn over `--picture-before <cycle>:<K1>` (the emulated frame buffer just before K1, so the 3D needs no mask) against `REFI`, exact where the blend is integer-exact, otherwise within the bounds step 7's blend design states; the per-state pixel tests against the CPU blend model stay as planned |
 | 8 VIF chain reader with the references | `vif` | (a) `walkChain` hashes (already A1); (b) per K2 kick the GIF bytes from the reader and references equal the emulated VU1's (`gifHash`, and byte for byte against `--path1`); (c) in front of the emulated GS: `REFI` bit for bit on levels 5, 17, 18, 20; (d) Vulkan pictures of the same cycles against `REFI` with difference statistics, feeding DIVERGENCES |
@@ -1040,3 +1043,288 @@ second F10 after 30 cycles and one ended by the count (100 cycles, 1,100 kicks),
 1, 5, 657, race at 658, clock 1:0; Europe 1, 5, 1166, race at 1167) at 60.0 / 50.0 fps; `tools/oracle.sh --all`
 Europe seed 9495 1563 ok, 0 FAIL; USA seed 9496 1631 ok, 0 FAIL, 1 skipped (`PathBuilder` timed out); USA seed 9494
 one FAIL (`AMenuDisplayMIT`) that the runtime before this batch gives too (NOTES.md).
+
+## 17. Step 5 as built (2026-11-20): shadow texture memory and decode
+
+Renderer plan P1 step 5, test plan 10.2's `tex` row. Built: `render/tex/` (library `rc_tex`, namespace `rc::rd`),
+`rc_replay --consumer tex` (`tools/rc_replay/tex.{h,cpp}`), `rc_tex_test` (`tools/rc_replay/tex_test.cpp`),
+`tools/tex_check.py`. Usage: `NOTES.md`, "Shadow texture memory and decode". Nothing of it is linked into the game or
+the oracle yet (the live reader of steps 6-9 will link `rc_tex`), the runtime is untouched, and so is every game
+function: recording off and normal play cannot have changed. Nothing found conflicts with option C.
+
+### 17.1 Design
+
+```
+render/tex/gs_layout.{h,cpp}    where a pixel of a buffer lives in GS memory: block and column tables, CT32/24, CT16,
+                                CT16S, T8, T4 (no dependencies)
+render/tex/gs_memory.{h,cpp}    GsMemory: the 4 MB, host-to-local transfers, per-block write serials
+render/tex/gif_walk.{h,cpp}     GifWalker: GIF tags (PACKED, REGLIST, IMAGE; a tag may span packets) -> register
+                                writes in register form and image data, through a GifSink
+render/tex/tex_decode.{h,cpp}   Tex0, Texa, Clut (the GS's CLUT buffer and CLD), mipLevel (MIPTBP1/2), decodeTexels
+render/tex/tex_cache.{h,cpp}    TextureCache: RGBA8 per texture, decoded again only when its blocks changed
+render/tex/tex_shadow.{h,cpp}   TexShadow: the rc::rec::Consumer that walks channel 2 kicks into GsMemory
+```
+
+- **Layout.** Written from the GS's arrangement (32 blocks of 256 bytes a page, four 64-byte columns a block), the
+  column order as four small formulas, not copied from the runtime's `GSMem` tables: the shadow is checked against the
+  emulated GS's memory, which only means something if the two were made independently. `rc_tex_test` compares the two
+  address by address as well.
+- **Transfers.** `GsMemory::writeRegister` takes BITBLTBUF, TRXPOS, TRXREG and TRXDIR (a TRXDIR of 0 opens a transfer:
+  DBP, DBW (0 read as 1), DPSM, DSAX/DSAY, RRW x RRH pixels row by row), `imageData` the pixels: CT32 four bytes, CT24
+  three (the fourth byte of memory kept; a pixel may straddle packets), CT16/16S two, T8 one, T4 two pixels a byte, low
+  nibble first, an odd rectangle dropping the last high nibble. Data after the last pixel is ignored; a TRXDIR of 1 or
+  2 (local to host, local to local: never seen, survey) is counted and not performed. Uploads into frame memory are
+  applied like any other (cheap, and step 6's blits read them back from there if it wants); draws never write the
+  shadow, so only blocks 0x1e00 up are comparable with the GS.
+- **Dirty tracking.** Every transfer has a serial number and every block the serial of the last transfer that
+  *changed* it: a pixel written with the value it already holds changes nothing. That matters: the game uploads its
+  animated textures again every frame (17-19 transfers, 100-124 KB, in the level 17 and 2 dumps), but they hold a new
+  animation frame only every third cycle, so two cycles in three dirty no block at all. A cache entry keeps the serial
+  it was decoded at and the blocks of its texels and palette; a lookup when memory's serial has not moved is one
+  comparison, otherwise a scan of the entry's blocks (at most 512), and a decode only if one is newer. Each decode
+  bumps the entry's `generation`; the Vulkan uploader of step 9 re-uploads the entries whose generation it has not
+  seen, which makes the upload incremental with no further bookkeeping.
+- **The cache key** is what decides the texels: TBP, TBW, format, the level's width and height, and for T8/T4 CBP,
+  CPSM, CSM and CSA; TEXA is part of it only where a format takes alpha from it (CT16, CT24, 16-bit palettes). TCC,
+  TFX and CLD are not. Entries are made at the first draw that names them and live until `clear()`: memory under an
+  entry can come to hold something else (the next level's image), which costs nothing while no draw names it; when to
+  drop entries is step 9's.
+- **CLUT.** `Clut` is the GS's 512-entry buffer: a TEX0 write loads it as CLD says (1 always, 2/3 load and remember
+  CBP0/CBP1, 4/5 load when CBP differs from the remembered one, 0 keeps it), CSM1 entries at their swizzled places in
+  the 16x16 or 8x2 image, CSM2 from TEXCLUT's row; lookups add CSA. The cache takes a `Clut` when the reader has one
+  that may differ from memory, and otherwise reads the palette from memory as it is at the draw, which is exactly what
+  a CLD 1 write does and is all RC uses. Two things follow the emulated GS rather than a hardware reference, because
+  only it can be checked against and RC reaches neither: the buffer is loaded only when PSM is T8/T4, and an 8-bit
+  texture's palette is loaded in place from entry CSA * 16 up.
+- **Decode** gives 4 bytes a texel, R, G, B, A with the GS's raw alpha (0x80 = 1.0): what the texture function takes.
+  CT16 and CT24 take alpha from TEXA (bit 15 clear: TA0, or 0 when AEM and the colour is black; set: TA1), 5-bit
+  channels go to the top of 8 bits. Mip levels are textures of their own at MIPTBP's place and half the size.
+- **`GifWalker`** delivers every register write in register form whatever the packet's form (a PACKED RGBAQ with the
+  Q of the last ST, a PACKED XYZ2 with its ADC bit as XYZ3), so the transfers, the usage scan of the `tex` consumer
+  and step 7's reader can share it. PRE writes PRIM only in PACKED form, as on the GS (the emulated GS writes it in
+  any form; no dump had a tag where that differs, see the counter in 17.2).
+- **`TexShadow`** is a `Consumer`: on a channel 2 kick it walks the stream with `walkChain` (normal mode or chain, as
+  the movie pictures are) and feeds the payload ranges to the walker. Live it will sit in the capture's consumer list
+  on the EE thread and read guest RAM in place; off-line `rc_replay` drives it. It follows PATH3 only: every transfer
+  of RC is on channel 2 (survey), and the check below confirms it (the transfer registers before every kick, and
+  texture memory after the VIF1 kicks).
+
+### 17.2 Checks and results
+
+`rc_replay --consumer tex --verify` does 10.2's check: the shadow starts from the first keyframe's `GSVR` (and
+the transfer registers of `GSRG`), applies every transfer of the channel 2 kicks, and at every later keyframe and the
+final one must equal `GSVR` on all texture blocks (0x1e00 up: 2,228,224 bytes) and hold the keyframe's BITBLTBUF,
+TRXPOS, TRXREG and TRXDIR; a keyframe after a save-state load is loaded, not compared. On exact dumps it also needs
+the recorded four transfer registers before *every* kick (the shadow follows PATH3 only, so a transfer register
+written on another path would show there). Two things were added to what 10.2 asked, both through `--with-emu`, which
+runs the consumer behind `emu` (the `emu` consumer gained a tap that hands every GIF packet of a replayed kick, with
+its path, to the consumer behind it):
+
+- **texture memory after every kick** against the emulated machine's GS memory, the VIF1 kicks included (draws must
+  not write texture memory); the first difference is named by cycle and kick;
+- **the decode against the emulated GS's own sampling.** Every texture a draw of any path names is decoded through
+  the cache (PATH3's from the shadow's own walk, in order with its transfers; PATH1's from the emulated VU1's
+  packets), mip levels too. After the last cycle each cache entry is decoded again and drawn by the emulated GS: a
+  point-sampled DECAL sprite (TCC 1, CLD 1, TEX1 nearest, level 0, UV at the texel centres) of the texture, one texel
+  to a pixel, into the emulated frame buffer at FBP 0, read back through the CT32 layout. Decoded texel and drawn
+  pixel must be equal in all four bytes. That covers the layout on the read side, the CSM1 palette order, CSA, the
+  CLD 1 load, TEXA and the 16-bit widening with nothing of the emulated GS's internals touched.
+
+**Dumps.** Step 4's dumps hold at most two segments and little loading, so new ones were taken in exact mode
+(`RC_FRAME_RECORD_REF=hash`, RTX 2060), 27 per version, in `build-decomp/frame-dumps/s5/` and
+`build-eu/frame-dumps/s5/` (2.5 and 2.3 GB): `boot` (`boot+900`: logos and the publisher movie as uploads into
+frame memory, the title, the front end, the first attract demo), `front` (`RC_SKIP_INTRO=1`, `boot+900`: the front
+end from its load, then an attract demo), `l1`-`l24` (`RC_BOOT_LEVEL=n`, `boot+700`: the level load with its splash
+(CT32 tiles, palettes, single textures), then the demo race with its animated textures), `tedit` (the Track Editor,
+`tools/tedit_walk.py 1 7000` pad, `game:1900+700`). Each has keyframes every 300 cycles, so two later keyframes and
+the final one. One more, USA only, outside the table: `l17long` (`RC_BOOT_LEVEL=17`, `boot+2700`: 45 seconds of the
+demo race, 284 MB): PASS both ways, 104,366 kicks, later keyframes 8 of 8 and the final one, every kick's registers
+and texture memory, 619 of 619 textures (1,527,040 texels) equal to the emulated sampling.
+
+| check | USA (27 dumps) | Europe (27 dumps) |
+|---|---|---|
+| `tex --verify` alone and `tex --verify --with-emu` | PASS on all 27, both ways | PASS on all 27, both ways |
+| cycles / kicks replayed / transfers applied | 19,300 / 681,563 / 792,705 | 19,300 / 707,323 / 865,993 |
+| texture blocks equal `GSVR` at later keyframes; at the final one | 54 of 54; 27 of 27 | 54 of 54; 27 of 27 |
+| transfer registers before a kick equal the recorded ones | 681,563 of 681,563 | 707,323 of 707,323 |
+| texture blocks equal the emulated GS's after a kick | 681,563 of 681,563 | 707,323 of 707,323 |
+| decoded textures equal the emulated GS's sampling | 11,433 of 11,433 (32,117,216 texels) | 13,182 of 13,182 (35,962,336 texels) |
+| the `emu` consumer's own verification in the same runs | every GIF hash, register file, picture hash, GS memory | the same |
+
+The textures compared with the emulated sampling are T4 and T8 through CT32 palettes, CT32, the mip levels of the two
+mipmapped textures (levels 2 and 14: 32x32 to 4x4 and 32x16 to 8x4) and the one CT16 texture (128x128, the HUD's
+dial, alpha from TEXA 0x80/0/0). Counters that stayed at zero in all 54 dumps: transfers in a format outside the
+list, local-to-host and local-to-local transfers, transfers cut off by the next TRXDIR, image data with no transfer
+open, packet bytes too short for a tag or an item, GIF tags with PRE outside PACKED form, TEX2 writes, textures in a
+format the decoder lacks, pages the dump lacks. What the transfers were (level 17, USA, 700 cycles): 11,980 CT32
+(44.2 MB, 8,880 of them the splash's tiles into frame memory), 9,096 T8 (35.5 MB), 72 T4; `boot`: 161,789 CT32
+(165.7 MB; 161,456 into frame memory: logos and movie pictures), 364 T8, 2,664 T4; levels 4, 10, 16 and 22 (USA) upload
+animated T4 textures every frame (4,240-4,968 T4 transfers, 9.5-12.3 MB). No dump has a CT16 or CT24 transfer: the
+CT16 texture's memory arrives in another format.
+
+**Step 4's own dumps** (`build-decomp/frame-dumps/`, `build-eu/frame-dumps/`, 22 dumps): `tex --verify` PASS on all.
+The exact ones give later keyframes 4 of 4 and final 4 of 4 (USA: `b4-key`, `b4-key-1`, `b4-x2-0`, `b4-x2-1`), 5 of
+5 and 4 of 4 (Europe). The 14 plain dumps (recorded with the hardware GS backend, `vramExact` 0) are compared too and
+reported apart: their `GSVR` equals the shadow on the texture blocks at all 32 keyframes (USA 20, Europe 12), so a
+GPU backend's memory image is exact there as well.
+
+**Decode against the track viewer** (`tools/tex_check.py`): for every `BB/<n>/<n>.BBK` with a world, every texture
+the world's and the placed objects' texture lists name is decoded by `tools/bbk_export.py` (the track viewer's
+decoder; numpy, the runtime's tables) and by `render/tex` (the file's GS memory image uploaded as the game uploads it,
+64x64 CT32 tiles from block 0x1e00, then `decodeTexels`): USA 8,980 textures of 49 level files (the 48 levels and the
+front-end world), Europe 9,004 of 49, all equal byte for byte (CT32, T8 and T4).
+
+**`rc_tex_test`**: PASS, 635 checks: each format's page is a permutation; 1,783,040 addresses (every pixel of a page
+at each of the 32 block offsets, and 200,000 random buffers a format) equal the runtime's tables
+(`decomp/generated/gs_tables.bin`: CT32, CT16, T8, T4); 600 random uploads in six formats (4.0 M pixels) through the
+walker in two pieces read back and leave memory equal to a model placed by the runtime's tables; the walker's PACKED,
+REGLIST and IMAGE forms across packet boundaries; CLD 0, 1, 2, 4, 5 and a 4-bit palette at CSA 2; decode of T8, T4,
+CT16 with TEXA and AEM, mip levels from MIPTBP1; the cache (a write elsewhere keeps an entry, a write into its texels
+or its palette decodes it again, the reader's CLUT buffer wins over memory, the alpha summary).
+
+**Pictures.** `--png` on `b4-key-1` (the race menu) beside the cycle's reference picture: the font sheets, the button
+icons, the arrows and the panel pieces of the menu, with the glyphs in the alpha channel (0 where the glyph is: the
+game's inverted alpha); on level 2 the CT32 textures with their mip chains and the CT16 dial. Looked at once; the
+bit-exact checks above are the proof.
+
+**The checks can fail** (`--fault`, level 17 of each version, 700 cycles, keyframes at 300 and 600):
+
+| planted | USA | Europe |
+|---|---|---|
+| 32-bit column table, two entries swapped, from the start | keyframe 300: 28,976 bytes in 5,235 blocks; 600 and final fail too | 29,020 bytes in 5,236 blocks; the same |
+| 8-bit table, from the start | 300 (760 bytes, 380 blocks), 600 and final fail | 300 (744 bytes, 372 blocks), 600 and final |
+| 4-bit table, from the start | 300 fails (196 bytes, 98 blocks: T4 is uploaded only at the load here), then clean | 300 and final fail |
+| 8-bit table from cycle 350 | 300 passes, 600 (134 bytes, 67 blocks) and final fail | the same |
+| one load-time transfer loses its data (`transfer:4:100` USA, `transfer:2:100` Europe) | 300 fails: 1,000 bytes in 4 blocks at block 0x2e4c | 997 bytes in 4 blocks |
+| the shadow skips a pixel kick of the last cycle (`kick:699:2`) | the next kicks' transfer registers differ (16 kicks), final fails | the same |
+| one animated upload loses its data, behind `emu` (`transfer:301:1` USA, `302:1` Europe) | the per-kick comparison fails at that kick (12,898 bytes, 64 blocks) for 37 kicks, until the next cycle uploads it again | 12,897 bytes, 37 kicks |
+| table swapped only before the final decode, behind `emu` (`decode:0:8`, `:4`, `:32`) | 63, 95 and 209 of 213 textures differ from the emulated sampling | 61, 96 and 208 of 212 |
+| as designed, no failure: the 16-bit table swapped (nothing is uploaded in CT16); an animated upload dropped in a cycle where it carries the frame memory already holds | PASS | PASS |
+
+A dropped animated upload heals at the next cycle, because the game sends every animated texture again each frame;
+alone, the keyframe check sees only what is still wrong at a keyframe. That is the reason for the per-kick
+comparison behind `emu`.
+
+### 17.3 The alpha histogram and PABE
+
+`tex --with-emu` keeps, per texture and per draw state (path, PRIM, ALPHA, PABE, the alpha test), the primitives
+drawn, the largest vertex alpha of each and the texture's alpha range *as decoded when it was drawn with*. (Taking
+the range of whatever memory later holds under a cache entry gives nonsense: a front-end entry decoded from the next
+level's image.) All 54 dumps: the 24 levels' first 11 seconds from their load, the front end, boot with the title and
+an attract demo, the Track Editor; 477,476,267 primitives.
+
+- **No texture has a texel alpha above 0x80 when drawn with**, on either path: 0 of 11,419 textures (USA, summed
+  over the dumps; 281 to 696 a level) and 0 of 13,168 (Europe). 10,513 and 12,134 of them have alpha 0 in every
+  texel; the others lie between 0 and 0x80. The level files agree: 0 of the 8,980 (USA) and 9,004 (Europe) textures
+  `tex_check.py` decodes has a texel above 0x80.
+- **No vertex alpha above 0x80** in any textured or blended primitive of these dumps; the only primitives with one
+  are the flip's clears (sprites with A 0xff, not blended, no alpha test).
+- So the largest source alpha any draw can produce here is 0x80 (TFX is MODULATE with TCC 1 everywhere).
+
+Draw states over the 54 dumps ("As >= 0x80 out": primitives whose largest possible source alpha is at or above 0x80
+at a pixel the alpha test lets reach the colour output; none can exceed 0x80):
+
+| path | PRIM | ALPHA / FIX | PABE | alpha test | primitives | largest As | As >= 0x80 out |
+|---|---|---|---|---|---|---|---|
+| 1 | 0x5b | 0x44 `(Cs-Cd)*As+Cd` | **1** | A<=0x2f KEEP | 314,276,470 | 0x7f | 0 |
+| 1 | 0x5b | 0x21 / 0x80 | **1** | A<=0x3f KEEP | 18,840 | 0x80 | 0 |
+| 1 | 0x1b | (no blend) | 0 | A<=0x2f KEEP | 63,187,871 | 0x7f | 0 |
+| 1 | 0x5b | 0x29 / 0x80 | 0 | A<=0x2f KEEP | 29,271,991 | 0 | 0 |
+| 1 | 0x5b | 0x29 / 0x80 | 0 | A<=0x3f KEEP | 8,314,022 | 0 | 0 |
+| 1 | 0x5b | 0x09 | 0 | off | 11,851,828 | 0x7d | 0 |
+| 1 | 0x5b | 0x62 / 0x15 | 0 | off | 11,851,596 | 0x54 | 0 |
+| 1 | 0x5b | 0x68 / 0x15 | 0 | off | 11,851,320 | 0x54 | 0 |
+| 1 | 0x5b | 0x68 / 0x80 | 0 | off | 6,609,987 | 0x7f | 0 |
+| 1 | 0x5b | 0x08 | 0 | A<=0x2f KEEP | 6,586,453 | 0x7f | 0 |
+| 1 | 0x5b | 0xa1 / 0x80 | 0 | A<=0x3f KEEP; off | 3,551,088; 17,640 | 0 | 0 |
+| 1 | 0x5b | 0x01 | 0 | off | 3,202,327 | 0x7f | 0 |
+| 1 | 0x5b | 0x29 / 0x7f | 0 | A<=0x2f KEEP | 2,930,917 | 0 | 0 |
+| 1 | 0x5b | 0x01 / 0x80 | 0 | A<=0x3f RGB_ONLY | 2,803,457 | 0x80 | 719,849 (at 0x80) |
+| 3 | 0x5b | 0x09 | 0 | A<=0x3f KEEP | 625,966 | 0x80 | 0 |
+| 3 | 0x5b | 0x01 | 0 | A<=0x01 RGB_ONLY | 277,626 | 0x80 | 277,626 (at 0x80) |
+| 3 | 0x01 lines, 0x13, 0x03, 0x0b | (no blend) | 0 | A<=0x2f / 0x3f KEEP, A<=0x01 RGB_ONLY | 145,055 | 0x80 | 156 (at 0x80) |
+| 3 | 0x43, 0x53 | 0x21 / 0x20, 0x40, 0x3f | 0 | A<=0x01 RGB_ONLY, A<=0x3f KEEP | 63,596 | 0 | 0 |
+| 3 | 0x5b | 0x29 / 0x80, 0xa1 / 0x80 | 0 | A<=0x3f KEEP | 420 | 0x80 | 0 |
+| 3 | 0x06 sprite (the clear) | (no blend) | 0 | off | 37,797 | 0xff | - |
+
+**Consequence for PABE (steps 7 and 9).** PABE blends a pixel only when its source alpha is 0x80 or more. Both
+states that set it also set an alpha test that keeps only pixels with As at most 0x2f (or 0x3f) and discards the rest
+(AFAIL KEEP): no pixel that PABE would blend is ever written. Under such a test the state is exactly **blending off
+with the alpha test as a discard**, for any texture and any vertex alpha, so the answer does not rest on the
+histogram: it holds for the primitives with vertex alpha above 0x80 the survey counted in this state too (they are
+discarded where As exceeds 0x2f and written unblended where the texture's alpha brings As below it). The survey's
+state tables, over all its captures, show PABE 1 with these two tests only. The renderer therefore needs no
+destination read and no logged divergence for PABE; the reader should check the precondition where it records a
+state (PABE 1 implies ATE on, ATST LESS or LEQUAL with AREF below 0x80, AFAIL KEEP) and log a divergence if a state
+ever breaks it. The histogram adds: (1) with no source alpha above 0x80 anywhere, every blend factor is within fixed
+function's range (`SRC1_ALPHA` = As * 255 / 128 is exact up to 0x80), on PATH3 as well; (2) nine textures in ten
+have alpha 0 throughout, so with the cache's alpha range per texture the renderer can drop the alpha test (and the
+discard in the shader) for most draws: step 9's alpha planner has its input.
+
+**The survey's vertex alpha above 0x80 was a counting artefact.** It reported 204,744 primitives of the 0x44 state
+with a vertex alpha above 0x80, "a few hundred per run"; these dumps have none, nor has a 2,700-cycle dump of level
+17 made to look for them (45 seconds of the demo race, 17.3 M primitives in that state). The number is one per swap
+cycle (the survey counted 208,416 cycles with a K2 draw): `gs_survey.cpp` starts each primitive's alpha range from
+the RGBAQ in force when the previous primitive was drawn, and the primitive before every K2 is the flip's clear
+sprite with A 0xff. The `tex` consumer keeps the same count for comparison ("counted the GS survey's way"): 700, 695
+and 695 primitives in PABE states in the 700 cycles of the Track Editor, level 5 (USA) and level 18 (Europe) dumps,
+against 0 counted per primitive. So no draw of the game has a vertex alpha above 0x80 in the scenes recorded, and the
+"0.016%" of the survey and of the plan's step 9 is nothing to handle.
+
+### 17.4 Cost
+
+Measured in `tex --with-emu` (the consumer's own time only; one core of the development machine, the machine
+otherwise idle), and `rc_tex_test bench`.
+
+| | level 17 (USA) | level 18 (USA) | level 2 (USA) |
+|---|---|---|---|
+| a race cycle's uploads | 17 transfers, 100 KB | 14, 68 KB | 19, 124 KB |
+| ... that change memory | all 17 every third cycle (about 320 blocks), none in between | 14 every third | 19 every third |
+| walk the kicks and apply them, a race cycle: median / 99% | 0.35 ms / 0.69 ms | 0.32 / 0.45 ms | 0.43 / 0.84 ms |
+| the level load's largest cycle (3,965 transfers, 5.8 MB with the splash's tiles) | 7.7 ms | 9.7 ms | 7.7 ms |
+| textures decoded again in a race cycle: median / 99% | 0 / 5 (30,720 texels, 0.12 ms) | 0 / 2 (16,384 texels, 0.07 ms) | 0 / 7 (28,928 texels, 0.13 ms) |
+| first decode of what the race's first frame draws | 196 textures, 569,856 texels: 2.5 ms | 345 textures, 1.24 M texels: 5.4 ms | 262 textures, 698,112 texels: 3.3 ms |
+| a full decode of every cached texture | 324 textures, 942,848 texels (3.6 MB of RGBA): 4.3 ms | 419, 1.47 M texels (5.6 MB): 6.4 ms | 517, 1.19 M texels (4.5 MB): 6.1 ms |
+
+Over the 24 levels (both versions) a race cycle carries 13 to 23 transfers and 52 to 124 KB; the cache holds 281 to
+703 textures, 3.2 to 6.7 MB of RGBA. Per pixel: an upload costs 3.2-4.7 ns (it compares before it writes), a decode
+1.2-1.9 ns a texel (CT16 9.2 ns; one texture a level). Applying the animated textures is 2% of a 16.7 ms frame and
+needs no work; of the 17 animated textures of level 17 five are among the textures drawn, so a third of the cycles
+decode and would upload about 30,000 texels (120 KB), the others nothing. Without the change test every cycle would.
+
+**For the Vulkan upload (step 9):** one host texture per cache entry, RGBA8 with raw GS alpha; after a cycle's
+lookups, upload the entries whose `generation` differs from the one uploaded. A level's first frame uploads 2-5 MB
+once; a race cycle 0 or about 120 KB. Mip levels are entries of their own (two textures a level at most). If block
+granularity ever matters (it does not at these sizes), `GsMemory::blockSerial` is there to upload sub-rectangles.
+
+### 17.5 What it changed in the plan, and notes for steps 6-9
+
+1. **PABE needs nothing** (17.3): steps 7 and 9 treat PABE 1 states as blend off under their alpha test.
+   `RENDERER_PLAN.md` step 5, step 9 and its open questions are updated.
+2. **Dirty tracking is by changed content, per 256-byte block**, not by upload: the plan's "about 20 animated
+   textures re-uploaded every frame" stays true of the uploads, but only every third cycle changes memory.
+3. **Uploads and sampling formats differ more than the survey listed**: animated textures arrive as CT32 64x64 or
+   64x32 images of a T8/T4 texture's storage, as T8, or as T4; the CT16 texture is never uploaded as CT16. The shadow
+   in the GS's own layout makes that free, as planned.
+4. **The `tex` consumer can run behind `emu`**, and `emu` has a GIF tap for consumers behind it: step 7's `gif2d` and
+   step 8's `vif` can use the same arrangement for their checks against the emulated machine.
+5. **`GifWalker` is step 7's starting point** (register writes in register form from every packet form). For the
+   reader: vertices without a drawing kick (XYZ3, or a PACKED XYZ2 with its ADC bit) occur on both paths (768,124 in
+   the level 17 dump's 700 cycles); no tag has PRE outside PACKED form; TEX2 is never written. The shadow's observer
+   (`TexShadow::setObserver`) delivers PATH3's other register writes in order with the transfers, so a reader built
+   on it sees a texture's upload before the TEX0 that samples it whatever the packets' layout.
+6. **Mipmaps**: by TEX0 the two mipmapped textures are CT32 64x64 with MXL 4 (TEX1 0xf6000000170, MIPTBP1 and 2) and
+   CT32 64x32 with MXL 3 (TEX1 0xf600000016c; the survey's table says 32x32), on levels 2 and 14 in both versions.
+   The cache holds each level as an entry at MIPTBP's place.
+7. **Live use.** `TexShadow` is a `Consumer`; the live reader adds it to the capture's consumer list (EE thread) and
+   the draw-list builder asks the cache as it records draws, so texture contents are those at the draw's place in
+   kick order. The cache is not thread-safe: the presenter takes decoded texels through the published draw list
+   (section 8), not from the cache.
+
+### 17.6 Open
+
+- **Split screen, the podium, results screens, the Track Editor's race and its loaded tracks** were not recorded for
+  this step. The shadow and decode do not depend on the scene; the alpha histogram of those scenes is missing.
+- **CSA other than 0, CSM2, 16-bit palettes, CT24 and CT16S** are implemented from the GS's rules and the emulated
+  GS's code and covered by `rc_tex_test` only: RC never uses them, so nothing in a dump can check them.
+- **Cache eviction and the texture count on the GPU** (entries of a level that is gone) are step 9's.
