@@ -19,6 +19,14 @@ const uint32_t kSpriteParams = sym::scratchPadG; // scratchPadG, used as the spr
 
 _sSpriteParams &params() { return *static_cast<_sSpriteParams *>(guest_host(kSpriteParams)); }
 
+// FontSpecialCharacterOrColourChange with the two registers its prologue saves: the caller's $s0 at 0 of its frame
+// and $ra at 0x10. They stay on the stack after it returns, and a slider's frame rectangle drawn next at that depth
+// (DisplayUIbar from AMenuDisplayMIT) takes its fix byte from the top byte of that $s0 (see AMENU, stale stack).
+int32_t fontSpecial(int16 x, int16 y, ptr32<char> pString, uint64_t savedS0, uint32_t savedRa);
+
+// The caller's $s0 as a native function entered from guest code sees it (natives leave the register alone).
+uint64_t callerS0() { return GPR_U64((&g_runtime->eeScheduler().runningContext()), 16); }
+
 uint32_t remu(uint32_t a, uint32_t b) { return b == 0 ? a : a % b; }
 
 // A character's place in the font: its index into the character pages (with the second range of characters
@@ -179,6 +187,9 @@ ptr32<char> FontPrint(int16 x, int16 y, ptr32<char> pString)
     // The proportional font's width table, found once (as the original keeps it in a register): a junk sprite's
     // texture can be written over the font's header while the string is drawn.
     const uint32_t widths = fontPtr.address + 0xcu + f.numSprites * 4u;
+    // The original's $s0: 1 in the fixed-width font, the drawn character's width address in the proportional one
+    // (the caller's until a character is drawn). FontSpecialCharacterOrColourChange saves it.
+    uint64_t s0 = f.type == 0 ? 1u : callerS0();
     for (;;)
     {
         const uint8_t c = ch(at);
@@ -191,11 +202,13 @@ ptr32<char> FontPrint(int16 x, int16 y, ptr32<char> pString)
             else if (c == 0x7d)
             {
                 ++at;
-                pen = static_cast<int16_t>(FontSpecialCharacterOrColourChange(pen, y, ptr32<char>(at)));
+                pen = static_cast<int16_t>(fontSpecial(pen, y, ptr32<char>(at), s0, sym::FontPrint + (f.type == 0 ? 0x1bcu : 0x358u)));
             }
             else
             {
                 const uint32_t index = glyphIndex(f, c);
+                if (f.type != 0)
+                    s0 = widths + index;
                 ptr32<_sSprite> sprite;
                 placeGlyph(f, fontPtr.address, index, 0, sprite);
                 if (f.type == 0)
@@ -285,7 +298,7 @@ int32_t FontPrintFX(int16 x, int16 y, ptr32<char> pString, uint16 fx, uint16 fxV
             if (c == 0x7d)
             {
                 ++at;
-                pen = static_cast<int16_t>(FontSpecialCharacterOrColourChange(pen, y, ptr32<char>(at)));
+                pen = static_cast<int16_t>(fontSpecial(pen, y, ptr32<char>(at), callerS0(), sym::FontPrintFX + 0x218u));
             }
             else if (c != 0x20)
             {
@@ -300,6 +313,7 @@ int32_t FontPrintFX(int16 x, int16 y, ptr32<char> pString, uint16 fx, uint16 fxV
     else if (f.type == 1)
     {
         const uint32_t widths = fontPtr.address + 0xcu + f.numSprites * 4u; // found once, as in FontPrint
+        uint64_t s0 = callerS0(); // as in FontPrint's proportional font
         for (; ch(at) != 0; ++at)
         {
             const uint8_t c = ch(at);
@@ -308,11 +322,12 @@ int32_t FontPrintFX(int16 x, int16 y, ptr32<char> pString, uint16 fx, uint16 fxV
             else if (c == 0x7d)
             {
                 ++at;
-                pen = static_cast<int16_t>(FontSpecialCharacterOrColourChange(pen, y, ptr32<char>(at)));
+                pen = static_cast<int16_t>(fontSpecial(pen, y, ptr32<char>(at), s0, sym::FontPrintFX + 0x3a0u));
             }
             else
             {
                 const uint32_t index = glyphIndex(f, c);
+                s0 = widths + index;
                 p.width = ch(widths + index);
                 ptr32<_sSprite> sprite;
                 placeGlyph(f, fontPtr.address, index, raise, sprite);
@@ -330,8 +345,18 @@ int32_t FontPrintFX(int16 x, int16 y, ptr32<char> pString, uint16 fx, uint16 fxV
 // "}" sequences: a button icon (0-9, A-Z, drawn by the game's callback, 32 wide) or a colour change.
 int32_t FontSpecialCharacterOrColourChange(int16 x, int16 y, ptr32<char> pString)
 {
+    return fontSpecial(x, y, pString, callerS0(), getRegU32(&g_runtime->eeScheduler().runningContext(), 31));
+}
+
+namespace {
+
+int32_t fontSpecial(int16 x, int16 y, ptr32<char> pString, uint64_t savedS0, uint32_t savedRa)
+{
     RC_DIVERT_IF_CHANGED(FontSpecialCharacterOrColourChange, x, y, pString);
     GuestFrame frame(0x20);
+    std::memcpy(guest_host(frame.local<uint8_t>(0).address), &savedS0, 8);
+    const uint64_t savedRa64 = savedRa;
+    std::memcpy(guest_host(frame.local<uint8_t>(0x10).address), &savedRa64, 8);
     const int32_t c = static_cast<int8_t>(*pString);
     int32_t pen = x;
     if (static_cast<uint8_t>(c - 0x30) < 10u || static_cast<uint32_t>(c - 0x41) < 0x1au)
@@ -376,6 +401,8 @@ int32_t FontSpecialCharacterOrColourChange(int16 x, int16 y, ptr32<char> pString
     }
     return pen;
 }
+
+} // namespace
 
 int32_t FontHandleSpecialCharacter(int16 x, int16 y, ptr32<char> pString)
 {
