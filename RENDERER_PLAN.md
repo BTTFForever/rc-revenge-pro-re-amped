@@ -305,6 +305,21 @@ ico-pc also replaces the PS2's other hardware layers and has a full settings men
 6. **Movies**: a host movie player with the game's entry points (PSS demux + libmpeg2, ico-pc `FMV.md`) in place of
    the MPEG/IPU emulation; movies drawn by the presenter at any resolution.
 7. **Saves**: the card already works; later, PCSX2-layout folders and an importer for real PS2 saves.
+8. **Multichannel surround** (user, 2026-11-19; on top of item 5's host sound driver). The game's Dolby Surround
+   option (sound mode 2) is already native (`decomp/src/sfx.cpp`, `revsfx.cpp`): `RevSfxPlay3D` gives every
+   positioned sound a left/right pan (0-30) and a front/back pan (0-31) from its position relative to the camera; in
+   Dolby mode a sound with effect flag 0x40 gets a second, rear voice, the front/back pan splits the volume between the
+   front and rear voices, and `SetDolbyVolume` sends the rear voice as the average of its left and right volumes at
+   +v left and -v right (out of phase: the Pro Logic matrix steers it to the surround channels). With the host sound
+   driver, a 5.1/7.1 output routes the front voice to FL/FR and the rear voice to SL/SR as a discrete pair, panned
+   by the rear lookup the game already has, instead of the out-of-phase mono fold; optional centre and LFE, and the
+   front/back pan applied to sounds that lack the flag. A settings row: stereo / Dolby Surround (the game's own
+   matrix, for Pro Logic receivers) / 5.1 / 7.1. No game logic changes: the positions already exist per sound.
+   Audio stack (2026-11-19, user asked about OpenAL): the core is our own software SPU2 mixer (ADPCM decode, ADSR,
+   pitch, the SPU2 reverb; checkable against the emulated sound path, as ico-pc's AUDIO.md), output through SDL3
+   audio (already a dependency; 2/6/8-channel layouts; replaces raylib). OpenAL Soft (LGPL) or Steam Audio (Apache)
+   only as an optional HRTF headphone mode fed with RevSfxPlay3D's world positions, not as the engine: the game
+   already computes per-voice pans, and OpenAL's mixing and reverb would change the sound.
 The Fable study (`ICO_RENDER_STUDY.md`) covers how ico-pc did each of these and what RC would need.
 
 ## End state: no PS2 hardware emulation (user, 2026-11-18)
