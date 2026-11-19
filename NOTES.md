@@ -705,6 +705,41 @@ the reference's pixel pipeline (`render/gs2d/gs_model`, in `rc_gs2d`) and their 
   at frame 658, Europe at 1167; `RC_RENDERER=vk RC_VK_VALIDATION=1` USA: scene 3020 at frame 658, 3,762 presents,
   0 validation errors.
 
+### Check (c): the 2D packet on Vulkan against the emulated GS (2026-11-20, renderer P1 step 7 batch 3)
+`rc_replay`'s `gif2d` consumer with `--vk` (`tools/rc_replay/gif2d_vk.{h,cpp}`): every drawing PATH3 kick of a dump
+(the flip's clear and K1) drawn through `Gs2dVk` over the emulated GS's own frame and Z buffers and compared with what
+the emulated GS drew. Design 10.3; what was built and the results: `RENDERER_2D_DESIGN.md` section 16. Nothing of it is
+linked into the game or the oracle.
+- **Run:** `ninja -C build-decomp rc_replay`, then `__NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only
+  build-decomp/rc_replay <exact dump> --consumer gif2d --vk --verify --quiet [--validation] [--no-tables]` (implies
+  `--with-emu`, so checks (a) and (b) run in the same pass). Ends `PASS` or `FAIL`; 1.5-3 min a 700-cycle dump with the
+  validation layer, about 20 ms of GPU time a kick per bias setting.
+- **What it does:** at each drawing kick the consumer (in front of `emu`) reads the colour target(s) the kick draws
+  into (CT32, FBP 0x0 / 0x50, 640 x 256) and the Z buffer (ZBP 0xa0, the Z32 layout now in `gs_layout`, low 24 bits)
+  from the emulated GS memory; `emu` runs the kick and calls back (`Emu::setAfterKick`); the same planes read again are
+  the reference. For each bias setting (`--vk-bias off|on|both`, default both) the targets and depth are seeded, the
+  kick's commands (with the state in force and every TEXTURE not yet uploaded) are drawn and read back. Pass per pixel:
+  alpha and Z equal, R/G/B within `-L..+2L` (bias off) or `-L..+L` (bias on), L = inexactly blended primitives
+  covering the pixel (D-2D-1). Guards firing also fail it.
+- **Report lines:** `(c) L ...` (the largest L and pixel-kicks by L), per bias `(c) bias off|on ...` (pixels compared,
+  equal, within the bound, out of it; alpha and depth differences; the worst differences and where; the largest
+  |d|/L), and tab-separated `C` lines: per bias the difference histogram by draw state (the state of the last inexact
+  primitive over the pixel; `L=0` where none) and by L. `FAIL (c)` lines name the cycle, kick, pixel, the three values
+  and every primitive over the pixel; `--vk-png <dir>` writes the first failing kick's before / Vulkan / reference /
+  difference pictures.
+- **Planted faults:** `--vk-fault atst-less|drop-fail|split-per-batch|z-gequal|fix|colour-swap|no-half-pixel|
+  bias-always|texel-row|texa` (comma-separated; `Gs2dVk::Fault`, and `texa` the reader's).
+- **Z layouts:** `gs_layout` has Z32/Z24/Z16/Z16S (the colour twin's block order with the top two block bits
+  inverted), checked by `rc_tex_test` against the runtime's tables: `tools/gs_tables_export.cpp` now also writes CT16S
+  and the Z formats into `decomp/generated/gs_tables.bin` (rebuild it with the command in that file's header).
+- **Result (2026-11-20):** all 67 exact dumps of both versions (s5, s6, the exact b4 ones) `PASS` with both bias
+  settings and the validation layer on (0 errors): 88,421 kicks, alpha and Z equal everywhere, largest L 7, worst
+  -1..+2 (bias off) / -2..+1 (on); bias on 82.3 M differing channels against 93.0 M off. Tables and the faults:
+  `RENDERER_2D_DESIGN.md` 16.2-16.3.
+- **The game:** nothing new links, but the CMake re-run regenerated a shader header by timestamp and relinked
+  `rc_revenge_pro` in both trees, so the checks were run: `tools/oracle.sh --all` USA seed 7331 1632 ok, Europe seed
+  7332 1563 ok, 0 FAIL; `playtest2` scene 3020 at frame 658 (USA) and 1167 (Europe).
+
 ### Level testing (2026-11-09)
 `RC_BOOT_LEVEL=<n> tools/play.sh` skips the intro and menus and loops the attract-mode demo on level n. `RC_SKIP_INTRO=1` skips only the legal screen, movie and Dolby screen and starts in the front end (for menu tests: `PS2X_PAD_REPLAY=<file>` plays a pad script of `epoch frame buttons axes` lines). `tools/level_sweep.sh <first> <last> <seconds> [VAR=value ...]` prints each level's frame rate.
 Sweep of levels 1-24 on the God of War renderer at 3x: 1, 3, 4, 10, 15, 16 and 22 hold about 55-60 fps; 6, 8, 9, 12, 17, 18 and 24 ran about 25-35 fps before the blend and palette fixes. On level 18 the default renderer reaches 35-43 fps with VU1 87% busy at 14.5 ms per field, so those levels are limited by VU1 on both renderers. About half the VU time is one block of program C3952C0FAEB52EAD; its cost is spread evenly over its instructions.

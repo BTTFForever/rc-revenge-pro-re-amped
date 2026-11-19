@@ -646,7 +646,7 @@ namespace rc::replay
         uint64_t bad = m->drawFailures + m->readFailures + m->validationErrors + m->kicksNoState;
         for (int b = 0; b < 2; ++b)
             if (m->opt.biasMask & (1u << b))
-                bad += m->tot[b].out + m->tot[b].depthDiff + m->tot[b].alphaDiff + (m->tot[b].kicks == 0 ? 1u : 0u);
+                bad += m->tot[b].out + m->tot[b].depthDiff + m->tot[b].alphaDiff + (m->tot[b].kicks != m->kicksSeen - m->kicksNoState ? 1u : 0u);
         return bad != 0;
     }
 

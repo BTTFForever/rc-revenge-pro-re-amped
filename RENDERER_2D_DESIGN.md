@@ -278,6 +278,8 @@ reach), with the plan of section 4:
 | K1 kicks whose smallest Z is above every Z under them | all 3,625 outside the Track Editor; none of the Track Editor's 700 (its lines) |
 | Z-tested K1 primitives that overlap, by bounding box, an earlier K1 primitive that may have written a Z at or above theirs | USA 512,481 of 557,979; Europe 418,194 of 446,390 |
 | inexactly blended K1 layers over one pixel in a cycle (bounding the blend error, 4.4) | 1: 28.7%, 2: 51.7%, 3: 16.9%, 4: 2.5%, 5-6: 0.2%, 7 or more: 793 pixels (USA, of 51.5 M blended pixel-cycles); deepest pixel of a cycle: 0 layers in 9,918 cycles, 2 in 9,763, 5-8 in 1,923, never more |
+| **as built (batch 3, check (c), 16.2):** L, the inexactly blended primitives of one kick covering a pixel (the reference's coverage, not the box), over all 67 exact dumps | USA: 1: 19.2 M, 2: 37.6 M, 3: 12.2 M, 4: 1.79 M, 5: 109 K, 6: 29 K, 7: 825 pixel-kicks; Europe: 17.5 M, 27.2 M, 10.3 M, 1.89 M, 135 K, 37 K, 617. **Largest L 7** in both versions (Track Editor and a USA front-end key dump); 0 to 3 on 96.9% of the pixel-kicks with L > 0 |
+| **as built:** Vulkan - reference per colour channel over the pixels with L > 0, by the state of the last inexact primitive over the pixel (both versions; bias off / bias on) | text `0x09`: +1 4.55 M / -1 5.76 M, +1 0.07 M; panels `0x01` lerp As: -1 0.02 M, +1 21.05 M, +2 0.013 M / -2 129, -1 6.42 M, +1 5.91 M; dimming boxes `0x21` FIX 0x20: +1 66.3 M / -1 13.4 M, +1 50.3 M; `0x21` FIX 0x3f (USA): +1 1.03 M, +2 0.013 M / -1 0.06 M, +1 0.36 M. Every other pixel (L = 0: 14.36 G pixel-kicks) equal in all four channels and Z, with either setting. Section 16.2 |
 
 ## 4. Blending
 
@@ -368,6 +370,12 @@ excess never changes which pixels are written. Hence, per colour channel and pix
 in a cycle, 3.3). Alpha and Z have no tolerance. A primitive with a flat source (untextured, one colour) and a
 fixed F is exact whenever `a >= b` on all three channels: `planState` can then set `exactBlend` and take it out of
 L (the dimming boxes, 0x21 FIX 0x20, are exact unless a channel of their colour is 0).
+
+**As built (batch 3): the bound measured on the device.** The RTX 2060's blender takes the source and the
+dual-source factor at 8 bits (15.3), so a layer is -1..+2 against the GS without the bias and -1..+1 with it, and a
+flat source is not exact (the dimming boxes differ on 66 M channels): check (c) uses `-L <= Vulkan - reference <= 2L`
+(bias off) or `-L <= ... <= L` (bias on), L counting every inexact plan (no flat-source exemption), and holds on all
+67 dumps with either setting (16.2). Divergence D-2D-1.
 
 ## 5. The alpha test
 
@@ -691,7 +699,7 @@ Per cycle with a K1 kick, `gif2d --with-emu --vk` (the consumer sits in front of
 |---|---|
 | alpha | Vulkan = reference |
 | depth (where read back) | Vulkan depth * 2^24 = reference Z24 |
-| R, G, B | `0 <= Vulkan - reference <= L(x, y)` (4.4); in particular equal wherever no inexactly blended K1 primitive's box covers the pixel |
+| R, G, B | `0 <= Vulkan - reference <= L(x, y)` (4.4); in particular equal wherever no inexactly blended K1 primitive's box covers the pixel. **As built:** `-L <= d <= 2L` (bias off), `-L <= d <= L` (bias on), L by coverage (16.1) |
 | guards | none fired on a primitive that covers a pixel; no default or seeded register but those of 10.1 |
 
 and over a dump, reported: the histogram of `Vulkan - reference` by draw state (expected: 0 on the great majority,
@@ -720,6 +728,7 @@ menu screen equals `gif2d --vk` of the same cycle drawn over the clear only.
    `gif2d` consumer. *Check:* 10.3 on all dumps of both versions; the difference histogram by state and the
    largest L written back into section 3.3's place in this file ("as built"), and the DIVERGENCES entries of
    section 12 drafted.
+   *Built 2026-11-20: section 16.*
 4. **Review point (Fable):** the report of batch 3 against the bounds here, before the live half; decision U1 is
    revisited with real numbers.
 5. **Live.** The reader in the capture's consumer list (EE thread), the draw list published at the cycle close
@@ -733,9 +742,12 @@ Batches 1 and 2 are independent of each other; 3 needs both.
 
 ## 12. Divergences this design accepts or inherits (for P2 step 10's list)
 
+Drafted for `DIVERGENCES` (P2 step 10) after batch 3; numbers from check (c) on the 67 exact dumps (16.2).
+
 | | what | size | where |
 |---|---|---|---|
-| D-2D-1 | fixed-function blend one level above the GS where the source term is under half a level and 0 < F < 0x80 | 0 or +1 per layer, at most L (8 in the dumps; 0-3 on 97% of blended pixels) | lerps and `Cd*F+Cs`; removed by U1's exact mode |
+| D-2D-1 (as drafted after batch 3) | fixed-function blend of the forms with a fractional factor (`Cd*F+Cs`, the lerps `(Cd-Cs)*F+Cs`, `(Cs-Cd)*F+Cd`, `(Cd-Cs)*f` with 0 < F < 0x80): the blender rounds where the GS floors, and on the RTX 2060 it takes the shader's source term and the dual-source factor at 8 bits (15.3), so neither the 127/256 bias nor a flat source makes it exact | per inexact layer -1..+2 levels per channel without the bias, -1..+1 with it; per pixel `-L..+2L` / `-L..+L`, L the inexact primitives covering it (largest 7 in the 67 dumps; 0-3 on 97% of the pixels with L > 0). Measured over 14.5 G pixel-kicks: 0.21% (bias off) / 0.19% (on) of all colour channels differ, never alpha or Z; of the pixels under an inexact layer 52% / 56% are equal (16.2) | K1's text (`0x09`), panels (`0x01`), dimming boxes and fades (`0x21` FIX 0x20, 0x3f, 0x40); in the race only the HUD's text and panels. Removed by U1's exact mode (destination read) |
+| D-2D-2 (batch 3) | the source bias setting changes the sign of D-2D-1's error: off, the error is upward (+1, rarely +2) and the text equal on 80% of its blended pixels (77% with the bias); on, it is two-sided, smaller in total (11% fewer differing channels) and largest on the panels' lerp, but text is darker by one level on 5.8 M channels | see 16.2's table | the default is the batch 4 review's decision |
 | I-1 (inherited from the reference, reproduced on purpose) | one-colour Gouraud primitives shaded one level low on about 6% of their pixels | 1 level before the texture function | every flat-coloured K1 quad; a real GS presumably shades them exactly |
 | I-2 (inherited) | bilinear filtering with float weights rounded to nearest; a real GS uses 4-bit weights and truncates | up to 1 level | every textured K1 pixel |
 | I-3 (inherited) | lines by Bresenham between truncated end points, both end pixels drawn | whole pixels at line ends | the Track Editor's lines |
@@ -1038,3 +1050,123 @@ for inexact blends) ends PASS; without it the run ends FAIL on T1 alone.
   `Cd*F+Cs`, more for the lerps) if (b) is chosen.
 - The model draws textures only from the decoded level, so region wraps that reach past the texture read 0 where the
   reference reads memory (the tests keep region bounds inside the texture; RC uses CLAMP only).
+
+## 16. Batch 3 as built (2026-11-20): check (c) on the dumps
+
+Section 11 item 3, with the orchestrator's decision after 15.3 (option (b), reversible): the fixed-function blend is
+accepted with its measured bound as D-2D-1, check (c) is widened to it, and it runs with the source bias off and on so
+that the batch 4 review can choose the default and decide U1 on real numbers. U1 was not built. Usage: `NOTES.md`,
+"Check (c): the 2D packet on Vulkan against the emulated GS".
+
+```
+render/tex/gs_layout.{h,cpp}     Z32/Z24/Z16/Z16S: the colour twin's block order with the top two block bits inverted
+tools/gs_tables_export.cpp       also writes CT16S and the Z formats (rc_tex_test compares all eight against the runtime)
+tools/rc_replay/emu.{h,cpp}      Emu::setAfterKick: a callback after the machine has run a kick (substituted or not)
+tools/rc_replay/gif2d_vk.{h,cpp} Gif2dVkCheck: seeding, the Vulkan replay per kick and bias, the comparison and its report
+tools/rc_replay/gif2d.{h,cpp}    --vk wiring (the reader's kick range, the emulated memory before and after), guards fail (c)
+tools/rc_replay/rc_replay.cpp    --vk, --vk-bias off|on|both, --vk-fault <names>, --vk-png <dir>; --validation
+```
+
+### 16.1 Changes to the design, and why
+
+1. **Per kick, not per cycle.** 10.3 compares at the K1 kick; the consumer judges every drawing PATH3 kick, the
+   flip's clear included (half the kicks), so the clear's sprite path, the Z32 write of Z 1 and the seed are checked as
+   well. A kick whose only primitives were dropped (FRAME.FBW 0) is not drawn and not judged; kicks that both upload and
+   draw would not be judged (none exist, 14.2). The b4 menu dumps `b4-key` / `b4-key-0` hold no drawing kick at all.
+2. **L counts coverage, not boxes.** 4.4 defined L by the scissored bounding box; K1 draws every rectangle as two
+   triangles with the same box, so that L is twice the layers (the first run gave a largest L of 12 on the front end
+   against 6 by coverage). L is the number of inexact primitives whose pixels, by the reference's own rules (edge
+   functions with the top-left bias, Bresenham for lines, the sprite rectangle), inside the scissor, include the pixel.
+   An alpha-test-failing pixel still counts (an upper bound). No flat-source exemption (4.4's last paragraph): with an
+   8-bit blender the dimming boxes are not exact (16.2).
+3. **The bound** is the decision's: per channel `-L <= Vulkan - reference <= 2L` with the bias off, `-L <= ... <= L`
+   with it on; alpha and Z (low 24 bits) exactly equal everywhere, which also makes every L = 0 pixel exact. Both
+   settings must pass for `PASS`; guards firing fail (c) as 10.3 asks (none fired).
+4. **Seeding as built in batch 2** (`Gs2dVk::seed`: colour and Z from CPU planes in one full-target draw), from the
+   emulated GS memory read with `gs_layout` (CT32 at FBP 0x0 / 0x50 for each target the kick draws into, Z32 layout at
+   ZBP, the low 24 bits); the emulated memory after the kick, read the same way, is the reference. No word of the Z
+   buffer had a non-zero top byte before any kick. Depth is read back for the whole plane (15.1 item 7).
+5. **The kick's sub-list:** the state in force at the kick's first command (STATE is emitted only on a change), every
+   TEXTURE command not yet given to the GPU (TEXTURE is sent once per generation, 14.1 item 5), then the kick's own
+   commands. One `Gs2dVk` serves both bias settings (`Options::sourceBias` is a per-record flag).
+6. **A first failure** prints the cycle, kick, pixel, the Vulkan, reference and seed values, the channel and its
+   bound, and every primitive covering the pixel with its state and plan; `--vk-png` writes the kick's before, Vulkan,
+   reference and difference pictures.
+
+### 16.2 Results (RTX 2060, driver 620.70.06, validation layer on for every dump; 67 / 67 `PASS`)
+
+`rc_replay <dump> --consumer gif2d --vk --validation --verify --quiet` (checks (a) and (b) in the same pass, both still
+holding everywhere). 2 h 36 min of process time, 4 at a time (45 min); about 14 ms of GPU time a kick per setting.
+
+| | USA s5 (28) | USA s6 (2) | USA b4 (4) | Europe s5 (27) | Europe s6 (2) | Europe b4 (4) |
+|---|---|---|---|---|---|---|
+| drawing kicks judged | 43,119 | 2,079 | 1,679 | 37,839 | 2,081 | 1,624 |
+| pixels compared (each setting) | 7.065 G | 0.341 G | 0.275 G | 6.200 G | 0.341 G | 0.266 G |
+| out of the bound; alpha, Z differing | 0; 0, 0 | 0; 0, 0 | 0; 0, 0 | 0; 0, 0 | 0; 0, 0 | 0; 0, 0 |
+| bias off: pixels not equal (within the bound) | 23,425,183 | 9,554,668 | 1,362,964 | 18,867,273 | 6,766,257 | 1,598,009 |
+| bias off: channels differing; range | 36.28 M; -1..+2 | 14.24 M; -1..+2 | 2.04 M; -1..+2 | 28.28 M; -1..+2 | 9.75 M; -1..+2 | 2.36 M; -1..+2 |
+| bias on: pixels not equal (within the bound) | 21,204,076 | 8,686,897 | 1,217,209 | 17,110,354 | 6,252,219 | 1,454,099 |
+| bias on: channels differing; range | 31.99 M; -1..+1 | 12.85 M; -1..+1 | 1.81 M; -1..+1 | 24.76 M; -2..+1 | 8.81 M; -2..+1 | 2.09 M; -2..+1 |
+| largest L | 7 | 6 | 7 | 7 | 6 | 6 |
+| validation errors | 0 | 0 | 0 | 0 | 0 | 0 |
+
+In all: 88,421 kicks, 14.49 G pixel-kicks, 43.5 G colour channels. Pixels under no inexact layer (L = 0, 14.36 G):
+equal in all four channels and Z with either setting, which covers every integer-exact form (the clear, untextured
+and textured blend-off draws, the Track Editor's lines, the flare's `Cd+Cs` and the `Cd-Cs` form). The largest
+|d| / L is 2.00 with the bias off (a +2 under one layer: 4,834 channels at L 1) and 1.00 with it on; the bias-on -2
+are 129 channels at L 2 (Europe). Largest L 7: USA Track Editor (cycle 1984 kick 197) and `b4-key-1` (cycle 468),
+Europe Track Editor (cycle 1903).
+
+**Difference by state** (the state of the last inexact primitive covering the pixel; both versions, channels):
+
+| state | pixels with L > 0 | bias off: equal; -1 / +1 / +2 | bias on: equal; -2 / -1 / +1 |
+|---|---|---|---|
+| text, `0x09` `Cd*As+Cs`, LEQUAL 0x3f | 12.88 M | 80.3%; 0 / 4.55 M / 0 | 77.1%; 0 / 5.76 M / 0.07 M |
+| panels, `0x01` `(Cd-Cs)*As+Cs`, RGB_ONLY split | 15.63 M | 19.9%; 0.02 M / 21.05 M / 0.013 M | 43.6%; 129 / 6.42 M / 5.91 M |
+| dimming boxes, `0x21` FIX 0x20 (flat colour) | 98.92 M | 53.4%; 0 / 66.28 M / 0 | 55.6%; 0 / 13.42 M / 50.31 M |
+| `0x21` FIX 0x3f, textured (USA) | 0.52 M | 10.2%; 0 / 1.03 M / 0.013 M | 46.5%; 0 / 0.06 M / 0.36 M |
+| all inexact | 127.95 M | 51.9%; 92.95 M channels, sum of \|d\| 92.98 M | 56.3%; 82.32 M channels, sum of \|d\| 82.32 M |
+
+`0x21` FIX 0x40 (1,798 primitives) never ends up as the last inexact layer of a pixel in these dumps. **Which bias
+gives the smaller real error:** on the dumps the bias on differs on 11% fewer channels (82.3 M against 93.0 M) with a
+smaller maximum (|d| <= L against 2L), a lower total |d|, more equal pixels under blending (56.3% against 51.9%) and an
+error of both signs; off, the error is one-signed (+1, the blender rounding up) and smaller for the text (4.55 M
+channels against 5.83 M). The panels' lerp gains most from the bias (21.1 M -> 12.3 M); the dimming boxes, most of
+the blended area, little (66.3 M -> 63.7 M). Either way 0.2% of all colour channels differ, by one level but for
+26,000 channels by two. For the review: the default (off as built; on would be the smaller error) and U1.
+
+### 16.3 Planted faults (9.3; `--vk-fault`, USA front end `s5/front`, 900 cycles, both bias settings)
+
+| fault | (c) | out-of-bound pixels (off / on); alpha, Z differing | failing kicks |
+|---|---|---|---|
+| ATST LEQUAL as LESS | fails | 1,302,500 / 1,302,500; alpha 1,302,499, Z 1,296,600 | 600 / 600 |
+| the failing part of the split dropped | fails | 1,673,017 / 1,946,570; 0, 0 | 600 / 600 |
+| the split per batch instead of per group | passes | 0 / 0 | 0 (9.3 asks only T3 to catch it; on this dump the order inside a batch changes no pixel) |
+| ZTST GREATER as GEQUAL | fails | 22,256 / 27,053; 0, 0 (text at equal Z) | 600 / 600 |
+| the half pixel left out of the position | fails | 425,152 / 431,680; alpha 56,256, Z 379,308 | 747 / 747 |
+| FIX off by one | fails, narrowly | 265 / 265; 0, 0 (13.97 M pixels differ but stay inside the widened bound, against 9.09 M without the fault) | 49 / 49 |
+| a vertex colour's R and G swapped | fails | 940,788 / 954,071; 0, 0 | 600 / 600 |
+| the texel fetch one row off | fails | 8,709,019 / 8,985,749; alpha 3,170,802, Z 1,706,291 | 743 / 743 |
+| the bias applied where a < b | passes | 0 / 0 | the fault acts only with the bias on, where it stays inside -L..+L (as in 15.4, the bound cannot see it) |
+| TEXA ignored (the reader's decode) | passes, also on `s5/l13` (the CT16 quad) | 0 | as 14.4: TEXA never changes a picture in these dumps |
+
+So check (c) fails for the faults 9.3 names for it (the dropped failing part, GEQUAL, the half pixel, FIX, the texel
+row, the colour swap). The widened bound makes FIX off by one visible on 265 pixels only, where the design's 0..+L
+would have seen far more: a cost of D-2D-1's width the review should weigh.
+
+### 16.4 The game and the oracle
+
+Nothing new is linked into either: the changed and new sources belong to `rc_replay`, `rc_tex` and `rc_tex_test`, and
+the game's and the oracle's build commands name none of them (`ninja -t commands`). The CMake re-run regenerated a
+shader header (`generated/trdr_shape_glsl.h`) by timestamp, so `ninja` recompiled two unchanged game objects and
+relinked `rc_revenge_pro` in both trees; the regression checks were run for that: `tools/oracle.sh --all` USA (seed
+7331) 1632 ok and Europe (seed 7332) 1563 ok, 0 FAIL; `playtest2` replays reach the race scene 3020 at frame 658 (USA)
+and 1167 (Europe).
+
+### 16.5 Open
+
+- **For the batch 4 review (Fable):** the bias default (16.2) and U1 (exact destination read), with D-2D-1's width
+  (the FIX fault nearly hidden) as an argument for U1.
+- The design's 4.4 argument that a later layer only scales an earlier excess holds empirically under the widened
+  bound (no pixel out of it at L up to 7); it is not proved for the 8-bit blender.
+- The live half (batch 5) and scenes not in the dumps (13).

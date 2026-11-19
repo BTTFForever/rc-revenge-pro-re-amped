@@ -347,6 +347,16 @@ After step 1: fold its answers into this plan's open questions.
      their tests. **T1 fails**: the device's blender works at 8 bits, so the lerps and `Cd*F+Cs` come out -1..+1 per
      layer with the 127/256 bias and -1..+2 without (the design assumed 0..+1); the integer-exact forms are exact.
      The bias is off as the design says. Whether to take the exact mode (U1) before batch 3 is open for the user.
+   - **Batch 3 built 2026-11-20** (`RENDERER_2D_DESIGN.md` section 16): check (c), `rc_replay --consumer gif2d --vk`
+     (the Z layouts in `gs_layout`, the emulated frame and Z buffers seeding `Gs2dVk` before every drawing PATH3 kick,
+     the kick drawn with the source bias off and on and compared with what the emulated GS drew). Decision taken for
+     it (orchestrator, reversible): the blender's measured bound is accepted as D-2D-1, so the colour criterion is
+     `-L..+2L` (bias off) / `-L..+L` (bias on), L the inexact primitives covering the pixel. All 67 exact dumps of
+     both versions pass with both settings and the validation layer on (0 errors): 88,421 kicks, 14.5 G pixel-kicks,
+     alpha and Z equal everywhere, every pixel under no inexact layer equal; largest L 7. The bias on gives the smaller
+     error (82.3 M differing channels against 93.0 M, |d| <= L against 2L), the bias off the one-signed one that
+     favours text. Planted faults of 9.3 fail (c) but the split-per-batch, bias and TEXA ones, as expected; FIX off by
+     one fails on only 265 pixels under the widened bound. Next: the batch 4 review (bias default, U1).
 8. VIF chain reader with the C++ VU references (Opus): races draw correctly (slowly); GIF bytes equal the emulated
    VU1's for recorded frames; full screenshots on levels 5, 17, 18, 20.
 
