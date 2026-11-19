@@ -192,6 +192,13 @@ replacement read an argument the game never passes.
   0 FAIL. `--all`: USA seed 7175: 1632 ok, 0 FAIL, 0 known, 0 skipped, 98 without a setup (481 s). Europe seed 7176: 1563 ok,
   0 FAIL, 0 known, 0 skipped, 90 without a setup (862 s).
 
+### AMenuDisplayMIT, seed 9494 (2026-11-20): open
+`--all --seed 9494` (USA) failed `AMenuDisplayMIT` on 1 input of 20 on each of the four dumps (iteration 11: `a0`
+0x1f00000, `a1` 0x1f00360, `a2` 0x1f00200, `f12` 1.5708, `f13` 4096; return value, scratchpad and globals equal; one
+RAM byte at 0x550714: original 00, native 31). The same with the runtime as it was before renderer P1 step 4 batch 4
+(`--only AMenuDisplayMIT --seed 9494`), so it is not that batch's (the oracle calls none of its code). Not investigated
+yet. Seed 9496: 1631 ok, 0 FAIL, 1 skipped (`PathBuilder`'s original timed out on a level 17 input).
+
 ## The runtime (vendored, 2026-11-19)
 PS2Recomp lives in `third_party/ps2recomp/` (see its `VENDORED.md`): ps2xRecomp, ps2xRuntime and ps2xIOP from the SotC fork
 at d06a4ab, with this project's changes applied. It used to be a separate checkout (`~/PS2Recomp-sotc`) with the changes
@@ -281,6 +288,14 @@ All are in `third_party/ps2recomp/` (against upstream d06a4ab; see "The runtime"
 - `EeScheduler.cpp`, `ee_scheduler.h` (`freezeClock`, 2026-11-19): while frozen, cycles advance neither the EE clock,
   the EE timers nor the IOP (cap 10 s of EE time). The live shadow comparison freezes it around both runs; see "Frame
   record", the Europe shadow stall.
+- `ps2_runtime.cpp`, `ps2_save_state.cpp`, `include/ps2_capture_hooks.h` (2026-11-20, renderer P1 step 4 batch 4): F10 in
+  the raylib loop and in `runHostPlatformLoop` calls the frame record's `hotkey` hook; `EeScheduler::serviceStateRequests`
+  calls `stateLoading` just before a save state replaces the machine and `stateLoaded` after (both null unless
+  `RC_FRAME_RECORD` installs them).
+- `ps2_save_state.cpp` (`GSStateAccess::serialize`, 2026-11-20): takes the backend lifetime mutex before the GS state
+  mutex, as the presentation latch (`GS::latchHostPresentationFrame`, main thread) does. Upstream's order (state first)
+  deadlocked a save against the latch: with the frame record in exact mode a `PS2X_STATE_SAVE_AT` save never finished in
+  2 runs of 3 (`playtest2`, field 1700); after the change 3 of 3 saved.
 - `ps2_runtime.cpp` (`Store32`): `g_ps2HardwareStoreHook`, null except in the offline oracle, sees each 32-bit store sent to a hardware register and can drop it (the oracle logs them so both runs' DMA kicks are compared).
 - `include/ps2_capture_hooks.h` (2026-11-19, renderer P1 step 4 batch 1): the frame record's hooks, null unless `RC_FRAME_RECORD` installs them (one null test per site): `ps2_memory.cpp` (each DMA kick on channels 0-2 with every byte range its stream is read from, GS privileged, VIF1 and GIF register stores, FIFO stores, PATH2 packets, `submitGifPacket`), `ps2_runtime.cpp` (`attach` at the end of `initialize`, the store caller in `Store32/64`, the native GIF fast paths), `System.cpp` (`SetGsCrt`), `gs_frontend.cpp` (`GS::writeRegister`, local->host transfers, and `g_gsRawRegs`: every GS register write kept as written, always on), `ps2_save_state.cpp` (`snapshotGs`: GS memory and registers for keyframes, as a save state takes them). See "Frame record".
 - `ps2_save_state.cpp`, `include/ps2_capture_hooks.h` (2026-11-19, renderer P1 step 4 batch 2): `ps2x::savestate::saveGraphics` / `loadGraphics` (the graphics machine's state but GS memory as one versioned blob: GS front end including a GIF tag in progress, which upstream's save state leaves out, backend state, privileged registers and the register shadow, VU1 memory and registers, VIF1 and DMA registers, PATH3 mask and FIFO, pending transfers, the I/O register map) and `ps2x::capture::exactCapable` (bare software GS and no VU1/GIF thread), for the frame record's exact mode and `rc_replay --consumer emu`. Nothing changes when they are not called.
@@ -400,7 +415,7 @@ SDL3 window with a Vulkan swapchain made by the RHI (`third_party/ico_rhi`) inst
 - Known, not new: `playtest2` is all epoch 0 and the level load at frame 658 moves the clock to epoch 1, so the replay's
   driving inputs are skipped and the player sits on the grid (both modes); a later recording needs a fresh `record`.
 
-### Frame record (2026-11-19, renderer P1 step 4, batches 1, 2 and 3)
+### Frame record (2026-11-19/20, renderer P1 step 4, batches 1-4)
 The kick record of `RENDERER_FRAME_RECORD.md`: per display cycle (DISPFB2 store to DISPFB2 store, one shown picture)
 every DMA kick on channels 1 and 2 as its registers, every GS privileged / VIF1 / GIF register store, and the 4 KB pages
 of guest RAM the kicks read, each stored when it is new or changed (a sparse page shadow), with keyframes (GS memory and
@@ -408,14 +423,32 @@ registers, VU1 memory and registers, VIF1) every 300 cycles. Off-line consumers 
 replay it with the guest RAM rebuilt. Any renderer records in plain mode; exact mode (batch 2: the synchronous software
 GS) adds the emulated GS's picture per cycle, its register file before every kick and a hash of every kick's GIF
 output, and `rc_replay --consumer emu` replays a dump through the runtime's own VIF1, VU1 and GS bit for bit. Batch 3
-adds side tags (below); ring/F10 come with batch 4.
+adds side tags (below); batch 4 the F10 key, the in-memory ring and the segment break at a save-state load.
 - **Record:** any run of the game, e.g.
   `RC_FRAME_RECORD=build-decomp/frame-dumps/l17.rcfr RC_FRAME_RECORD_AT=level:300+120 RC_BOOT_LEVEL=17 tools/play.sh`
-  (`RC_VERSION=eu` as usual). Triggers (count in display cycles, default 120): `boot[+n]`, `cycle:<n>[+n]`,
-  `game:<n>[+n]` (game frames since boot), `level:<n>[+n]` (game frames since the last level start; not before one),
-  `scene:<hex>[+n]` (the GS survey's scene id). `RC_FRAME_RECORD_KEY=<n>` sets the cycles per segment (300). Unset
-  `RC_FRAME_RECORD_AT`: `boot+120`. The game logs `[frame-record]` lines to `session.log`: when it starts (and in
-  which mode), and at the end sizes by record type and the recorder's time.
+  (`RC_VERSION=eu` as usual). Triggers (count in display cycles, default 120): `key[+n]` (the default when
+  `RC_FRAME_RECORD_AT` is unset: F10 in the game window starts, F10 again or the count stops, the next F10 records
+  again), `ring:<n>` (below), `boot[+n]`, `cycle:<n>[+n]`, `game:<n>[+n]` (game frames since boot), `level:<n>[+n]`
+  (game frames since the last level start; not before one), `scene:<hex>[+n]` (the GS survey's scene id).
+  `RC_FRAME_RECORD_KEY=<n>` sets the cycles per segment (300; 120 in ring mode). Successive dumps of one run (each F10
+  recording, each ring dump) are numbered: `%d` in the name becomes 0, 1, 2...; without `%d` the second and later get
+  `-1`, `-2`... before the extension. The game logs `[frame-record]` lines to `session.log`: when it starts (and in which
+  mode), each F10, and at the end of a dump sizes by record type and the recorder's time.
+- **Ring:** `RC_FRAME_RECORD_AT=ring:<n>` records from boot and keeps the last n display cycles in memory, encoded and
+  compressed, whole segments at a time (a segment is a keyframe and the cycles after it; the oldest goes when the others
+  hold n), so a dump holds n to n + 120 cycles. F10 writes the ring and a final keyframe to the next numbered file (on the
+  writer's thread; the game only takes the keyframe) and recording goes on. Exact mode keeps only the pictures' hashes
+  unless `RC_FRAME_RECORD_REF` says otherwise. At every new segment the game logs a `ring:` line (the last segment's
+  bytes a cycle by record type, raw and stored, the recorder's time, the ring's memory).
+- **F10:** the raylib loop and `RC_RENDERER=vk`'s loop pass it to the capture (a counter the EE thread reads at the next
+  cycle close), so the dump ends (or a key recording starts) at a cycle boundary. Keys reach the game only while its
+  window has focus. Without a keyboard (scripted checks): `RC_FRAME_RECORD_F10=<cycle>[,<cycle>...]` acts as if F10 was
+  pressed at the close of those display cycles; or a uinput keyboard, see "How to take and check a dump".
+- **Save states:** loading one (F9, `PS2X_STATE_LOAD_AT`) while recording closes the cycle in progress just before the
+  machine is replaced and starts a new segment with a keyframe flagged `afterStateLoad` right after, so a dump that spans
+  a load replays and verifies (`rc_replay emu` loads that keyframe instead of comparing against it). The runtime's save
+  state serialisation now takes the GS mutexes in the presentation latch's order (it deadlocked the game 2 runs in 3 in
+  exact mode when a timed save came due; see "Local changes to the runtime").
 - **Exact mode:** `RC_FRAME_RECORD=<file> RC_FRAME_RECORD_AT=<trigger> tools/frame_record.sh [play.sh arguments]`:
   `play.sh` with `PS2X_GS_GPU=0 PS2X_GS_HW=0 PS2X_GS_THREAD=0 PS2X_MTVU=0 RC_TRACK_SHADER=0 RC_VU1_REF=0` (the
   track shader replaces VU1 programs, so it rules exact mode out) and `RC_FRAME_RECORD_STRICT=1` (stop if exact mode is
@@ -469,9 +502,21 @@ adds side tags (below); ring/F10 come with batch 4.
 - **Container test:** `ninja -C build-decomp rc_record_test && build-decomp/rc_record_test <scratch folder>` writes a
   synthetic dump (chains with every tag kind, the scratchpad, wrap at the end of RAM, two segments), reads it back,
   cuts it at five points (each reads up to its last whole chunk) and checks a flipped byte and a dropped page are
-  caught.
-- **Code:** `render/record/` (format, consumer interface `rc::rec::Consumer`, page tracker, chain walker, writer,
-  reader, `capture.cpp` = the hooks, cycles and triggers, linked into the game only and installed only when
+  caught; (batch 4) a ring of 5 cycles in 3-cycle segments dumped twice, each dump read back whole.
+- **How to take and check a dump** (batch 4):
+  1. Glitch hunting in normal play: `RC_FRAME_RECORD='build-decomp/frame-dumps/ring%d.rcfr' RC_FRAME_RECORD_AT=ring:300
+     tools/play.sh [replay <name>]` (any renderer, `RC_RENDERER=vk` too); press F10 after the glitch. A plain-mode dump:
+     `build-decomp/rc_replay build-decomp/frame-dumps/ring0.rcfr --verify --quiet` must end `PASS` (A1), and
+     `tools/frame_dump.py verify <dump>` must say `ok`.
+  2. For the emulated replay record in exact mode: `RC_FRAME_RECORD=... RC_FRAME_RECORD_AT=ring:300
+     tools/frame_record.sh [replay <name>]` (or `key`, or any trigger), then `build-decomp/rc_replay <dump> --consumer emu
+     --verify --quiet` must end `PASS` (A2: every kick's GIF output, register file and picture hash, GS memory at every
+     keyframe but those after a state load, and the final one).
+  3. F10 without a hand on the keyboard: a uinput keyboard (`python-evdev`; `/dev/uinput` is writable for the user)
+     pressing F10 every few seconds until `session.log` shows `[frame-record] F10`; a press counts only while the
+     game window has keyboard focus.
+- **Code:** `render/record/` (format, consumer interface `rc::rec::Consumer`, page tracker, chain walker, writer
+  (batch 4: also the ring, `Writer::Ring`), reader, `capture.cpp` = the hooks, cycles, triggers, F10 and state loads, linked into the game only and installed only when
   `RC_FRAME_RECORD` is set; `emu_state.cpp` = keyframe state from and into the runtime; `picture.h` = the reference
   picture's read-out), `render/gfx/tags.{h,cpp}` (the tag channel, in `rc_record`) and `decomp/rc_gfx_tags.cpp` (the
   game's anchor readers), `tools/rc_replay/` (`emu.cpp`: the emu consumer), the runtime's
@@ -503,7 +548,10 @@ adds side tags (below); ring/F10 come with batch 4.
 - **Sizes and cost** (plain mode, both versions; details in `RENDERER_FRAME_RECORD.md` 6.3): a race cycle 0.46-0.54 MB
   raw, 86-102 KB stored; front end 0.29-0.34 MB / 63-75 KB; a movie picture 0.35 MB / 93 KB; a keyframe 4.1 MB raw,
   1.2-1.4 MB stored; 120 race cycles 14-18 MB on disc, `boot+900` 72-80 MB. The recorder costs the EE thread 2.6-6.8 ms
-  a cycle while it records (page compare and the stream hash; compression runs on its own thread).
+  a cycle while it records (page compare and the stream hash; compression runs on its own thread). Measured with the
+  ring in normal play (batch 4, A9 in `RENDERER_FRAME_RECORD.md` 6.3): 63-75 KB stored a cycle (front end, race),
+  2.9-4.2 ms on the EE thread a cycle on average (largest 14 ms), `ring:300` 22-37 MB of memory (peak 44 MB), no frame
+  rate lost (60.0 / 50.0 fps).
 
 ### Level testing (2026-11-09)
 `RC_BOOT_LEVEL=<n> tools/play.sh` skips the intro and menus and loops the attract-mode demo on level n. `RC_SKIP_INTRO=1` skips only the legal screen, movie and Dolby screen and starts in the front end (for menu tests: `PS2X_PAD_REPLAY=<file>` plays a pad script of `epoch frame buttons axes` lines). `tools/level_sweep.sh <first> <last> <seconds> [VAR=value ...]` prints each level's frame rate.

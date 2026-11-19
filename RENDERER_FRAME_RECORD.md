@@ -4,7 +4,9 @@ Designed 2026-11-19 for `RENDERER_PLAN.md` step 4; "Build batches" at the end is
 and container) built 2026-11-19**: what it changed in this design is marked "(batch 1)" where it applies and listed in
 section 13 with the reasons; its measurements are in sections 2 and 6.3. **Batch 2 (exact mode and the emulated
 replay) built 2026-11-19**: its changes are marked "(batch 2)" and listed in section 14. **Batch 3 (side tags) built
-2026-11-19**: its changes are marked "(batch 3)" and listed in section 15. Read with `RENDERER_SURVEY.md` (what the kicks carry) and `ICO_RENDER_STUDY.md` section 2 (where the
+2026-11-19**: its changes are marked "(batch 3)" and listed in section 15. **Batch 4 (ring, F10, save-state loads,
+write-up) built 2026-11-20**: its changes are marked "(batch 4)" and listed in section 16; the measured budget (A9) is in
+6.3. Read with `RENDERER_SURVEY.md` (what the kicks carry) and `ICO_RENDER_STUDY.md` section 2 (where the
 game builds its packets). Paths are relative to the repository; the runtime is `third_party/ps2recomp/ps2xRuntime`
 (`RT/` below).
 
@@ -191,7 +193,10 @@ so a replay can compare all of GS memory at the end. In exact mode `GSVR` is exa
 `vramExact = 0` (a GPU backend's memory image is whatever its `SnapshotVram` gives) and tools say so.
 
 A save-state load (F9) while recording closes the segment; the next cycle close writes a keyframe flagged
-`afterStateLoad`.
+`afterStateLoad`. (batch 4) As built the cycle in progress closes just before the machine is replaced (its `END`
+carries the picture the display shows then, with a `NOTE`), and the keyframe is taken right after the load, before any
+guest code runs: the cycles before the load replay and verify as recorded, the segment after it starts from the loaded
+machine. `emu` loads such a keyframe without comparing GS memory against it (section 16).
 
 ### 3.5 Exact mode extras
 
@@ -486,7 +491,7 @@ closed draw lists (section 9).
 
 ```
 RC_FRAME_RECORD=<file>          write a dump (".rcfr"; "%d" numbers successive dumps of one run)
-RC_FRAME_RECORD_AT=<trigger>    when; default "key" (batch 1, until key exists: "boot+120")
+RC_FRAME_RECORD_AT=<trigger>    when; default "key" (batch 1-3: "boot+120"; batch 4: "key")
     boot[+count]                from the first kick
     cycle:<n>[+count]           display cycles since boot
     game:<n>[+count]            game frames since boot (the override's counter)
@@ -495,6 +500,7 @@ RC_FRAME_RECORD_AT=<trigger>    when; default "key" (batch 1, until key exists: 
     scene:<hex>[+count]         the first cycle of a scene id
     key[+count]                 F10 starts, F10 or count stops (default count 120)
     ring:<n>                    keep the last n cycles; F10 writes them and goes on
+RC_FRAME_RECORD_F10=<c>[,<c>]   (batch 4, a test aid) act as if F10 was pressed at the close of these display cycles
 RC_FRAME_RECORD_REF=<n>|hash|off  reference picture every n-th cycle (default 1; ring: hash), hashes always (exact mode)
 RC_FRAME_RECORD_KEY=<n>         cycles per segment (default 300; ring 120)
 RC_FRAME_RECORD_STRICT=1        stop the run if exact mode is not possible
@@ -502,7 +508,9 @@ RC_FRAME_RECORD_STRICT=1        stop the run if exact mode is not possible
 
 A recording starts and stops at cycle closes. `count` is in cycles. Both versions use the same switches;
 `tools/frame_record.sh [play.sh arguments]` is `play.sh` with the exact-mode environment and honours `RC_VERSION`.
-`platform/vk_host.cpp` needs no change in step 4 (F10 arrives through the runtime's loop).
+`platform/vk_host.cpp` needs no change in step 4 (F10 arrives through the runtime's loop). (batch 4) Successive dumps of
+one run (`key` after each stop, every F10 of `ring`) take the next number for `%d`; a name without `%d` gets `-1`,
+`-2`... before its extension for the second and later dumps.
 
 ### 6.3 Size budget (estimates from section 2's measurements; batch 1 replaces them with measured numbers)
 
@@ -547,6 +555,31 @@ on level 18, 3.5 / 4.0 ms front end, 2.6 / 3.0 ms over boot; largest single cycl
 copies every static page). Keyframes 7-32 ms (GS memory read back from the God of War backend and the VU1/VIF1 state).
 This is above the 1-2 ms estimated in 3.2, which left out the stream hash: measured hot-cache, `Hash64` costs about
 1.5 ms and the page compare about 1.2 ms per 10 MB of stream. The ring's memory is measured with batch 4.
+
+**A9, the final table (batch 4, 2026-11-20).** Measured with the ring (`RC_FRAME_RECORD_AT=ring:300`, segments of
+120 cycles) during `tools/play.sh replay playtest2` (default renderer, MTVU on, RTX 2060, 180 s; the same runs as A5),
+from the game's per-segment `ring:` lines, each scene's first segment after a change (the transition) left out, plus the
+exact-mode ring of the same replay (`tools/frame_record.sh`, USA). Bytes are a cycle's records raw (as the writer
+builds them) and its `CYCL` chunk stored (zlib level 1); recorder time is the EE thread's time in the kick hooks a
+cycle (page compare and copy, stream hash, records; compression runs on the writer's thread). USA / Europe; the
+race of `playtest2` is the player on the grid with the computer cars racing (its driving inputs are skipped, see
+NOTES.md) and the idle camera:
+
+| scene | segments | raw a cycle (PAGE, KICK, TAG, HW + END) | stored a cycle | recorder a cycle (largest cycle) |
+|---|---|---|---|---|
+| boot, legal screen (0x30) | 1 / 1 | 364 / 379 KB (362 / 378, 0.1, 0.1, 0.3) | 97 / 97 KB | 0.43 / 0.39 ms (0.8) |
+| front end (0x1620) | 4 / 8 | 324 / 324 KB avg, 288-379 (318, 1.9, 3.8, 0.3) | 75 / 75 KB avg, 70-87 | 2.9 / 2.9 ms avg, 2.6-3.3 (6.9 / 5.9) |
+| race (0x3020) | 76 / 57 | 331 / 340 KB avg, 279-608 (321 / 331, 5.0 / 4.8, 5.1 / 4.4, 0.3) | 63 / 64 KB avg, 51-105 | 4.1 / 4.2 ms avg, 3.2-5.4 (13.3 / 14.0) |
+| exact mode, front end (USA) | 9 | 341 KB (326, 10.5 with register files, 4.1, 0.3) | 77 KB | 2.75 ms (5.9) |
+| exact mode, race (USA, hashes only) | 3 | 471 KB (427, 37.0, 6.5, 0.3) | 79 KB | 4.0 ms (8.2) |
+
+Keyframes: 4.1 MB raw, 1.2 MB stored in plain mode (GS memory from the God of War backend), 2.3-2.5 MB in exact mode
+(the software GS's own memory compresses less); `EMUS` 112 KB raw, 11-14 KB stored. **Ring memory** (`ring:300`, the
+compressed chunks the worker keeps, plus the last final keyframe): 21.6-36.8 MB once full (USA), 21.7-36.6 MB
+(Europe), peak 43.6 / 43.4 MB just before the oldest segment is dropped; exact mode with picture hashes only 31.6-42.1
+MB, peak 47.8 MB. A ring dump is that memory written out: 25.7-43.2 MB for 300-417 cycles. The estimate of 220 MB in
+6.3 assumed raw records; the ring keeps them compressed (section 16). Recording costs no frame rate in these runs:
+60.0 / 50.0 fps with the ring on, as without (A5).
 
 ### 6.4 The file
 
@@ -750,7 +783,7 @@ a `tedit_walk.py` pad (120 cycles); USA only, a split-screen attract demo if a `
 3. **Side tags.** (Built 2026-11-19; section 15.) `render/gfx/tags`, the comparing switch in `rc_decomp.cpp`, resolution at the kick, `TAG` /
    `TAGP` / `TNAM`, the first sites of 5.3, the inspector's `tags`. *Check:* A8, A5's shadow half, A4 again (oracle
    counts on both versions), A1 and A2 still pass with tags in the dumps.
-4. **Ring, hotkey, save states, write-up.** `ring:` and `key` triggers, F10 in both host loops, the state-load
+4. **Ring, hotkey, save states, write-up.** (Built 2026-11-20; section 16.) `ring:` and `key` triggers, F10 in both host loops, the state-load
    segment break, A5's ring half, A9's final table, `NOTES.md` ("Frame record": switches, tools, how to take and
    check a dump) and the measured numbers back into this file. *Check:* a ring dump taken by F10 during a default
    `play.sh` session replays through `stats --verify` and, taken in exact mode, through `emu --verify`.
@@ -935,3 +968,75 @@ tags), level 18 6.8 / 4.6 KB, front end 4.1 / 5.8 KB; they compress inside `CYCL
 17 (USA / Europe), 5.4 / 5.3 level 18, 3.0 / 4.3 front end, 2.2 / 2.6 boot: within batch 2's 3.0-6.1 ms. Resolution
 found every anchored tag in every dump: 0 dropped unconsumed, 0 repeats, 0 unanchorable.
 
+
+## 16. Batch 4 as built (2026-11-20): changes to this design and why
+
+Built: the `key` and `ring:<n>` triggers and the save-state segment break in `render/record/capture.cpp`; the ring in
+the writer (`render/record/writer.{h,cpp}`, `Writer::Ring`); F10 in both host loops and the `stateLoading` /
+`stateLoaded` calls (`third_party/ps2recomp/ps2xRuntime`: `ps2_runtime.cpp`, `ps2_save_state.cpp`,
+`include/ps2_capture_hooks.h`); `rc_replay`'s handling of `afterStateLoad` keyframes; the ring round trip in
+`rc_record_test`. Usage: `NOTES.md`, "Frame record". Nothing found conflicts with option C or the plan.
+
+Changes, each the smallest that worked:
+
+1. **`key` is the default trigger** (6.2, 13 item 9): as designed; batch 1 used `boot+120` only until `key` existed.
+   A run with `RC_FRAME_RECORD` set and no `RC_FRAME_RECORD_AT` now records nothing until F10; every script and
+   example names its trigger.
+2. **The ring is kept compressed** (6.1, 6.3): the writer's worker thread encodes each cycle and keyframe as it does for
+   a file (zlib level 1) and keeps the finished chunks in memory instead of writing them, so the EE thread does exactly
+   what it does in file mode and the ring of 300 cycles holds 26-45 MB, not the 220 MB estimated for raw records. A
+   segment (a keyframe chunk and the chunks after it) is dropped from the front while the others still hold n cycles,
+   so a dump holds n to n + `KEY` cycles. Its default segment length is 120 (6.2), so at most 120 cycles are kept beyond
+   n.
+3. **F10 in ring mode** (6.1): at the cycle close after the press the EE thread takes a final keyframe (the only work
+   it does) and queues a dump request behind the cycles already queued; the worker then writes the header, the name
+   table, the ring's chunks unchanged, the final keyframe, the index and `ENDF`, and the ring goes on. The final
+   keyframe is kept apart from the ring, so a later dump is still made of whole segments.
+4. **F10 reaches the capture as a counter** (4.1): the `hotkey` hook (main thread) only increments an atomic; the EE
+   thread reads and clears it at each cycle close. Starting, stopping and dumping therefore happen at cycle boundaries
+   and the game thread pays one atomic exchange per displayed picture. `platform/vk_host.cpp` needed no change: F10 is
+   read in `runHostPlatformLoop` through the platform's `keyPressed`, as F5/F9 are.
+5. **The state-load break closes the cycle before the load and keyframes right after it** (3.4): one hook after the load
+   could no longer read the picture the cycle in progress ended on (GS memory is already replaced), and a keyframe at
+   the next cycle close would leave that cycle's kicks drawing on GS memory the replay does not have. So the hook table
+   gained `stateLoading` (last in the table, so earlier positional initialisers keep their meaning), called in
+   `EeScheduler::serviceStateRequests` once the file is read and checked, just before `serializeMachine`: the capture
+   closes the cycle there (an `END` with the picture the display shows, a `NOTE` saying why). `stateLoaded` follows the
+   load (also a failed one), still on the EE thread before any guest code runs, and takes a keyframe flagged
+   `afterStateLoad`. `rc_replay emu` loads that keyframe without comparing GS memory against its replay of the cycles
+   before (they drew the old machine), `stats` and `frame_dump.py` name it.
+6. **Numbered dumps** (6.2): `%d` takes the dump's number in the run; a name without `%d` keeps the first dump's name
+   and gets `-1`, `-2`... before its extension for the next ones, so a second F10 never overwrites the first dump.
+7. **A test trigger**: `RC_FRAME_RECORD_F10=<cycle>[,<cycle>...]` acts as a press at the close of those display cycles,
+   for scripted checks; the real key was proved once per host loop with a uinput keyboard.
+8. **Ring status lines**: at each new segment the game logs the last segment's bytes a cycle by record type, raw and
+   stored, the recorder's time and the ring's memory; A9's table below is read from them.
+9. **Save-state lock order (runtime)**: upstream's `GSStateAccess::serialize` took the GS state mutex before the backend
+   lifetime mutex, the opposite of the presentation latch (13 item 5 noted the risk). With the recorder in exact mode a
+   timed save (`PS2X_STATE_SAVE_AT`) deadlocked against the latch in 2 runs of 3; it now takes them in the latch's
+   order, and 3 runs of 3 saved.
+10. **Open: a stall after a save-state load with the recorder in exact mode.** `playtest2` in exact mode with a timed
+    save at field 1700 and load at 2000 (both in the front end) stopped advancing emulated time at game frame 404-405
+    after the load in 2 of 6 runs with `ring:300` recording (the EE thread busy at 100%, the debug dump still writing);
+    0 of 6 runs without `RC_FRAME_RECORD` and 0 of 3 with the capture installed but idle (`key`, never pressed) stopped.
+    Not found: the recorder's state-load work only reads (it closes a cycle, then takes a keyframe as at any segment
+    start), and the same load in the level 17 attract demo, recorded, replayed bit for bit on both versions (A2 below).
+    Upstream's save state also leaves the GS front end's GIF tag in progress out (14 item 2) and cannot restore native
+    code's host frames, so a load is timing-sensitive in this port anyway; left for a later look.
+
+**Checks (2026-11-20, RTX 2060).** Real F10 through a uinput keyboard, `ring:300`, `tools/play.sh replay playtest2`
+(USA): raylib loop, the press at 44 s, a dump of 417 cycles (1440-1856, 4 segments, 42.5 MB); `RC_RENDERER=vk`, 411
+cycles (1440-1850, 42.3 MB; `[vk-host]` logged keyboard focus, 0 validation errors). Both: `rc_replay --verify` PASS,
+`frame_dump.py verify` ok. Simulated F10 (`RC_FRAME_RECORD_F10`) in default play, `rc_replay --verify` PASS: USA
+cycles 1200-1499 (300, 12,300 kicks) and 2040-2399 (360, 14,760 kicks); Europe 1200-1499 (300 cycles through the
+level load, 6,382 kicks) and 2160-2499 (340, 13,940 kicks). Exact-mode ring dumps by F10, `rc_replay --consumer emu
+--verify` PASS: level 17 attract demo with a save at field 1200 and a load at 1500, USA cycles 360-699 (the load at
+cycle 596; 12,543 kicks, 340 picture hashes, keyframes 1/1 compared and the one after the load loaded) and 596-999
+(16,024 kicks, 404 pictures, keyframes 3/3, final 1/1); Europe 360-699 (load at 505; 13,345 kicks, keyframes 2/2) and
+625-999 (13,875 kicks, 3/3). A1/A2 on normal (`key+100`) dumps, exact mode, both versions: a dump stopped by the
+second F10 after 30 cycles and one ended by the count (100 cycles, 1,100 kicks), `stats --verify`, `emu --verify` and
+`frame_dump.py verify` pass on all four. `rc_record_test` PASS (with the ring round trip). A5's ring half and A4:
+`tools/play.sh replay playtest2`, 180 s, with `ring:300` and without the recorder give the same scene logs (USA frames
+1, 5, 657, race at 658, clock 1:0; Europe 1, 5, 1166, race at 1167) at 60.0 / 50.0 fps; `tools/oracle.sh --all`
+Europe seed 9495 1563 ok, 0 FAIL; USA seed 9496 1631 ok, 0 FAIL, 1 skipped (`PathBuilder` timed out); USA seed 9494
+one FAIL (`AMenuDisplayMIT`) that the runtime before this batch gives too (NOTES.md).

@@ -216,6 +216,34 @@ After step 1: fold its answers into this plan's open questions.
      and `AIControl` `svGlob` pad-byte (5 of 5) artefacts; without the recorder 2,572 compares, the same three (50, 3,
      1). Europe could not be checked: the shadow run stops at the level-load movie after 139 compares, with and
      without the recorder and with HEAD's binary too (it ran on 2026-11-18): open, not this batch's.
+   **Batch 4 done 2026-11-20; step 4 complete** (usage: NOTES.md, "Frame record"; changes to the design and why:
+   `RENDERER_FRAME_RECORD.md` section 16; A9's table: its 6.3). `RC_FRAME_RECORD_AT=key` (now the default: F10 starts,
+   F10 or the count stops, again on the next F10) and `ring:<n>` (the last n cycles kept compressed in memory, whole
+   segments of 120 cycles; F10 writes them with a final keyframe to the next numbered file and recording goes on); F10
+   in the raylib loop and in `RC_RENDERER=vk`'s loop; the segment break at a save-state load (the cycle closes before
+   the load, a keyframe flagged `afterStateLoad` follows it); `RC_FRAME_RECORD_F10` for scripted presses; the GS
+   save-state lock order fixed in the runtime (timed saves deadlocked against the presentation latch). Check (RTX 2060):
+   - A ring dump by F10 in a default `play.sh` session, `rc_replay --verify` PASS: the real key through a uinput
+     keyboard in both host loops (USA, raylib 417 cycles, vk 411 cycles, `frame_dump.py verify` ok), simulated presses
+     on both versions (USA 300 and 360 cycles, Europe 300 through the level load and 340).
+   - Exact-mode ring dumps by F10 (level 17 attract demo, a save state loaded mid-dump), `rc_replay --consumer emu
+     --verify` PASS on both versions: USA 340 cycles with the load and 404 after it, Europe 340 with the load and 375;
+     every GIF hash, register file and picture hash, GS memory at every keyframe but the one after the load (loaded,
+     not compared) and the final one.
+   - A1/A2 on normal dumps (exact mode, `key+100`, one stopped by F10 after 30 cycles, one by the count), both
+     versions: `stats --verify`, `emu --verify`, `frame_dump.py verify` pass.
+   - A5's ring half: `tools/play.sh replay playtest2` (180 s) with `RC_FRAME_RECORD_AT=ring:300`: USA frames 1, 5
+     (clock 0:255), 657 (0:907), race scene 3020 at 658 (clock 1:0), 60.0 fps (59.8-60.2 samples); Europe 1, 5
+     (0:256), 1166 (0:1417), race at 1167 (1:0), 50.0 fps (49.8-50.2): the same as without the recorder.
+   - A4: without `RC_FRAME_RECORD` the same replays give the same scene logs and frame rates (USA 60.0, Europe 50.0).
+     `tools/oracle.sh --all`: Europe seed 9495 1563 ok, 0 FAIL, 90 without a setup (8 dumps); USA seed 9496 1631 ok,
+     0 FAIL, 1 skipped (`PathBuilder`: the original timed out on a level 17 input, as with seed 7171 in Europe), 98
+     without a setup; USA seed 9494 1631 ok, 1 FAIL: `AMenuDisplayMIT`, 1 of 20 inputs on each dump, also with the
+     runtime of batch 3 (the oracle calls none of the new code): a decompilation difference the seed reaches, left
+     open (NOTES.md, "AMenuDisplayMIT, seed 9494").
+   - A9: `RENDERER_FRAME_RECORD.md` 6.3 (a race cycle 63 KB stored, 4.1-4.2 ms of recorder time; `ring:300` 22-37 MB).
+   - Open: in exact mode with the ring recording, `playtest2` with a timed save state loaded in the front end stopped
+     at game frame 404 in 2 of 6 runs (none of 9 without recording or with the capture idle); section 16 item 10.
 5. Shadow texture memory and decode (Fable); checked against `tools/track_viewer` off-line and the emulated GS
    memory in game. Uploads arrive as CT32 (level image, palettes) **and** PSMT8/PSMT4 (single textures, animated
    frames), so the shadow needs those write swizzles too; formats sampled are T4/T8 with CT32 palettes (CSM1, CSA 0,
