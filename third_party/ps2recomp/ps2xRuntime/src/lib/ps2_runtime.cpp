@@ -1603,8 +1603,15 @@ bool PS2Runtime::dispatchGuestBranch(uint8_t *rdram,
     return ctx->pc == fallthroughPc;
 }
 
+// For the decompilation's random test (rc_decomp.cpp): counts the loads and stores the memory map could not serve (an
+// address in KSEG2/3 with no TLB entry, or nothing mapped), each of which raises an address error. A run of an original
+// that raised one did what a console would take an exception on, so its result is not one to compare.
+std::atomic<uint64_t> g_ps2AddressErrors{0};
+
 void PS2Runtime::SignalException(R5900Context *ctx, PS2Exception exception)
 {
+    if (exception == EXCEPTION_ADDRESS_ERROR_LOAD || exception == EXCEPTION_ADDRESS_ERROR_STORE || exception == EXCEPTION_TLB_REFILL)
+        g_ps2AddressErrors.fetch_add(1, std::memory_order_relaxed);
     if (exception == EXCEPTION_INTEGER_OVERFLOW)
     {
         HandleIntegerOverflow(ctx);

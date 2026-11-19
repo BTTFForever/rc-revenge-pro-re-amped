@@ -4,6 +4,12 @@
 # beyond main RAM. Recompiled code sends those to the hardware registers (Store32 of a special address); native code
 # wraps them into RAM. The same inputs differ in the live random test (checked 2026-11-13 with tools/shadow.sh, level 5,
 # 100 inputs: identical iterations). No real call uses such an address.
+# Since 2026-11-19 an input on which the original raises an address error (KSEG2/3 with no TLB entry, or nothing mapped)
+# is redrawn, not compared (rc::fuzzCase), which removes most of these. What is left is a wild pointer into the I/O
+# registers (0x10000000 up), which the runtime accepts as a register write: e.g. sceVif1PkTerminate, seed 0, 300 inputs,
+# iteration 317 (low memory 0xeb0 written by the native, 0x10000eb0 a timer register for the original). The harness does
+# not capture hardware register state, so these remain listed; without the list all seven passed 300 inputs on seeds 0,
+# 4242, 4243, 11, 12 on both versions except that one input.
 RdrState_PkForceApplyStateBlock wild packet pointer beyond RAM (live random test differs on the same input)
 RdrZedsWriteOff random channel index beyond RAM (live random test differs on the same input)
 sceVif1PkTerminate wild packet pointer beyond RAM (live random test differs on the same input)

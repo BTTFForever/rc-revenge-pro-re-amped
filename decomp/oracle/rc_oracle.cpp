@@ -61,6 +61,7 @@ struct JobResult
     Outcome outcome = Outcome::Skip;
     int cases = 0;
     uint64_t mismatches = 0;
+    uint64_t faulted = 0; // inputs not compared because the original faulted (redrawn)
     std::string detail; // first differences, or why it was skipped
     double seconds = 0;
 };
@@ -124,13 +125,31 @@ void writeRaw(const char *text)
     (void)ignored;
 }
 
+// A child that crashed or exited early ends with one of these plus its phase (0-2), so the phase survives a log that
+// has reached its size limit.
+constexpr int kSignalStatus = 10, kExitedStatus = 20;
+
+// The runtime ends the process with exit() on some errors (a jump to an address with no recompiled function): say which
+// run it was in, as for a signal, or the parent would blame the setup.
+volatile sig_atomic_t g_finished = 0;
+void onExit()
+{
+    static const char *const kPhases[] = {"setup", "original", "native"};
+    if (g_finished)
+        return;
+    char line[96];
+    std::snprintf(line, sizeof(line), "\n@@PHASE %s exited\n", kPhases[g_phase]);
+    writeRaw(line);
+    _exit(kExitedStatus + g_phase); // also in the status: a runaway log may have reached its size limit
+}
+
 void onFatalSignal(int signal)
 {
     static const char *const kPhases[] = {"setup", "original", "native"};
     char line[96];
     std::snprintf(line, sizeof(line), "\n@@PHASE %s %d\n", kPhases[g_phase], signal);
     writeRaw(line);
-    _exit(3);
+    _exit(kSignalStatus + g_phase);
 }
 
 [[noreturn]] void runChild(rc::Entry &entry, PS2Runtime &runtime, const Options &options, const std::string &logPath)
@@ -146,6 +165,7 @@ void onFatalSignal(int signal)
     for (const int signal : {SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGABRT, SIGALRM, SIGTRAP})
         std::signal(signal, onFatalSignal);
     alarm(static_cast<unsigned>(options.timeout));
+    std::atexit(onExit);
 
     g_realOriginal = entry.original;
     g_realNative = entry.native;
@@ -163,18 +183,26 @@ void onFatalSignal(int signal)
     const int inputs = entry.fuzzWholeRam ? std::min(options.cases, rc::kFuzzWholeRamInputs) : options.cases;
     // The live test's generator start, so a seed of 0 gives the inputs RC_SHADOW_FUZZ gives.
     uint64_t state = 0x5EEDu + entry.address + options.seed * 0x9E3779B97F4A7C15ull;
-    uint64_t mismatches = 0, cutShort = 0, nonZero = 0, wrote = 0;
+    uint64_t mismatches = 0, cutShort = 0, nonZero = 0, wrote = 0, faulted = 0;
     int done = 0;
     try
     {
-        for (; done < inputs; ++done)
+        // An input on which the original faulted (rc::fuzzCase) is not compared and another is drawn in its place, up to
+        // three times the inputs asked for in all. The draw number is the "iteration" a mismatch reports.
+        for (int draw = 0; done < inputs && draw < 3 * inputs; ++draw)
         {
-            const rc::FuzzCaseResult result = rc::fuzzCase(entry, rdram, live, &runtime, state, backup.get(), done, mismatches);
+            const rc::FuzzCaseResult result = rc::fuzzCase(entry, rdram, live, &runtime, state, backup.get(), draw, mismatches);
             if (result.cutShort)
             {
                 ++cutShort;
                 break; // Offline nothing can cut an original short but a wait, which no later input will avoid.
             }
+            if (result.faulted)
+            {
+                ++faulted;
+                continue;
+            }
+            ++done;
             mismatches += result.same ? 0u : 1u;
             nonZero += result.returnedNonZero ? 1u : 0u;
             wrote += result.wroteMemory ? 1u : 0u;
@@ -192,9 +220,19 @@ void onFatalSignal(int signal)
         std::fflush(stderr);
         _exit(3);
     }
-    std::fprintf(stderr, "\n@@RESULT %d %llu %llu %llu %llu\n", done, (unsigned long long)mismatches, (unsigned long long)cutShort,
-                 (unsigned long long)nonZero, (unsigned long long)wrote);
+    // A log that reached its size limit (an original stuck printing a runtime error) would lose this line, and the parent
+    // would take the child for one that exited early: make room for it.
     std::fflush(stderr);
+    if (const off_t size = lseek(STDERR_FILENO, 0, SEEK_END); size > static_cast<off_t>((4u << 20) - 4096u))
+    {
+        if (ftruncate(STDERR_FILENO, (4u << 20) - 4096u) == 0)
+            lseek(STDERR_FILENO, 0, SEEK_END);
+        writeRaw("\n@@LOG cut to make room for the result\n");
+    }
+    std::fprintf(stderr, "\n@@RESULT %d %llu %llu %llu %llu %llu\n", done, (unsigned long long)mismatches, (unsigned long long)cutShort,
+                 (unsigned long long)nonZero, (unsigned long long)wrote, (unsigned long long)faulted);
+    std::fflush(stderr);
+    g_finished = 1;
     _exit(0);
 }
 
@@ -241,21 +279,28 @@ JobResult parseResult(const std::string &log, int status, int cases)
     const size_t at = log.rfind("@@RESULT ");
     if (WIFEXITED(status) && WEXITSTATUS(status) == 0 && at != std::string::npos)
     {
-        unsigned long long mismatches = 0, cut = 0, nonZero = 0, wrote = 0;
+        unsigned long long mismatches = 0, cut = 0, nonZero = 0, wrote = 0, faulted = 0;
         int done = 0;
-        std::sscanf(log.c_str() + at, "@@RESULT %d %llu %llu %llu %llu", &done, &mismatches, &cut, &nonZero, &wrote);
+        std::sscanf(log.c_str() + at, "@@RESULT %d %llu %llu %llu %llu %llu", &done, &mismatches, &cut, &nonZero, &wrote, &faulted);
         result.cases = done;
         result.mismatches = mismatches;
-        if (cut != 0u)
+        result.faulted = faulted;
+        if (mismatches != 0u)
+        {
+            // Before checking for a cut-short original: inputs compared before it still count.
+            result.outcome = Outcome::Fail;
+            result.detail = std::to_string(mismatches) + " of " + std::to_string(done) + " inputs differ" + explain(log, false);
+        }
+        else if (done == 0 && faulted != 0u && cut == 0u)
+        {
+            result.outcome = Outcome::Skip;
+            result.detail = "the original faulted (an address error) on all " + std::to_string(faulted) + " inputs drawn";
+        }
+        else if (cut != 0u)
         {
             // An original that waits (a semaphore, vsync, an IOP reply) cannot finish without the game's threads.
             result.outcome = Outcome::Skip;
             result.detail = "original did not return (waits on another thread or the hardware)";
-        }
-        else if (mismatches != 0u)
-        {
-            result.outcome = Outcome::Fail;
-            result.detail = std::to_string(mismatches) + " of " + std::to_string(done) + " inputs differ" + explain(log, false);
         }
         else
             result.outcome = Outcome::Ok;
@@ -278,12 +323,25 @@ JobResult parseResult(const std::string &log, int status, int cases)
                : signal != 0                  ? std::string(strsignal(signal))
                                               : rest;
     }
+    else if (WIFEXITED(status) && (WEXITSTATUS(status) / 10 == kSignalStatus / 10 || WEXITSTATUS(status) / 10 == kExitedStatus / 10) &&
+             WEXITSTATUS(status) % 10 <= 2)
+    {
+        static const char *const kPhases[] = {"setup", "original", "native"};
+        phase = kPhases[WEXITSTATUS(status) % 10];
+        what = WEXITSTATUS(status) >= kExitedStatus ? "exited (log full)" : "crashed (log full)";
+    }
     else if (WIFSIGNALED(status))
         what = strsignal(WTERMSIG(status));
     else
         what = "exited " + std::to_string(WEXITSTATUS(status));
-    result.outcome = phase == "native" ? Outcome::Fail : Outcome::Skip;
-    result.detail = (phase == "native" ? "native " : phase == "original" ? "original " : "setup ") + what + explain(log, true);
+    // Inputs compared before the crash still count: a difference among them is a failure, not hidden by the skip.
+    size_t compared = 0; // differing inputs reported (fuzzCase prints the first few)
+    for (size_t pos = log.find("FUZZ MISMATCH "); pos != std::string::npos; pos = log.find("FUZZ MISMATCH ", pos + 1))
+        ++compared;
+    result.outcome = phase == "native" || compared != 0 ? Outcome::Fail : Outcome::Skip;
+    result.detail = (phase == "native" ? "native " : phase == "original" ? "original " : "setup ") + what +
+                    (phase != "native" && compared != 0 ? std::string(", after inputs that differed") : std::string()) +
+                    explain(log, true);
     return result;
 }
 
@@ -520,9 +578,13 @@ int main(int argc, char **argv)
         {
             ++ok;
             int total = 0;
+            uint64_t faulted = 0;
             for (const auto &item : list)
-                total += item.second.cases;
-            std::printf("ok   %-40s %d inputs over %zu dump%s\n", entry->name, total, list.size(), list.size() == 1 ? "" : "s");
+                total += item.second.cases, faulted += item.second.faulted;
+            std::printf("ok   %-40s %d inputs over %zu dump%s", entry->name, total, list.size(), list.size() == 1 ? "" : "s");
+            if (faulted != 0u)
+                std::printf(" (%llu redrawn: the original faulted)", (unsigned long long)faulted);
+            std::printf("\n");
         }
     }
     if (!noSetup.empty())

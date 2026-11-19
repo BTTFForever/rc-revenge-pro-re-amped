@@ -331,13 +331,13 @@ void install(bool heap)
     }
 }
 
-// A stand-in for one setup's callees (installed once in its test process).
+// A stand-in for one setup's callees (offline only). Every call installs its list: a single "installed" flag made the
+// second list of a setup that calls two (teditMainMenus: searchStandIns, then its own) a no-op, so LoadSaveProcess and
+// BuildTrackEditorHelp ran for real and a random menu state could send the help's string wrapping off the end of RAM.
 void standIn(std::initializer_list<Stub> stubs)
 {
-    static bool installed = false;
-    if (!g_offline || installed)
+    if (!g_offline)
         return;
-    installed = true;
     for (const Stub &s : stubs)
         g_runtime->replaceFunction(s.address, s.fn);
 }

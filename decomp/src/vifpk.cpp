@@ -4,6 +4,7 @@
 // A packet is a cursor into a buffer of 32-bit words, plus the open DMA tag and the open UNPACK code, whose counts are
 // filled in when they are closed.
 
+#include "display_fuzz.h"
 #include "vifpk.h"
 
 namespace rc {
@@ -161,7 +162,7 @@ RC_DECOMP_FN(sceVif1PkTerminate)
 RC_DECOMP_FN(sceVif1PkRet)
 RC_DECOMP_FN(sceVif1PkAddCode)
 RC_DECOMP_FN(sceVif1PkAddUpkData32)
-RC_DECOMP_FN(sceVif1PkAddUpkData32N)
+RC_DECOMP_FN_SETUP(sceVif1PkAddUpkData32N, rc::fuzz::vifUpkData32N)
 RC_DECOMP_FN(sceVif1PkAddUpkData64)
 RC_DECOMP_FN(sceVif1PkOpenUpkCode)
 RC_DECOMP_FN_NOFUZZ(sceVif1PkCloseUpkCode) // Divides by numlen: a zero unit traps.

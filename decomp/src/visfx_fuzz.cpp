@@ -2083,6 +2083,8 @@ void vfxReadySteadyGo(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 // spin counter (+0x2d4) and a life that is mostly above 0x20 (which draws the rocket itself with the level's own shape).
 void vfxRocketSmokeRenderer(R5900Context *ctx, uint64_t &state, uint32_t scratch)
 {
+    // The game's resource, not the previous input's stand-in: that one's +0x88 is a fresh random scratch word by now.
+    restoreGlobals();
     const uint32_t realRes = G(visFxVarG).pVfxRes.address;
     const uint32_t shape = realRes ? mem<uint32_t>(realRes + 0x88) : 0;
     const uint32_t effect = ringEffect(state, scratch, 31, 0x44, 0x14, 0x10, 0x20);

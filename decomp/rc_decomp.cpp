@@ -15,8 +15,11 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <atomic>
 #include <thread>
 #include <vector>
+
+extern std::atomic<uint64_t> g_ps2AddressErrors; // ps2_runtime.cpp: loads and stores it could not map
 
 namespace rc {
 
@@ -307,6 +310,7 @@ FuzzCaseResult fuzzCase(Entry &entry, uint8_t *rdram, const R5900Context &live, 
         std::memcpy(stackStart.get(), rdram + stackBase, kStackScratch);
     g_pad.save();
     R5900Context originalCtx = inputs;
+    const uint64_t addressErrors = g_ps2AddressErrors.load(std::memory_order_relaxed);
     runOriginal(entry, rdram, &originalCtx, runtime);
     g_pad.keepAndRevert();
     if (entry.fuzzWholeRam)
@@ -314,6 +318,7 @@ FuzzCaseResult fuzzCase(Entry &entry, uint8_t *rdram, const R5900Context &live, 
         std::memcpy(g_expected.get(), rdram, PS2_RAM_SIZE);
         revertWrites(rdram, g_before.get(), 0u, PS2_RAM_SIZE);
     }
+    const uint64_t originalErrors = g_ps2AddressErrors.load(std::memory_order_relaxed) - addressErrors;
     if (originalCtx.pc != getRegU32(&inputs, 31))
     {
         // Cut short by a scheduling point: the caller decides whether to try the input again.
@@ -360,7 +365,27 @@ FuzzCaseResult fuzzCase(Entry &entry, uint8_t *rdram, const R5900Context &live, 
     if (stackInRam)
         std::memcpy(rdram + stackBase, stackStart.get(), kStackScratch);
     R5900Context nativeCtx = inputs;
+    const uint64_t beforeNative = g_ps2AddressErrors.load(std::memory_order_relaxed);
     runComparedNative(entry, rdram, &nativeCtx, runtime);
+    // An original that loaded or stored at an address the memory map cannot serve (a wild pointer into KSEG2/3, which has
+    // no TLB entries, or into nothing) did what a console takes an address-error or TLB exception on: the game would stop
+    // there. The runtime instead drops the store or reads 0, sets EXL in the context and carries on, while native code
+    // wraps the address into RAM. Neither is behaviour to match, so when the original raised more address errors than
+    // the native run (whose guest calls raise the same ones as the original's), the input is not compared: the caller
+    // draws another. Errors in callees both runs share (a dump whose state sends a callee to an unmapped address) are
+    // equal on both sides and do not count.
+    if (originalErrors > g_ps2AddressErrors.load(std::memory_order_relaxed) - beforeNative)
+    {
+        if (entry.fuzzWholeRam)
+            revertWrites(rdram, ramBackup, 0u, PS2_RAM_SIZE);
+        else
+            std::memcpy(rdram, lowStart, kLowPage);
+        std::memcpy(rdram + kScratch, scratchStart.get(), kScratchSize);
+        std::memcpy(rdram + kDataStart, globalsStart.get(), kDataEnd - kDataStart);
+        result.faulted = true;
+        g_comparing = wasComparing;
+        return result;
+    }
 
     const bool regsSame = entry.returns == ReturnKind::None ||
                           (entry.returns == ReturnKind::Gpr ? GPR_U64((&nativeCtx), 2) == GPR_U64((&originalCtx), 2)
@@ -489,7 +514,7 @@ struct FuzzProgress
     uint64_t state = 0;        // The random generator, at the start of the current input.
     bool entryStarted = false;
     int retries = 0;           // Times the current input was cut short with a whole step to itself.
-    uint64_t mismatches = 0, returnedNonZero = 0, wroteMemory = 0, cutShort = 0; // For the current function.
+    uint64_t mismatches = 0, returnedNonZero = 0, wroteMemory = 0, cutShort = 0, faulted = 0; // For the current function.
     uint64_t failures = 0, steps = 0;
 };
 
@@ -522,7 +547,7 @@ bool fuzzStep(uint8_t *rdram, const R5900Context &live, PS2Runtime *runtime, int
             progress.entryStarted = true;
             progress.iteration = 0;
             progress.state = 0x5EEDu + entry.address;
-            progress.mismatches = progress.returnedNonZero = progress.wroteMemory = progress.cutShort = 0u;
+            progress.mismatches = progress.returnedNonZero = progress.wroteMemory = progress.cutShort = progress.faulted = 0u;
         }
         const int inputs = entry.fuzzWholeRam ? std::min(iterations, kFuzzWholeRamInputs) : iterations;
         for (; progress.iteration < inputs; ++progress.iteration, firstOfStep = false, progress.retries = 0)
@@ -545,6 +570,11 @@ bool fuzzStep(uint8_t *rdram, const R5900Context &live, PS2Runtime *runtime, int
                 break;
             }
             progress.state = state;
+            if (result.faulted)
+            {
+                ++progress.faulted; // not compared (see fuzzCase)
+                continue;
+            }
             progress.returnedNonZero += result.returnedNonZero ? 1u : 0u;
             progress.wroteMemory += result.wroteMemory ? 1u : 0u;
             progress.mismatches += result.same ? 0u : 1u;
@@ -552,9 +582,9 @@ bool fuzzStep(uint8_t *rdram, const R5900Context &live, PS2Runtime *runtime, int
         if (progress.iteration >= inputs)
         {
             // The counts say how much of the function the inputs reached.
-            std::fprintf(stderr, "[decomp] fuzz %s: %d inputs, %llu mismatches (%llu returned non-zero, %llu wrote memory, %llu cut short)\n",
+            std::fprintf(stderr, "[decomp] fuzz %s: %d inputs, %llu mismatches (%llu returned non-zero, %llu wrote memory, %llu cut short, %llu faulted)\n",
                          entry.name, inputs, (unsigned long long)progress.mismatches, (unsigned long long)progress.returnedNonZero,
-                         (unsigned long long)progress.wroteMemory, (unsigned long long)progress.cutShort);
+                         (unsigned long long)progress.wroteMemory, (unsigned long long)progress.cutShort, (unsigned long long)progress.faulted);
             progress.failures += progress.mismatches;
             progress.entryStarted = false;
             ++progress.index;

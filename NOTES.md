@@ -93,6 +93,82 @@ USA 1629 ok, 0 FAIL; Europe 1560 ok, 0 FAIL on both the old and the fresh dumps.
 `build-oracle-eu/dumps/` as `level<n>_cc.bin` (oracle.sh runs every `level*.bin`, so `--all` uses all eight;
 `--level N` picks only the old one).
 
+### New-seed failures (2026-11-19, seeds 4242 USA and 4243 Europe)
+`--all --seed 4242` (USA) failed `RdrZedsWriteOn`, `SpriteConstructDaemon` and `sceVif1PkAddUpkData64`, and
+`RC_VERSION=eu --all --seed 4243` failed `VfxRenderer_RocketSmoke`, each on 1 input of 20. None was a native bug.
+- **Wild addresses that fault (harness).** All three USA inputs sent the original to an address in KSEG2/3
+  (`RdrZedsWriteOn`: channel 0xd34cc2 puts the channel at 0xc649d270; `SpriteConstructDaemon`: an unaligned sprite
+  pointer whose texture word read as 0xc1c780bc; `sceVif1PkAddUpkData64`: a scratch cursor 0xf03cbbaa). The runtime has
+  no TLB entry there, so the original's load or store raises an address error: the store is dropped, the load reads
+  0, EXL is set in the context and the code carries on. Native code wraps the address into RAM. On a console the
+  game would take the exception and stop, so there is no behaviour to match. With 300 inputs about 1.3% of each
+  function's inputs do this (more for the VIF packet functions); other seeds happened to miss them in 20. The runtime
+  now counts address errors (`g_ps2AddressErrors`, in `SignalException`). `rc::fuzzCase` does not compare an input on
+  which the original raised more of them than the native run did (`FuzzCaseResult::faulted`). The native run is part of
+  the rule because a callee both runs share can fault the same way in both. A first version that counted the
+  original's errors alone made `ScreenAdjust` fault on all 60 draws: its `AMenuDrawBox` tail call faults on the
+  level 17 dump either way. When it skips an input, `fuzzCase` puts the scratch area, low page, globals and, for a
+  whole-RAM function, RAM back. The oracle then draws another input (up to 3x the inputs asked for in all) and prints
+  `(N redrawn: the original faulted)` on the `ok` line. If every draw faults the function is a skip. The live test
+  counts these as `faulted`. The seven functions in `tools/oracle_known.txt` mostly failed for this reason. Without the
+  list they all passed 300 inputs on seeds 0, 4242, 4243, 11 and 12 on both versions, except `sceVif1PkTerminate` on
+  seed 0 (iteration 317). That input is the other half of the old reason: a wild pointer into the I/O registers
+  (0x10000eb0), which the runtime accepts as a register write and does not fault. The harness does not capture
+  register state, so the list stays, with its header updated. Nothing was added to it.
+- **The iteration 13 in two functions is a coincidence.** Each function's generator starts from its own address
+  (`0x5EED + address + seed * K`). The two inputs share nothing: a random channel number in one, a random scratch word
+  in the other. With 300 inputs the failing iterations were 13/33/75/176 (`sceVif1PkAddUpkData64`), 13/190
+  (`RdrZedsWriteOn`) and 9/85/93/197 (`SpriteConstructDaemon`). The odd `v0` in the reports is a void function's
+  scratch register: the original's last value (here the faulting pointer + 4) against the input's `v0`, which the native
+  never touches. `v0` is not compared for void functions.
+- **`VfxRenderer_RocketSmoke` (setup bug).** `vfxRocketSmokeRenderer` read `visFxVarG.pVfxRes` before
+  `restoreGlobals()`. From the second input on, that was the previous input's stand-in resource in scratch, whose +0x88
+  had just been refilled with a random word. So the "real" rocket shape the renderer rewrites (matrix and position)
+  was a random pointer. Both runs wrote the same random RAM, except when the pointer faulted or reached the
+  I/O registers. The setup now restores the globals first. It fails on USA seeds 1-3 before the fix and has no
+  redrawn inputs after it. The other `realRes` readers (`vfxArmCannonRenderer`, `vfxCarRocket`, `vfxBombRenderer`)
+  already restored first.
+
+**Why Europe seed 4243 said "0 known, 3 skipped"** (default seed: "2 known, 1 skipped"). Both counts depend on the
+seed, and two things were wrong in the tooling.
+- `known` counts listed functions that failed this run. With seed 4243 the two VIF functions passed, so 0. This is
+  correct.
+- Two of the three skips were setup bugs that a seed reached:
+  - `TBoxProcess` (level 20): the setup moved a car or camera off the trigger grid. `TBoxUpdate` does not check the
+    cell index, so it read a "cell" past the grid's table and called through a garbage callback slot (0x800e). The
+    original's error message looped until the child's 4 MB log limit cut off its `@@RESULT` line. The parent then saw
+    a child that "exited 0" with no phase and blamed the setup. The setups (`tboxRace`, `tboxUpdate`) now keep the
+    points they move on the grid (`onGrid`, the same cell arithmetic plus the end of the cell table; after 8 tries
+    they fall back to camera 0's position).
+  - `TEditDisplayMainMenus` (level 18): `standIn` had one static "installed" flag. `teditMainMenus` calls
+    `searchStandIns()` and then its own list, so its own stand-ins (`LoadSaveProcess`, `BuildTrackEditorHelp`,
+    `AMenuProcessAll`...) were never installed. The real help builder sometimes wrapped a garbage string with the
+    host's `strcat` past the end of RAM (SIGSEGV). Every `standIn` call now installs its list.
+- `sceVif1PkAddUpkData32N` was skipped because a later input timed out. That skip hid a difference on input 0 of the
+  default seed: counts of millions of words copy RAM over itself and through the I/O registers.
+- Oracle fixes:
+  - A job that crashes or times out in the setup or the original after inputs that differed is now a FAIL (`...,
+    after inputs that differed`), not a skip.
+  - A child whose log is full cuts it to make room for `@@RESULT`.
+  - A child that crashes or exits through the runtime carries its phase in the exit status as well (10+phase,
+    20+phase), so a full log no longer turns it into "setup exited 0".
+- `sceVif1PkAddUpkData32N` now has a setup (`rc::fuzz::vifUpkData32N`): the cursor is in scratch or the globals, the
+  data in scratch or RAM, and the count is up to 0x1000 words, kept inside the area. The harness only puts scratch
+  and the globals back between the two runs. A first version let the copy write past the end of scratch and read
+  that back, so the native saw what the original had written (seen on 2 of 300 inputs). It is no longer skipped.
+
+Checks after the fixes:
+- Without the known list, 300 inputs on seeds 0, 4242, 4243, 11 and 12 on both versions (USA 4 dumps, Europe 8):
+  all 16 functions above (the four that failed, the seven listed, `sceVif1PkAddUpkData32N`, `TBoxProcess`,
+  `TBoxUpdate`, `TEditDisplayMainMenus`, `ScreenAdjust`) pass. The one exception is the listed I/O input of
+  `sceVif1PkTerminate` (USA, seed 0).
+- `--all` results:
+  - USA seed 4242: 1632 ok, 0 FAIL, 0 known, 0 skipped, 98 without a setup (470 s).
+  - Europe seed 4243: 1563 ok, 0 FAIL, 0 known, 0 skipped, 90 without a setup (857 s).
+  - USA default seed: 1632 ok, 0 FAIL, 0 known, 0 skipped (471 s).
+  - Europe default seed: 1563 ok, 0 FAIL, 0 known, 0 skipped (856 s).
+- 15-23 functions per run report redrawn inputs.
+
 ## The runtime (vendored, 2026-11-19)
 PS2Recomp lives in `third_party/ps2recomp/` (see its `VENDORED.md`): ps2xRecomp, ps2xRuntime and ps2xIOP from the SotC fork
 at d06a4ab, with this project's changes applied. It used to be a separate checkout (`~/PS2Recomp-sotc`) with the changes

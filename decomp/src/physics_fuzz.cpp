@@ -247,6 +247,42 @@ void pointNear(uint64_t &state, uint32_t box, int32_t out[3])
     }
 }
 
+// Whether TBoxUpdate finds a position (1/256 units) inside the trigger grid. It does not check: off the grid it reads a
+// "cell" from past the grid's table, follows it to a list of garbage box numbers and calls through the garbage type's
+// callback slot (a jump to nowhere, 0x800e on EU level 20 with seed 4243, which ended the oracle's child). Cars and
+// cameras are always over the level in the game, so the setups keep the points they move on the grid.
+bool onGrid(const int32_t p[3])
+{
+    const uint32_t grid = mem<uint32_t>(kTBoxVars), parent = mem<uint32_t>(kLsParent);
+    if (!inRam(grid) || !inRam(parent))
+        return true; // TBoxUpdate returns at once without a grid; a broken parent is not the setup's doing
+    const uint32_t shift = static_cast<uint32_t>(mem<int16_t>(grid + 4u)) & 31u, widthShift = static_cast<uint32_t>(mem<int16_t>(grid + 6u)) & 31u;
+    const int32_t col = (static_cast<int16_t>(p[0] >> 8) - mem<int32_t>(parent + 0x58u)) >> shift;
+    const int32_t row = (static_cast<int16_t>(p[2] >> 8) - mem<int32_t>(parent + 0x5cu)) >> shift;
+    if (col < 0 || row < 0 || row >= (1 << widthShift))
+        return false;
+    // The table of cells ends where the first list starts: the smallest non-zero cell offset.
+    const uint32_t index = (static_cast<uint32_t>(col) << widthShift) + static_cast<uint32_t>(row);
+    uint32_t end = 0x10000u;
+    for (uint32_t i = 0; 0xcu + 2u * i < end; ++i)
+        if (const uint16_t cell = mem<uint16_t>(grid + 0xcu + 2u * i); cell != 0 && cell < end)
+            end = cell;
+    return 0xcu + 2u * index + 2u <= end;
+}
+
+// pointNear, on the grid: a few tries, else camera 0's position (the dump's, over the level).
+void pointOnGrid(uint64_t &state, uint32_t box, int32_t out[3])
+{
+    for (int tries = 0; tries < 8; ++tries)
+    {
+        pointNear(state, box, out);
+        if (onGrid(out))
+            return;
+    }
+    for (uint32_t k = 0; k < 3; ++k)
+        out[k] = mem<int32_t>(kCameras + 0xcu + 4u * k);
+}
+
 // Varies a few of the level's boxes: angles, sizes, masks.
 void varyBoxes(uint64_t &state)
 {
@@ -510,7 +546,7 @@ void tboxRace(R5900Context *, uint64_t &state, uint32_t scratch)
         if (chance(state, 60))
         {
             int32_t p[3];
-            pointNear(state, realBox(state), p);
+            pointOnGrid(state, realBox(state), p);
             for (uint32_t k = 0; k < 3; ++k)
                 mem<int32_t>(kCameras + c * kCameraSize + 0xcu + 4u * k) = p[k];
         }
@@ -520,7 +556,7 @@ void tboxRace(R5900Context *, uint64_t &state, uint32_t scratch)
         if (!usableCar(car) || chance(state, 40))
             continue;
         int32_t p[3];
-        pointNear(state, realBox(state), p);
+        pointOnGrid(state, realBox(state), p);
         const uint32_t phys = mem<uint32_t>(car + 0x20u);
         for (uint32_t k = 0; k < 3; ++k)
             mem<float>(phys + 8u + 4u * k) = static_cast<float>(p[k]) + frnd(state, 0.5f);
@@ -541,7 +577,7 @@ void tboxUpdate(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     varyBoxes(state);
     const uint32_t box = realBox(state);
     int32_t p[3];
-    pointNear(state, box, p);
+    pointOnGrid(state, box, p);
     for (uint32_t k = 0; k < 3; ++k)
         mem<int32_t>(scratch + 4u * k) = p[k];
     const uint32_t car = pickCar(state);

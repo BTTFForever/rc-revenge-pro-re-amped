@@ -67,6 +67,7 @@ constexpr int kFuzzWholeRamInputs = 40; // At most, for a function registered wi
 struct FuzzCaseResult
 {
     bool cutShort = false; // The original did not return (a scheduling point or a wait); nothing was compared.
+    bool faulted = false;  // The original raised an address error (see fuzzCase); nothing was compared.
     bool same = true;
     bool returnedNonZero = false;
     bool wroteMemory = false;

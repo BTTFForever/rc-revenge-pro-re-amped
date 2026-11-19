@@ -43,5 +43,6 @@ void gfxTerm(R5900Context *ctx, uint64_t &state, uint32_t scratch);         // n
 void gfxDmaSend(R5900Context *ctx, uint64_t &state, uint32_t scratch);      // no arguments; the two packets in scratch
 void gfxLoadTex(R5900Context *ctx, uint64_t &state, uint32_t scratch);      // a0 a GS address, a1 a texture, a2 a level, a3 a frame
 void packerArgs(R5900Context *ctx, uint64_t &state, uint32_t scratch);      // a0 a quadword, a1-t3 random 64-bit values
+void vifUpkData32N(R5900Context *ctx, uint64_t &state, uint32_t scratch);   // a0 a packet, a1 data, a2 a count of words
 
 } // namespace rc::fuzz

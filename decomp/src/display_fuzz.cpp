@@ -729,5 +729,26 @@ void packerArgs(R5900Context *ctx, uint64_t &state, uint32_t scratch)
     setArg(ctx, 0, scratch + 16u * rnd(state, 0x700));
 }
 
+// sceVif1PkAddUpkData32N: a packet in scratch whose cursor is in scratch (mostly) or in the game's globals, data in
+// scratch or anywhere in RAM, and a count of words up to 0x1000 (mostly under 64, now and then 0) that keeps the copy
+// inside the area it starts in. Plain random arguments gave counts of millions of words, which copy all of RAM over
+// itself (the original then ran past the 60 s limit; the oracle reported a skip that hid a difference) and wild
+// cursors whose words went to the hardware registers in the original and wrapped into RAM in the native: neither is a
+// call the game can make. The copy writes only where the harness puts memory back between the two runs (scratch and
+// the globals): a write elsewhere that the copy then read back would give the native run other data than the original.
+void vifUpkData32N(R5900Context *ctx, uint64_t &state, uint32_t scratch)
+{
+    const uint32_t count = chance(state, 10) ? 0u : chance(state, 70) ? 1u + rnd(state, 64) : rnd(state, 0x1001);
+    const uint32_t bytes = 4u * count;
+    const auto within = [&](uint32_t begin, uint32_t end) { return begin + 4u * rnd(state, (end - begin - bytes) / 4u + 1u); };
+    const uint32_t to = chance(state, 75) ? within(scratch, scratch + kFuzzScratchSize) : within(kFuzzDataStart, kFuzzDataEnd);
+    const uint32_t from = chance(state, 60) ? within(scratch, scratch + kFuzzScratchSize) : within(sym::sec_text, kFuzzScratch);
+    const uint32_t packet = scratch + 0x7000u + 16u * rnd(state, 0x80);
+    mem<uint32_t>(packet) = chance(state, 10) ? (to | 0x20000000u) : to; // the uncached mirror now and then
+    setArg(ctx, 0, packet);
+    setArg(ctx, 1, from);
+    setArg(ctx, 2, count);
+}
+
 } // namespace fuzz
 } // namespace rc
