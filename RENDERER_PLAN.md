@@ -315,6 +315,22 @@ After step 1: fold its answers into this plan's open questions.
 7. GIF reader and the 2D packet (Opus, blend/alpha rules by Fable): front end and menus usable; per-state pixel tests
    against a CPU model of the GS blend. The 2D path needs the alpha-test split (AFAIL RGB_ONLY with Z write on, 3.5 M
    primitives in the survey); its other states are plain fixed function (survey, "Draw states").
+   **Designed 2026-11-20: `RENDERER_2D_DESIGN.md`** (the state block and draw-list commands, the blend, alpha-test,
+   depth, sampling and rasterisation rules, the CPU model and tests, five build batches; measured with `rc_replay
+   --consumer gif2dstat` on step 5's 55 dumps). What it fixes: K1 is 1-16 primitives in a race, 129-1024 in the front
+   end; triangles as axis-aligned rectangle pairs, lines only in the Track Editor, no sprite but the clear. Blending
+   is three fixed-function configurations with the source term computed in the shader and a dual-source destination
+   factor: adds and subtracts integer exact, the lerps and `Cd*F+Cs` exact wherever the source term is at least half
+   a level (a bias of 127/256 level turns the blender's rounding into the GS's floor), otherwise 0 or +1 per layer.
+   The alpha-test split is two draws per group of non-overlapping primitives, in primitive order. Depth is `D32F`
+   with Z * 2^-24 written by the shader, exact. The software GS, the only reference, interpolates in floats (a
+   one-colour Gouraud quad is one level low on 6% of its pixels; every textured 2D pixel mixes texels), so the K1
+   shader computes the reference's own per-pixel arithmetic from the primitive's vertices instead of using the
+   GPU's interpolators; check (c) is then: alpha and Z equal, colour `0 <= Vulkan - reference <= L` with L the
+   inexactly blended layers over the pixel. Check (c) seeds the depth buffer as well as the colour (2D primitives
+   hide one another by Z everywhere; the Track Editor's lines are sorted against the 3D). Two decisions are put to
+   the user at the top of that file: exact integer blending by destination read (recommended: not now), and two
+   marked edits to the vendored RHI to enable `shaderFloat64` (recommended).
 8. VIF chain reader with the C++ VU references (Opus): races draw correctly (slowly); GIF bytes equal the emulated
    VU1's for recorded frames; full screenshots on levels 5, 17, 18, 20.
 

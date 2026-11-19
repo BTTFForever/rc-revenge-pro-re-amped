@@ -219,7 +219,7 @@ add_library(rc_blit_vk STATIC EXCLUDE_FROM_ALL "${RC_BLIT_DIR}/blit_presenter.cp
 target_include_directories(rc_blit_vk PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_options(rc_blit_vk PRIVATE -O2)
 target_link_libraries(rc_blit_vk PUBLIC rc_ico_rhi)
-target_sources(rc_replay PRIVATE tools/rc_replay/blit.cpp)
+target_sources(rc_replay PRIVATE tools/rc_replay/blit.cpp tools/rc_replay/gif2d_survey.cpp)
 target_link_libraries(rc_replay PRIVATE rc_blit rc_blit_vk rc_tex)
 add_executable(rc_tex_test EXCLUDE_FROM_ALL tools/rc_replay/tex_test.cpp)
 target_compile_options(rc_tex_test PRIVATE -O2)

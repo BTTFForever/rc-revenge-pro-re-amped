@@ -1,6 +1,6 @@
 // rc_replay: feeds a frame record dump (.rcfr, RENDERER_FRAME_RECORD.md) to consumers.
 //
-//   rc_replay <dump> [--consumer stats|emu|tex|blit] [--cycles a-b] [--verify] [--quiet]
+//   rc_replay <dump> [--consumer stats|emu|tex|blit|gif2dstat] [--cycles a-b] [--verify] [--quiet]
 //             [--png <dir>] [--picture-before <cycle>:<kick> <out.png>] [--path1 <cycle>:<kick> <out.bin>] [--kick-hashes]
 //             [--fault page|kick|hw:<cycle>[:<n>]]
 //             [--with-emu] [--fault transfer|kick|swizzle|decode:<cycle>:<n>] (tex)
@@ -36,6 +36,7 @@
 #include "emu.h"
 #include "tex.h"
 #include "blit.h"
+#include "gif2d_survey.h"
 #include "consumer.h"
 #include "reader.h"
 #include "../../render/gfx/tags.h"
@@ -442,7 +443,7 @@ namespace
 
     void usage()
     {
-        std::fprintf(stderr, "usage: rc_replay <dump.rcfr> [--consumer stats|emu|tex|blit] [--cycles a-b] [--verify] [--quiet] [--png <dir>]\n"
+        std::fprintf(stderr, "usage: rc_replay <dump.rcfr> [--consumer stats|emu|tex|blit|gif2dstat] [--cycles a-b] [--verify] [--quiet] [--png <dir>]\n"
                              "                 [--picture-before <cycle>:<kick> <out.png>] [--path1 <cycle>:<kick> <out.bin>] [--kick-hashes]\n"
                              "                 [--fault page|kick|hw:<cycle>[:<n>]]\n"
                              "       tex: [--with-emu] [--png <dir>] [--fault transfer|kick:<cycle>:<n> | swizzle:<cycle>:<bits> | decode:0:<bits>]\n"
@@ -453,7 +454,7 @@ namespace
 namespace
 {
     int runEmu(Reader &reader, const std::string &path, rc::replay::EmuOptions options, bool verify, bool quiet, uint64_t first, uint64_t last,
-               const rc::replay::TexOptions *texOptions = nullptr)
+               const rc::replay::TexOptions *texOptions = nullptr, bool gif2dSurvey = false)
     {
         options.verify = verify;
         options.quiet = quiet;
@@ -483,6 +484,13 @@ namespace
         // (step 5) The tex consumer behind the emulated machine: it sees every GIF packet and the machine's memory.
         std::unique_ptr<rc::replay::TexCheck> tex;
         std::vector<Consumer *> consumers{&emu};
+        // (step 7's design) The gif2dstat survey in front of the machine: it reads the Z buffer before each kick.
+        std::unique_ptr<rc::replay::Gif2dSurvey> survey;
+        if (gif2dSurvey)
+        {
+            survey = std::make_unique<rc::replay::Gif2dSurvey>(&runtime);
+            consumers.insert(consumers.begin(), survey.get());
+        }
         if (texOptions)
         {
             tex = std::make_unique<rc::replay::TexCheck>(*texOptions, &runtime);
@@ -498,6 +506,8 @@ namespace
         emu.summary();
         if (tex)
             tex->summary();
+        if (survey)
+            survey->summary();
         if (!reader.complete())
             std::printf("note: the dump was not closed (%s); read up to its last whole chunk\n",
                         reader.truncated() ? "a partial chunk at the end" : "no index");
@@ -657,6 +667,21 @@ int main(int argc, char **argv)
     {
         usage();
         return 2;
+    }
+    if (consumer == "gif2dstat")
+    {
+        Reader reader;
+        if (!reader.open(path))
+        {
+            std::fprintf(stderr, "%s: %s\n", path.c_str(), reader.error().c_str());
+            return 2;
+        }
+        if (withEmu)
+            return runEmu(reader, path, emuOptions, false, true, first, last, nullptr, true);
+        rc::replay::Gif2dSurvey survey(nullptr);
+        const bool ok = reader.run({&survey}, first, last);
+        survey.summary();
+        return ok ? 0 : 2;
     }
     if (consumer != "stats" && consumer != "emu" && consumer != "tex" && consumer != "blit")
     {
