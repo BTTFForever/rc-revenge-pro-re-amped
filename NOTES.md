@@ -169,6 +169,29 @@ Checks after the fixes:
   - Europe default seed: 1563 ok, 0 FAIL, 0 known, 0 skipped (856 s).
 - 15-23 functions per run report redrawn inputs.
 
+### FrontEndProcess, seed 7170 (2026-11-19): the runtime's sprintf knew %a, the game's does not
+`--only FrontEndProcess --seed 7170` (USA) failed 1 input of 40 on every dump: 3 bytes of the front end's string
+buffer (scratch+0x2d7f, " pi" against "(nu"). Neither the native code nor the setup was wrong; the runtime's `sprintf`
+replacement read an argument the game never passes.
+- The input: French text (`workingLanguage` 1), a two-player race (0x10000200) with reverse or mirror on, so
+  `BuildConfirmText` formats general string 0x1c. The game's own French text (in the dumps of both versions) has a
+  typo: `"Concourez sur le circuit '%s' en mode %s% avec la voiture %s ... et la voiture %s ..."`. The original passes
+  five arguments (`$a2`-`$t2`, BuildConfirmText at 0x11fc28-0x11fc40) and never sets `$t3`.
+- The game's libc (newlib `_vfprintf_r`, its conversion jump table at 0x325b50 USA / 0x325dd0 Europe) has no `%a`,
+  `%A` or `%F`: they go to the same case as unknown characters (0x1b9dac USA), which prints the character and takes no
+  argument. So the console prints "...Inversé avec la voiture ..." and reads five arguments.
+- The runtime's formatter (`formatPs2StringCore`, `Support.h`) took `% a` as C99 hex float: it read 8 bytes from the
+  next two argument slots (`$t0`, `$t1`), so the last `%s` read `$t3`. In the original run `$t3` was 0x2e, left by the
+  recompiled `SpriteRender` under `DisplayRCRevengeBanner` (a sprite's u coordinate; a string at 0x2e is empty); the
+  native banner calls the native `SpriteRender`, so `$t3` was still 0 ("(null)"). Live, the Europe game in French
+  would have shown a hex float (two pointers read as a double) and a stale register's string in that text.
+- Fix (runtime, see "Local changes to the runtime"): `%a`, `%A`, `%F` and every conversion the formatter does not know
+  print the character, padded to the width (zeros with `0`, on the right with `-`), and take no argument, as newlib
+  does. Before, an unknown conversion copied the whole `%...` text.
+- Checks: seed 7170 passes; `--only FrontEndProcess,BuildConfirmText` seeds 7170-7174 and 8800 on both versions,
+  0 FAIL. `--all`: USA seed 7175: 1632 ok, 0 FAIL, 0 known, 0 skipped, 98 without a setup (481 s). Europe seed 7176: 1563 ok,
+  0 FAIL, 0 known, 0 skipped, 90 without a setup (862 s).
+
 ## The runtime (vendored, 2026-11-19)
 PS2Recomp lives in `third_party/ps2recomp/` (see its `VENDORED.md`): ps2xRecomp, ps2xRuntime and ps2xIOP from the SotC fork
 at d06a4ab, with this project's changes applied. It used to be a separate checkout (`~/PS2Recomp-sotc`) with the changes
@@ -251,6 +274,10 @@ All are in `third_party/ps2recomp/` (against upstream d06a4ab; see "The runtime"
 - `iop_pad.h`: missing `<cstddef>`. `state_io.h`: a form Clang also accepts. `ps2_debug_panel.h`: `PS2X_DEBUG_PANEL=0` hides the debugger.
 - `gs/gs_survey.cpp` (2026-11-19, renderer P0 step 1): the GS usage survey, on with `RC_GS_SURVEY=<file>`; hooks in `ps2_memory.cpp` (DMA kicks, chain tags, `submitGifPacket`, the native GIF fast paths, GS privileged register and FIFO stores), `gs_frontend.cpp` (`GS::writeRegister`), `System.cpp` (`SetGsCrt`), `ps2_runtime.cpp` (`Store32/64`: the caller's address). Unset, each hook is one test of a false global. Findings and the record format: `RENDERER_SURVEY.md`; summariser `tools/gs_survey.py`.
 - `include/ps2_host_platform.h`, `ps2_runtime.cpp` (`initialize`, `run`, `runHostPlatformLoop`, `UploadFrame`), `ps2_host_input.cpp` (2026-11-19, renderer P0 step 3): host platform hooks. Null unless the game installs them (`platform/vk_host.cpp` for `RC_RENDERER=vk`); then no raylib window, a std::chrono host loop and input through the hooks in raylib's codes. With no hooks every path is the old one (one test of a null pointer per call).
+- `Kernel/Stubs/Helpers/Support.h` (`formatPs2StringCore`, 2026-11-19): the guest `printf`/`sprintf` family formats as
+  the game's newlib does for conversions newlib lacks: `%a`, `%A`, `%F` and unknown characters print the character
+  (padded to the width) and take no argument. Upstream read a double for `%a`/`%F` and copied unknown specs whole. See
+  "FrontEndProcess, seed 7170".
 - `ps2_runtime.cpp` (`Store32`): `g_ps2HardwareStoreHook`, null except in the offline oracle, sees each 32-bit store sent to a hardware register and can drop it (the oracle logs them so both runs' DMA kicks are compared).
 - `include/ps2_capture_hooks.h` (2026-11-19, renderer P1 step 4 batch 1): the frame record's hooks, null unless `RC_FRAME_RECORD` installs them (one null test per site): `ps2_memory.cpp` (each DMA kick on channels 0-2 with every byte range its stream is read from, GS privileged, VIF1 and GIF register stores, FIFO stores, PATH2 packets, `submitGifPacket`), `ps2_runtime.cpp` (`attach` at the end of `initialize`, the store caller in `Store32/64`, the native GIF fast paths), `System.cpp` (`SetGsCrt`), `gs_frontend.cpp` (`GS::writeRegister`, local->host transfers, and `g_gsRawRegs`: every GS register write kept as written, always on), `ps2_save_state.cpp` (`snapshotGs`: GS memory and registers for keyframes, as a save state takes them). See "Frame record".
 - `ps2_save_state.cpp`, `include/ps2_capture_hooks.h` (2026-11-19, renderer P1 step 4 batch 2): `ps2x::savestate::saveGraphics` / `loadGraphics` (the graphics machine's state but GS memory as one versioned blob: GS front end including a GIF tag in progress, which upstream's save state leaves out, backend state, privileged registers and the register shadow, VU1 memory and registers, VIF1 and DMA registers, PATH3 mask and FIFO, pending transfers, the I/O register map) and `ps2x::capture::exactCapable` (bare software GS and no VU1/GIF thread), for the frame record's exact mode and `rc_replay --consumer emu`. Nothing changes when they are not called.

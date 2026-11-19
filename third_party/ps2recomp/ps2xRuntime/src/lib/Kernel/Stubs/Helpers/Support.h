@@ -1161,13 +1161,10 @@ namespace
                 break;
             }
             case 'f':
-            case 'F':
             case 'e':
             case 'E':
             case 'g':
             case 'G':
-            case 'a':
-            case 'A':
             {
                 const uint64_t bits = nextU64();
                 double value = 0.0;
@@ -1192,8 +1189,22 @@ namespace
                 break;
             }
             default:
-                out.append(specStart, p - specStart);
+            {
+                // The game's libc (newlib's _vfprintf_r) has no %a, %A or %F (C99). Like any conversion it does not
+                // know, it prints the character itself, padded to the width, and takes no argument. RC Revenge Pro's
+                // French two-player confirmation text has "%s% avec": a C99 %a here read a sixth argument the game
+                // never passes (whatever $t3 held) and printed it as a double.
+                const bool leftAlign = parsedFlags.find('-') != std::string::npos || (widthSpecified && parsedWidth < 0);
+                const bool zeroPad = !leftAlign && parsedFlags.find('0') != std::string::npos;
+                const size_t width = widthSpecified ? static_cast<size_t>(parsedWidth < 0 ? -static_cast<int64_t>(parsedWidth) : parsedWidth) : 0u;
+                const size_t padding = width > 1u ? width - 1u : 0u;
+                if (!leftAlign)
+                    out.append(padding, zeroPad ? '0' : ' ');
+                out.push_back(spec);
+                if (leftAlign)
+                    out.append(padding, ' ');
                 break;
+            }
             }
         }
 
