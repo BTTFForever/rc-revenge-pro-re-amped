@@ -40,6 +40,7 @@ game code (unchanged) -> packets in guest RAM
    rc::rd front (C++, fork/render/): GIF reader, VIF chain reader, VU program table, shadow texture memory
         |
    frame record (state deltas, screen prims, shape batches, image blits, clear, flip)  <- dump / replay tool
+   (step 4's design records one level lower as well: the kicks themselves, RENDERER_FRAME_RECORD.md)
         |
    replay -> RHI (ico-pc's, C, Vulkan) -> SDL3 window
 ```
@@ -97,6 +98,28 @@ After step 1: fold its answers into this plan's open questions.
 
 ### P1: the reader and the frame record (option A)
 4. Frame record, dump and replay tool (Fable designs, Opus builds); the side-tag channel defined here.
+   **Designed 2026-11-19: `RENDERER_FRAME_RECORD.md`.** The record has two tiers: the *kick record* (per display
+   cycle, i.e. per displayed picture: the DMA kicks as their registers, the hardware stores, the side tags, and a
+   sparse 4 KB page shadow of guest RAM so by-reference level data is stored once), which steps 5-8 are developed
+   from off-line, and the *draw list* the readers produce for the RHI (the "frame record" of the diagram above;
+   its container and first commands are in that file's section 9). Live and off-line consumers share one interface
+   (`rc::rec::Consumer`: kick registers + a RAM view + tags), so the live renderer reads guest RAM in place. Dumps
+   are `.rcfr` files (`RC_FRAME_RECORD=<file>`, `RC_FRAME_RECORD_AT=<trigger>`); in exact mode (software GS,
+   synchronous: `tools/frame_record.sh`) they carry the emulated GS's picture per cycle, its register file before
+   each kick and its memory at keyframes. `rc_replay` feeds a dump to consumers: `stats`, and `emu`, which
+   re-submits the kicks to the runtime's VIF1, VU1 and software GS and must reproduce every reference bit for bit.
+   Side tags are `rc::gfx` begin/end marks anchored to the 2D buffer position, the chain slot or the next kicks.
+   Build batches, each with its check (details: that file, sections 10 and 12):
+   1. Capture hooks in the runtime, the container, the page shadow, plain keyframes, `rc_replay --consumer stats`,
+      `tools/frame_dump.py`. Check: every recorded stream hash reproduced by the host's own chain walker; nothing
+      changes with recording off (scene logs, oracle).
+   2. Exact mode and the `emu` consumer. Check: levels 5, 17, 18, 20, the front end, boot with the movie, a level
+      load and the Track Editor, both versions: every picture and all of GS memory bit-identical on replay; planted
+      faults fail.
+   3. The side-tag channel and its first sites. Check: tags resolve to the right stream offsets; a sampled shadow
+      run and the oracle are unaffected.
+   4. Ring mode with the F10 hotkey, save-state handling, measured size and time budget, the NOTES.md section.
+   Batches 1 and 2 are what steps 5-8 depend on.
 5. Shadow texture memory and decode (Fable); checked against `tools/track_viewer` off-line and the emulated GS
    memory in game. Uploads arrive as CT32 (level image, palettes) **and** PSMT8/PSMT4 (single textures, animated
    frames), so the shadow needs those write swizzles too; formats sampled are T4/T8 with CT32 palettes (CSM1, CSA 0,
