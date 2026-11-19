@@ -1,8 +1,9 @@
 // rc_replay: feeds a frame record dump (.rcfr, RENDERER_FRAME_RECORD.md) to consumers.
 //
-//   rc_replay <dump> [--consumer stats|emu] [--cycles a-b] [--verify] [--quiet]
+//   rc_replay <dump> [--consumer stats|emu|tex] [--cycles a-b] [--verify] [--quiet]
 //             [--png <dir>] [--picture-before <cycle>:<kick> <out.png>] [--path1 <cycle>:<kick> <out.bin>] [--kick-hashes]
 //             [--fault page|kick|hw:<cycle>[:<n>]]
+//             [--with-emu] [--fault kick|swizzle|decode:<cycle>:<n>]          (tex)
 //
 // stats: per cycle and in total, kicks by channel and mode, stream bytes, DMA tags by id, pages and bytes by record
 // type, odd events. With --verify: the host's chain walker (render/record/chain_walk) over the rebuilt RAM image
@@ -17,9 +18,16 @@
 // pictures (and on a mismatch the reference and a difference image); --picture-before writes the frame buffer just
 // before a kick; --path1 the GIF bytes a kick produced; --kick-hashes prints a GS memory hash after every kick;
 // --fault plants one fault (a flipped page byte, a dropped kick, a wrong store) to show the checks catch it.
+//
+// tex (tex.cpp; renderer plan P1 step 5): the host's shadow of GS texture memory (render/tex). It applies the PATH3
+// kicks' host-to-local transfers and with --verify must equal GSVR on every texture block at every later keyframe and
+// the final one. --with-emu runs it behind emu: texture memory compared after every kick, every texture any path draws
+// with decoded and compared with the emulated GS's own sampling, the alpha histogram by draw state. --png writes the
+// decoded textures. --fault plants a dropped transfer or a layout error.
 // One build replays both versions' dumps.
 #include "chain_walk.h"
 #include "emu.h"
+#include "tex.h"
 #include "consumer.h"
 #include "reader.h"
 #include "../../render/gfx/tags.h"
@@ -30,6 +38,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -425,15 +434,17 @@ namespace
 
     void usage()
     {
-        std::fprintf(stderr, "usage: rc_replay <dump.rcfr> [--consumer stats|emu] [--cycles a-b] [--verify] [--quiet] [--png <dir>]\n"
+        std::fprintf(stderr, "usage: rc_replay <dump.rcfr> [--consumer stats|emu|tex] [--cycles a-b] [--verify] [--quiet] [--png <dir>]\n"
                              "                 [--picture-before <cycle>:<kick> <out.png>] [--path1 <cycle>:<kick> <out.bin>] [--kick-hashes]\n"
-                             "                 [--fault page|kick|hw:<cycle>[:<n>]]\n");
+                             "                 [--fault page|kick|hw:<cycle>[:<n>]]\n"
+                             "       tex: [--with-emu] [--png <dir>] [--fault kick:<cycle>:<n> | swizzle:<cycle>:<bits> | decode:0:<bits>]\n");
     }
 }
 
 namespace
 {
-    int runEmu(Reader &reader, const std::string &path, rc::replay::EmuOptions options, bool verify, bool quiet, uint64_t first, uint64_t last)
+    int runEmu(Reader &reader, const std::string &path, rc::replay::EmuOptions options, bool verify, bool quiet, uint64_t first, uint64_t last,
+               const rc::replay::TexOptions *texOptions = nullptr)
     {
         options.verify = verify;
         options.quiet = quiet;
@@ -460,13 +471,24 @@ namespace
         for (const IndexSegment &seg : reader.segments())
             if (seg.firstCycle <= first)
                 from = seg.firstCycle;
-        const bool ok = reader.run({&emu}, from, last);
+        // (step 5) The tex consumer behind the emulated machine: it sees every GIF packet and the machine's memory.
+        std::unique_ptr<rc::replay::TexCheck> tex;
+        std::vector<Consumer *> consumers{&emu};
+        if (texOptions)
+        {
+            tex = std::make_unique<rc::replay::TexCheck>(*texOptions, &runtime);
+            emu.setGifTap([&tex](int p, const uint8_t *data, uint32_t bytes) { tex->gifPacket(p, data, bytes); });
+            consumers.push_back(tex.get());
+        }
+        const bool ok = reader.run(consumers, from, last);
         if (emu.fatal())
         {
             std::printf("unusable for emu: %s\n", emu.fatalError().c_str());
             return 2;
         }
         emu.summary();
+        if (tex)
+            tex->summary();
         if (!reader.complete())
             std::printf("note: the dump was not closed (%s); read up to its last whole chunk\n",
                         reader.truncated() ? "a partial chunk at the end" : "no index");
@@ -477,8 +499,38 @@ namespace
         }
         if (verify && (h.flags & kFileExact))
         {
-            std::printf("%s\n", emu.failed() ? "FAIL" : "PASS");
-            return emu.failed() ? 1 : 0;
+            const bool failed = emu.failed() || (tex && tex->failed());
+            std::printf("%s\n", failed ? "FAIL" : "PASS");
+            return failed ? 1 : 0;
+        }
+        return 0;
+    }
+
+    int runTex(Reader &reader, const std::string &path, const rc::replay::TexOptions &options, uint64_t first, uint64_t last)
+    {
+        const FileHeader &h = reader.header();
+        std::printf("dump %s\n  %s, %ux%u, recorded with %.16s, build %.40s, %s%s\n", path.c_str(), h.gameVersion ? "Europe" : "USA", h.width,
+                    h.height, h.gsBackend, h.build, (h.flags & kFileExact) ? "exact" : "plain", (h.flags & kFileComplete) ? "" : ", not closed");
+        rc::replay::TexCheck tex(options, nullptr);
+        // The shadow needs every transfer since the segment's keyframe.
+        uint64_t from = 0;
+        for (const IndexSegment &seg : reader.segments())
+            if (seg.firstCycle <= first)
+                from = seg.firstCycle;
+        const bool ok = reader.run({&tex}, from, last);
+        tex.summary();
+        if (!reader.complete())
+            std::printf("note: the dump was not closed (%s); read up to its last whole chunk\n",
+                        reader.truncated() ? "a partial chunk at the end" : "no index");
+        if (!ok)
+        {
+            std::printf("read error: %s\n", reader.error().c_str());
+            return 2;
+        }
+        if (options.verify)
+        {
+            std::printf("%s\n", tex.failed() ? "FAIL" : "PASS");
+            return tex.failed() ? 1 : 0;
         }
         return 0;
     }
@@ -487,7 +539,7 @@ namespace
 int main(int argc, char **argv)
 {
     std::string path, consumer = "stats";
-    bool verify = false, quiet = false;
+    bool verify = false, quiet = false, withEmu = false;
     uint64_t first = 0, last = ~0ull;
     rc::replay::EmuOptions emuOptions;
     auto cycleKick = [](const char *text, int64_t &cycle, uint32_t &kick)
@@ -529,6 +581,8 @@ int main(int argc, char **argv)
                 emuOptions.faultN = n;
             }
         }
+        else if (a == "--with-emu")
+            withEmu = true;
         else if (a == "--verify")
             verify = true;
         else if (a == "--quiet")
@@ -553,9 +607,9 @@ int main(int argc, char **argv)
         usage();
         return 2;
     }
-    if (consumer != "stats" && consumer != "emu")
+    if (consumer != "stats" && consumer != "emu" && consumer != "tex")
     {
-        std::fprintf(stderr, "consumer '%s' is not built yet (stats, emu)\n", consumer.c_str());
+        std::fprintf(stderr, "consumer '%s' is not built yet (stats, emu, tex)\n", consumer.c_str());
         return 2;
     }
     Reader reader;
@@ -563,6 +617,22 @@ int main(int argc, char **argv)
     {
         std::fprintf(stderr, "%s: %s\n", path.c_str(), reader.error().c_str());
         return 2;
+    }
+    if (consumer == "tex")
+    {
+        rc::replay::TexOptions texOptions;
+        texOptions.verify = verify;
+        texOptions.quiet = quiet;
+        texOptions.pngDir = emuOptions.pngDir;
+        texOptions.faultKind = emuOptions.faultKind;
+        texOptions.faultCycle = emuOptions.faultCycle;
+        texOptions.faultN = emuOptions.faultN;
+        if (!withEmu)
+            return runTex(reader, path, texOptions, first, last);
+        // Behind emu: the planted fault and the PNGs are the tex consumer's, not the emulated machine's.
+        emuOptions.pngDir.clear();
+        emuOptions.faultKind.clear();
+        return runEmu(reader, path, emuOptions, verify, true, first, last, &texOptions);
     }
     if (consumer == "emu")
         return runEmu(reader, path, emuOptions, verify, quiet, first, last);

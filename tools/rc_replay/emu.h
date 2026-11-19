@@ -7,6 +7,7 @@
 #include "consumer.h"
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -53,7 +54,9 @@ namespace rc::replay
         void cycleEnd(const rc::rec::CycleInfo &info, const uint8_t *refRgba) override;
         void close() override;
 
-        void gifPacket(const uint8_t *data, uint32_t bytes);
+        void gifPacket(int path, const uint8_t *data, uint32_t bytes);
+        // (step 5) Every GIF packet a replayed kick submits, with its path, for a consumer running behind this one.
+        void setGifTap(std::function<void(int, const uint8_t *, uint32_t)> tap) { m_gifTap = std::move(tap); }
 
         bool fatal() const { return !m_fatal.empty(); }
         const std::string &fatalError() const { return m_fatal; }
@@ -73,6 +76,7 @@ namespace rc::replay
         std::vector<uint8_t> m_picture;
 
         bool m_collect = false;
+        std::function<void(int, const uint8_t *, uint32_t)> m_gifTap;
         uint64_t m_gifBytes = 0;
         rc::rec::Hash64 m_gif;
         bool m_path1 = false;

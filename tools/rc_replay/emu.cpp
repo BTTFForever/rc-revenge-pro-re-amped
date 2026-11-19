@@ -27,10 +27,10 @@ namespace rc::replay
         // Only the GIF packet hook: every byte submitGifPacket receives while a recorded kick is being replayed.
         const ps2x::capture::Hooks kHooks = [] {
             ps2x::capture::Hooks h{};
-            h.gifPacket = [](int, const uint8_t *data, uint32_t bytes)
+            h.gifPacket = [](int path, const uint8_t *data, uint32_t bytes)
             {
                 if (g_emu)
-                    g_emu->gifPacket(data, bytes);
+                    g_emu->gifPacket(path, data, bytes);
             };
             return h;
         }();
@@ -213,10 +213,12 @@ namespace rc::replay
         mem.write32(phys, static_cast<uint32_t>(value));
     }
 
-    void Emu::gifPacket(const uint8_t *data, uint32_t bytes)
+    void Emu::gifPacket(int path, const uint8_t *data, uint32_t bytes)
     {
         if (!m_collect || !data)
             return;
+        if (m_gifTap)
+            m_gifTap(path, data, bytes);
         m_gif.update(data, bytes);
         if (m_path1)
             m_path1Bytes.insert(m_path1Bytes.end(), data, data + bytes);

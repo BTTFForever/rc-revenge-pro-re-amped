@@ -188,6 +188,19 @@ if(TARGET rc_vu1_code)
     target_compile_definitions(rc_replay PRIVATE RC_HAVE_VU1_CODE=1)
     target_link_libraries(rc_replay PRIVATE -Wl,--whole-archive rc_vu1_code -Wl,--no-whole-archive)
 endif()
+# rc_tex (render/tex; renderer plan P1 step 5, RENDERER_FRAME_RECORD.md section 17): the host's shadow of GS texture
+# memory, the GIF walker, texture decode and the texture cache. Linked by rc_replay (the tex consumer) and rc_tex_test
+# only: nothing of it is in the game or the oracle yet (the live reader of steps 6-9 will link it).
+set(RC_TEX_DIR "${CMAKE_CURRENT_SOURCE_DIR}/render/tex")
+add_library(rc_tex STATIC EXCLUDE_FROM_ALL "${RC_TEX_DIR}/gs_layout.cpp" "${RC_TEX_DIR}/gs_memory.cpp" "${RC_TEX_DIR}/gif_walk.cpp"
+    "${RC_TEX_DIR}/tex_decode.cpp" "${RC_TEX_DIR}/tex_cache.cpp" "${RC_TEX_DIR}/tex_shadow.cpp")
+target_compile_options(rc_tex PRIVATE -O2)
+target_link_libraries(rc_tex PRIVATE rc_record)
+target_sources(rc_replay PRIVATE tools/rc_replay/tex.cpp)
+target_link_libraries(rc_replay PRIVATE rc_tex)
+add_executable(rc_tex_test EXCLUDE_FROM_ALL tools/rc_replay/tex_test.cpp)
+target_compile_options(rc_tex_test PRIVATE -O2)
+target_link_libraries(rc_tex_test PRIVATE rc_tex rc_record ZLIB::ZLIB)
 add_executable(rc_record_test EXCLUDE_FROM_ALL tools/rc_replay/record_test.cpp)
 target_include_directories(rc_record_test PRIVATE "${RC_RECORD_DIR}")
 target_link_libraries(rc_record_test PRIVATE rc_record)
