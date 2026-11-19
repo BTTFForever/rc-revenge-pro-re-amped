@@ -222,7 +222,7 @@ RAM byte at 0x550714: original 00, native 31). The same with the runtime as it w
   more seeds instead of `--cases 1000`: 8,200 AMenuDisplayMIT inputs per version): USA 369 ok, Europe 328 ok, 0 FAIL.
   Three planted errors (no saved $s0; $s0 saved at 8; FontPrint's proportional $s0 starting at -1) each failed
   AMenuDisplayMIT on seed 9494 only (seeds 9501-9505 passed them): the input is rare (a slider whose text is only a
-  colour change, about 1 in 800). `--all`: USA seed 9601 1632 ok, Europe seed 9602 1563 ok, 0 FAIL, 0 known,
+  colour change: 1 of the 240 inputs per dump that the six seeds drew). `--all`: USA seed 9601 1632 ok, Europe seed 9602 1563 ok, 0 FAIL, 0 known,
   0 skipped. Live (`tools/front_live.sh 7301 120`, USA, AMenuDisplay and the drivers in `RC_DECOMP_SKIP` so the
   recompiled AMenuDisplay calls the native AMenuDisplayMIT): 1,300 of 1,585 calls compared, 0 mismatches.
 
