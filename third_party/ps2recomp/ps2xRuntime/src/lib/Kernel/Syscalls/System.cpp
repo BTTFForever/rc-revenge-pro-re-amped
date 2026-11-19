@@ -1,3 +1,4 @@
+#include "runtime/gs/gs_survey.h"
 #include "Common.h"
 #include "runtime/ee_scheduler.h"
 #include "System.h"
@@ -9,6 +10,8 @@ namespace ps2_syscalls
         int interlaced = getRegU32(ctx, 4); // $a0 - 0=non-interlaced, 1=interlaced
         int videoMode = getRegU32(ctx, 5);  // $a1 - 0=NTSC, 1=PAL, 2=VESA, 3=HiVision
         int frameMode = getRegU32(ctx, 6);  // $a2 - 0=field, 1=frame
+        if (ps2x::gssurvey::enabled())
+            ps2x::gssurvey::setCrt(interlaced, videoMode, frameMode);
 
         if (runtime)
         {

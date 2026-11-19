@@ -225,6 +225,7 @@ Debugging:
 - `PS2X_SCREENSHOT_DIR` and `PS2X_SCREENSHOT_FIELDS` save frames; `PS2X_AUDIO_STATS=1` prints audio rates.
 - `PS2X_PAD_SCRIPT` plays scripted input as comma-separated `start[v]:BTN+BTN[:hold]`, where `v` means fields rather than seconds.
 - `PS2X_DEBUG_PANEL=1` shows the debugger.
+- `RC_GS_SURVEY=<file>` records every DMA kick and GS register write by path, per frame and scene (`RENDERER_SURVEY.md`); use it with `RC_TRACK_SHADER=0 PS2X_MTVU=0` (tools/play.sh passes both through), read with `tools/gs_survey.py`.
 - `eeCycle` in the dump is not a reliable speed gauge. Use `gameframes`.
 - In zsh, unquoted variables do not word-split, so pass env settings one by one.
 
@@ -244,6 +245,7 @@ All are in `third_party/ps2recomp/` (against upstream d06a4ab; see "The runtime"
 - `iop_memory.h`: IOP heap base 0xA0000, set for this game's modules and sound banks.
 - `iop_spu2.*`, `iop_emulator.cpp`: SPU2 IRQ address, which the streamed music relies on.
 - `iop_pad.h`: missing `<cstddef>`. `state_io.h`: a form Clang also accepts. `ps2_debug_panel.h`: `PS2X_DEBUG_PANEL=0` hides the debugger.
+- `gs/gs_survey.cpp` (2026-11-19, renderer P0 step 1): the GS usage survey, on with `RC_GS_SURVEY=<file>`; hooks in `ps2_memory.cpp` (DMA kicks, chain tags, `submitGifPacket`, the native GIF fast paths, GS privileged register and FIFO stores), `gs_frontend.cpp` (`GS::writeRegister`), `System.cpp` (`SetGsCrt`), `ps2_runtime.cpp` (`Store32/64`: the caller's address). Unset, each hook is one test of a false global. Findings and the record format: `RENDERER_SURVEY.md`; summariser `tools/gs_survey.py`.
 - `ps2_runtime.cpp` (`Store32`): `g_ps2HardwareStoreHook`, null except in the offline oracle, sees each 32-bit store sent to a hardware register and can drop it (the oracle logs them so both runs' DMA kicks are compared).
 - Experimental, off by default: God of War's render-target renderer (`gs_hw_backend.cpp`, `gs_texture_store.*`, `gs_gpu_helpers.h`,
   `gs_tri_groups.h`, `gs_upload24.h`, `gs_colour_runs.h`, additions to `gs_gl.h`, `gs_gl_api_load.inl` and `ps2_gs_memory.*`).

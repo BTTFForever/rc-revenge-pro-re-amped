@@ -1,3 +1,4 @@
+#include "runtime/gs/gs_survey.h"
 #include "runtime/gs/gs_track_batch.h"
 #include "runtime/gs/gs_frontend.h"
 #include "runtime/gs/gs_cpu_backend.h"
@@ -1192,6 +1193,8 @@ void GS::writeRegisterPacked(uint8_t regDesc, uint64_t lo, uint64_t hi)
 
 void GS::writeRegister(uint8_t regAddr, uint64_t value)
 {
+    if (ps2x::gssurvey::enabled())
+        ps2x::gssurvey::eeRegisterWrite(regAddr, value);
     std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
     writeRegisterUnlocked(regAddr, value);
 }

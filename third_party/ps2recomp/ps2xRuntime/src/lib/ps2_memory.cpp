@@ -1,3 +1,4 @@
+#include "runtime/gs/gs_survey.h"
 #include "runtime/ps2_async_vif.h"
 #include "runtime/ps2_memory.h"
 #include "runtime/ps2_address.h"
@@ -366,6 +367,7 @@ bool PS2Memory::initialize(size_t ramSize)
     m_vif1PendingPath2ImageQwc = 0u;
     m_vif1PendingPath2DirectHl = false;
     resetEeTimers();
+    ps2x::gssurvey::setFieldCounter(&gs_regs.vsyncTick);
 
     try
     {
@@ -1060,6 +1062,11 @@ void PS2Memory::write32(uint32_t address, uint32_t value)
             uint64_t newVal = (*reg & ~mask) | ((uint64_t)value << (off * 8));
             *reg = newVal;
         }
+        if (ps2x::gssurvey::enabled())
+        {
+            const uint64_t *reg = gsRegPtr(gs_regs, address);
+            ps2x::gssurvey::privWrite(regOff, reg ? *reg : value);
+        }
         return;
     }
 
@@ -1119,6 +1126,8 @@ void PS2Memory::write64(uint32_t address, uint64_t value)
         {
             *reg = value;
         }
+        if (ps2x::gssurvey::enabled())
+            ps2x::gssurvey::privWrite(regOff, value);
         return;
     }
 
@@ -1166,6 +1175,8 @@ void PS2Memory::write128(uint32_t address, __m128i value)
     const bool scratch = isScratchpad(address);
     uint32_t physAddr = translateAddress(address);
 
+    if (ps2x::gssurvey::enabled() && !scratch && physAddr >= 0x10004000u && physAddr < 0x10006000u)
+        ps2x::gssurvey::fifoWrite(physAddr);
     if (!scratch && physAddr == 0x10004000u) // VIF0_FIFO
     {
         alignas(16) uint8_t fifoData[16];
@@ -1229,6 +1240,8 @@ void PS2Memory::write128(uint32_t address, __m128i value)
 
 bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
 {
+    if (ps2x::gssurvey::enabled() && address >= 0x10004000u && address < 0x10007000u)
+        ps2x::gssurvey::fifoWrite(address);
     if (isAsyncVifRegister(address))
         ps2x::asyncvif::sync(*this);
     size_t timerIndex = 0u;
@@ -1311,6 +1324,11 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
             *reg = (*reg & ~mask) | (static_cast<uint64_t>(value) << (off * 8u));
         }
         m_gsWriteCount.fetch_add(1, std::memory_order_relaxed);
+        if (ps2x::gssurvey::enabled())
+        {
+            const uint64_t *reg = gsRegPtr(gs_regs, address);
+            ps2x::gssurvey::privWrite(regOff, reg ? *reg : value);
+        }
         return true;
     }
 
@@ -1443,6 +1461,7 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
             const uint32_t channelBase = address & 0xFFFFFF00;
             const uint32_t madr = m_ioRegisters[channelBase + 0x10];
             const uint32_t qwc = m_ioRegisters[channelBase + 0x20];
+            const uint32_t startTadr = m_ioRegisters[channelBase + 0x30];
             m_dmaStartCount.fetch_add(1, std::memory_order_relaxed);
             if (channelBase == 0x10009000u)
                 ps2x::asyncvif::vu1Kick();
@@ -1585,6 +1604,8 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
                         uint32_t addr = static_cast<uint32_t>((tag >> 32) & 0x7FFFFFFF);
                         lastTagUpper = static_cast<uint32_t>((tag >> 16) & 0xFFFFu);
                         ++tagsProcessed;
+                        if (ps2x::gssurvey::enabled())
+                            ps2x::gssurvey::chainTag(id, addr, tagQwc);
 
                         uint32_t dataAddr = 0;
                         bool hasPayload = (tagQwc > 0);
@@ -1708,6 +1729,14 @@ bool PS2Memory::writeIORegister(uint32_t address, uint32_t value)
                     enqueueTransfer(madr, qwc);
                 }
 
+                if (ps2x::gssurvey::enabled())
+                {
+                    uint64_t chainBytes = 0u;
+                    const auto &pending = channelBase == 0x1000A000u ? m_pendingGifTransfers : channelBase == 0x10009000u ? m_pendingVif1Transfers : m_pendingVif0Transfers;
+                    for (const PendingTransfer &p : pending)
+                        chainBytes += p.chainData.empty() ? static_cast<uint64_t>(p.qwc) * 16u : p.chainData.size();
+                    ps2x::gssurvey::dmaKick(channelBase, value, madr, qwc, startTadr, static_cast<uint32_t>(chainBytes));
+                }
                 const bool autoProcessTransfers =
                     (channelBase == 0x1000A000u) ? (m_gifPacketCallback || m_gifArbiter != nullptr) : true;
                 if (autoProcessTransfers)
@@ -2136,6 +2165,8 @@ void PS2Memory::flushMaskedPath3Packets(bool drainImmediately)
 
 void PS2Memory::submitGifPacket(GifPathId pathId, const uint8_t *data, uint32_t sizeBytes, bool drainImmediately, bool path2DirectHl)
 {
+    if (ps2x::gssurvey::enabled())
+        ps2x::gssurvey::gifPacket(static_cast<int>(pathId), data, sizeBytes);
     if (!data || sizeBytes < 16)
         return;
 
@@ -2367,6 +2398,11 @@ bool PS2Memory::tryProcessNativeGifImageUploadChain(GS &gs, uint32_t tadr, uint3
     m_dmaStartCount.fetch_add(1, std::memory_order_relaxed);
     m_seenGifCopy = true;
     m_gifCopyCount.fetch_add(1, std::memory_order_relaxed);
+    if (ps2x::gssurvey::enabled())
+    {
+        ps2x::gssurvey::dmaKick(GIF_CHANNEL, chcr, 0u, 0u, tadr, imageBytes + 112u);
+        ps2x::gssurvey::nativeImage(ps2x::gssurvey::Path3, setupRegs[0], setupRegs[1], setupRegs[2], setupRegs[3], imageBytes);
+    }
     gs.uploadImageNative(setupRegs[0], setupRegs[1], setupRegs[2], setupRegs[3], imageData, imageBytes);
 
     m_ioRegisters[GIF_CHANNEL + 0x30u] = finalTadr;
@@ -2444,6 +2480,11 @@ bool PS2Memory::tryProcessNativeGifPackedChain(GS &gs, uint32_t tadr, uint32_t c
     const uint8_t *payload = nullptr;
     if (!resolveContiguous(tadr + 16u, payloadBytes, payload))
         return false;
+    if (ps2x::gssurvey::enabled())
+    {
+        ps2x::gssurvey::dmaKick(GIF_CHANNEL, chcr, 0u, 0u, tadr, payloadBytes);
+        ps2x::gssurvey::gifPacket(ps2x::gssurvey::Path3, payload, payloadBytes);
+    }
     if (!gs.processNativePackedGIFPacket(payload, payloadBytes))
         return false;
 

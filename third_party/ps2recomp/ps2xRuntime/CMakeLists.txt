@@ -384,6 +384,7 @@ add_library(ps2_runtime STATIC
     src/lib/gs/gs_frontend.cpp
     src/lib/gs/gs_cpu_backend.cpp
     src/lib/gs/gs_recording.cpp
+    src/lib/gs/gs_survey.cpp
     src/lib/gs/gs_threaded_backend.cpp
     src/lib/gs/gs_swizzle.cpp
     src/lib/gs/gs_cpu_raster.cpp

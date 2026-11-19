@@ -11,6 +11,7 @@
 #include "ps2_runtime.h"
 #include "ps2_runtime_macros.h"
 #include "runtime/ee_scheduler.h"
+#include "runtime/gs/gs_survey.h"
 #include "ps2_stubs.h"
 #include "../decomp/oracle/ram_dump.h"
 // The addresses and recompiled functions of the version being built (tools/gen_addrs.py, decomp/generated/<version>/).
@@ -394,6 +395,8 @@ namespace
     void mpegGetPicture(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
         g_inputClock.fetch_add(1u, std::memory_order_relaxed);
+        if (ps2x::gssurvey::enabled())
+            ps2x::gssurvey::markMovie();
         const uint32_t returnAddress = getRegU32(ctx, 31);
         if (wholeFileMovieDrained(rdram, ctx, runtime))
         {
@@ -434,9 +437,45 @@ namespace
         std::_Exit(out ? 0 : 1);
     }
 
+    // RC_GS_SURVEY (renderer plan P0 step 1): marks each frame for the runtime's GS survey with the scene and the
+    // renderer's own buffer counters, read before the swap sends the 2D packet (K1) and the frame's chain (K2) starts.
+    void gsSurveyFrame(const uint8_t *rdram)
+    {
+        const auto word = [rdram](uint32_t address)
+        {
+            uint32_t value;
+            std::memcpy(&value, rdram + (address & PS2_RAM_MASK), 4u);
+            return value;
+        };
+        constexpr uint32_t kMain = sym::mainVarG;
+        // scene = mode << 12 | level << 4 | split screen << 1 (the movie bit 0 is the runtime's)
+        const uint32_t scene = (word(kMain + 8u) & 0xfu) << 12 | static_cast<uint32_t>(rdram[kMain + 0x34au] & 0xffu) << 4 |
+                               (rdram[kMain + 0x368u] ? 2u : 0u);
+        const uint32_t rdr = sym::gRdr;
+        const uint32_t frameNumber = word(rdr + 4u);
+        const uint32_t tags = word(rdr + 0xcu);
+        const uint32_t shapes = word(rdr + 0x18u), skins = word(rdr + 0x24u), tedit = word(rdr + 0x30u), water = word(rdr + 0x3cu);
+        const uint32_t buff0 = word(sym::gpGfx_DmaBuff0), buff1 = word(sym::gpGfx_DmaBuff1);
+        const uint32_t states = word(sym::g_RdrStateDmaBlocks);
+        ps2x::gssurvey::setRange(0, "k1buf0", buff0, buff0 + 0x50000u);
+        ps2x::gssurvey::setRange(1, "k1buf1", buff1, buff1 + 0x50000u);
+        ps2x::gssurvey::setRange(2, "chain", tags, tags + 32000u);
+        ps2x::gssurvey::setRange(3, "state", states, states + 0x100u * 0x90u);
+        ps2x::gssurvey::setRange(4, "shape", shapes, shapes + 0x168u * word(rdr + 0x10u));
+        ps2x::gssurvey::setRange(5, "skin", skins, skins + 0x180u * word(rdr + 0x1cu));
+        ps2x::gssurvey::setRange(6, "tedit", tedit, tedit + 0x180u * word(rdr + 0x28u));
+        ps2x::gssurvey::setRange(7, "water", water, water + 0x20u * word(rdr + 0x34u));
+        ps2x::gssurvey::setCounterNames("buffIdx,currDmaTag,currShapeData,currSkinData,currTrackEdData,waterCurrShapeData,stateBlock");
+        const uint32_t counters[] = {word(sym::gGfxP2 + 0x14u), word(rdr + 8u), word(rdr + 0x14u), word(rdr + 0x20u), word(rdr + 0x2cu),
+                                     word(rdr + 0x38u), word(sym::g_RdrStateCurrBlock)};
+        ps2x::gssurvey::frameBoundary(frameNumber, scene, counters, static_cast<int>(std::size(counters)));
+    }
+
     // Counts real game frames for RC_DEBUG_DUMP.
     void countGameFrame(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        if (ps2x::gssurvey::enabled())
+            gsSurveyFrame(rdram);
         g_gameFrames.fetch_add(1u, std::memory_order_relaxed);
         static const char *dumpPath = std::getenv("RC_RAMDUMP");
         static const uint64_t dumpFrame = std::getenv("RC_RAMDUMP_FRAME") ? std::strtoull(std::getenv("RC_RAMDUMP_FRAME"), nullptr, 10) : 600u;

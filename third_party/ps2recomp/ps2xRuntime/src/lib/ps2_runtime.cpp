@@ -1,3 +1,4 @@
+#include "runtime/gs/gs_survey.h"
 #include "runtime/ps2_async_vif.h"
 #include "ps2_runtime.h"
 #include "runtime/ps2_save_state.h"
@@ -2310,6 +2311,8 @@ void PS2Runtime::Store32(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr, uint
 {
     if (g_ps2HardwareStoreHook && g_ps2HardwareStoreHook(vaddr, value))
         return;
+    if (ps2x::gssurvey::enabled())
+        ps2x::gssurvey::noteStoreCaller(getRegU32(ctx, 31));
     ps2TraceGuestWrite(rdram, vaddr, 4u, value, 0u, "WRITE32", ctx);
     try
     {
@@ -2324,6 +2327,8 @@ void PS2Runtime::Store32(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr, uint
 
 void PS2Runtime::Store64(uint8_t *rdram, R5900Context *ctx, uint32_t vaddr, uint64_t value)
 {
+    if (ps2x::gssurvey::enabled())
+        ps2x::gssurvey::noteStoreCaller(getRegU32(ctx, 31));
     ps2TraceGuestWrite(rdram, vaddr, 8u, value, 0u, "WRITE64", ctx);
     try
     {
