@@ -181,6 +181,41 @@ After step 1: fold its answers into this plan's open questions.
    - Sizes and cost (exact mode): a 120-cycle race dump with every picture is 57-74 MB (a stored picture 280-400 KB);
      register files add 32 KB raw a race cycle; `EMUS` 112 KB raw, 11 KB stored. The recorder costs 3.0-6.1 ms a race
      cycle on the EE thread; the game ran near real time in exact mode (a race dump with its level load: 42-64 s).
+   **Batch 3 done 2026-11-19** (usage: NOTES.md, "Frame record"; changes to the design and why:
+   `RENDERER_FRAME_RECORD.md` section 15). The side-tag channel `render/gfx/tags` (`rc::gfx`; compiled to nothing
+   unless `RC_GFX_TAGS`, which only the game target's build of the native and override code sets), the comparison
+   setters in `rc_decomp.cpp` (both halves of a live comparison and random-input runs make no tag), resolution at the
+   kick in the capture (spans by stream offset, labels, expiry after two cycle closes), `TAG` / `TAGP` / `TNAM` in the
+   dump, the first sites (`Scene` in the swap override; `View` in `MainGameProcess`; `Kick` labels for K1, K2, the
+   flip, texture uploads, animated textures, backdrops and movie pictures; `Draw` on the chain in `TRdr_VUShape` and
+   `Rdr_VUSkin`; `Hud` in the HUD panel functions and `Draw` in `FontPrint` in the 2D packet), `rc_replay` tag
+   statistics and checks, `frame_dump.py tags`. Check (RTX 2060 for the game runs):
+   - A8, exact-mode dumps of levels 17 and 18, the front end and boot (`boot+900`, `REF=10`), both versions: every
+     anchored tag made in a replayed cycle was resolved to a kick (USA 5,296 + 9,536 + 4,526 + 34,360, Europe 3,908 +
+     5,822 + 7,692 + 42,074; the last two cycles of each dump not judged), 0 unresolved, 0 dropped, 0 repeats; every
+     begin's end in the same kick (USA 2,675 + 4,817 + 2,282 + 17,180 pairs, Europe 1,971 + 2,924 + 3,889 + 21,037),
+     every span's stream offset delivers the guest address its tag names (host walker). Where they land: shape and
+     skin spans only in K2 (USA level 17: 1,278 shapes and 1,097 skins in 120 cycles; level 18 4,054 and 463), the
+     HUD panel and font spans only in K1 (level 17 cycle 350: the panel from stream +0xc0 to +0x270 of a 0x270-byte
+     K1; level 18: +0xc0 to +0x780 of 0x780, its end the end of K1); every chain span's anchor holds a `call` tag (26
+     + 26 in USA level 17 cycle 350, 17 + 17 Europe, 36 + 36 USA level 18). Race cycles: one `Scene`, one `View`
+     (USA), labels on every kick (K1, K2, flip, texture uploads, animated textures USA); level loads leave the palette
+     and level-image tile uploads unlabelled (not first sites). Europe has no `View`, `Hud`, animated-texture or
+     backdrop tags: those functions run recompiled there.
+   - A1 and A2 with tags in the dumps, the same eight: `rc_replay --verify` PASS (every stream hash reproduced, 0
+     `ODD` but the two known start-up FIFO stores in boot), `frame_dump.py verify` clean, `rc_replay --consumer emu
+     --verify` PASS on all eight (USA 4,440 + 3,720 + 4,474 + 9,151 kicks, Europe 4,440 + 3,720 + 4,440 + 12,275, every
+     GIF hash, register file, picture hash and stored picture, GS memory at keyframes and the end).
+   - A4: `tools/oracle.sh --all` with new seeds: USA seed 8180 1632 ok, 0 FAIL, 98 without a setup (4 dumps); Europe
+     seed 8181 1563 ok, 0 FAIL, 90 without a setup (8 dumps). Recording off: `tools/play.sh replay playtest2` (150 s)
+     gives USA frames 1, 5, 657, race at 658 (twice) at 60.0-60.2 fps; Europe 1, 5, 1166, race at 1167 at 50.0-50.4
+     (46.0 at boot), the same as HEAD's binary in the same session. A first Europe run gave 1167 / 1168 with the front
+     end reached at input clock 0:255 instead of 0:256: a boot-timing variance, not reproduced in the next run.
+   - A5's shadow half: `RC_SHADOW_RATE=20 RC_SHADOW_FIRST=1 tools/shadow.sh 17 115 0` with `RC_FRAME_RECORD` set (the
+     channel live all run): USA 2,574 compares, only the known `TaskProcess` (52 of 101), `InputSnapshot` (2 of 100)
+     and `AIControl` `svGlob` pad-byte (5 of 5) artefacts; without the recorder 2,572 compares, the same three (50, 3,
+     1). Europe could not be checked: the shadow run stops at the level-load movie after 139 compares, with and
+     without the recorder and with HEAD's binary too (it ran on 2026-11-18): open, not this batch's.
 5. Shadow texture memory and decode (Fable); checked against `tools/track_viewer` off-line and the emulated GS
    memory in game. Uploads arrive as CT32 (level image, palettes) **and** PSMT8/PSMT4 (single textures, animated
    frames), so the shadow needs those write swizzles too; formats sampled are T4/T8 with CT32 palettes (CSM1, CSA 0,

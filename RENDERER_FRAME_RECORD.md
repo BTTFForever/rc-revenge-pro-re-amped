@@ -3,7 +3,8 @@
 Designed 2026-11-19 for `RENDERER_PLAN.md` step 4; "Build batches" at the end is the work order. **Batch 1 (capture
 and container) built 2026-11-19**: what it changed in this design is marked "(batch 1)" where it applies and listed in
 section 13 with the reasons; its measurements are in sections 2 and 6.3. **Batch 2 (exact mode and the emulated
-replay) built 2026-11-19**: its changes are marked "(batch 2)" and listed in section 14. Read with `RENDERER_SURVEY.md` (what the kicks carry) and `ICO_RENDER_STUDY.md` section 2 (where the
+replay) built 2026-11-19**: its changes are marked "(batch 2)" and listed in section 14. **Batch 3 (side tags) built
+2026-11-19**: its changes are marked "(batch 3)" and listed in section 15. Read with `RENDERER_SURVEY.md` (what the kicks carry) and `ICO_RENDER_STUDY.md` section 2 (where the
 game builds its packets). Paths are relative to the repository; the runtime is `third_party/ps2recomp/ps2xRuntime`
 (`RT/` below).
 
@@ -349,11 +350,16 @@ A tag is a small fixed-layout record native code appends to a host-side log. Thr
   Two anchors cover the game: the 2D buffer (`gGfxP2.pDmaBuff + buffIdx * 16`) and the chain slot
   (`&gRdr.pDmaTag[currDmaTag]`); `beginAt(address, ...)` takes any other buffer position (polygon channels).
 - **kick span**: `begin` / `end` with no address: labels every kick made while it is open (uploads, the flip, K1,
-  K2, movie pictures), for kicks made inside Sony's library.
+  K2, movie pictures), for kicks made inside Sony's library. (batch 3) Spans may close out of order (a guest thread can
+  switch inside a blocking call): `end(token)` closes that span wherever it is in the open list. Kick spans never
+  expire; the flip's span stays open across the cycle close its DISPFB2 store makes.
 
 Resolution happens at the kick, in the recorder: an address-anchored tag whose anchor lies in one of the kick's
 ranges gets that range's stream offset plus the distance into it, and goes into the kick's `spans` (sorted by stream
-offset, then sequence). Anchors must be in buffers a kick visits once (the tag array, the rings, the 2D buffer,
+offset, then sequence). (batch 3) A DMA tag's range matches only its own address (the tag's stream offset); a payload
+range matches `[start, end]`, its end included (an end mark after the last packet, an empty span at the end of K1).
+Resolution also runs while the recorder waits for its trigger, so the first keyframe's `TAGP` holds only tags no kick
+has consumed. Anchors must be in buffers a kick visits once (the tag array, the rings, the 2D buffer,
 polygon and alpha buffers), never in static level data, which one chain can reference twice; an anchor is resolved
 at its first visit only and repeats are counted. Tags never consumed are dropped two cycle closes after they were
 made, and counted.
@@ -396,10 +402,22 @@ Rules for every call site (they are what keeps game behaviour and the oracle unt
 2. The channel reads guest RAM (the two anchors) and never writes it; it charges no EE cycles and cannot yield.
 3. `detail::g_live` is `enabled && !comparing`. Every assignment to `g_comparing` in `decomp/rc_decomp.cpp` goes
    through one inline setter that also updates `detail::g_live`. Random-input runs and both halves of a
-   live comparison therefore log nothing.
+   live comparison therefore log nothing. (batch 3) The native half of a live comparison runs with `g_comparing`
+   false and `g_inComparedNative` true, so both flags go through setters (`setComparing`, `setInComparedNative`) and
+   "comparing" for the channel is either of them.
 4. Nothing reads a tag back into game logic. The channel has no query functions.
 
 Cost when off: one load and test of a global byte per site; in the oracle build nothing.
+
+(batch 3) As built (`render/gfx/tags.h` is normative): `RC_GFX_TAGS` defaults to 0 in the header and is set to 1 only
+for the game target's build of the native and override sources (a generator expression on those sources'
+`COMPILE_DEFINITIONS`, since the same files compile into `rc_oracle`), for `capture.cpp` and for `rc_record`. With 0
+every function is an inline no-op and `live()` is `constexpr false`: `rc_oracle` holds no `rc::gfx` symbol. The
+channel itself (`render/gfx/tags.cpp`, in `rc_record`) knows no game layout: the game registers the two anchor readers
+(`decomp/rc_gfx_tags.cpp`), and a consumer attaches through `rc::gfx::detail::attach(Sink *)`. The capture attaches
+when `RC_FRAME_RECORD` installs it (`RC_FRAME_RECORD_TAGS=0` leaves the channel detached) and detaches when the dump is
+closed. `begin2D` with a `HudTag` makes one `Hud` begin (payload: the key and the element), without one a `Draw`
+begin. `pass`, `beginAt`, `label` and `Cut` are built but have no call site yet.
 
 ### 5.3 In the record
 
@@ -413,12 +431,19 @@ Tag kinds, version 1 (payloads little-endian, no pointers to follow, sizes multi
 
 | kind | payload |
 |---|---|
-| 1 `Scene` | game frame (the override's counter), `gRdr.frameNumber`, scene id (the survey's: mode << 12, level << 4, split << 1, movie), flags |
+| 1 `Scene` | game frame (the override's counter), `gRdr.frameNumber`, scene id (the survey's: mode << 12, level << 4, split << 1, movie; (batch 3) as the override and the `scene:` trigger compute it, without the movie bit), flags |
 | 2 `View` | index (0, 1 in split screen), scissor x0 y0 x1 y1, vertical draw offset, camera position, camera rotation (3 x 3, from `_sRdrCamera`), `dVal` `dValX` `dValY` (projection scales), `minZ` `maxZ`, `viewAngle` |
 | 3 `Pass` | pass id |
 | 4 `Draw` | `DrawKey`, flags, optional object matrix (3 x 4 floats) |
 | 5 `Hud` | element id, its box in the game's 2D units, anchor hint (left/right/top/bottom/centre/stretch) |
 | 6 `Kick` | what (1 K1, 2 K2, 3 texture upload, 4 animated texture, 5 backdrop, 6 movie picture, 7 flip), object (the texture's `_sGfxTexture` address as identity), two free words |
+
+(batch 3) Payload sizes as built: `Scene` 24, `View` 104 (also the camera's guest address), `Pass` 8, `Draw` 24 (key,
+flags, has-matrix) plus 48 with the matrix (3 x 4 floats: the object's rotation rows then its position), `Hud` 40 (key,
+element, anchor hint, box; the box is 0 where the function does not know it), `Kick` 16, `Label` the text padded with
+zeros, `Cut` 8. `TNAM` is text, one `table value name` line each for the tables `kind`, `op`, `draw`, `hud`, `anchor`,
+`kick`. `TAGP` is the waiting tags as `TAG` records (header and body as in `CYCL`); a reader adds them to its tag store
+without delivering them again as tag events.
 | 7 `Label` | text |
 | 8 `Cut` | reason (camera mode change, level transition): reserved for interpolation |
 
@@ -427,7 +452,13 @@ Step 4 builds the channel and a first set of sites that exercises every shape: `
 `startVif1Chain`, `GfxTex_Update`, `BackdropDisplayBMP24`, the texture upload helpers in `gfx_p2.cpp`,
 `ldimage.cpp`'s `loadImage`), `Draw` on the chain (`TRdr_VUShape`, `Rdr_VUSkin`), `Draw` + `Hud` in the 2D buffer
 (the `Hud*` panel functions of `hud.cpp`, one font string function). Full coverage is added when a feature needs it
-(P3: keys for interpolation, HUD anchors).
+(P3: keys for interpolation, HUD anchors). (batch 3) As built: `View` in `MainGameProcess` right after the second
+`SetFrameWindow` of each view (one tag per view and frame); a `flip` label in `GfxP2_SwapBuffers` around
+`sceGsSwapDBuff` (otherwise the draw-environment kick that opens each cycle was the one unlabelled kick); `Hud` in
+`HudPanel`, `HudTopRight`, `HudBottomRight`, `HudBottomLeft`, `HudMiddle` (`HudTopLeft` draws nothing); the font
+function is `FontPrint` (so also `FontCentre` and `FontPrintRight`). In the Europe build the changed functions run
+recompiled, so `View` (`MainGameProcess`), `Hud` (the panel functions), the animated-texture label (`GfxTex_Update`)
+and the backdrop label (`BackdropDisplayBMP24`) are missing there by design (5.1, second case).
 
 ### 5.4 How P4's native API grows from it
 
@@ -716,7 +747,7 @@ a `tedit_walk.py` pad (120 cycles); USA only, a split-screen attract demo if a `
    files per kick, `gifHash`, reference pictures, exact and final keyframes, `STRICT`; `tools/frame_record.sh`; the
    `emu` consumer with `--verify`, `--png`, `--picture-before`, `--path1`. *Check:* A2, A3, A6, A7 on the full dump
    list of 10.1, both versions.
-3. **Side tags.** `render/gfx/tags`, the comparing switch in `rc_decomp.cpp`, resolution at the kick, `TAG` /
+3. **Side tags.** (Built 2026-11-19; section 15.) `render/gfx/tags`, the comparing switch in `rc_decomp.cpp`, resolution at the kick, `TAG` /
    `TAGP` / `TNAM`, the first sites of 5.3, the inspector's `tags`. *Check:* A8, A5's shadow half, A4 again (oracle
    counts on both versions), A1 and A2 still pass with tags in the dumps.
 4. **Ring, hotkey, save states, write-up.** `ring:` and `key` triggers, F10 in both host loops, the state-load
@@ -841,4 +872,66 @@ Track Editor 7 KB. Recorder time on the EE thread (kick hooks, the picture read 
 3.1 / 3.6 ms front end, 2.1 / 2.7 ms boot, 0.6 ms Track Editor; largest cycle 8-16 ms. The game ran close to real time
 in exact mode: a 120-cycle race dump with the level load took 42-64 s. `rc_replay emu` replays a 120-cycle race dump in
 13-18 s, boot (900 cycles) in 38 s.
+
+## 15. Batch 3 as built (2026-11-19): changes to this design and why
+
+Built: `render/gfx/tags.{h,cpp}` (the `rc::gfx` channel; payloads, enumerators and the name table in the header,
+normative), `decomp/rc_gfx_tags.cpp` (the game's two anchor readers), the comparison setters in `decomp/rc_decomp.cpp`,
+the capture as the channel's consumer (`render/record/capture.cpp`: resolution at the kick, labels, expiry, `TAGP`,
+`TNAM`, the `kFileTags` flag), `TNAM` in the writer and `TNAM` / `TAGP` in the reader, the first sites (5.3), the
+statistics and checks of `rc_replay` and `frame_dump.py tags`. Usage: `NOTES.md`, "Frame record". Check results:
+`RENDERER_PLAN.md` step 4. Nothing found conflicts with option C or the plan's architecture.
+
+Changes, each the smallest that worked:
+
+1. **`RC_GFX_TAGS` per target** (4, 5.2): the native and override sources compile into both `rc_revenge_pro` and
+   `rc_oracle`, so the switch is a generator expression on those sources (`RC_GFX_TAGS=1` only when the consuming
+   target is the game) and the header defaults to 0. It changes only the native and override compile lines; the
+   recompiled code is untouched. `rc_oracle` (both versions) holds no `rc::gfx` symbol.
+2. **The channel knows no game layout** (4, 5.2): `tags.cpp` sits in `rc_record`, which cannot include the
+   per-version globals, so the game registers how to read the 2D buffer and chain-slot anchors
+   (`setAnchorReader`), and the capture attaches as a `Sink`. The channel is attached while `RC_FRAME_RECORD` has
+   installed the capture (from start-up, so tags are resolved and expired while the trigger waits) and detached when
+   the dump closes; `RC_FRAME_RECORD_TAGS=0` keeps it off.
+3. **Both comparison flags** (5.2 rule 3): the native half of a live comparison runs with `g_comparing` false and
+   `g_inComparedNative` true; both go through setters and the channel's "comparing" is either.
+4. **Resolution rules** (5.1): a DMA tag's range matches only its own address; a payload range matches up to and
+   including its end, so an end mark after the last packet (every HUD panel's end is the end of K1) and an empty span
+   at the end resolve; first visit in stream order wins; a second visit inside another range counts as a repeat.
+5. **Out-of-order ends** (5.1): guest threads can switch inside a blocking call made within a span, so `end(token)`
+   closes that span wherever it is in the open list; `depth` is the number of open spans, `parent` the latest open.
+6. **Payload layouts fixed** (5.3, values in the header): `View` also carries the camera's guest address; `Draw`
+   carries a has-matrix word and the 3 x 4 matrix as the object's rotation rows then its position; a 2D begin with a
+   HUD descriptor is one `Hud` begin (key and element), not a `Draw` and a `Hud` tag. `Scene`'s id is the override's
+   (no movie bit), as the `scene:` trigger uses.
+7. **Sites** (5.3): `View` in `MainGameProcess` right after the second `SetFrameWindow` of each view (one per view
+   and frame; `SetFrameWindow` itself runs twice per view and once for the full-screen reset). A `flip` label in
+   `GfxP2_SwapBuffers` around `sceGsSwapDBuff`: without it the draw-environment kick that opens every cycle was the
+   one unlabelled kick of a race; its span stays open across the cycle close the DISPFB2 store inside it makes, so its
+   end tag is in the next cycle. `HudTopLeft` draws nothing and has no span. The font function is `FontPrint`.
+   `pass`, `beginAt`, `label` and `Cut` have no site yet.
+8. **Europe** (5.1, case 2): `MainGameProcess`, the HUD panel functions, `GfxTex_Update` and `BackdropDisplayBMP24`
+   run recompiled there, so its dumps have no `View`, no `Hud`, no animated-texture label and no backdrop label (its
+   two backdrop uploads per screen and the recompiled `GfxTex_ManageTexture`'s uploads are unlabelled). `Scene`, K1
+   (`GfxP2_RenderDmaSendActual` has a variant), K2, the flip, the texture uploads, movie pictures and the chain and
+   font spans are there.
+9. **Unlabelled kicks left** (10.1 A8 asks labels on K1, K2 and the texture uploads): in races none. During level
+   loads (front end and boot dumps) the palette uploads of `GfxTex_ManageTexture` and the 64 x 64 level-image tiles of
+   `BBLoad` (`bb.cpp`, `uploadTile`): 334 of 4,474 kicks in the USA front-end dump, 572 of 9,151 in USA boot. They
+   are texture construction, not on the first-site list; labelling them is two more `SpanKicks` when a consumer needs
+   it.
+10. **Demo races draw only the panel's "DEMO"** (10.1 A8): in the attract demo `HudPanel` returns after the flashing
+    `DEMO` (and the off-screen "." that sets the font's packet state up), so the dumps' `Hud` spans are the panel's;
+    the corner panels need a real race, which no check dump has.
+11. **`TAGP` is not replayed as events** (5.3): a reader adds its tags to the tag store so a segment's first kicks
+    find them, but does not deliver them again through `Consumer::tag`.
+12. **More checks than planned** (7, 10.1): `rc_replay --verify` also checks that every span's stream offset delivers
+    the guest address its tag names (by the host's walker) and pairs every begin with its end in the same kick;
+    `stats` prints tags by kind, kicks by innermost label, spans by tag class and kick, and anchored tags left
+    unresolved (those of the last two cycles of a dump are not judged).
+
+**Measured (exact mode, 2026-11-19).** `TAG` records, raw, a cycle (USA / Europe): level 17 4.7 / 3.7 KB (88 / 74
+tags), level 18 6.8 / 4.6 KB, front end 4.1 / 5.8 KB; they compress inside `CYCL` with the rest. Recorder time with the channel on: 3.5 / 3.2 ms a cycle level
+17 (USA / Europe), 5.4 / 5.3 level 18, 3.0 / 4.3 front end, 2.2 / 2.6 boot: within batch 2's 3.0-6.1 ms. Resolution
+found every anchored tag in every dump: 0 dropped unconsumed, 0 repeats, 0 unanchorable.
 

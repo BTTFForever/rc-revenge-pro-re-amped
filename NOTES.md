@@ -397,15 +397,15 @@ SDL3 window with a Vulkan swapchain made by the RHI (`third_party/ico_rhi`) inst
 - Known, not new: `playtest2` is all epoch 0 and the level load at frame 658 moves the clock to epoch 1, so the replay's
   driving inputs are skipped and the player sits on the grid (both modes); a later recording needs a fresh `record`.
 
-### Frame record (2026-11-19, renderer P1 step 4, batches 1 and 2)
+### Frame record (2026-11-19, renderer P1 step 4, batches 1, 2 and 3)
 The kick record of `RENDERER_FRAME_RECORD.md`: per display cycle (DISPFB2 store to DISPFB2 store, one shown picture)
 every DMA kick on channels 1 and 2 as its registers, every GS privileged / VIF1 / GIF register store, and the 4 KB pages
 of guest RAM the kicks read, each stored when it is new or changed (a sparse page shadow), with keyframes (GS memory and
 registers, VU1 memory and registers, VIF1) every 300 cycles. Off-line consumers (the readers of renderer steps 5-8)
 replay it with the guest RAM rebuilt. Any renderer records in plain mode; exact mode (batch 2: the synchronous software
 GS) adds the emulated GS's picture per cycle, its register file before every kick and a hash of every kick's GIF
-output, and `rc_replay --consumer emu` replays a dump through the runtime's own VIF1, VU1 and GS bit for bit. Side tags
-come with batch 3, ring/F10 with 4.
+output, and `rc_replay --consumer emu` replays a dump through the runtime's own VIF1, VU1 and GS bit for bit. Batch 3
+adds side tags (below); ring/F10 come with batch 4.
 - **Record:** any run of the game, e.g.
   `RC_FRAME_RECORD=build-decomp/frame-dumps/l17.rcfr RC_FRAME_RECORD_AT=level:300+120 RC_BOOT_LEVEL=17 tools/play.sh`
   (`RC_VERSION=eu` as usual). Triggers (count in display cycles, default 120): `boot[+n]`, `cycle:<n>[+n]`,
@@ -445,6 +445,24 @@ come with batch 3, ring/F10 with 4.
   a dropped kick, a store with bit 0 flipped) to show the checks catch it. The last line is `replay digest <hash>`:
   two replays (or `PS2X_GS_BANDS=1` against the default band count) must print the same. A plain dump replays without
   verifying.
+- **Side tags** (batch 3; `render/gfx/tags.h`, `RENDERER_FRAME_RECORD.md` sections 5 and 15): native code marks what
+  it puts into the frame's packets. `rc::gfx::Span2D` / `SpanChain` open a begin anchored to the 2D packet's write
+  position / the next chain slot and close it at scope end; `SpanKicks` labels the kicks made while it is open;
+  `scene()` / `view()` set frame state. Sites so far: `Scene` (the swap override), `View` (`MainGameProcess`), kick
+  labels (K1, K2, flip, texture upload, animated texture, backdrop, movie picture), `Draw` spans in `TRdr_VUShape`,
+  `Rdr_VUSkin` (chain) and `FontPrint` (2D), `Hud` spans in the HUD panel functions. The recorder resolves anchors at
+  the kick into each `KICK`'s spans (stream offsets) and labels; the dump holds `TAG` records, `TNAM` (names) and
+  `TAGP` (tags waiting at a keyframe). Rules for a new site (they keep the oracle and the game untouched): only in
+  native code after `RC_DIVERT_IF_CHANGED`; arguments from values the function has, built under `rc::gfx::live()` or
+  by a `Span*` constructor; nothing written to guest RAM, no guest call, no hardware access. `RC_GFX_TAGS` is 1 only
+  for the game target's build of the native and override sources (CMake generator expression), so the oracle compiles
+  every tag to nothing; comparisons switch the channel off (`setComparing` / `setInComparedNative` in
+  `rc_decomp.cpp`). The channel is on while `RC_FRAME_RECORD` is set (`RC_FRAME_RECORD_TAGS=0`: off). In the Europe
+  build the changed functions run recompiled, so `View`, `Hud`, the animated-texture and backdrop labels are missing
+  there. Read them: `build-decomp/rc_replay <dump> --verify` prints tags by kind, kicks by label, spans by tag and
+  kick and unresolved anchored tags, and checks each span against the walk (stream offset delivers the tag's guest
+  address, begin and end in one kick); `tools/frame_dump.py tags <dump> <cycle>` lists a cycle's tags decoded, each
+  kick's labels and spans (stream offset of stream size, guest address), pairs and unresolved tags.
 - **Container test:** `ninja -C build-decomp rc_record_test && build-decomp/rc_record_test <scratch folder>` writes a
   synthetic dump (chains with every tag kind, the scratchpad, wrap at the end of RAM, two segments), reads it back,
   cuts it at five points (each reads up to its last whole chunk) and checks a flipped byte and a dropped page are
@@ -452,8 +470,14 @@ come with batch 3, ring/F10 with 4.
 - **Code:** `render/record/` (format, consumer interface `rc::rec::Consumer`, page tracker, chain walker, writer,
   reader, `capture.cpp` = the hooks, cycles and triggers, linked into the game only and installed only when
   `RC_FRAME_RECORD` is set; `emu_state.cpp` = keyframe state from and into the runtime; `picture.h` = the reference
-  picture's read-out), `tools/rc_replay/` (`emu.cpp`: the emu consumer), the runtime's `include/ps2_capture_hooks.h`
-  (above, "Local changes to the runtime"). The oracle links none of it.
+  picture's read-out), `render/gfx/tags.{h,cpp}` (the tag channel, in `rc_record`) and `decomp/rc_gfx_tags.cpp` (the
+  game's anchor readers), `tools/rc_replay/` (`emu.cpp`: the emu consumer), the runtime's
+  `include/ps2_capture_hooks.h` (above, "Local changes to the runtime"). The oracle links none of it.
+- **Open (found by batch 3's check, not caused by it):** the Europe build's sampled shadow run
+  (`RC_VERSION=eu RC_SHADOW_RATE=20 RC_SHADOW_FIRST=1 tools/shadow.sh 17 115 0`) stops at the level-load movie after
+  about 140 compares (last log line the movie's `sceMpegAddBs` and a texture load), with the batch 3 build and with
+  the commit before it (72dfa43) alike; it ran to 2,603 compares on 2026-11-18. USA is unaffected, as are Europe's
+  normal and exact-mode runs.
 - **Sizes and cost** (plain mode, both versions; details in `RENDERER_FRAME_RECORD.md` 6.3): a race cycle 0.46-0.54 MB
   raw, 86-102 KB stored; front end 0.29-0.34 MB / 63-75 KB; a movie picture 0.35 MB / 93 KB; a keyframe 4.1 MB raw,
   1.2-1.4 MB stored; 120 race cycles 14-18 MB on disc, `boot+900` 72-80 MB. The recorder costs the EE thread 2.6-6.8 ms
