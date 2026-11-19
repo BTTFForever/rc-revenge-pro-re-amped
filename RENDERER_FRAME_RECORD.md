@@ -2,7 +2,8 @@
 
 Designed 2026-11-19 for `RENDERER_PLAN.md` step 4; "Build batches" at the end is the work order. **Batch 1 (capture
 and container) built 2026-11-19**: what it changed in this design is marked "(batch 1)" where it applies and listed in
-section 13 with the reasons; its measurements are in sections 2 and 6.3. Read with `RENDERER_SURVEY.md` (what the kicks carry) and `ICO_RENDER_STUDY.md` section 2 (where the
+section 13 with the reasons; its measurements are in sections 2 and 6.3. **Batch 2 (exact mode and the emulated
+replay) built 2026-11-19**: its changes are marked "(batch 2)" and listed in section 14. Read with `RENDERER_SURVEY.md` (what the kicks carry) and `ICO_RENDER_STUDY.md` section 2 (where the
 game builds its packets). Paths are relative to the repository; the runtime is `third_party/ps2recomp/ps2xRuntime`
 (`RT/` below).
 
@@ -181,7 +182,7 @@ Keyframe contents, taken on the EE thread at a cycle close after `ps2x::asyncvif
 | `VU1M` | VU1 micro memory then data memory (16 KB each) | the VIF reader and the C++ references (data memory persists between runs) |
 | `VU1R` | VF[32][4], VI[16], ACC, Q, P, I as plain values | the C++ references ("a program can store registers it left set in an earlier run") |
 | `VIF1` | the runtime's `VIFRegisters` for VIF1 plus ROW and COL | the VIF reader (CYCLE, MODE, MASK, BASE, OFST, TOPS persist across kicks) |
-| `EMUS` | opaque: the runtime's own serialisation of the GS front end, backend state, VU1 and VIF1 (`ps2x::savestate::saveGraphics`, new, cut from `serializeMachine`), with `emuStateVersion` in the file header | only the `emu` consumer, so no hidden emulator state (CLUT cache, vertex queue, a GIF tag in progress, path 3 mask) can break bit-exactness. A dump whose version differs from the tool's is refused by `emu` only |
+| `EMUS` | opaque: the runtime's own serialisation of the GS front end, backend state, VU1 and VIF1 (`ps2x::savestate::saveGraphics`, new, cut from `serializeMachine`), with `emuStateVersion` in the file header. (batch 2) Without GS memory (`loadGraphics` takes `GSVR`), so a keyframe does not carry 4 MB twice: 112 KB raw, 11 KB stored. Written in both modes | only the `emu` consumer, so no hidden emulator state (CLUT cache, vertex queue, a GIF tag in progress, path 3 mask) can break bit-exactness. A dump whose version differs from the tool's is refused by `emu` only |
 | `TAGP` | tags emitted but not yet consumed by a kick (section 5.3) | tags of the segment's first K1/K2 |
 
 A dump ends with a **final keyframe** (flag `final`, `GSVR` + `GSPR` + `GSRG` only): the state after the last cycle,
@@ -194,12 +195,14 @@ A save-state load (F9) while recording closes the segment; the next cycle close 
 ### 3.5 Exact mode extras
 
 On when the run is synchronous and software-rendered (the recorder checks `ps2x::asyncvif::active` is false and the
-backend is the bare `GSCpuBackend`; a new `GSThreadedBackend::DefaultName()` reports which backend `MakeDefault`
-made). Then, and only then:
+backend is the bare `GSCpuBackend`; (batch 2) one runtime function, `ps2x::capture::exactCapable`, asks the GS itself
+instead of a `GSThreadedBackend::DefaultName()`) and `RC_TRACK_SHADER` is not 1 (batch 2: the track shader replaces
+four VU1 programs, so the GIF output would not be the VU1's). Then, and only then:
 
 - `KICK.regs`: the 0x63-entry register file read from the emulated GS just before the kick. Lets the 2D reader
   (step 7) be developed and tested on K1 before a VIF reader exists, although K1 depends on what K2 left behind.
-- `KICK.gifHash`, `gifBytes`.
+- `KICK.gifHash`, `gifBytes`. (batch 2) So the `KICK` record is emitted at `kickDone`, after the runtime processed the
+  stream, in both modes; a kick's `PAGE` events still precede it.
 - `END.refHash` and, every `ref`-th cycle, a `REFI` chunk: the 640 x H rectangle (H = 240 USA, 256 Europe, from the
   file header) at DISPFB2's new FBP, FBW 10, read through the PSMCT32 layout: 4 bytes a pixel R, G, B, A exactly as
   stored (alpha raw, 0x80 = opaque). DISPLAY2 is not applied (the survey: ignore its position and its 512-line
@@ -500,7 +503,8 @@ end), both versions. Raw is the records as written, stored is after zlib level 1
 | movie or splash picture (254 a boot) | 350 / 367 KB, largest 2.6 MB | 93 / 94 KB |
 | other boot cycles (title, front end, attract) | 301 / 347 KB | 66 / 78 KB |
 | `KICK` records (no register files) | 3.5 KB a race cycle (37 kicks), 1 KB front end | |
-| exact-mode extras (register files, pictures) | batch 2 | |
+| exact-mode extras (batch 2): register files | 32 KB a race cycle | (in `CYCL`) |
+| exact-mode extras (batch 2): reference picture | 614 / 655 KB | 280-400 KB (section 14) |
 
 Files: 120 race cycles 13.9 / 15.0 MB (level 17), 17.1 / 17.6 MB (level 18), front end 11.3 / 12.8 MB, `boot+900`
 71.8 / 79.5 MB (three segments of 300 cycles). The estimates above held: a race cycle is 0.46-0.54 MB raw,
@@ -708,7 +712,7 @@ a `tedit_walk.py` pad (120 cycles); USA only, a split-screen attract demo if a `
    `tools/frame_dump.py`; `.gitignore`. *Check:* a unit test that writes a synthetic dump and reads it back (no
    game); A1 and A4 on levels 17 and 18, the front end and boot, both versions; the measurements for A9's first
    table.
-2. **Exact mode and the emulated replay.** `saveGraphics` / `loadGraphics` in the runtime and `EMUS`; register
+2. **Exact mode and the emulated replay.** (Built 2026-11-19; section 14.) `saveGraphics` / `loadGraphics` in the runtime and `EMUS`; register
    files per kick, `gifHash`, reference pictures, exact and final keyframes, `STRICT`; `tools/frame_record.sh`; the
    `emu` consumer with `--verify`, `--png`, `--picture-before`, `--path1`. *Check:* A2, A3, A6, A7 on the full dump
    list of 10.1, both versions.
@@ -778,3 +782,63 @@ Changes, each the smallest that worked:
 12. **`callerRa` of native stores**: kicks and stores that native code makes through `hw_write32` carry the running
     guest context's `$ra`, which says nothing about the native caller (most K1 and upload kicks show 0xfffffff0). Batch
     3's `Kick` labels are what identifies those kicks.
+
+## 14. Batch 2 as built (2026-11-19): changes to this design and why
+
+Built: `ps2x::savestate::saveGraphics` / `loadGraphics` / `graphicsStateVersion` and `ps2x::capture::exactCapable`
+(`ps2_save_state.cpp`, declared in `ps2_capture_hooks.h`); `EMUS` in every keyframe and `loadKeyframeState`
+(`render/record/emu_state.cpp`); exact mode in `render/record/capture.cpp` (register file and GIF hash per kick, the
+reference picture per cycle through `render/record/picture.h`, exact keyframes, `RC_FRAME_RECORD_REF`,
+`RC_FRAME_RECORD_STRICT`); `tools/frame_record.sh`; the `emu` consumer (`tools/rc_replay/emu.cpp`) with `--verify`,
+`--png`, `--picture-before`, `--path1`, `--kick-hashes` and `--fault`. Usage: `NOTES.md`, "Frame record". Check
+results: `RENDERER_PLAN.md` step 4. The emulated replay was bit-exact at the first try on every dump: no hidden state had
+to be hunted, so the bisection aid `RC_FRAME_RECORD_VRAMHASH` (a recorder-side GS memory hash per kick) was not built;
+`rc_replay --kick-hashes` prints the replay's side if it is ever needed.
+
+Changes, each the smallest that worked:
+
+1. **`EMUS` without GS memory** (3.4): `loadGraphics(runtime, blob, vram)` takes GS memory from `GSVR`, so a keyframe
+   does not store 4 MB twice. `EMUS` is written in plain mode too (cheap); `emu` replays any dump with it and verifies
+   only exact ones.
+2. **A GIF tag in progress is in `EMUS`** (3.4): upstream's save state (`GSStateAccess::serialize`) does not know the
+   GS front end's `m_gifProgress` (a local change: a GIF tag continuing across DMA transfers). `saveGraphics` adds it;
+   the save-state format is unchanged. `EMUS` also holds the privileged registers, the register shadow, VU1 memory and
+   registers, VIF1 and DMA registers, the PATH3 mask and its FIFO, pending transfers and the I/O register map. Locks
+   are taken in the presentation latch's order (13.5).
+3. **`KICK` at `kickDone`** (3.5): the GIF hash is only known after the runtime processed the stream, so the record is
+   emitted then (both modes; plain mode simply has no hash). Events from the processing itself (a `PATH2` `ODD`) come
+   between the kick's `PAGE` events and its `KICK`.
+4. **`KICK.fbrst` from the running guest thread's context** (4.2): batch 1 recorded `runtime.cpu().vu0_fbrst`, but
+   the runtime's VU1 start (MSCAL) reads the current guest thread's context; the recorder now reads the same.
+5. **Exact mode also needs `RC_TRACK_SHADER` off** (3.5): with it, four VU1 programs are replaced by the track
+   shader's paths, so the kicks' GIF output is not what a replay's VU1 makes. `tools/frame_record.sh` sets it to 0
+   and `RC_VU1_REF=0` (the reference checks only observe, but cost time), plus `RC_FRAME_RECORD_STRICT=1`.
+   `tools/play.sh` now honours `PS2X_GS_GPU`, `PS2X_GS_HW` and `PS2X_GS_THREAD` from the environment (defaults
+   unchanged) and takes a pad path for `replay`.
+6. **How `emu` applies events** (7): a GS privileged store sets the recorded register value (the value after the
+   store; CSR directly, since its write-one-to-clear bits would change a written value); VIF1 and GIF stores go
+   through `write32` as the game's did; `CRT` is not applied (it changes no GS memory). A kick sets MADR, QWC, TADR,
+   ASR0/1 in the register map, forces the DMAC enable bit (the recorder sees only kicks that passed that test), sets
+   MXCSR and the VU0 FBRST, then stores CHCR. The picture is read at the replayed machine's own DISPFB2 (and its FBP
+   checked against `END.refFbp`), so a wrong DISPFB2 store is caught. `emu` always replays from the segment's keyframe;
+   `--cycles a-b` only limits the pictures it writes.
+7. **More checks than planned** (7): the GS register file before every kick is compared with `KICK.regs` (it names the
+   first kick after a divergence even when that kick's own output is still equal), and the register file at keyframes
+   with `GSRG`. `--fault page|kick|hw:<cycle>[:<n>]` plants a fault inside the tool (a flipped byte in the cycle's first
+   page, a dropped kick, a store with bit 0 flipped) instead of editing a dump. A flipped byte is only caught when it is
+   part of a stream (3.2): bytes 16 and 2048 of the Europe movie's first page are not read by any kick and replay
+   clean, byte 3000 fails.
+8. **The headless machine** (7): `rc_replay` sets `PS2X_GS_THREAD=0 PS2X_GS_GPU=0 PS2X_GS_HW=0 PS2X_MTVU=0` before the
+   runtime exists, registers the generated VU1 programs itself (`registerGeneratedVu1Programs`, as the game's
+   overrides do) and defines the runtime's recompiled-function table as empty (no game code is linked).
+9. **Reference pictures are larger than estimated** (6.3): a stored `REFI` is 280-400 KB with zlib level 1 (race and
+   front-end pictures 300-400 KB), not 0.1-0.2 MB. A 120-cycle race dump with every picture is 57-74 MB, the 900-cycle
+   boot with `REF=10` 104-114 MB, the 400-cycle level load with every picture 188-204 MB.
+
+**Measured (exact mode, 2026-11-19, both versions, USA / Europe).** `KICK` records with register files: 32 KB raw a
+race cycle (37 kicks), 9-12 KB a boot cycle. `CYCL` stored: race 86-191 KB a cycle, front end 110-126 KB, boot 82-93 KB,
+Track Editor 7 KB. Recorder time on the EE thread (kick hooks, the picture read included): 3.0-6.1 ms a race cycle,
+3.1 / 3.6 ms front end, 2.1 / 2.7 ms boot, 0.6 ms Track Editor; largest cycle 8-16 ms. The game ran close to real time
+in exact mode: a 120-cycle race dump with the level load took 42-64 s. `rc_replay emu` replays a 120-cycle race dump in
+13-18 s, boot (900 cycles) in 38 s.
+

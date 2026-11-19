@@ -144,6 +144,43 @@ After step 1: fold its answers into this plan's open questions.
      4.1 MB raw, 1.2-1.4 MB stored. Outside the game's rings a race cycle changes about 290-320 KB (two alternately
      rewritten buffers at 0x617000/0x696000 read by K2, and the animated-texture header page), as much as inside them.
      The recorder costs 2.6-6.8 ms a cycle on the EE thread (estimate was 1-2 ms; the stream hash was left out).
+   **Batch 2 done 2026-11-19** (usage: NOTES.md, "Frame record"; changes to the design and why:
+   `RENDERER_FRAME_RECORD.md` section 14). `ps2x::savestate::saveGraphics`/`loadGraphics` (the graphics machine's
+   state but GS memory, `EMUS`) and `exactCapable` in the runtime; exact mode in the capture (GS register file and GIF
+   output hash per kick, the picture at DISPFB2 per cycle, exact keyframes, `RC_FRAME_RECORD_REF`/`_STRICT`);
+   `tools/frame_record.sh`; `rc_replay --consumer emu` (headless runtime as the oracle builds it, forced to the
+   synchronous software GS) with `--verify`, `--png`, `--picture-before`, `--path1`, `--kick-hashes`, `--fault`.
+   Check, exact-mode dumps (RTX 2060), both versions:
+   - Levels 5, 17, 18, 20 (`level:300+120`), the front end (`game:600+120`), boot with the logos and the publisher
+     movie (`boot+900`, `REF=10`), a level load with its loading splash (`RC_BOOT_LEVEL=17`, `boot+400`) and the Track
+     Editor (`game:2400+120`, `tedit_walk.py` pad): `rc_replay emu --verify` PASS on all 16. USA: 4,440 + 4,440 +
+     3,720 + 4,680 + 5,890 + 9,535 + 15,530 + 360 kicks, every GIF hash and register file equal; picture hashes
+     120 x 5 + 900 + 400 + 120 of the same counts, all equal; stored pictures 120 x 5 + 90 + 400 + 120, all bit for
+     bit; GS memory and registers at keyframes 2/2 (boot) and 1/1 (load), final 8/8. Europe: 4,440 + 4,440 + 3,720 +
+     4,680 + 4,680 + 12,275 + 15,602 + 360 kicks, the same results. `stats --verify` and `frame_dump.py verify` pass on
+     all 16 too (0 `ODD` but the two known start-up FIFO stores in boot and load). The emulated replay was bit-exact
+     from the first try: no hidden state had to be found.
+   - Determinism: every dump replayed with `PS2X_GS_BANDS=1` gives the same replay digest (all picture hashes) as the
+     default 4 bands; level 18 also with 8 bands and a second default run, levels 5 and 17 (USA) twice.
+   - Planted faults (`--fault`), USA and Europe, level 17 and boot: a flipped byte in a page the first kick reads fails
+     that kick's GIF hash in that cycle; a dropped kick fails the next kick's register file (race) or the cycle's
+     picture (movie) in that cycle; DISPFB2 stored with bit 0 flipped fails that cycle's FBP and picture. A flipped
+     byte that no kick reads replays clean, as designed. A dump cut at 60% replays its 77 whole cycles and says so.
+   - Static screens: `RC_RENDERER=vk` screenshots (`PS2X_SCREENSHOT_FIELDS=650,950`, the studio logo and the Dolby
+     screen, each shown 300 fields) equal the `REFI` of the cycle shown, 0 of 153,600 (USA) / 163,840 (Europe)
+     pixels different in RGB; the presentation transform is the stored R, G, B with alpha set to 255.
+   - Recording off changes nothing: `tools/play.sh replay playtest2` (150 s) gives the scene log of batch 1 (USA frames
+     1, 5, 657, race at 658; Europe 1, 5, 1166, race at 1167) at 60.0-60.2 fps (one 59.8 sample) and 50.0-50.2 (46.4 at
+     boot, as before). `tools/oracle.sh --all` with new seeds: USA seed 7170 1631 ok, 1 FAIL,
+     98 without a setup; Europe seed 7171 1562 ok, 0 FAIL, 1 skipped (`PathBuilder`: the recompiled original timed
+     out on one level 17 input, also when run alone), 90 without a setup (8 dumps). The USA FAIL is `FrontEndProcess`
+     (1 of 20 inputs on each of the four dumps: a byte at 0x1f02d7f 0x20 vs 0x28, scratch word 0 vs 1.0f, v0 0xcb vs
+     0x2a0000): a decompilation difference the new seed reaches, not this batch's: it fails the same way with the
+     runtime of batch 1 (`--only FrontEndProcess --seed 7170`, 1 of 40), and the oracle calls none of the new code.
+     With batch 1's seeds: USA 6160 1632 ok, 0 FAIL; Europe 6161 1563 ok, 0 FAIL (8 dumps): the counts of batch 1.
+   - Sizes and cost (exact mode): a 120-cycle race dump with every picture is 57-74 MB (a stored picture 280-400 KB);
+     register files add 32 KB raw a race cycle; `EMUS` 112 KB raw, 11 KB stored. The recorder costs 3.0-6.1 ms a race
+     cycle on the EE thread; the game ran near real time in exact mode (a race dump with its level load: 42-64 s).
 5. Shadow texture memory and decode (Fable); checked against `tools/track_viewer` off-line and the emulated GS
    memory in game. Uploads arrive as CT32 (level image, palettes) **and** PSMT8/PSMT4 (single textures, animated
    frames), so the shadow needs those write swizzles too; formats sampled are T4/T8 with CT32 palettes (CSM1, CSA 0,
