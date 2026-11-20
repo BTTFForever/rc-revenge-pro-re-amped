@@ -15,6 +15,15 @@ namespace rc::rd
         }
     }
 
+    void GifWalker::registerWrite(uint8_t addr, uint64_t value, GifSink &sink)
+    {
+        if (addr == 0x01)
+            m_vq = static_cast<uint32_t>(value >> 32);
+        else if (addr == 0x04 || addr == 0x05 || addr == 0x0C || addr == 0x0D)
+            sink.vertexQ(m_vq);
+        sink.reg(addr, value);
+    }
+
     void GifWalker::packed(uint8_t d, uint64_t lo, uint64_t hi, GifSink &sink)
     {
         ++m_stats.regWrites;
@@ -27,20 +36,23 @@ namespace rc::rd
             break;
         case 0x2: // ST, and Q for the next RGBAQ
             m_q = static_cast<uint32_t>(hi);
+            m_vq = m_q;
             sink.reg(0x02, lo);
             break;
         case 0x3: sink.reg(0x03, (lo & 0x3FFFu) | ((lo >> 32) & 0x3FFFu) << 16); break; // UV
         case 0x4:                                                                          // XYZF2 (ADC: XYZF3)
+            sink.vertexQ(m_vq);
             sink.reg((hi >> 47) & 1u ? 0x0C : 0x04,
                      (lo & 0xFFFFu) | ((lo >> 32) & 0xFFFFu) << 16 | ((hi >> 4) & 0xFFFFFFu) << 32 | ((hi >> 36) & 0xFFu) << 56);
             break;
         case 0x5: // XYZ2 (ADC: XYZ3)
+            sink.vertexQ(m_vq);
             sink.reg((hi >> 47) & 1u ? 0x0D : 0x05, (lo & 0xFFFFu) | ((lo >> 32) & 0xFFFFu) << 16 | (hi & 0xFFFFFFFFu) << 32);
             break;
         case 0xA: sink.reg(0x0A, ((hi >> 36) & 0xFFu) << 56); break; // FOG
-        case 0xE: sink.reg(static_cast<uint8_t>(hi & 0xFFu), lo); break; // A+D
-        case 0xF: break;                                               // NOP
-        default: sink.reg(d, lo); break;                               // TEX0_1/2, CLAMP_1/2, XYZF3, XYZ3, reserved
+        case 0xE: registerWrite(static_cast<uint8_t>(hi & 0xFFu), lo, sink); break; // A+D
+        case 0xF: break;                                                         // NOP
+        default: registerWrite(d, lo, sink); break;                              // TEX0_1/2, CLAMP_1/2, XYZF3, XYZ3, reserved
         }
     }
 
@@ -72,7 +84,7 @@ namespace rc::rd
                 else if (m_regs[m_regIndex] < 0xEu) // REGLIST: the 64 bits are the register; A+D and NOP do nothing
                 {
                     ++m_stats.regWrites;
-                    sink.reg(m_regs[m_regIndex], le64(data + at));
+                    registerWrite(m_regs[m_regIndex], le64(data + at), sink);
                 }
                 at += item;
                 ++m_regIndex;
@@ -107,6 +119,7 @@ namespace rc::rd
             if ((lo >> 15) & 1u)
                 ++m_stats.eop;
             m_q = 0x3F800000u;
+            m_vq = 0x3F800000u;
             if ((lo >> 46) & 1u)
             {
                 if (m_flg == 0u)

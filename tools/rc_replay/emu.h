@@ -64,6 +64,19 @@ namespace rc::replay
         // (step 7 batch 3, check (c)) Called after the machine has run a kick (substituted or not), so a consumer in
         // front of this one can read GS memory before (in its own kick()) and after it.
         void setAfterKick(std::function<void(const rc::rec::KickView &)> f) { m_afterKick = std::move(f); }
+        // (step 8, RENDERER_3D_DESIGN.md 11.3) Called for every channel 1 kick once the machine has run its DMA (VIF1,
+        // VU1), with the kick's RAM view. When it returns bytes they are submitted to the GS as PATH1 packets (one
+        // submitGifPacket per packet size) under the kick's MXCSR with 0x6000 set, the mode the machine's VU1 hands its
+        // packets over in, after whatever the machine itself sent (the caller diverts the machine's packets when it
+        // substitutes). With checkHash the recorded GIF hash is checked against everything the GS received as usual;
+        // otherwise the kick counts as substituted.
+        struct Path1Substitute
+        {
+            const std::vector<uint8_t> *bytes = nullptr;
+            const std::vector<uint32_t> *packets = nullptr; // sizes; null: one packet
+            bool checkHash = true;
+        };
+        void setPath1Substitute(std::function<Path1Substitute(const rc::rec::KickView &, const rc::rec::RamView &)> f) { m_path1Sub = std::move(f); }
 
         bool fatal() const { return !m_fatal.empty(); }
         const std::string &fatalError() const { return m_fatal; }
@@ -86,6 +99,7 @@ namespace rc::replay
         std::function<void(int, const uint8_t *, uint32_t)> m_gifTap;
         std::function<const std::vector<uint8_t> *(const rc::rec::KickView &)> m_substitute;
         std::function<void(const rc::rec::KickView &)> m_afterKick;
+        std::function<Path1Substitute(const rc::rec::KickView &, const rc::rec::RamView &)> m_path1Sub;
         uint64_t m_gifBytes = 0;
         rc::rec::Hash64 m_gif;
         bool m_path1 = false;
@@ -101,7 +115,7 @@ namespace rc::replay
             uint64_t refHashChecked = 0, refHashOk = 0, picturesChecked = 0, picturesOk = 0;
             uint64_t keyframesChecked = 0, keyframesOk = 0, finalChecked = 0, finalOk = 0, keyframesLoaded = 0, keyframesAfterLoad = 0;
             uint64_t hwApplied = 0, pagesApplied = 0;
-            uint64_t substituted = 0, substitutedBytes = 0;
+            uint64_t substituted = 0, substitutedBytes = 0, path1Substituted = 0, path1SubstitutedBytes = 0, path1HashChecked = 0;
         } m_t;
         uint64_t m_digest = 0; // all replayed picture hashes, folded: equal digests = identical replays
     };

@@ -171,7 +171,17 @@ namespace rc::rd
         size_t at = 0;
         while (at < e.writes.size())
         {
-            const size_t n = std::min<size_t>(0x7FFFu, e.writes.size() - at);
+            // A tag holds at most 0x7FFF writes. A new tag sets the GS's current Q back to 1.0, so a tag ends only
+            // before a PRIM (the start of a primitive), never between a vertex's RGBAQ and its XYZ2.
+            size_t n = std::min<size_t>(0x7FFFu, e.writes.size() - at);
+            if (at + n < e.writes.size())
+            {
+                size_t cut = n;
+                while (cut > 1 && e.writes[at + cut].first != kGsPrim)
+                    --cut;
+                if (cut > 1)
+                    n = cut;
+            }
             const bool eop = at + n == e.writes.size();
             const uint64_t lo = static_cast<uint64_t>(n) | (eop ? 1ull << 15 : 0ull) | 1ull << 60; // FLG 0 PACKED, NREG 1
             const uint64_t hi = 0xEu;                                                             // A+D

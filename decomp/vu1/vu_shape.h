@@ -17,6 +17,8 @@
 namespace rc::vu1 {
 
 using KickList = std::vector<std::vector<uint8_t>>;
+// One XGKICK: the GIF packet as the program sends it (the references' Io entry, vu1_ref.h).
+using PacketFn = void (*)(void *user, const uint8_t *data, uint32_t bytes);
 
 enum Lanes : int { X = 1, Y = 2, Z = 4, W = 8, XY = X | Y, XYZ = X | Y | Z, XYW = X | Y | W, XYZW = 15 };
 
@@ -155,7 +157,10 @@ struct ShapeProgram
     uint8_t *mem;
     V r[32];
     const ShapeLayout &layout;
-    KickList *kicks;
+    KickList *kicks = nullptr;        // the old entry points collect the packets here...
+    PacketFn packetFn = nullptr;      // ... the Io entry hands each one to a callback
+    void *packetUser = nullptr;
+    std::vector<uint8_t> scratch;     // the packet being handed over (Io entry)
     float acc[4]{};
     float q = 0.0f;
     uint32_t clipFlags = 0u;
@@ -163,6 +168,7 @@ struct ShapeProgram
     int behind = 0;
 
     ShapeProgram(uint8_t *memory, const float registers[32][4], const ShapeLayout &shapeLayout, KickList &kickList);
+    ShapeProgram(uint8_t *memory, const float registers[32][4], const ShapeLayout &shapeLayout, PacketFn fn, void *user);
 
     V &operator[](int index) { return r[index]; }
     V load(int quad) const

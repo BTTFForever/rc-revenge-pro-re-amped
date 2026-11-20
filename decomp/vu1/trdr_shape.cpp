@@ -14,11 +14,12 @@
 
 namespace rc::vu1 {
 
-void runTrdrShape(uint8_t *memory, const float registers[32][4], uint32_t startPc, uint32_t top, KickList &kicks)
-{
-    static const ShapeLayout layout{0x7C, 0x335, 0x3B9, 0x3C6, 26, 46, 195, 216, 237, 238, {5, 6, 7}, 247, QuickWrap::Flush, true, 0, true, true};
-    ShapeProgram p(memory, registers, layout, kicks);
+namespace {
 
+const ShapeLayout kLayout{0x7C, 0x335, 0x3B9, 0x3C6, 26, 46, 195, 216, 237, 238, {5, 6, 7}, 247, QuickWrap::Flush, true, 0, true, true};
+
+void body(ShapeProgram &p, uint32_t startPc, uint32_t top)
+{
     if (startPc == 0x2050u)
     {
         p.kick(static_cast<int>(top & 0x3FFu));
@@ -36,6 +37,21 @@ void runTrdrShape(uint8_t *memory, const float registers[32][4], uint32_t startP
         p.applyTint();
         p.drawTriangle();
     });
+}
+
+} // namespace
+
+void runTrdrShape(uint8_t *memory, const float registers[32][4], uint32_t startPc, uint32_t top, KickList &kicks)
+{
+    ShapeProgram p(memory, registers, kLayout, kicks);
+    body(p, startPc, top);
+}
+
+void runTrdrShape(Io &io)
+{
+    ShapeProgram p(io.memory, io.vf, kLayout, io.packet, io.user);
+    body(p, io.startPc, io.top);
+    std::memcpy(io.vf, p.r, sizeof(p.r));
 }
 
 } // namespace rc::vu1

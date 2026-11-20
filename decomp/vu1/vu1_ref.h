@@ -30,6 +30,31 @@ void runTerdrShape(uint8_t *memory, const float registers[32][4], uint32_t start
 void runRdrShape(uint8_t *memory, const float registers[32][4], uint32_t startPc, uint32_t top,
                  std::vector<std::vector<uint8_t>> &kicks);
 
+// The entry the renderer's VIF1 reader uses (RENDERER_3D_DESIGN.md 5.2): VU data memory and the vector registers are
+// changed in place, as the program leaves them, and each XGKICK is handed to `packet` as it happens. The functions
+// above are wrappers kept for RC_VU1_REF, RC_VU1_SYNTH and tools/shader_check: they copy the registers and collect
+// the packets. The host FPU must round toward zero (MXCSR bits 13-14 set) during a run, as for the VU1.
+struct Io
+{
+    uint8_t *memory;  // 16 KB of VU data memory, changed in place
+    float (*vf)[4];   // 32 registers in, and out as the program leaves them
+    uint32_t startPc, top;
+    void (*packet)(void *user, const uint8_t *data, uint32_t bytes); // one XGKICK
+    void *user;
+};
+enum Program { kTrdr, kEnv, kWater, kSkin, kTerdr, kRdr, kProgramCount };
+const char *programName(Program);
+// Whether `startPc` (a byte address) is an entry the reference reproduces.
+bool isEntry(Program, uint32_t startPc);
+// False (and nothing run) when the start address is not an entry of that program.
+bool run(Program, Io &);
+void runTrdrShape(Io &);
+void runEnvShape(Io &);
+void runWaterShape(Io &);
+void runSkinShape(Io &);
+void runTerdrShape(Io &);
+void runRdrShape(Io &);
+
 // Copies one GIF packet, starting at a VU memory quadword: tags and data up to the end-of-packet tag.
 void copyGifPacket(const uint8_t *memory, int quad, std::vector<uint8_t> &packet);
 

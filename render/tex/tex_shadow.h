@@ -44,6 +44,11 @@ namespace rc::rd
     private:
         void reg(uint8_t addr, uint64_t value) override;
         void image(const uint8_t *data, uint32_t bytes) override;
+        void vertexQ(uint32_t q) override
+        {
+            if (m_observer)
+                m_observer->vertexQ(q);
+        }
 
         GsMemory m_mem;
         GifWalker m_walker;

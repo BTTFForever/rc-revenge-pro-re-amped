@@ -20,12 +20,12 @@ void environmentCorners(ShapeProgram &p)
 {
     const V row[3] = {p.load(7), p.load(8), p.load(9)};
     const V settings = p.load(10);
-    V normal[3];
     float scale[3];
 
+    // The normals live in vf26-vf28, as in the original: vf26.w reaches a later run's GS packets (the water program's).
     for (int corner = 0; corner < 3; ++corner)
     {
-        V &n = normal[corner];
+        V &n = p[26 + corner];
         V &eye = p[14 + corner];
         const V &packed = p[17 + corner];
 
@@ -59,7 +59,7 @@ void environmentCorners(ShapeProgram &p)
 
     for (int corner = 0; corner < 3; ++corner)
     {
-        V &n = normal[corner];
+        V &n = p[26 + corner];
         V &texture = p[14 + corner];
         p.mulBy(n, scale[corner], XY);
         p.mulBy(n, 0.5f, XY);
@@ -86,11 +86,12 @@ void environmentCorners(ShapeProgram &p)
 
 } // namespace
 
-void runEnvShape(uint8_t *memory, const float registers[32][4], uint32_t startPc, uint32_t top, KickList &kicks)
-{
-    static const ShapeLayout layout{0xDE, 0x399, 0x41D, 0x42A, 26, 46, 195, 216, 237, 238, {5, 6, 7}, 247, QuickWrap::None, true, 0, true, true};
-    ShapeProgram p(memory, registers, layout, kicks);
+namespace {
 
+const ShapeLayout kLayout{0xDE, 0x399, 0x41D, 0x42A, 26, 46, 195, 216, 237, 238, {5, 6, 7}, 247, QuickWrap::None, true, 0, true, true};
+
+void body(ShapeProgram &p, uint32_t startPc, uint32_t top)
+{
     if (startPc == 0x2370u)
     {
         p.kick(static_cast<int>(top & 0x3FFu));
@@ -122,14 +123,17 @@ void runEnvShape(uint8_t *memory, const float registers[32][4], uint32_t startPc
 
         do
         {
-            if (!p.setupTriangle(reader))
-                continue;
+            // The original works out the corners' texture and colour before its facing test, so a triangle it rejects
+            // leaves them (and the normals in vf26-vf28) in the registers too: vf26.w reaches a later run's packets.
+            const bool facing = p.setupTriangle(reader);
             if (environment)
                 environmentCorners(p);
             else
                 for (int corner = 0; corner < 3; ++corner)
                     for (int lane = 0; lane < 4; ++lane)
                         p[17 + corner].f[lane] = ftoi0(p[17 + corner].f[lane]);
+            if (!facing)
+                continue;
             p.applyTint();
             p.drawTriangle();
         } while (--count != 0);
@@ -145,6 +149,21 @@ void runEnvShape(uint8_t *memory, const float registers[32][4], uint32_t startPc
         if (count == 0)
             return;
     }
+}
+
+} // namespace
+
+void runEnvShape(uint8_t *memory, const float registers[32][4], uint32_t startPc, uint32_t top, KickList &kicks)
+{
+    ShapeProgram p(memory, registers, kLayout, kicks);
+    body(p, startPc, top);
+}
+
+void runEnvShape(Io &io)
+{
+    ShapeProgram p(io.memory, io.vf, kLayout, io.packet, io.user);
+    body(p, io.startPc, io.top);
+    std::memcpy(io.vf, p.r, sizeof(p.r));
 }
 
 } // namespace rc::vu1

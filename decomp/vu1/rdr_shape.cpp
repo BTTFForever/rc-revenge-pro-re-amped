@@ -106,15 +106,18 @@ void drawOne(ShapeProgram &p, int &reader, const V first[4], const V second[4])
 
 } // namespace
 
-void runRdrShape(uint8_t *memory, const float registers[32][4], uint32_t, uint32_t, KickList &kicks)
+namespace {
+
+const ShapeLayout kLayout = []
 {
-    static const ShapeLayout layout = []
-    {
-        ShapeLayout l{0xCC, 0x380, 0x40D, 0x41A, 31, 51, 200, 221, 242, 243, {5, 6, 7}, 0, QuickWrap::None, false, 4, false, false};
-        l.biasInKick = true;
-        return l;
-    }();
-    ShapeProgram p(memory, registers, layout, kicks);
+    ShapeLayout l{0xCC, 0x380, 0x40D, 0x41A, 31, 51, 200, 221, 242, 243, {5, 6, 7}, 0, QuickWrap::None, false, 4, false, false};
+    l.biasInKick = true;
+    return l;
+}();
+
+void body(ShapeProgram &p)
+{
+    const ShapeLayout &layout = kLayout;
 
     V first[4], second[4];
     for (int i = 0; i < 4; ++i)
@@ -145,6 +148,21 @@ void runRdrShape(uint8_t *memory, const float registers[32][4], uint32_t, uint32
         if (p.loadInt(reader, 2) == 0)
             return;
     }
+}
+
+} // namespace
+
+void runRdrShape(uint8_t *memory, const float registers[32][4], uint32_t, uint32_t, KickList &kicks)
+{
+    ShapeProgram p(memory, registers, kLayout, kicks);
+    body(p);
+}
+
+void runRdrShape(Io &io)
+{
+    ShapeProgram p(io.memory, io.vf, kLayout, io.packet, io.user);
+    body(p);
+    std::memcpy(io.vf, p.r, sizeof(p.r));
 }
 
 } // namespace rc::vu1

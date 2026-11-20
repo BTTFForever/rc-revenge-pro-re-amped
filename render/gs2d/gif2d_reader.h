@@ -11,8 +11,11 @@
 // drives it. From step 8 on the same object takes PATH1's packets.
 //
 // Register file: 0x63 registers with a provenance each (unknown, default, seeded from a recorded file, from the
-// stream). A channel 1 kick (PATH1, not read until step 8) makes the registers PATH1 writes unknown (kPath1Writes,
-// measured on the dumps). A draw that needs an unknown register takes the default of RENDERER_2D_DESIGN.md 3.1, or is
+// stream). (Step 8, RENDERER_3D_DESIGN.md 7) PATH1's packets come in through beginPath1Kick / feedPath1 /
+// endPath1Kick (the VIF1 reader's XGKICK packets, through a second GIF walker) into the same register file, vertex
+// queue and draw list: there is one register file, and a channel 1 kick no longer makes anything unknown, except
+// after a guard of the VIF1 reader (endPath1Kick(true): the registers PATH1 can write, path1Writes, become unknown).
+// kick() ignores channel 1: FrameReader routes it. A draw that needs an unknown register takes the default of RENDERER_2D_DESIGN.md 3.1, or is
 // dropped where there is none; with Options::seed (rc_replay on an exact dump) unknown registers are seeded from the
 // kick's recorded register file (and the keyframe's GSRG) first. Draws that needed a seeded or default register are
 // counted by register.
@@ -44,8 +47,8 @@ namespace rc::rd
         kProvStream = 3,  // written by the packets the reader walked
     };
 
-    // The registers a VIF1 kick (K2, PATH1) can change, as measured on the step 5 dumps (rc_replay gif2d prints the
-    // set it sees): a channel 1 kick makes them unknown.
+    // The registers PATH1 writes (RENDERER_3D_DESIGN.md 3.5, and the vertex registers): unknown after a guard of the
+    // VIF1 reader stopped a kick.
     bool path1Writes(uint8_t addr);
 
     class Gif2dReader : public rc::rec::Consumer, private GifSink
@@ -58,6 +61,9 @@ namespace rc::rd
             int64_t faultCycle = -1;    // planted fault: every write of GS register faultN in this cycle lost (check (a)
             uint32_t faultN = 0;        // must fail where the register's value changed)
             bool faultIgnoreTexa = false; // planted fault (rc_gs2d_test T6): textures decoded as if TEXA were TA0 0, TA1 0x80, AEM 0
+            // (step 8, RENDERER_3D_DESIGN.md 8) Leave out of the list a triangle of zero area and one whose bounding box
+            // (the reference's gsTriangleSetup bounds) misses the scissor: the reference's own early exits.
+            bool cullOffscreen = false;
         };
         struct Stats
         {
@@ -76,6 +82,10 @@ namespace rc::rd
             uint64_t sideRegsNonZero = 0; // ... draws while SCANMSK, or DIMX with DTHE, were not neutral
             uint64_t walkerDropped = 0, absentPages = 0;
             uint64_t kicksWithTransfersAndDraws = 0;
+            // (step 8) PATH1
+            uint64_t path1Packets = 0, path1Bytes = 0, path1OpenTags = 0, path1Transfers = 0, path1Guarded = 0;
+            uint64_t culledZeroArea = 0, culledOffscreen = 0;
+            uint64_t vertexQNotRgbaq = 0; // vertices whose Q (the reference's) is not the RGBAQ register's
         };
 
         Gif2dReader();
@@ -113,10 +123,22 @@ namespace rc::rd
         void startBlank();
         void feedPath3(const uint8_t *data, uint32_t bytes);
 
+        // (step 8) PATH1: one VIF1 kick's XGKICK packets, in order. `k` (or null) for the cycle and the counters.
+        void beginPath1Kick();
+        void feedPath1(const uint8_t *data, uint32_t bytes);
+        // guarded: the VIF1 reader stopped the kick (the registers PATH1 writes become unknown).
+        void endPath1Kick(bool guarded);
+        // A side tag's begin or end as a scope command (PATH1's spans: FrameReader places them between the runs).
+        void scope(const rc::rec::Span &s);
+        // The current cycle (for a caller's planted faults).
+        uint64_t cycle() const { return m_cycle; }
+
     private:
         // GifSink (through the shadow's observer)
         void reg(uint8_t addr, uint64_t value) override;
         void image(const uint8_t *, uint32_t) override {}
+        void vertexQ(uint32_t q) override { m_vertexQ = q; }
+        uint32_t m_vertexQ = 0x3F800000u; // the reference's Q for the next vertex (GifSink::vertexQ)
 
         void vertex(uint8_t addr, uint64_t value);
         void primitive(const GsVertex *v, uint32_t n);
@@ -137,6 +159,16 @@ namespace rc::rd
         uint64_t m_cycle = 0;
         uint32_t m_cycleRegWrites = 0;
         bool m_seenClear = false;
+
+        // (step 8) PATH1's walker and the sink it feeds (register writes to reg(), transfers to the shadow's memory).
+        struct Path1Feed final : GifSink
+        {
+            Gif2dReader *self = nullptr;
+            void reg(uint8_t addr, uint64_t value) override;
+            void image(const uint8_t *data, uint32_t bytes) override;
+            void vertexQ(uint32_t q) override { self->m_vertexQ = q; }
+        } m_path1Feed;
+        GifWalker m_path1Walker;
 
         // Primitive assembly.
         GsVertex m_queue[3] = {};

@@ -38,12 +38,11 @@ void rippleTexture(ShapeProgram &p, int triangle)
     }
 }
 
-} // namespace
+const ShapeLayout kLayout{0x73, 0x1BC, 0x249, 0x256, 34, 54, 203, 224, 245, 246, {25, 26, 29}, 255, QuickWrap::FlushFirst, false, 11, false, false};
 
-void runWaterShape(uint8_t *memory, const float registers[32][4], uint32_t, uint32_t top, KickList &kicks, float (*after)[4])
+void body(ShapeProgram &p, uint32_t top)
 {
-    static const ShapeLayout layout{0x73, 0x1BC, 0x249, 0x256, 34, 54, 203, 224, 245, 246, {25, 26, 29}, 255, QuickWrap::FlushFirst, false, 11, false, false};
-    ShapeProgram p(memory, registers, layout, kicks);
+    const ShapeLayout &layout = kLayout;
 
     p.kick(20);
     p.loadConstants();
@@ -102,12 +101,25 @@ void runWaterShape(uint8_t *memory, const float registers[32][4], uint32_t, uint
 
         count = p.loadInt(reader, 2);
         if (count == 0)
-        {
-            if (after != nullptr)
-                std::memcpy(after, p.r, sizeof(p.r));
             return;
-        }
     }
+}
+
+} // namespace
+
+void runWaterShape(uint8_t *memory, const float registers[32][4], uint32_t, uint32_t top, KickList &kicks, float (*after)[4])
+{
+    ShapeProgram p(memory, registers, kLayout, kicks);
+    body(p, top);
+    if (after != nullptr)
+        std::memcpy(after, p.r, sizeof(p.r));
+}
+
+void runWaterShape(Io &io)
+{
+    ShapeProgram p(io.memory, io.vf, kLayout, io.packet, io.user);
+    body(p, io.top);
+    std::memcpy(io.vf, p.r, sizeof(p.r));
 }
 
 } // namespace rc::vu1

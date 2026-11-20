@@ -41,16 +41,17 @@ void lightCorners(ShapeProgram &p)
 
 } // namespace
 
-void runTerdrShape(uint8_t *memory, const float registers[32][4], uint32_t startPc, uint32_t top, KickList &kicks)
-{
-    static const ShapeLayout layout = []
-    {
-        ShapeLayout l{0x9C, 0x35B, 0x3E8, 0x3F5, 27, 47, 196, 217, 238, 239, {5, 6, 7}, 248, QuickWrap::Flush, true, -4, true, false};
-        l.biasInQuickPath = true;
-        return l;
-    }();
-    ShapeProgram p(memory, registers, layout, kicks);
+namespace {
 
+const ShapeLayout kLayout = []
+{
+    ShapeLayout l{0x9C, 0x35B, 0x3E8, 0x3F5, 27, 47, 196, 217, 238, 239, {5, 6, 7}, 248, QuickWrap::Flush, true, -4, true, false};
+    l.biasInQuickPath = true;
+    return l;
+}();
+
+void body(ShapeProgram &p, uint32_t startPc, uint32_t top)
+{
     if (startPc == 0x2198u)
     {
         p.kick(static_cast<int>(top & 0x3FFu));
@@ -66,6 +67,21 @@ void runTerdrShape(uint8_t *memory, const float registers[32][4], uint32_t start
         lightCorners(p);
         p.drawTriangle();
     });
+}
+
+} // namespace
+
+void runTerdrShape(uint8_t *memory, const float registers[32][4], uint32_t startPc, uint32_t top, KickList &kicks)
+{
+    ShapeProgram p(memory, registers, kLayout, kicks);
+    body(p, startPc, top);
+}
+
+void runTerdrShape(Io &io)
+{
+    ShapeProgram p(io.memory, io.vf, kLayout, io.packet, io.user);
+    body(p, io.startPc, io.top);
+    std::memcpy(io.vf, p.r, sizeof(p.r));
 }
 
 } // namespace rc::vu1

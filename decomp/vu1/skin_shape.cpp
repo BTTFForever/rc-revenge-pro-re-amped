@@ -101,10 +101,13 @@ void loadAndTransform(ShapeProgram &p, int &reader)
 
 } // namespace
 
-void runSkinShape(uint8_t *memory, const float registers[32][4], uint32_t, uint32_t, KickList &kicks)
+namespace {
+
+const ShapeLayout kLayout{0xA1, 0x367, 0x401, 0x41B, 26, 46, 195, 216, 237, 238, {1, 2, 3}, 0, QuickWrap::None, false, 0, false, false};
+
+void body(ShapeProgram &p)
 {
-    static const ShapeLayout layout{0xA1, 0x367, 0x401, 0x41B, 26, 46, 195, 216, 237, 238, {1, 2, 3}, 0, QuickWrap::None, false, 0, false, false};
-    ShapeProgram p(memory, registers, layout, kicks);
+    const ShapeLayout &layout = kLayout;
 
     for (int i = 0; i < 4; ++i)
         p[5 + i] = p.load(21 + i);
@@ -131,6 +134,21 @@ void runSkinShape(uint8_t *memory, const float registers[32][4], uint32_t, uint3
         if (p.loadInt(reader, 2) == 0)
             return;
     }
+}
+
+} // namespace
+
+void runSkinShape(uint8_t *memory, const float registers[32][4], uint32_t, uint32_t, KickList &kicks)
+{
+    ShapeProgram p(memory, registers, kLayout, kicks);
+    body(p);
+}
+
+void runSkinShape(Io &io)
+{
+    ShapeProgram p(io.memory, io.vf, kLayout, io.packet, io.user);
+    body(p);
+    std::memcpy(io.vf, p.r, sizeof(p.r));
 }
 
 } // namespace rc::vu1

@@ -224,7 +224,7 @@ namespace rc::replay
             m_path1Bytes.insert(m_path1Bytes.end(), data, data + bytes);
     }
 
-    void Emu::kick(const KickView &k, const RamView &)
+    void Emu::kick(const KickView &k, const RamView &ram)
     {
         if (!m_started || fatal())
             return;
@@ -301,6 +301,30 @@ namespace rc::replay
         _mm_setcsr(k.mxcsr);
         mem.write32(base, k.chcr);
         _mm_setcsr(savedCsr);
+        bool checkHash = true;
+        if (k.channel == 1u && m_path1Sub)
+        {
+            // (step 8) The VIF1 reader's PATH1 packets (or its draw list encoded back) after the machine's run.
+            const Path1Substitute s = m_path1Sub(k, ram);
+            if (s.bytes)
+            {
+                _mm_setcsr(k.mxcsr | 0x6000u);
+                const uint8_t *p = s.bytes->data();
+                if (s.packets)
+                    for (const uint32_t n : *s.packets)
+                    {
+                        mem.submitGifPacket(GifPathId::Path1, p, n);
+                        p += n;
+                    }
+                else if (!s.bytes->empty())
+                    mem.submitGifPacket(GifPathId::Path1, p, static_cast<uint32_t>(s.bytes->size()));
+                _mm_setcsr(savedCsr);
+                ++m_t.path1Substituted;
+                m_t.path1SubstitutedBytes += s.bytes->size();
+                checkHash = s.checkHash;
+                m_t.path1HashChecked += checkHash ? 1u : 0u;
+            }
+        }
         m_collect = false;
         const uint64_t gifHash = m_gif.finish();
         const uint64_t gifBytes = m_gif.length();
@@ -320,7 +344,7 @@ namespace rc::replay
         }
         if (m_afterKick)
             m_afterKick(k);
-        if (m_opt.verify && m_exact && k.hasGifHash)
+        if (m_opt.verify && m_exact && k.hasGifHash && checkHash)
         {
             ++m_t.gifChecked;
             if (gifHash == k.gifHash && gifBytes == k.gifBytes)
@@ -409,6 +433,10 @@ namespace rc::replay
         if (m_t.substituted)
             std::printf("emu: %" PRIu64 " kicks replaced by substitute streams (%" PRIu64 " bytes; their recorded GIF hashes not checked)\n",
                         m_t.substituted, m_t.substitutedBytes);
+        if (m_t.path1Substituted)
+            std::printf("emu: %" PRIu64 " channel 1 kicks drawn from substitute PATH1 packets (%.1f MB) after the machine's run; %" PRIu64
+                        " of them with the recorded GIF hash checked\n",
+                        m_t.path1Substituted, m_t.path1SubstitutedBytes / 1048576.0, m_t.path1HashChecked);
         if (m_opt.verify && m_exact)
             std::printf("verify: GIF output %" PRIu64 "/%" PRIu64 " kicks; register files %" PRIu64 "/%" PRIu64 "; picture hashes %" PRIu64 "/%" PRIu64
                         "; stored pictures %" PRIu64 "/%" PRIu64 " bit for bit; GS memory at keyframes %" PRIu64 "/%" PRIu64 ", final %" PRIu64 "/%" PRIu64 "\n",

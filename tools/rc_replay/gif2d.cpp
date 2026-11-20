@@ -1,6 +1,7 @@
 // rc_replay's gif2d consumer: see gif2d.h and RENDERER_2D_DESIGN.md section 10.
 #include "gif2d.h"
 
+#include "../../render/frame/frame_reader.h"
 #include "../../render/gs2d/gif2d_reader.h"
 #include "../../render/gs2d/gs2d_encode.h"
 #include "../../render/gs2d/gs_plan.h"
@@ -48,7 +49,9 @@ namespace rc::replay
     struct Gif2dCheck::Impl
     {
         Gif2dOptions opt;
-        Gif2dReader reader;
+        // (step 8) The frame reader: PATH1 from the VIF1 reader into the same register file as PATH3, nothing excused.
+        FrameReader fr;
+        Gif2dReader &reader;
         uint64_t cycle = 0;
 
         // (a)
@@ -79,10 +82,17 @@ namespace rc::replay
         // (c)
         std::unique_ptr<Gif2dVkCheck> vk;
 
-        explicit Impl(const Gif2dOptions &o) : opt(o), reader(makeReaderOptions(o))
+        explicit Impl(const Gif2dOptions &o) : opt(o), fr(makeFrameOptions(o)), reader(fr.gif())
         {
             if (o.vk)
                 vk = std::make_unique<Gif2dVkCheck>(o.vkOptions);
+        }
+        static FrameReader::Options makeFrameOptions(const Gif2dOptions &o)
+        {
+            FrameReader::Options f;
+            f.gif = makeReaderOptions(o);
+            f.deferPath1 = o.withEmu; // beside the machine the vif consumer behind it runs channel 1 kicks (Emu::setPath1Substitute)
+            return f;
         }
         static Gif2dReader::Options makeReaderOptions(const Gif2dOptions &o)
         {
@@ -239,14 +249,16 @@ namespace rc::replay
     Gif2dCheck::Gif2dCheck(const Gif2dOptions &options) : m(std::make_unique<Impl>(options)) {}
     Gif2dCheck::~Gif2dCheck() = default;
 
-    void Gif2dCheck::open(const FileInfo &info) { m->reader.open(info); }
-    void Gif2dCheck::keyframe(const Keyframe &kf) { m->reader.keyframe(kf); }
+    void Gif2dCheck::open(const FileInfo &info) { m->fr.open(info); }
+    void Gif2dCheck::keyframe(const Keyframe &kf) { m->fr.keyframe(kf); }
+    void Gif2dCheck::hw(uint32_t address, uint32_t width, uint64_t value, uint32_t callerRa) { m->fr.hw(address, width, value, callerRa); }
+    rc::rd::FrameReader *Gif2dCheck::frameReader() { return &m->fr; }
 
     void Gif2dCheck::cycleBegin(uint64_t cycle)
     {
         m->cycle = cycle;
         m->faultPrimBase = 0;
-        m->reader.cycleBegin(cycle);
+        m->fr.cycleBegin(cycle);
         if (m->vk)
             m->vk->cycleBegin(cycle);
     }
@@ -297,7 +309,7 @@ namespace rc::replay
         uint64_t before[kGsRegFile];
         std::memcpy(before, k.regs ? k.regs : r.regs(), sizeof(before));
 
-        r.kick(k, ram);
+        m->fr.kick(k, ram);
 
         // (c) The kick's commands and the emulated GS memory before the machine runs it.
         if (m->vk && k.channel == 2u && m->opt.vram)
@@ -366,7 +378,7 @@ namespace rc::replay
 
     void Gif2dCheck::cycleEnd(const CycleInfo &info, const uint8_t *refRgba)
     {
-        m->reader.cycleEnd(info, refRgba);
+        m->fr.cycleEnd(info, refRgba);
         const DrawList &l = m->reader.list();
         if (m->vk)
             m->vk->cycleEnd(l);
@@ -415,6 +427,7 @@ namespace rc::replay
         std::printf("gif2d: draw lists: %" PRIu64 " STATE, %" PRIu64 " TEXTURE (%.1f MB), %" PRIu64 " SCREEN_PRIMS, %" PRIu64 " scope commands; %" PRIu64
                     " cycles with a list, largest %" PRIu64 " commands / %" PRIu64 " payload bytes\n",
                     s.stateCmds, s.textureCmds, s.textureBytes / 1048576.0, s.primCmds, s.scopeCmds, m->cyclesWithList, m->largestList, m->largestPayload);
+        std::printf("gif2d: vertices whose Q is not the RGBAQ register's: %" PRIu64 "\n", s.vertexQNotRgbaq);
         std::printf("gif2d: kicks that drew and uploaded: %" PRIu64 "; walker bytes dropped %" PRIu64 ", absent pages %" PRIu64 "; TEX0 with CLD other than 1 at a textured state %" PRIu64
                     "; vertices with Z >= 2^24 under Z24 %" PRIu64 "; draws with SCANMSK or CSM2 %" PRIu64 "\n",
                     s.kicksWithTransfersAndDraws, s.walkerDropped, s.absentPages, s.cldOther, s.zAbove24, s.sideRegsNonZero);

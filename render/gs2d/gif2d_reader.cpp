@@ -2,6 +2,7 @@
 
 #include "../gfx/tags.h"
 #include "../record/chain_walk.h"
+#include "gs_model.h"
 
 #include <algorithm>
 #include <cstring>
@@ -12,15 +13,14 @@ namespace rc::rd
 
     bool path1Writes(uint8_t addr)
     {
-        // Measured on the 81 dumps of step 7 batch 1 (RENDERER_2D_DESIGN.md section 14): the registers whose value
-        // differs before and after a VIF1 kick are PRIM, RGBAQ, ST, XYZ2, XYZ3, TEX0_1, TEX1_1, TEXA, SCISSOR_1,
-        // ALPHA_1, TEST_1, PABE and ZBUF_1. The other vertex registers (UV, XYZF2, XYZF3, FOG) are added: they are
-        // vertex data like the measured ones. Check (a) compares every other register after a VIF1 kick, so a scene
-        // in which PATH1 changes one more fails there.
+        // PATH1's registers (RENDERER_3D_DESIGN.md 3.5: PRIM, RGBAQ, ST, XYZ2/3, TEX0_1, CLAMP_1, TEX1_1, MIPTBP1/2_1,
+        // TEXA, SCISSOR_1, ALPHA_1, TEST_1, PABE, ZBUF_1) and the other vertex registers (UV, XYZF2, XYZF3, FOG). Used
+        // only after a guard of the VIF1 reader stopped a kick: those registers are then no longer known.
         switch (addr)
         {
         case kGsPrim: case kGsRgbaq: case kGsSt: case kGsUv: case kGsXyzf2: case kGsXyz2: case kGsXyzf3: case kGsXyz3: case kGsFog:
-        case kGsTex0: case kGsTex1: case kGsTexa: case kGsScissor: case kGsAlpha: case kGsTest: case kGsPabe: case kGsZbuf:
+        case kGsTex0: case kGsClamp: case kGsTex1: case kGsMiptbp1: case kGsMiptbp2: case kGsTexa: case kGsScissor: case kGsAlpha:
+        case kGsTest: case kGsPabe: case kGsZbuf:
             return true;
         default:
             return false;
@@ -97,6 +97,61 @@ namespace rc::rd
     Gif2dReader::Gif2dReader(Options options) : m_opt(options), m_cache(m_shadow.memory())
     {
         m_shadow.setObserver(this);
+        m_path1Feed.self = this;
+    }
+
+    void Gif2dReader::Path1Feed::reg(uint8_t addr, uint64_t value)
+    {
+        if (addr >= kGsBitbltbuf && addr <= kGsHwreg)
+        {
+            // Never seen on PATH1 (RENDERER_3D_DESIGN.md 3.5); applied as PATH3 applies it, and counted.
+            ++self->m_stats.path1Transfers;
+            self->m_shadow.memory().writeRegister(addr, value);
+            self->m_regs[addr] = value;
+            self->m_prov[addr] = kProvStream;
+            return;
+        }
+        self->reg(addr, value);
+    }
+
+    void Gif2dReader::Path1Feed::image(const uint8_t *data, uint32_t bytes)
+    {
+        ++self->m_stats.path1Transfers;
+        self->m_shadow.memory().imageData(data, bytes);
+    }
+
+    void Gif2dReader::beginPath1Kick()
+    {
+        closePrims();
+        m_kickFirstCmd = static_cast<uint32_t>(m_list.cmds.size());
+        m_kickPrims = m_kickDropped = m_kickTransfers = 0;
+        ++m_stats.path1Kicks;
+    }
+
+    void Gif2dReader::feedPath1(const uint8_t *data, uint32_t bytes)
+    {
+        if (!m_started)
+            return;
+        ++m_stats.path1Packets;
+        m_stats.path1Bytes += bytes;
+        m_path1Walker.feed(data, bytes, m_path1Feed);
+        // Every PATH1 packet is one tag with EOP (RENDERER_3D_DESIGN.md 3.5): one left open is counted, and the next
+        // packet continues it as the GS would.
+        if (m_path1Walker.tagOpen())
+            ++m_stats.path1OpenTags;
+    }
+
+    void Gif2dReader::endPath1Kick(bool guarded)
+    {
+        closePrims();
+        if (!guarded)
+            return;
+        ++m_stats.path1Guarded;
+        for (uint32_t a = 0; a < kGsRegFile; ++a)
+            if (path1Writes(static_cast<uint8_t>(a)))
+                m_prov[a] = kProvUnknown;
+        m_queued = 0;
+        m_stateDirty = true;
     }
 
     void Gif2dReader::open(const FileInfo &) {}
@@ -172,17 +227,7 @@ namespace rc::rd
         closePrims();
         m_kickFirstCmd = static_cast<uint32_t>(m_list.cmds.size());
         m_kickPrims = m_kickDropped = m_kickTransfers = 0;
-        if (k.channel == 1u)
-        {
-            // PATH1 (step 8 reads it): the registers it writes are no longer known.
-            ++m_stats.path1Kicks;
-            for (uint32_t a = 0; a < kGsRegFile; ++a)
-                if (path1Writes(static_cast<uint8_t>(a)))
-                    m_prov[a] = kProvUnknown;
-            m_queued = 0;
-            m_stateDirty = true;
-            return;
-        }
+        // Channel 1 (PATH1) comes in through beginPath1Kick / feedPath1 / endPath1Kick (FrameReader).
         if (k.channel != 2u)
             return;
         ++m_stats.kicks;
@@ -210,17 +255,7 @@ namespace rc::rd
             const KickView *k;
             const std::vector<uint32_t> *order;
             uint32_t next = 0;
-            void scope(const Span &s)
-            {
-                if (!s.tag || (s.op != rc::gfx::OpBegin && s.op != rc::gfx::OpEnd))
-                    return;
-                self->closePrims();
-                DrawCmd &c = self->m_list.add(s.op == rc::gfx::OpBegin ? kOpScopeBegin : kOpScopeEnd, s.tag->payload, s.tag->payloadBytes);
-                c.a = s.tag->kind;
-                c.b = s.tag->seq;
-                c.c = s.guestAddr;
-                ++self->m_stats.scopeCmds;
-            }
+            void scope(const Span &s) { self->scope(s); }
             void until(uint32_t offset)
             {
                 while (next < order->size() && k->spans[(*order)[next]].streamOffset <= offset)
@@ -277,6 +312,18 @@ namespace rc::rd
             ++m_stats.kicksWithTransfersAndDraws;
     }
 
+    void Gif2dReader::scope(const Span &s)
+    {
+        if (!s.tag || (s.op != rc::gfx::OpBegin && s.op != rc::gfx::OpEnd))
+            return;
+        closePrims();
+        DrawCmd &c = m_list.add(s.op == rc::gfx::OpBegin ? kOpScopeBegin : kOpScopeEnd, s.tag->payload, s.tag->payloadBytes);
+        c.a = s.tag->kind;
+        c.b = s.tag->seq;
+        c.c = s.guestAddr;
+        ++m_stats.scopeCmds;
+    }
+
     void Gif2dReader::reg(uint8_t addr, uint64_t value)
     {
         if (static_cast<int64_t>(m_cycle) == m_opt.faultCycle && addr == m_opt.faultN)
@@ -324,7 +371,10 @@ namespace rc::rd
         v.g = static_cast<uint8_t>(c >> 8);
         v.b = static_cast<uint8_t>(c >> 16);
         v.a = static_cast<uint8_t>(c >> 24);
-        const uint32_t qb = static_cast<uint32_t>(c >> 32), sb = static_cast<uint32_t>(m_regs[kGsSt]), tb = static_cast<uint32_t>(m_regs[kGsSt] >> 32);
+        // Q as the reference gives the vertex (GifSink::vertexQ), not the RGBAQ register's.
+        if (m_vertexQ != static_cast<uint32_t>(c >> 32))
+            ++m_stats.vertexQNotRgbaq;
+        const uint32_t qb = m_vertexQ, sb = static_cast<uint32_t>(m_regs[kGsSt]), tb = static_cast<uint32_t>(m_regs[kGsSt] >> 32);
         std::memcpy(&v.q, &qb, 4);
         std::memcpy(&v.s, &sb, 4);
         std::memcpy(&v.t, &tb, 4);
@@ -576,6 +626,24 @@ namespace rc::rd
                 }
         if ((m_regs[kGsScanmsk] & 3u) || (m_state.tme() && Tex0::unpack(m_state.tex0).csm))
             ++m_stats.sideRegsNonZero;
+        if (m_opt.cullOffscreen && kind == kKindTriangles)
+        {
+            // The reference's early exits: no area, or a bounding box outside the scissor. No pixel and no later state
+            // depends on such a triangle.
+            GsTri t;
+            if (!gsTriSetup(v, static_cast<uint32_t>(m_state.xyoffset & 0xFFFFu), static_cast<uint32_t>((m_state.xyoffset >> 32) & 0xFFFFu), t))
+            {
+                ++m_stats.culledZeroArea;
+                return;
+            }
+            const int sx0 = static_cast<int>(m_state.scissor & 0x7FFu), sx1 = static_cast<int>((m_state.scissor >> 16) & 0x7FFu);
+            const int sy0 = static_cast<int>((m_state.scissor >> 32) & 0x7FFu), sy1 = static_cast<int>((m_state.scissor >> 48) & 0x7FFu);
+            if (std::max(t.minX, sx0) > std::min(t.maxX, sx1) || std::max(t.minY, sy0) > std::min(t.maxY, sy1))
+            {
+                ++m_stats.culledOffscreen;
+                return;
+            }
+        }
 
         ++m_kickPrims;
         const bool ate = m_state.test & 1u;

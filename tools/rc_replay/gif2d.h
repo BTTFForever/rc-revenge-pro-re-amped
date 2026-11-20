@@ -4,8 +4,10 @@
 // (render/gs2d Gif2dReader) on a dump, with the checks of 10.1 and 10.2.
 //
 //   (a) register files: at every kick with a recorded register file, every register the reader knows (from the
-//       stream or seeded) must equal the recorded value. A channel 1 kick makes the registers PATH1 writes unknown
-//       (path1Writes); the next channel 2 kick seeds them from its recorded file.
+//       stream or seeded) must equal the recorded value. (Step 8) The reader is the frame reader: PATH1's packets come
+//       from the VIF1 reader and its C++ VU1 references into the same register file, so nothing is excused after a
+//       channel 1 kick. With --with-emu the vif consumer behind the machine runs the channel 1 kicks beside it
+//       (a run the machine cut short is taken as the machine left it, vif.h).
 //   (b) --with-emu: the consumer runs in front of the emu consumer; every channel 2 kick that drew is encoded back
 //       from the reader's draw list (gs2d_encode) and submitted to the emulated GS in place of the kick, so emu
 //       --verify (every picture, every register file before a kick, GS memory at keyframes and at the end) holds only
@@ -30,6 +32,11 @@
 #include <string>
 #include <vector>
 
+namespace rc::rd
+{
+    class FrameReader;
+}
+
 namespace rc::replay
 {
     struct Gif2dOptions
@@ -53,8 +60,11 @@ namespace rc::replay
         void open(const rc::rec::FileInfo &info) override;
         void keyframe(const rc::rec::Keyframe &kf) override;
         void cycleBegin(uint64_t cycle) override;
+        void hw(uint32_t address, uint32_t width, uint64_t value, uint32_t callerRa) override;
         void kick(const rc::rec::KickView &k, const rc::rec::RamView &ram) override;
         void cycleEnd(const rc::rec::CycleInfo &info, const uint8_t *refRgba) override;
+        // (step 8) The frame reader it drives; beside the machine the vif consumer attaches to it for channel 1 kicks.
+        rc::rd::FrameReader *frameReader();
 
         // For the emu consumer behind this one: the stream that replaces kick k, or null.
         const std::vector<uint8_t> *substitute(const rc::rec::KickView &k);

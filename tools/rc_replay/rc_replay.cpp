@@ -47,6 +47,15 @@
 // read, every pixel equal; the default where the device has it), ff (fixed function with D-2D-1's bound; the default
 // without local read) or both; --vk-bias off|on|both is fixed function's source bias (default on); --vk-fault plants the
 // faults of 9.3 and 18.3 in the Vulkan path, --vk-png writes the first failing kick's planes.
+//
+// vif (vif.cpp; renderer plan P1 step 8 batch 1, RENDERER_3D_DESIGN.md 11.1-11.3): the frame reader (render/frame: the
+// VIF1 reader with the C++ VU1 references feeding the GIF reader as PATH1). With --verify: (a) VIF1 registers, VU1
+// micro and data memory and the vector registers at every later keyframe, the GS register file at every kick; (b)
+// every channel 1 kick's PATH1 bytes against its recorded GIF hash. --with-emu: behind the emulated machine, run by run
+// against its VU1 (packets, VU memory, registers), and (c) --vif-substitute bytes|list|list-cull|none: the reader's
+// bytes (or the K2 draw list encoded back, without or with cullOffscreen) drawn by the emulated GS in place of the
+// machine's PATH1. --fault unpack|tops|dbf|mpg|mscal|mxcsr|lane|packet|vumem:<cycle>[:<n>]; --vif-out <dir> writes the
+// first differing run. The gif2d consumer uses the same frame reader (and with --with-emu the vif consumer beside it).
 #include "chain_walk.h"
 #include "emu.h"
 #include "tex.h"
@@ -54,6 +63,7 @@
 #include "gif2d_survey.h"
 #include "vif_survey.h"
 #include "gif2d.h"
+#include "vif.h"
 #include "consumer.h"
 #include "reader.h"
 #include "../../render/gfx/tags.h"
@@ -465,6 +475,8 @@ namespace
                              "                 [--fault page|kick|hw:<cycle>[:<n>]]\n"
                              "       tex: [--with-emu] [--png <dir>] [--fault transfer|kick:<cycle>:<n> | swizzle:<cycle>:<bits> | decode:0:<bits>]\n"
                              "       gif2d: [--with-emu] [--no-tables] [--fault reg|prim|field:<cycle>:<n>]\n"
+                             "       vif: [--with-emu [--vif-substitute bytes|list|list-cull|none]] [--vif-out <dir>]\n"
+                             "            [--fault unpack|tops|dbf|mpg|mscal|mxcsr|lane|packet|vumem:<cycle>[:<n>]]\n"
                              "              [--vk] [--vk-blend read|ff|both] [--vk-bias off|on|both] [--vk-fault <name>[,<name>...]] [--vk-png <dir>] [--validation]\n"
                              "       blit: [--no-gpu] [--validation] [--png <dir>] [--fault tile:<cycle>:<n> | dispfb:<cycle> | byte|gpubyte:<cycle>:<pixel>]\n");
     }
@@ -474,7 +486,7 @@ namespace
 {
     int runEmu(Reader &reader, const std::string &path, rc::replay::EmuOptions options, bool verify, bool quiet, uint64_t first, uint64_t last,
                const rc::replay::TexOptions *texOptions = nullptr, bool gif2dSurvey = false, const rc::replay::Gif2dOptions *gif2dOptions = nullptr,
-               bool vifSurvey = false, bool vifRoundNearest = false)
+               bool vifSurvey = false, bool vifRoundNearest = false, const rc::replay::VifOptions *vifOptions = nullptr)
     {
         options.verify = verify;
         options.quiet = quiet;
@@ -532,6 +544,20 @@ namespace
             }
             consumers.insert(consumers.begin(), gif2d.get());
         }
+        // (step 8) The vif consumer behind the machine: the machine runs each channel 1 kick first, then the frame reader
+        // runs it and is compared run by run (and with gif2d, the vif consumer works on gif2d's frame reader).
+        std::unique_ptr<rc::replay::VifCheck> vifCheck;
+        if (vifOptions || gif2d)
+        {
+            rc::replay::VifOptions o = vifOptions ? *vifOptions : rc::replay::VifOptions{};
+            o.withEmu = true;
+            o.verify = verify;
+            o.quiet = quiet;
+            vifCheck = std::make_unique<rc::replay::VifCheck>(o, &runtime, vifOptions ? nullptr : gif2d->frameReader());
+            vifCheck->installVu1Wrappers();
+            emu.setPath1Substitute([&vifCheck](const rc::rec::KickView &k, const rc::rec::RamView &ram) { return vifCheck->path1(k, ram); });
+            consumers.push_back(vifCheck.get());
+        }
         if (texOptions)
         {
             tex = std::make_unique<rc::replay::TexCheck>(*texOptions, &runtime);
@@ -565,6 +591,8 @@ namespace
             vif->summary();
         if (gif2d)
             gif2d->summary();
+        if (vifCheck)
+            vifCheck->summary();
         if (!reader.complete())
             std::printf("note: the dump was not closed (%s); read up to its last whole chunk\n",
                         reader.truncated() ? "a partial chunk at the end" : "no index");
@@ -575,7 +603,7 @@ namespace
         }
         if (verify && (h.flags & kFileExact))
         {
-            const bool failed = emu.failed() || (tex && tex->failed()) || (gif2d && gif2d->failed());
+            const bool failed = emu.failed() || (tex && tex->failed()) || (gif2d && gif2d->failed()) || (vifCheck && vifCheck->failed());
             std::printf("%s\n", failed ? "FAIL" : "PASS");
             return failed ? 1 : 0;
         }
@@ -645,6 +673,35 @@ namespace
         return 0;
     }
 
+    int runVif(Reader &reader, const std::string &path, const rc::replay::VifOptions &options, uint64_t first, uint64_t last)
+    {
+        const FileHeader &h = reader.header();
+        std::printf("dump %s\n  %s, %ux%u, recorded with %.16s, build %.40s, %s%s\n", path.c_str(), h.gameVersion ? "Europe" : "USA", h.width,
+                    h.height, h.gsBackend, h.build, (h.flags & kFileExact) ? "exact" : "plain", (h.flags & kFileComplete) ? "" : ", not closed");
+        rc::replay::VifCheck vif(options, nullptr);
+        // The readers start at the segment's keyframe.
+        uint64_t from = 0;
+        for (const IndexSegment &seg : reader.segments())
+            if (seg.firstCycle <= first)
+                from = seg.firstCycle;
+        const bool ok = reader.run({&vif}, from, last);
+        vif.summary();
+        if (!reader.complete())
+            std::printf("note: the dump was not closed (%s); read up to its last whole chunk\n",
+                        reader.truncated() ? "a partial chunk at the end" : "no index");
+        if (!ok)
+        {
+            std::printf("read error: %s\n", reader.error().c_str());
+            return 2;
+        }
+        if (options.verify)
+        {
+            std::printf("%s\n", vif.failed() ? "FAIL" : "PASS");
+            return vif.failed() ? 1 : 0;
+        }
+        return 0;
+    }
+
     int runBlit(Reader &reader, const std::string &path, const rc::replay::BlitOptions &options, uint64_t first, uint64_t last)
     {
         const FileHeader &h = reader.header();
@@ -684,8 +741,9 @@ namespace
 int main(int argc, char **argv)
 {
     std::string path, consumer = "stats";
-    bool verify = false, quiet = false, withEmu = false, noGpu = false, validation = false, noTables = false, vk = false, vifRoundNearest = false;
-    std::string vkBias = "on", vkBlend = "auto", vkFaults, vkPng;
+    bool verify = false, quiet = false, withEmu = false, noGpu = false, validation = false, noTables = false, vk = false, vifRoundNearest = false,
+         vifNoPoison = false;
+    std::string vkBias = "on", vkBlend = "auto", vkFaults, vkPng, vifSubstitute = "bytes", vifOut;
     uint64_t first = 0, last = ~0ull;
     rc::replay::EmuOptions emuOptions;
     auto cycleKick = [](const char *text, int64_t &cycle, uint32_t &kick)
@@ -729,6 +787,12 @@ int main(int argc, char **argv)
         }
         else if (a == "--vif-round-nearest")
             vifRoundNearest = true;
+        else if (a == "--vif-substitute" && i + 1 < argc)
+            vifSubstitute = argv[++i];
+        else if (a == "--vif-out" && i + 1 < argc)
+            vifOut = argv[++i];
+        else if (a == "--vif-no-poison")
+            vifNoPoison = true;
         else if (a == "--with-emu")
             withEmu = true;
         else if (a == "--no-gpu")
@@ -803,9 +867,9 @@ int main(int argc, char **argv)
         survey.summary();
         return ok ? 0 : 2;
     }
-    if (consumer != "stats" && consumer != "emu" && consumer != "tex" && consumer != "blit" && consumer != "gif2d")
+    if (consumer != "stats" && consumer != "emu" && consumer != "tex" && consumer != "blit" && consumer != "gif2d" && consumer != "vif")
     {
-        std::fprintf(stderr, "consumer '%s' is not built yet (stats, emu, tex, blit, gif2d, gif2dstat, vifstat)\n", consumer.c_str());
+        std::fprintf(stderr, "consumer '%s' is not built yet (stats, emu, tex, blit, gif2d, gif2dstat, vifstat, vif)\n", consumer.c_str());
         return 2;
     }
     Reader reader;
@@ -896,6 +960,36 @@ int main(int argc, char **argv)
             return runEmu(reader, path, emuOptions, verify, true, first, last, nullptr, false, &g);
         }
         return runGif2d(reader, path, g, first, last);
+    }
+    if (consumer == "vif")
+    {
+        rc::replay::VifOptions v;
+        v.verify = verify;
+        v.quiet = quiet;
+        v.withEmu = withEmu;
+        v.substitute = vifSubstitute;
+        v.outDir = vifOut;
+        v.noPoison = vifNoPoison;
+        if (vifSubstitute != "none" && vifSubstitute != "bytes" && vifSubstitute != "list" && vifSubstitute != "list-cull")
+        {
+            std::fprintf(stderr, "unknown --vif-substitute '%s' (none, bytes, list, list-cull)\n", vifSubstitute.c_str());
+            return 2;
+        }
+        if (!emuOptions.faultKind.empty())
+        {
+            if (!rc::rd::parseVifFault(emuOptions.faultKind, v.fault))
+            {
+                std::fprintf(stderr, "unknown vif fault '%s' (unpack, tops, dbf, mpg, mscal, mxcsr, lane, packet, vumem)\n", emuOptions.faultKind.c_str());
+                return 2;
+            }
+            v.faultCycle = emuOptions.faultCycle;
+            v.faultN = emuOptions.faultN;
+            std::printf("vif: planted fault %s at cycle %" PRId64 " (n %u)\n", emuOptions.faultKind.c_str(), v.faultCycle, v.faultN);
+            emuOptions.faultKind.clear();
+        }
+        if (withEmu)
+            return runEmu(reader, path, emuOptions, verify, true, first, last, nullptr, false, nullptr, false, false, &v);
+        return runVif(reader, path, v, first, last);
     }
     if (consumer == "emu")
         return runEmu(reader, path, emuOptions, verify, quiet, first, last);
