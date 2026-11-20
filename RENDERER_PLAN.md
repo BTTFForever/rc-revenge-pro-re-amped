@@ -368,6 +368,20 @@ After step 1: fold its answers into this plan's open questions.
      a device without local read (D-2D-1 applies there only). Specification: section 18 (**batch 4b**, Opus).
      Order after it: step 8's design, step 8's first batch (the off-line VIF reader, which gives K1 the registers
      it inherits from PATH1), step 7 batch 5 (live 2D), then K2 on Vulkan.
+   - **Batch 4b built 2026-11-20** (`RENDERER_2D_DESIGN.md` section 19): the exact blend by local read. The fractional
+     blend forms are drawn by 64 READ pipelines (blend off, `gs2d.frag`'s `GS2D_DSTREAD` build reads the target as an
+     input attachment and computes the GS rule in integers) with a by-region barrier before each group of
+     non-overlapping primitives; fixed function stays for every other plan, and for everything on a device without
+     local read (`Gs2dVk::Options::blend`; bias now on; D-2D-1 is the fallback's only). `rc_gs2d_test`: T1 in read mode
+     equal on all 44.2 M pixels, T2-T8 equal in every plane (T8 new: order, alternation, one large group, both
+     targets), every planted fault caught (the two new ones, the barrier left out and a batch as one group, by T8).
+     **Check (c) is now equality:** all 67 exact dumps of both versions, 88,421 kicks, 14.49 G pixel-kicks, every
+     pixel equal in R, G, B, A and Z, validation layer with synchronisation validation on, 0 errors; FIX off by one
+     now fails on 6.1 M front-end pixels (265 under the old band). The fixed-function fallback still passes its bound
+     on eight dumps. **Open: the cost.** The draws take 6x fixed function's GPU time on the front end (largest kick 3.6
+     ms against 0.44, about 20 us a barrier on the RTX 2060), 1.5x in a race; the specification's acceptance rule was
+     to stop and report rather than optimise, so it is reported (section 19.5) for a decision before batch 5 and for
+     step 8's K2 (where the interlock form may need reconsidering).
 8. VIF chain reader with the C++ VU references (Opus): races draw correctly (slowly); GIF bytes equal the emulated
    VU1's for recorded frames; full screenshots on levels 5, 17, 18, 20.
    **Order and design (step 7's batch 4 review, 2026-11-20, `RENDERER_2D_DESIGN.md` 17.4).** Step 8 starts before

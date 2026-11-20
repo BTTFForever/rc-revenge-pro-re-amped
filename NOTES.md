@@ -690,15 +690,30 @@ the reference's pixel pipeline (`render/gs2d/gs_model`, in `rc_gs2d`) and their 
   `third_party/ico_rhi/VENDORED.md`), the blend is fixed function with dual-source factors, 288 pipelines are made at
   start, lines become one point a pixel, RGB_ONLY with Z write is two draws per group of non-overlapping primitives.
   `seed()` / `readColour()` / `readDepth()` / `probe()` serve the tests and check (c).
-- **Check:** `ninja -C build-decomp rc_gs2d_test`, then `__NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only
-  build-decomp/rc_gs2d_test [--validation] [--quiet] [--only model,T1,...,T7] [--no-faults] [--no-design-bound]`: the
-  model's self-check, T1-T7 through the emulated GS (the runtime's `GS` alone), the model and Vulkan, then the planted
-  faults (each must fail its test). About 4.5 min, with or without `--validation` (T1 is most of it). **Ends FAIL on the RTX 2060** because T1's
-  design bound for inexact blends does not hold: the blender takes the source and the dual-source factor at 8 bits
-  (section 15.3; decision open). `--no-design-bound` checks everything else and ends PASS. `--only blenddbg` prints
-  a small table of the blender's results.
+- **The exact blend (batch 4b, 2026-11-20, `RENDERER_2D_DESIGN.md` sections 18-19):** where the device has dynamic
+  rendering local read (`RhiLimits.localRead`: the RTX 2060 and the Vega), the plans with a fractional blend factor
+  (text `0x09`, panels `0x01`, dimming boxes `0x21` FIX f, ...) are drawn by 64 READ pipelines: blend off, the
+  `GS2D_DSTREAD` build of `gs2d.frag` reads its own pixel as an input attachment and computes the GS rule in
+  integers; their batches are cut into groups of non-overlapping primitives with a by-region barrier
+  (`rhi_cmd_local_read_barrier`) before each group, and the passes are begun readable. Everything else stays fixed
+  function in the same pass. `Gs2dVk::Options::blend`: `kBlendAuto` (default: the read where available),
+  `kBlendFixed` (fixed function with the source bias, now on by default: divergence D-2D-1), `kBlendRead`.
+  Result: every plane equal to the emulated GS in every test and on every exact dump.
+- **Check:** `ninja -C build-decomp rc_gs2d_test` (also builds in `build-eu`), then `__NV_PRIME_RENDER_OFFLOAD=1
+  __VK_LAYER_NV_optimus=NVIDIA_only VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true build-decomp/rc_gs2d_test [--validation]
+  [--quiet] [--only model,T1,...,T8] [--blend read|ff|both] [--no-faults]`: the model's self-check, T1-T8 through
+  the emulated GS (the runtime's `GS` alone), the model and Vulkan, then the planted faults (each must fail its
+  test). `--blend both` (the default with local read) runs T1 in read mode (equality) and fixed function with the
+  bias on and off (D-2D-1's bound), T2 in both; T3-T6 and T8 in read mode. About 6 min with the validation layer;
+  ends `PASS` on the RTX 2060. With `--validation` it first checks that synchronisation validation is on (a planted
+  hazard must be reported; `VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true` turns it on). `--only blenddbg` prints a small
+  table of the fixed-function blender's results.
 - **Learnt:** the float division in a shader is not correctly rounded on the RTX 2060 (1/Q in double instead); the
-  double multiply and its rounding to float are; `rhi_readback_texture` reads a D32F depth back.
+  double multiply and its rounding to float are; `rhi_readback_texture` reads a D32F depth back. The fixed-function
+  blender takes the source and the dual-source factor at 8 bits (hence the read). A by-region local-read barrier
+  costs about 20 us on the RTX 2060 (batch 4b). Synchronisation validation (layer 1.4.363) does not model
+  input-attachment reads under local read: a missing barrier is caught by the pictures (T8, check (c)), not by the
+  layer.
 - **The RHI edit and the game:** `rc_ico_rhi` changed, so the games were rebuilt (nothing else in them changed) and
   checked (2026-11-20): `tools/oracle.sh --all` USA seed 7311 1632 ok, 0 FAIL, 98 without a setup; Europe seed 7312
   1563 ok, 0 FAIL, 90 without a setup; `tools/play.sh replay playtest2` (70 s, `RC_SCENE_LOG`): USA race scene 3020
@@ -711,9 +726,16 @@ the reference's pixel pipeline (`render/gs2d/gs_model`, in `rc_gs2d`) and their 
 the emulated GS drew. Design 10.3; what was built and the results: `RENDERER_2D_DESIGN.md` section 16. Nothing of it is
 linked into the game or the oracle.
 - **Run:** `ninja -C build-decomp rc_replay`, then `__NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only
-  build-decomp/rc_replay <exact dump> --consumer gif2d --vk --verify --quiet [--validation] [--no-tables]` (implies
-  `--with-emu`, so checks (a) and (b) run in the same pass). Ends `PASS` or `FAIL`; 1.5-3 min a 700-cycle dump with the
-  validation layer, about 20 ms of GPU time a kick per bias setting.
+  build-decomp/rc_replay <exact dump> --consumer gif2d --vk --verify --quiet [--vk-blend read|ff|both] [--vk-bias
+  off|on|both] [--validation] [--no-tables]` (implies `--with-emu`, so checks (a) and (b) run in the same pass). Ends
+  `PASS` or `FAIL`; 1.5-3 min a 700-cycle dump with the validation layer, about 10-13 ms of wall time a kick per
+  setting (seed, draw, read-back). `rc_replay` does not depend on the game version; it is built in both trees
+  (`build-eu/rc_replay` is current since batch 4b) and either serves both versions' dumps.
+- **Settings (batch 4b):** `--vk-blend read` (default where the device has local read): the exact blend, pass = every
+  pixel equal in R, G, B, A and Z; `ff` (default without local read): fixed function, D-2D-1's bound below, with
+  `--vk-bias` (default `on`); `both`. Report lines per setting: `(c) <setting>: GPU time of the draws ... ms a kick`
+  (timestamps around the kick's passes) and the wall time; `(c) read: ... reading primitives in ... groups, ...
+  barriers; largest in a kick ...`.
 - **What it does:** at each drawing kick the consumer (in front of `emu`) reads the colour target(s) the kick draws
   into (CT32, FBP 0x0 / 0x50, 640 x 256) and the Z buffer (ZBP 0xa0, the Z32 layout now in `gs_layout`, low 24 bits)
   from the emulated GS memory; `emu` runs the kick and calls back (`Emu::setAfterKick`); the same planes read again are
@@ -728,7 +750,8 @@ linked into the game or the oracle.
   and every primitive over the pixel; `--vk-png <dir>` writes the first failing kick's before / Vulkan / reference /
   difference pictures.
 - **Planted faults:** `--vk-fault atst-less|drop-fail|split-per-batch|z-gequal|fix|colour-swap|no-half-pixel|
-  bias-always|texel-row|texa` (comma-separated; `Gs2dVk::Fault`, and `texa` the reader's).
+  bias-always|texel-row|no-barrier|one-group|texa` (comma-separated; `Gs2dVk::Fault`, and `texa` the reader's;
+  `no-barrier` and `one-group` act in read mode).
 - **Z layouts:** `gs_layout` has Z32/Z24/Z16/Z16S (the colour twin's block order with the top two block bits
   inverted), checked by `rc_tex_test` against the runtime's tables: `tools/gs_tables_export.cpp` now also writes CT16S
   and the Z formats into `decomp/generated/gs_tables.bin` (rebuild it with the command in that file's header).
@@ -739,6 +762,16 @@ linked into the game or the oracle.
 - **The game:** nothing new links, but the CMake re-run regenerated a shader header by timestamp and relinked
   `rc_revenge_pro` in both trees, so the checks were run: `tools/oracle.sh --all` USA seed 7331 1632 ok, Europe seed
   7332 1563 ok, 0 FAIL; `playtest2` scene 3020 at frame 658 (USA) and 1167 (Europe).
+- **Result with the exact blend (batch 4b, 2026-11-20):** all 67 exact dumps `PASS` in read mode with the validation
+  layer and synchronisation validation (0 errors): 88,421 kicks, 14.49 G pixel-kicks, **every pixel equal** in R, G,
+  B, A and Z. The fixed-function fallback (`--vk-blend ff`, bias on) passes D-2D-1's bound on `s5/front`, `boot`,
+  `tedit`, `l17` of both versions. In read mode the faults fail on the front end (FIX off by one on 6.1 M pixels, the
+  barrier left out on 0.98 M, a batch as one group on 71 K). Cost: the draws take about 6x fixed function's GPU time
+  on menu kicks (largest 3.6 ms; ~20 us a barrier), 1.5x in races; open (`RENDERER_2D_DESIGN.md` 19.5). Runner used:
+  each dump's command line as above with `--vk-blend read --validation`, 4 at a time, 33 min. The game relinked (CMake re-run, `git describe` in
+  `capture.cpp`): `tools/oracle.sh --all` USA seed 7451 1632 ok, Europe seed 7452 1563 ok, 0 FAIL; `playtest2` scene
+  3020 at frame 658 (USA) and 1167 (Europe). Under heavy CPU load (the oracle running) the replay drifts: one Europe
+  run reached the race at 1168; run it on an idle machine.
 
 ### Level testing (2026-11-09)
 `RC_BOOT_LEVEL=<n> tools/play.sh` skips the intro and menus and loops the attract-mode demo on level n. `RC_SKIP_INTRO=1` skips only the legal screen, movie and Dolby screen and starts in the front end (for menu tests: `PS2X_PAD_REPLAY=<file>` plays a pad script of `epoch frame buttons axes` lines). `tools/level_sweep.sh <first> <last> <seconds> [VAR=value ...]` prints each level's frame rate.
