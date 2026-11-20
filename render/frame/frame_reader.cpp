@@ -41,6 +41,13 @@ namespace rc::rd
             m_vif.setFault(f, cycle, n);
     }
 
+    void FrameReader::startLive()
+    {
+        m_vif.reset();
+        m_gif.startBlank();
+        m_started = true;
+    }
+
     void FrameReader::open(const FileInfo &info) { m_gif.open(info); }
 
     void FrameReader::keyframe(const Keyframe &kf)

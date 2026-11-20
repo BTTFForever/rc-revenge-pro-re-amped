@@ -391,6 +391,17 @@ After step 1: fold its answers into this plan's open questions.
      built; the interlock form is not built; fixed function stays as the fallback and a switch. Batch 5's consumer
      is step 8's `FrameReader` (the VIF reader gives the registers K1 inherits), which costs 22 ms of the EE thread
      a front-end frame: see step 8, decision U2.
+   - **Batch 5 built 2026-11-20** (`RENDERER_2D_DESIGN.md` section 20): live 2D behind `RC_RENDERER=vk
+     RC_VK_PICTURE=native` (`render/live`, library `rc_live`, linked into the game). The frame reader is a live consumer
+     of the capture on the EE thread (from reset, K2's primitives left out and its registers kept), uploads into the
+     frame buffers become `IMAGE_BLIT` commands in list order, the list is published at the cycle close and drawn by
+     `Gs2dVk::record` in the vk host's frame; `target[DISPFB2.FBP]` is presented; F7 shows the emulated picture.
+     Checks: the front end, menus and race HUD readable (over black where K2 draws); a native session's screenshots
+     equal to `rc_replay --consumer live2d`'s pictures of the same cycles from a ring dump of that session, and every
+     picture equal to the reference outside K2's pixels, both versions, on the two live rings, both `s6/boot` dumps
+     (42.3 M and 45.1 M pixels, of them 39.5 M / 42.3 M drawn by K1) and four more; validation 0 errors. Cost:
+     the references on the EE thread (U2): about 30 fps in the USA front end and races, 25-33 in Europe; the 2D's GPU
+     time 0.3-0.5 ms a frame. Oracle and `playtest2` unchanged in default and plain vk mode.
 8. VIF chain reader with the C++ VU references (Opus): races draw correctly (slowly); GIF bytes equal the emulated
    VU1's for recorded frames; full screenshots on levels 5, 17, 18, 20.
    **Designed 2026-11-20: `RENDERER_3D_DESIGN.md`** (every point of the outline below settled, measured with the new

@@ -28,9 +28,19 @@
 // no kick consumed are dropped two cycle closes after they were made; each keyframe carries the ones still waiting
 // (TAGP), and the file the name table (TNAM).
 // No ring, key or state-load handling yet (batch 4).
+// (Step 7 batch 5) The capture is also installed, with no recording, when a live consumer is added (addLiveConsumer:
+// RC_RENDERER=vk RC_VK_PICTURE=native's frame reader); live consumers see the events whether a dump is recorded or not.
 
 namespace rc::rec
 {
+    struct Consumer;
+
     // True when RC_FRAME_RECORD installed the hooks.
     bool captureInstalled();
+
+    // (step 7 batch 5) Installs the hooks if RC_FRAME_RECORD has not, and adds a live consumer: from boot on, every hw,
+    // crt and kick event (guest RAM in place) and every cycle begin and end on the EE thread, recording or not, and after
+    // a save-state load a keyframe of the loaded machine (kKeyAfterStateLoad). Must be called before main (a static
+    // initializer). The consumer lives for the rest of the run.
+    void addLiveConsumer(Consumer *consumer);
 }

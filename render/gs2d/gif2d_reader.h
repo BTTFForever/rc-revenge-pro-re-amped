@@ -64,6 +64,16 @@ namespace rc::rd
             // (step 8, RENDERER_3D_DESIGN.md 8) Leave out of the list a triangle of zero area and one whose bounding box
             // (the reference's gsTriangleSetup bounds) misses the scissor: the reference's own early exits.
             bool cullOffscreen = false;
+            // (step 7 batch 5, live 2D) false: PATH1's primitives are left out of the list (counted), their register
+            // writes kept. The live picture of RC_VK_PICTURE=native draws K1 only until step 8 draws K2; this spares the
+            // EE thread K2's states, texture decodes and 0.6 MB of vertices a kick.
+            bool path1Prims = true;
+            // (step 7 batch 5, live 2D) host-to-local transfers into the frame buffers become IMAGE_BLIT commands (a: FBP,
+            // b: x | y << 16, c: w | h << 16, payload w x h CT32 words as stored) in list order, so the targets hold what was
+            // uploaded under what is drawn after it (the front end draws its menus over an uploaded picture, not a clear).
+            // CT32 at FBW 10 from a page-row boundary, placed by its line in the two 640 x 256 buffers FBP 0x0 / 0x50 (a 640 x 512
+            // upload at FBP 0x0 fills both); anything else is counted, not drawn.
+            bool frameUploads = false;
         };
         struct Stats
         {
@@ -86,6 +96,8 @@ namespace rc::rd
             uint64_t path1Packets = 0, path1Bytes = 0, path1OpenTags = 0, path1Transfers = 0, path1Guarded = 0;
             uint64_t culledZeroArea = 0, culledOffscreen = 0;
             uint64_t vertexQNotRgbaq = 0; // vertices whose Q (the reference's) is not the RGBAQ register's
+            uint64_t path1PrimsLeftOut = 0; // Options::path1Prims false: PATH1 primitives not put in the list
+            uint64_t frameUploads = 0, frameUploadBlits = 0, frameUploadsOther = 0; // Options::frameUploads
         };
 
         Gif2dReader();
@@ -145,6 +157,8 @@ namespace rc::rd
         bool buildState(GsState &s, uint16_t &needSeeded, uint16_t &needDefault, uint32_t &dropReason);
         uint64_t value(uint8_t addr, uint16_t group, uint16_t &needSeeded, uint16_t &needDefault, bool &missing);
         void closePrims();
+        void flushUploads(); // Options::frameUploads: the logged transfers as IMAGE_BLIT commands
+        std::vector<GsMemory::TransferRect> m_xfers;
         void emitState(const GsState &s, const GsPlan &p);
         uint32_t textureId(const CachedTexture *t);
         void feed(const uint8_t *data, uint32_t bytes);
@@ -169,6 +183,7 @@ namespace rc::rd
             void vertexQ(uint32_t q) override { self->m_vertexQ = q; }
         } m_path1Feed;
         GifWalker m_path1Walker;
+        bool m_inPath1 = false; // between beginPath1Kick and endPath1Kick
 
         // Primitive assembly.
         GsVertex m_queue[3] = {};

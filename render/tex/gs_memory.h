@@ -17,6 +17,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 namespace rc::rd
 {
@@ -87,6 +88,15 @@ namespace rc::rd
         void markDrawnPage(uint32_t page);                        // 2,048 words
         void markAllDrawn();
 
+        // (step 7 batch 5) Transfers into frame memory (their first block below kTextureFirstBlock), logged as they begin
+        // when a log is set: the live renderer copies them into its targets (Gif2dReader::Options::frameUploads).
+        struct TransferRect
+        {
+            uint32_t dbp, dbw, psm, x, y, w, h;
+            uint64_t serial;
+        };
+        void setTransferLog(std::vector<TransferRect> *log) { m_log = log; }
+
         // Dirty tracking.
         uint64_t serial() const { return m_serial; }                        // of the newest transfer (or load)
         uint64_t blockSerial(uint32_t block) const { return m_blockSerial[block & (kGsBlocks - 1u)]; }
@@ -123,6 +133,7 @@ namespace rc::rd
         uint8_t m_carry[4] = {};
         uint32_t m_carryBytes = 0;
         uint64_t m_dropAt = 0;
+        std::vector<TransferRect> *m_log = nullptr;
         uint32_t m_changed = 0;
         bool m_countedChanged = false;
         Stats m_stats;

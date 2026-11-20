@@ -51,6 +51,10 @@ namespace rc::rd
         FrameReader();
         explicit FrameReader(const Options &options);
 
+        // (step 7 batch 5) Live: start from the machine's reset state with the game (RENDERER_3D_DESIGN.md 5.1), no
+        // keyframe: VU1 and VIF1 reset, GS memory blank, every register unknown until written.
+        void startLive();
+
         void open(const rc::rec::FileInfo &info) override;
         void keyframe(const rc::rec::Keyframe &kf) override;
         void cycleBegin(uint64_t cycle) override;

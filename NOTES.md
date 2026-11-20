@@ -283,6 +283,7 @@ Debugging:
 - `PS2X_PAD_SCRIPT` plays scripted input as comma-separated `start[v]:BTN+BTN[:hold]`, where `v` means fields rather than seconds.
 - `PS2X_DEBUG_PANEL=1` shows the debugger.
 - `RC_RENDERER=vk`: SDL3 window and input, Vulkan presentation, raylib audio only (section "RC_RENDERER=vk" below);
+  with `RC_VK_PICTURE=native` the native 2D picture (section "Live 2D" below);
   unset or `gs`, the raylib window as always. `RC_SCENE_LOG=<file>` writes a line at each scene change (game frame,
   input clock, field, seconds, scene) to compare two runs of a recording.
 - `RC_GS_SURVEY=<file>` records every DMA kick and GS register write by path, per frame and scene (`RENDERER_SURVEY.md`); use it with `RC_TRACK_SHADER=0 PS2X_MTVU=0` (tools/play.sh passes both through), read with `tools/gs_survey.py`.
@@ -824,6 +825,32 @@ cullOffscreen` leaves out triangles of no area or outside the scissor. Seeded fr
 - Found on the way: the reference GS gives a vertex the Q of the last PACKED ST or register RGBAQ and resets it to 1.0
   at every GIF tag (`GifSink::vertexQ`; the frame record's RGBAQ register keeps its own convention); the draw list
   encoder therefore ends a tag only before a PRIM.
+
+### Live 2D: RC_VK_PICTURE=native (2026-11-20, renderer P1 step 7 batch 5)
+`RC_RENDERER=vk RC_VK_PICTURE=native tools/play.sh [replay <name>]` (`RC_VERSION=eu` as usual) presents the native picture:
+step 8's frame reader runs on the EE thread as a live consumer of the frame record's capture (`render/live`, library
+`rc_live`, linked into the game; nothing of it runs without the switch), the cycle's draw list (the flip's clear,
+uploads into the frame buffers, K1) is drawn through `Gs2dVk` with the exact blend and `target[DISPFB2.FBP]` is shown.
+K2 (the 3D) is not drawn yet: black where only K2 draws. Design and results: `RENDERER_2D_DESIGN.md` section 20.
+- **Keys and switches:** F7 toggles the emulated GS picture and back (the window title says which; `[vk-host] F7 key
+  down` is logged). `RC_VK_BLEND=ff|read` (default: the read where the device has it), `RC_VK_PRESENT_FILTER=nearest`,
+  `RC_VK_SHOT_DIR=<dir> RC_VK_SHOT_AT=<cycle>[,...]` (native screenshots, `.png` and raw `.rgba`, 640 x lines, RGBA as
+  stored), `RC_VK_NATIVE_REPORT=<n>` (a reader line every n display cycles; default 600). At close the game logs
+  `[vk-native] reader: ...` (EE time a cycle, VIF1 kicks) and `[vk-native] presenter: ...` (GPU time, barriers).
+- **Native resolution:** the picture is the PS2's 640 x 240 / 256, letterboxed exactly as the GS picture; it matches the
+  emulated picture at `PS2X_GS_HW_SCALE=1` in size and placement and looks softer than play.sh's default scale 2. Higher
+  resolution and widescreen are P3's.
+- **Speed:** the frame reader runs the C++ VU1 references for every K2 kick (about 20-30 ms a cycle), so the game runs at
+  roughly 30-35 fps (USA) wherever 3D is drawn (front end, races): decision U2 of `RENDERER_3D_DESIGN.md`. `gs` stays the
+  default.
+- **Check on a dump:** `rc_replay <exact dump> --consumer live2d --verify [--validation] [--live-shots <dir>] [--png <dir>]
+  [--vk-blend read|ff]`: the live reader and presenter on the dump, behind nothing and in front of the emulated machine;
+  every displayed picture must equal `REFI` on every pixel K2 did not change, and every live screenshot in `<dir>`
+  (`native_<cycle>.rgba`) the off-line picture of its cycle. A live session and its dump together: add
+  `RC_FRAME_RECORD=<dir>/ring%d.rcfr RC_FRAME_RECORD_AT=ring:300 RC_FRAME_RECORD_REF=1 RC_FRAME_RECORD_F10=<cycle>` and run
+  through `tools/frame_record.sh` (exact mode; keep the shots and F10 early, exact mode with the reader is slow).
+- **Capture:** `rc::rec::addLiveConsumer` installs the capture hooks without a recording; live consumers see every event
+  from boot whether a dump is recorded or not.
 
 ### Level testing (2026-11-09)
 `RC_BOOT_LEVEL=<n> tools/play.sh` skips the intro and menus and loops the attract-mode demo on level n. `RC_SKIP_INTRO=1` skips only the legal screen, movie and Dolby screen and starts in the front end (for menu tests: `PS2X_PAD_REPLAY=<file>` plays a pad script of `epoch frame buttons axes` lines). `tools/level_sweep.sh <first> <last> <seconds> [VAR=value ...]` prints each level's frame rate.

@@ -132,7 +132,11 @@ namespace rc::rd
         if (m_stats.transfers == m_dropAt)
             m_open = false; // a planted fault: its data goes nowhere
         if (gsBlockOf(layoutTables(), m_dpsm, m_dbp, m_dbw, m_dsax, m_dsay) < kTextureFirstBlock)
+        {
             ++m_stats.intoFrame;
+            if (m_log)
+                m_log->push_back({m_dbp, m_dbw, m_dpsm, m_dsax, m_dsay, m_rrw, m_rrh, m_serial});
+        }
     }
 
     inline void GsMemory::mark(uint32_t block)

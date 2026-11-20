@@ -140,8 +140,16 @@ namespace rc::rd
         // The colour target `target` (0: FBP 0x0, 1: FBP 0x50) and the depth texture from CPU planes (640 x 256 RGBA
         // words; Z values below 2^24), both required.
         bool seed(uint32_t target, const uint32_t *rgba, const uint32_t *z);
-        // Replays a draw list (TEXTURE, STATE, SCREEN_PRIMS, CLEAR; scope and other commands are skipped) into the targets.
+        // Replays a draw list (TEXTURE, STATE, SCREEN_PRIMS, CLEAR, and (batch 5) IMAGE_BLIT into FBP 0x0 / 0x50, in list
+        // order with the draws; scope and other commands are skipped) into the targets:
+        // its own frame (rhi_wait_frame), submitted and waited for, with the GPU time in lastList().
         bool draw(const DrawList &list);
+        // (batch 5, live) The same recorded into the caller's command list, in the caller's frame: no wait, no submit.
+        // stamps: timestamps 0 and 1 of the frame slot around the passes (the caller reads them when the slot comes round).
+        bool record(const DrawList &list, RhiCommandList cl, bool stamps = false);
+        // (batch 5, live) The colour target `target` put in SHADER_READ for the presenter to sample (the next record()
+        // takes it back); its id, or 0.
+        RhiTexture sampleTarget(RhiCommandList cl, uint32_t target);
         // Read-back: the colour target as RGBA words, the depth as Z values (false if a depth is not an integer Z).
         bool readColour(uint32_t target, std::vector<uint32_t> &rgba);
         bool readDepth(std::vector<uint32_t> &z);
@@ -164,7 +172,16 @@ namespace rc::rd
             bool points;
             bool read;    // a READ pipeline (key: readKey)
             bool barrier; // the first draw of a reading group: a barrier before it unless nothing was drawn since the last
+            int32_t blit = -1; // (batch 5) an IMAGE_BLIT, not a draw: index into m_blits
         };
+        struct Blit
+        {
+            uint32_t target;
+            RhiRect rect;
+            uint64_t offset; // in m_blitStage
+        };
+        std::vector<Blit> m_blits;
+        RhiBuffer m_blitStage{}; // the list's IMAGE_BLIT pixels (destroyed, deferred, once recorded)
         bool build(const DrawList &list, std::vector<Draw> &draws, std::vector<RhiTexture> &fresh, RhiCommandList cl);
         bool upload(const std::vector<Gs2dPrim> &records);
         void transition(RhiCommandList cl, RhiTexture t, RhiState &current, RhiState to);
@@ -185,8 +202,8 @@ namespace rc::rd
         RhiTexture m_targets[2]{}, m_depth{}, m_probeTarget{}, m_dummy{};
         RhiState m_targetState[2]{RHI_STATE_UNDEFINED, RHI_STATE_UNDEFINED}, m_depthState = RHI_STATE_UNDEFINED;
         RhiState m_probeState = RHI_STATE_UNDEFINED;
-        RhiBuffer m_records{};
-        uint64_t m_recordBytes = 0;
+        RhiBuffer m_records[RHI_FRAMES_IN_FLIGHT]{}; // by frame slot (batch 5: live, lists of two frames are in flight)
+        uint64_t m_recordBytes[RHI_FRAMES_IN_FLIGHT] = {};
         std::unordered_map<uint32_t, RhiTexture> m_textures; // TEXTURE id -> its latest upload
         std::vector<RhiTexture> m_retired;                    // replaced uploads, destroyed after the next submit
         std::vector<Gs2dPrim> m_scratch;
