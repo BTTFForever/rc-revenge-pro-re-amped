@@ -15,7 +15,7 @@ with this design; nothing in it is the reader, and no game function or runtime f
 regenerate the dumps' references by replay, before K2 is drawn through Vulkan (batch 2).** Needs an answer before
 batch 2; batch 1 and step 7's batch 5 do not depend on it.
 
-**Decided by the user (2026-11-20): A.** Batch R (section 13) runs next, before batch 2.
+**Decided by the user (2026-11-20): A.** Batch R (section 13) runs next, before batch 2. **Built 2026-11-20 (section 17).**
 
 - *Found.* The runtime runs a VU1 program with the host FPU rounding toward zero (`ps2_vu1_core.cpp`: MXCSR
   `| 0x6000`, which the VU's arithmetic needs) and hands every XGKICK packet to the GS from inside the run
@@ -1071,10 +1071,151 @@ Checked on the final build, both versions where it applies:
 
 ### 16.6 Open
 
-- **U1 and batch R** (not built, as instructed): until the runtime's VU1 cycle limit goes, the 1,054 kicks with a cut
+- **U1 and batch R** (built later the same day: section 17): until the runtime's VU1 cycle limit goes, the 1,054 kicks with a cut
   water run fail (b) without the machine, and beside it the reader is given the machine's state after the cut.
 - The 72 poisoned lanes: the references could be made to keep them (5.2's second half); nothing needs them now.
 - `FrameBlit` joins `FrameReader` with batch 3.
 - Step 7's batch 5 (live 2D) can now take its PATH1 registers from `FrameReader` (FBA_1 is the only register no
   path writes; the keyframe gives 0, the default).
 - The reader's time (16.3) is the references' as 3.10 predicted; nothing in batch 1 reduces it (U2).
+
+## 17. Batch R as built (2026-11-20): the reference machine, the dumps re-referenced
+
+Section 13 item R, with U1 = A. Two runtime changes (`NOTES.md`, "Local changes to the runtime"), a new `rc_replay`
+mode, and the 67 exact dumps re-referenced. The kick records (what the game sent) are untouched.
+
+```
+third_party/ps2recomp/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp   runLoopWith: keeps the entering thread's MXCSR rounding bits (m_runRounding), lastRunCycles
+third_party/ps2recomp/ps2xRuntime/src/lib/vu/ps2_vu1_impl.inl   finishXgkick: submitGifPacket under those bits, then back to the run's
+third_party/ps2recomp/ps2xRuntime/src/lib/ps2_runtime.cpp       MSCAL / MSCNT budget kRunGuardCycles (2^22) instead of 65,536; ps2x::vu1run statistics
+third_party/ps2recomp/ps2xRuntime/include/runtime/ps2_vu1.h     the members, lastRunCycles(), ps2x::vu1run
+tools/rc_replay/emu.{h,cpp}                                    Rereference (consumer behind Emu); Emu keeps what it made; PATH1 substitute under the kick's MXCSR
+tools/rc_replay/rc_replay.cpp                                  --consumer emu --rereference <out.rcfr>
+render/record/format.h                                         kFileRereferenced (header flag 1 << 4)
+```
+
+### 17.1 The runtime
+
+1. **PATH1 under the kick's rounding.** The rounding bits are kept in the interpreter, not a thread-local: the
+   `VU1Interpreter` is the one object the run and `finishXgkick` share, and a nested run (`runVerified`) restores the
+   outer value. Only the rounding bits change around the submission; exception flags the GS raises stay set, as
+   before. Every PATH1 packet reaches the GS through `finishXgkick` (the generated programs start an XGKICK through
+   `startXgkick` and finish it through the interpreter's pipeline), so this one site covers the machine `rc_replay`
+   and exact mode run. The game's own native VU1 wrappers (`decomp/vu1/track_draw.cpp`, `RC_TRACK_SHADER`) submit
+   their packets themselves and still do so inside the run; they draw through the GL back end and are never on in
+   exact mode.
+2. **No cut runs.** The budget of an MSCAL / MSCNT run is `ps2x::vu1run::kRunGuardCycles` = 2^22 cycles (about a
+   frame of VU1 time), a guard for a runaway program; the runtime counts runs, the largest, the runs over 65,536 and
+   the guard stops, logs `[vu1] a run took N cycles ...` at the first run over 65,536 and each of the first eight
+   guard stops, and `rc_replay emu` prints the counts. **Largest run in the dumps: 99,261 cycles (USA), 90,201
+   (Europe); 575 + 520 runs over 65,536, exactly the runs batch 1 found cut; 0 guard stops.**
+
+### 17.2 Re-referencing (`rc_replay <dump> --consumer emu --rereference <out.rcfr>`)
+
+The `Rereference` consumer sits behind `Emu` and writes, through the frame record's own `Writer`, a copy in which:
+
+- every `KICK`'s register file (before the kick) and GIF hash and length are the replaying machine's;
+- every `END.refHash` and every `REFI` picture are the machine's picture of that cycle (its DISPFB2 rectangle);
+- every keyframe after the first (and not after a save-state load) holds the machine's `GSVR`, `GSRG`, `VU1M`,
+  `VU1R`, `VIF1` and `EMUS` there. In this mode `Emu` does not load those keyframes: the machine runs on from the
+  first one, so the copy's references are one continuous replay. **`GSPR` is kept as recorded**: the privileged
+  registers are made by stores (replayed, so equal) and by the vertical blank, which the replay machine does not run;
+  the machine's copy differs only in CSR, IMR and vsyncTick, none of them the GS's output. `TAGP` is copied.
+- the first keyframe and keyframes after a save-state load are copied: they are where a replay starts, so their GS
+  memory is still the old machine's drawing (it is redrawn within a cycle or two in every dump);
+- pages, kicks (registers and streams), stores, CRT, tags, odd events and `TNAM` are copied; the header gets
+  `kFileRereferenced` (`rc_replay` prints "exact, re-referenced") and the first cycle a `NOTE` naming the build
+  (`git describe`) and the source.
+
+It counts what changed and, where the source stored pictures, a histogram of the picture differences. **Where the
+dumps live:** the re-referenced dumps are at the old paths (`build-decomp/frame-dumps/{s5,s6,b4-key*,b4-x2-*}`,
+`build-eu/frame-dumps/...`), so every command of steps 4-8 runs on them unchanged; **the originals are kept under
+`<tree>/frame-dumps/pre-r/` with the same relative paths** until step 8 is closed (3.4 GB + 3.1 GB). Run time: 20
+minutes for the 64 large dumps, four at a time.
+
+| what changed (re-referenced against the original) | USA (34 dumps) | Europe (33) |
+|---|---|---|
+| cycles; kicks | 24,174; 839,921 | 21,445; 764,118 |
+| GIF output (hash and length) | 541 kicks, all longer: exactly batch 1's kicks with a cut run | 513 kicks |
+| register files before a kick | 10 kicks, one value each (after a cut) | 8 kicks |
+| picture hashes | 23,415 of 24,174 | 20,738 of 21,445 |
+| stored pictures (`REFI`) | 1,136 of 1,430 | 1,137 of 1,430 |
+| keyframes from the machine; their `GSVR` changed | 103; 102 (20.2 MB in all) | 95; 94 (19.4 MB) |
+| `GSRG`, `VU1M`, `VU1R`, `VIF1` changed at a keyframe | 0, 0, 0, 0 | 0, 0, 0, 0 |
+| `EMUS` changed | 69 (the VU1 cycle counter, the GS's state) | 62 |
+
+The pictures without 3D are unchanged: `s6/boot`'s logos and movie, cycles 0-256 (USA) and 0-257 (Europe), have the
+same hash in both copies (as do a few black cycles later), and `b4-key` (USA) and `b4-key-0` (Europe), menu screens
+drawn from uploads, change in no picture.
+
+**The picture difference** (re-referenced minus original, share of all pixels of the stored pictures, by channel):
+
+| dump | pixels differing | R: -1, +1, +2, +3 or more | G: -1, +1, +2, +3 or more | alpha |
+|---|---|---|---|---|
+| USA `s6/load17` (level load, 380 race cycles) | 31.75% | 3.4%, 12.4%, 1.6%, 0.20% | 8.4%, 15.3%, 2.5%, 0.38% | +1 on 0.08% |
+| Europe `s6/load17` | 36.85% | 5.1%, 14.8%, 1.8%, 0.25% | 9.2%, 17.1%, 3.5%, 0.63% | +1 on 0.06% |
+| USA `s6/boot` (front end after the movie) | 4.40% | 0.10%, 1.8%, 0.59%, 0.01% | 0.07%, 1.6%, 0.62%, 0.01% | +1 on 0.77% |
+| Europe `s6/boot` | 11.52% | 0.06%, 7.4%, 2.3%, 0.20% | 0.05%, 6.7%, 0.42%, 0.20% | +1 on 0.02% |
+| USA `b4-key-1`, Europe `b4-key-1` (front end) | 6.95%, 7.32% | 0.17%, 2.9%, 1.2%, 0.01% (USA) | 0.11%, 2.3%, 1.1%, 0.01% (USA) | +1 on 1.0%, 0.9% |
+
+As 3.11 measured with PATH1 alone moved to round to nearest (31.8-33.2% of a race's pixels, mostly +1); Europe's
+level 17 differs a little more (-2 or less on 1-2% of the channel values) because its water runs were also cut
+before and are now finished. One race picture, USA `s6/load17` cycle 380 (the boat by the octopus): 50,659 of
+153,600 pixels (33.0%) differ, R -1 8.2% / +1 15.7% / +2 1.5% / +3 or more 0.19%, G and B alike, alpha none,
+largest -1..+5; the picture is otherwise the same (`build-decomp/batchR-shots/usa_load17_c380_{before,after,diff}.png`,
+not committed): the difference is a level of dither over the 3D (water, buildings, the tentacles, the boat), none
+on the sky or the HUD.
+
+### 17.3 Checks (all on the re-referenced dumps, both versions)
+
+| check | USA (34) | Europe (33) |
+|---|---|---|
+| `emu --verify`, twice: every GIF hash, register file, picture hash, `REFI`, keyframe and final GS memory | 34 / 34 `PASS` both runs, equal digests | 33 / 33, equal digests |
+| totals of those (both versions) | 1,604,039 kicks' GIF output, 1,604,039 register files, 45,619 picture hashes, 2,860 stored pictures, 131 keyframes, 67 finals: all equal | |
+| VU1 runs; over 65,536 cycles; stopped by the guard | 22,517,443; 575; 0 | 20,558,762; 520; 0 |
+| `vifstat --with-emu` (`s5/l5`, `l17`, `l12`, `front`): MXCSR at the PATH1 packets | 0x1fa2, 0x1fb2, 0x1fb3, 0x1fba, 0x1fbb: the kicks' own (round to nearest; batch 1 saw 0x7fb2 / 0x7fa2); runs cut short 0 | |
+| `vif --verify` without the machine: (b) hash and count per VIF1 kick | **23,433 / 23,433** (was 22,892: the 541 cut kicks) | **20,767 / 20,767** (was 20,254) |
+| the same: register values at every kick | 82,312,258 at 839,921 kicks, 0 differ (was 10) | 74,883,564 at 764,118, 0 differ (was 8) |
+| the same: keyframes (VIF1 registers, micro and data memory, vector registers; `GSRG`) | 69 / 69 each; 103 / 103 | 62 / 62; 95 / 95 |
+| `tex --verify` | 34 / 34 `PASS` | 33 / 33 |
+| `blit --verify --validation` | 34 / 34 `PASS` | 33 / 33 |
+| `gif2d --verify` without the machine (a) | 34 / 34 `PASS` (before batch R only the dumps without cut runs passed) | 33 / 33 |
+| `gif2d --vk --verify --vk-blend read --validation` ((a), (b) with the machine, (c)) | (a), (b), (c) hold on all 34; `PASS` on 32 (below) | on all 33; `PASS` on 31 |
+| (c) totals, both versions | 88,421 kicks, 14,486,896,640 pixel-kicks, **every pixel equal** in R, G, B, A and Z (as batch 4b); 0 validation errors | |
+| `live2d --verify --validation` (`s6/boot`, `s6/load17`, `b4-key*`) | 4 / 4 `PASS` | 4 / 4; 0 validation errors |
+
+- **The four `gif2d --vk` FAILs are not batch R's:** `s5/l2` and `s5/l14` of both versions end `FAIL` only because
+  `--vk` fails on any fired guard, and since batch 1 the gif2d reader also reads PATH1 (`FrameReader`), whose
+  primitives with the two mipmapped textures fire `MIPMAP` (27,399 / 59,687 USA, 31,071 / 59,335 Europe). Every
+  comparison in those runs is equal; the original USA `s5/l2` gives the same `MIPMAP 27399` on the machine before
+  this batch. The check was last run on all dumps in step 7's batch 4b, before PATH1 reached the reader. Batch 2
+  decides K2's mip guard (D-3D-2) and with it what `--vk` counts.
+- `rc_gs2d_test` and the game: 17.4.
+
+### 17.4 `rc_gs2d_test`, the game and the oracle
+
+The runtime changed, so the game and the oracle were rebuilt in all four trees (`build-decomp`, `build-eu` with its
+`rc_replay`, `build-oracle`, `build-oracle-eu`; 6-7 minutes each).
+
+- `rc_gs2d_test --validation` (synchronisation validation on): `PASS`, 0 validation errors (266 s).
+- `tools/oracle.sh --all`: USA seed 5521, **1,632 ok, 0 FAIL** (472 s); Europe seed 5522, **1,563 ok, 0 FAIL** (861 s).
+- `RC_SCENE_LOG=... RC_DEBUG_DUMP=... timeout 70 tools/play.sh replay playtest2`, idle machine: USA default race
+  scene 3020 at frame 658, `RC_RENDERER=vk` 658, **60.0 fps** in both (`tools/fps.py`, every 5 s sample after the
+  boot); Europe `RC_RENDERER=vk` 1167, default 1167 on a second run (the first default run, right after the USA
+  runs and a GPU test, reached it at 1168: the drift `NOTES.md` records under load), **50.0-50.4 fps** in both.
+- Level 17 (`RC_BOOT_LEVEL=17 RC_VU1_REF=1 RC_VU1_SYNTH=decomp/generated/vusrc RC_TRACK_SHADER=0 PS2X_MTVU=0`,
+  120 s): 1,862,204 runs (track 1,262,098, env 344,140 of them 113,443 env-mapped, water 114,462, skin 141,504),
+  58.7 M packets, **cut short 0**, 0 packet, memory or count mismatches; the synthetic TERdr and Rdr_VUShape runs
+  6,261 each, 0 mismatches.
+- The emulated picture: 17.2's race frame (before, after, difference) and the checks above; the GPU back ends the
+  game uses by default (`play.sh`: `PS2X_GS_GPU=1`, `PS2X_GS_HW=1`) do not rasterise in host floats and are
+  unchanged.
+
+### 17.5 Open
+
+- `gif2d --vk` counts PATH1's `MIPMAP` guards as failures on `s5/l2` and `s5/l14` (17.3); batch 2 settles K2's mip
+  levels and what the check counts.
+- The game's native VU1 wrappers (`track_draw.cpp`) still submit PATH1 inside the run's rounding (17.1); they never
+  feed the software GS in exact mode.
+- The originals under `frame-dumps/pre-r/` go when step 8 is closed (6.5 GB).
+- The vif consumer's handling of runs the machine cut short (16.1 item 2) stays in the code and now reports 0.

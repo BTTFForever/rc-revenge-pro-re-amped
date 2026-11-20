@@ -327,6 +327,23 @@ All are in `third_party/ps2recomp/` (against upstream d06a4ab; see "The runtime"
 - `ps2_runtime.cpp` (`Store32`): `g_ps2HardwareStoreHook`, null except in the offline oracle, sees each 32-bit store sent to a hardware register and can drop it (the oracle logs them so both runs' DMA kicks are compared).
 - `include/ps2_capture_hooks.h` (2026-11-19, renderer P1 step 4 batch 1): the frame record's hooks, null unless `RC_FRAME_RECORD` installs them (one null test per site): `ps2_memory.cpp` (each DMA kick on channels 0-2 with every byte range its stream is read from, GS privileged, VIF1 and GIF register stores, FIFO stores, PATH2 packets, `submitGifPacket`), `ps2_runtime.cpp` (`attach` at the end of `initialize`, the store caller in `Store32/64`, the native GIF fast paths), `System.cpp` (`SetGsCrt`), `gs_frontend.cpp` (`GS::writeRegister`, local->host transfers, and `g_gsRawRegs`: every GS register write kept as written, always on), `ps2_save_state.cpp` (`snapshotGs`: GS memory and registers for keyframes, as a save state takes them). See "Frame record".
 - `ps2_save_state.cpp`, `include/ps2_capture_hooks.h` (2026-11-19, renderer P1 step 4 batch 2): `ps2x::savestate::saveGraphics` / `loadGraphics` (the graphics machine's state but GS memory as one versioned blob: GS front end including a GIF tag in progress, which upstream's save state leaves out, backend state, privileged registers and the register shadow, VU1 memory and registers, VIF1 and DMA registers, PATH3 mask and FIFO, pending transfers, the I/O register map) and `ps2x::capture::exactCapable` (bare software GS and no VU1/GIF thread), for the frame record's exact mode and `rc_replay --consumer emu`. Nothing changes when they are not called.
+- `vu/ps2_vu1_core.cpp` (`runLoopWith`), `vu/ps2_vu1_impl.inl` (`finishXgkick`), `include/runtime/ps2_vu1.h` (2026-11-20,
+  renderer P1 step 8 batch R): **PATH1 is handed to the GS under the rounding mode the VU1 run was entered with.** A run
+  sets MXCSR to round toward zero (the VU arithmetic needs it) and XGKICK passed its packet to the GS from inside the run,
+  so the software GS (floats on the calling thread, its band and GS threads take the caller's MXCSR) set up and shaded
+  every PATH1 triangle truncating and every PATH3 one rounding to nearest. `runLoopWith` keeps the entering thread's
+  rounding bits in the interpreter (`m_runRounding`, nested runs restore the outer one) and `finishXgkick` switches to
+  them around `submitGifPacket` and back. Effect: the `gs` renderer's software path (and every exact-mode picture) draws
+  3D about one level brighter on a third of the pixels (`RENDERER_3D_DESIGN.md` 3.11 and section 17); the GPU back ends
+  are unchanged. Not covered: the game's own native VU1 wrappers (`decomp/vu1/track_draw.cpp`, `RC_TRACK_SHADER`, which
+  draws through the GL back end) submit their packets themselves inside the run.
+- `ps2_runtime.cpp` (the MSCAL / MSCNT callbacks), `include/runtime/ps2_vu1.h` (`ps2x::vu1run`, 2026-11-20, batch R):
+  **a VU1 run is no longer cut at 65,536 cycles.** Upstream stopped every run there and never resumed it, which cut
+  1,095 water runs of the exact dumps short (the hardware and the C++ references finish them; the longest in the
+  dumps is 99,261 cycles). The budget is now `kRunGuardCycles` (2^22, about a frame of VU1 time), a guard for a runaway
+  program only; `accountRun` counts runs, the largest, those over the old limit and guard stops (`runStats()`; `rc_replay
+  emu` prints them) and logs `[vu1] a run took N cycles` at the first run over 65,536 and each of the first eight guard
+  stops. `VU1Interpreter::lastRunCycles()` is the cycles of the last run.
 - Experimental, off by default: God of War's render-target renderer (`gs_hw_backend.cpp`, `gs_texture_store.*`, `gs_gpu_helpers.h`,
   `gs_tri_groups.h`, `gs_upload24.h`, `gs_colour_runs.h`, additions to `gs_gl.h`, `gs_gl_api_load.inl` and `ps2_gs_memory.*`).
   Enable with `PS2X_GS_HW=1 PS2X_GS_HW_SCALE=<n>`.
@@ -509,6 +526,17 @@ adds side tags (below); batch 4 the F10 key, the in-memory ring and the segment 
   a dropped kick, a store with bit 0 flipped) to show the checks catch it. The last line is `replay digest <hash>`:
   two replays (or `PS2X_GS_BANDS=1` against the default band count) must print the same. A plain dump replays without
   verifying.
+- **Re-referencing** (renderer P1 step 8 batch R, 2026-11-20; `RENDERER_3D_DESIGN.md` section 17):
+  `build-decomp/rc_replay <exact dump> --consumer emu --rereference <out.rcfr>` replays the whole dump on this build's
+  machine and writes a copy whose references are that machine's: every `KICK`'s register file and GIF hash and length,
+  every `END.refHash` and `REFI`, and the `GSVR`, `GSRG`, `VU1M`, `VU1R`, `VIF1` and `EMUS` of every keyframe but the
+  first and those after a save-state load (the machine runs on through them; `GSPR` and `TAGP` are kept). Everything
+  the game sent is copied. The header gets `kFileRereferenced` ("exact, re-referenced") and the first cycle a `NOTE`
+  naming the build. It prints what changed and a difference histogram of the stored pictures. Use it after a runtime
+  change that changes what the machine draws; then `--consumer emu --verify` must pass on the copy. **The 67 exact
+  dumps were re-referenced on 2026-11-20 (PATH1 rounding, no cut VU1 runs) and are at their old paths; the originals
+  are under `build-decomp/frame-dumps/pre-r/` and `build-eu/frame-dumps/pre-r/` (same relative paths) until step 8 is
+  closed.** A dump recorded by a game built after batch R needs nothing: the recorder's machine is already the new one.
 - **Side tags** (batch 3; `render/gfx/tags.h`, `RENDERER_FRAME_RECORD.md` sections 5 and 15): native code marks what
   it puts into the frame's packets. `rc::gfx::Span2D` / `SpanChain` open a begin anchored to the 2D packet's write
   position / the next chain slot and close it at scope end; `SpanKicks` labels the kicks made while it is open;
@@ -805,8 +833,8 @@ cullOffscreen` leaves out triangles of no area or outside the scissor. Seeded fr
 - `rc_replay <dump> --consumer vif --verify [--quiet]`: (a) VIF1 registers, both VU memories and the vector registers
   at every later keyframe, the GS register file at every kick and against `GSRG`; (b) every channel 1 kick's PATH1
   bytes against the recorded GIF hash. About 20 s a race dump; prints the reader's time a K2 kick (references, VIF
-  walk, GIF walk and list). Kicks with a water run the machine cut short at its 65,536-cycle budget fail (b) here
-  (and can pull the register file with them); that is expected until the runtime's limit goes (design batch R).
+  walk, GIF walk and list). Since batch R (the runtime no longer cuts VU1 runs, the dumps re-referenced) every kick
+  of all 67 dumps passes (b) and the register file is equal at every kick here too.
 - `--with-emu`: behind the emulated machine, whose six generated VU1 programs are wrapped (every run's packets, VU
   memory and registers kept); the reader then runs the same kick and is compared run by run and packet by packet
   (the first difference is named; `--vif-out <dir>` writes that run as `tools/shader_check`'s run record plus both

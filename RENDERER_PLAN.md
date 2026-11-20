@@ -439,6 +439,16 @@ After step 1: fold its answers into this plan's open questions.
    image bit for bit; step 7's `gif2d` checks pass on the frame reader. Without the machine only the 1,054 kicks with a
    water run the runtime cuts short fail (batch R removes the cut). Nine planted faults fail. The reader costs 24-49 ms
    a K2 kick (references 75%). Step 7's batch 5 can follow; batch 2 waits for U1.
+   **U1 answered A; batch R built 2026-11-20 (`RENDERER_3D_DESIGN.md` 17):** the runtime hands PATH1 to the GS under
+   the rounding mode the VU1 run was entered with (the kick's, round to nearest) and no longer cuts VU1 runs at
+   65,536 cycles (a 2^22-cycle runaway guard; the longest run in the dumps is 99,261 cycles). `rc_replay --consumer emu
+   --rereference` rewrote the references of all 67 exact dumps from the corrected machine (kick records untouched;
+   originals kept in `frame-dumps/pre-r/`): about a third of a race's pixels move by a level (USA level 17 31.8%,
+   Europe 36.9%), pictures without 3D are unchanged. On the new dumps `emu --verify` passes twice with equal digests,
+   the vif consumer without the machine now matches every VIF1 kick (23,433 + 20,767; before, the 1,054 kicks with a
+   cut run failed), and steps 5-7's checks pass (tex, blit, gif2d (a), (b), (c) with every pixel equal on 88,421
+   kicks, live2d), apart from `gif2d --vk` counting PATH1's MIPMAP guards on levels 2 and 14 (from batch 1, left to
+   batch 2). Oracle 1,632 / 1,563 ok, `playtest2` unchanged (658 at 60 fps, 1167 at 50). Batch 2 can start.
    **Order and design (step 7's batch 4 review, 2026-11-20, `RENDERER_2D_DESIGN.md` 17.4).** Step 8 starts before
    step 7's live batch, because K1 inherits registers only PATH1 writes and they come out of the VU1 programs'
    packets. It needs a short design first (Fable, `RENDERER_3D_DESIGN.md`), then batches: (1) the reader and the
