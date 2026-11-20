@@ -46,7 +46,11 @@
 // with the emulated GS's result (RENDERER_2D_DESIGN.md 10.3, 16 and 18.4): --vk-blend read (the exact blend by local
 // read, every pixel equal; the default where the device has it), ff (fixed function with D-2D-1's bound; the default
 // without local read) or both; --vk-bias off|on|both is fixed function's source bias (default on); --vk-fault plants the
-// faults of 9.3 and 18.3 in the Vulkan path, --vk-png writes the first failing kick's planes.
+// faults of 9.3 and 18.3 in the Vulkan path, --vk-png writes the first failing kick's planes. (Step 8 batch 2,
+// RENDERER_3D_DESIGN.md 11.4) (d): every channel 1 kick (K2, from the C++ VU1 references) is judged the same way, every
+// pixel equal; the barriers go by covered pixels; --vk-boxes adds the read with batch 4b's box groups for comparison;
+// the faults of 10.3 and 11.4 (no-first-barrier, cover-own-batch, no-stamp-other, epoch-no-barrier, gequal-greater,
+// z-plus-one, repeat-clamp, no-q, draw-culled, cull-drawn).
 //
 // vif (vif.cpp; renderer plan P1 step 8 batch 1, RENDERER_3D_DESIGN.md 11.1-11.3): the frame reader (render/frame: the
 // VIF1 reader with the C++ VU1 references feeding the GIF reader as PATH1). With --verify: (a) VIF1 registers, VU1
@@ -478,7 +482,7 @@ namespace
                              "       gif2d: [--with-emu] [--no-tables] [--fault reg|prim|field:<cycle>:<n>]\n"
                              "       vif: [--with-emu [--vif-substitute bytes|list|list-cull|none]] [--vif-out <dir>]\n"
                              "            [--fault unpack|tops|dbf|mpg|mscal|mxcsr|lane|packet|vumem:<cycle>[:<n>]]\n"
-                             "              [--vk] [--vk-blend read|ff|both] [--vk-bias off|on|both] [--vk-fault <name>[,<name>...]] [--vk-png <dir>] [--validation]\n"
+                             "              [--vk] [--vk-blend read|ff|both] [--vk-boxes] [--vk-bias off|on|both] [--vk-fault <name>[,<name>...]] [--vk-png <dir>] [--validation]\n"
                              "       blit: [--no-gpu] [--validation] [--png <dir>] [--fault tile:<cycle>:<n> | dispfb:<cycle> | byte|gpubyte:<cycle>:<pixel>]\n"
                              "       emu --rereference <out.rcfr> (exact dumps): a copy with the references this machine makes\n"
                              "       live2d (exact dumps; the live 2D renderer, RC_VK_PICTURE=native): [--live-shots <dir>] [--vk-blend read|ff] [--validation] [--png <dir>]\n");
@@ -795,6 +799,7 @@ int main(int argc, char **argv)
     std::string path, consumer = "stats";
     bool verify = false, quiet = false, withEmu = false, noGpu = false, validation = false, noTables = false, vk = false, vifRoundNearest = false,
          vifNoPoison = false;
+    bool vkBoxes = false;
     std::string vkBias = "on", vkBlend = "auto", vkFaults, vkPng, vifSubstitute = "bytes", vifOut, liveShots, rereference;
     uint64_t first = 0, last = ~0ull;
     rc::replay::EmuOptions emuOptions;
@@ -859,6 +864,8 @@ int main(int argc, char **argv)
             vkFaults = argv[++i];
         else if (a == "--vk-png" && i + 1 < argc)
             vkPng = argv[++i];
+        else if (a == "--vk-boxes")
+            vkBoxes = true;
         else if (a == "--live-shots" && i + 1 < argc)
             liveShots = argv[++i];
         else if (a == "--no-tables")
@@ -983,6 +990,7 @@ int main(int argc, char **argv)
             g.vkOptions.quiet = quiet;
             g.vkOptions.pngDir = vkPng;
             g.vkOptions.biasMask = vkBias == "off" ? 1u : vkBias == "on" ? 2u : 3u;
+            g.vkOptions.boxes = vkBoxes;
             if (vkBlend != "auto" && vkBlend != "read" && vkBlend != "ff" && vkBlend != "both")
             {
                 std::fprintf(stderr, "unknown --vk-blend '%s' (read, ff, both)\n", vkBlend.c_str());
@@ -999,7 +1007,8 @@ int main(int argc, char **argv)
                 else if (!rc::replay::gif2dVkFault(name, g.vkOptions.faults))
                 {
                     std::fprintf(stderr, "unknown --vk-fault '%s' (atst-less, drop-fail, split-per-batch, z-gequal, fix, colour-swap, no-half-pixel, "
-                                         "bias-always, texel-row, no-barrier, one-group, texa)\n",
+                                         "bias-always, texel-row, no-barrier, one-group, no-first-barrier, cover-own-batch, no-stamp-other, epoch-no-barrier, "
+                                         "gequal-greater, z-plus-one, repeat-clamp, no-q, draw-culled, cull-drawn, texa)\n",
                                  name.c_str());
                     return 2;
                 }

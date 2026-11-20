@@ -231,7 +231,7 @@ target_link_libraries(rc_replay PRIVATE rc_blit rc_blit_vk rc_tex)
 # game or the oracle.
 set(RC_GS2D_DIR "${CMAKE_CURRENT_SOURCE_DIR}/render/gs2d")
 add_library(rc_gs2d STATIC EXCLUDE_FROM_ALL "${RC_GS2D_DIR}/gif2d_reader.cpp" "${RC_GS2D_DIR}/gs_plan.cpp" "${RC_GS2D_DIR}/gs2d_encode.cpp"
-    "${RC_GS2D_DIR}/gs_model.cpp")
+    "${RC_GS2D_DIR}/gs_model.cpp" "${RC_GS2D_DIR}/gs_cover.cpp")
 # gs_model reproduces the software GS's float expressions operator by operator (no contraction), as the runtime is built.
 target_compile_options(rc_gs2d PRIVATE -O2 -ffp-contract=off -fno-fast-math)
 target_link_libraries(rc_gs2d PRIVATE rc_tex rc_record)

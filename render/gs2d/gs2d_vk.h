@@ -6,7 +6,7 @@
 //
 // Every primitive becomes a record in one storage buffer (Gs2dPrim): its window coordinates, colours, texture
 // coordinates, Z, the reference's edge functions and 1 / area (as double bits) and the plan's per-pixel parameters.
-// The vertex shader only places vertices (GS coordinates moved half a pixel, a 4096 x 4096 viewport at -2048 so the
+// The vertex shader only places vertices (GS coordinates moved half a pixel, an 8192 x 8192 viewport at -4096 so the
 // positions are exact); gs2d.frag computes everything per pixel as the software GS does (weights in doubles, colour,
 // texture coordinates, the bilinear filter, texture function, alpha test, the source term of the blend and Z). The
 // blend is fixed function with dual-source factors (4.2: OFF, MIX, MIXSUB), and every combination of blend
@@ -23,9 +23,17 @@
 // pass is begun readable. Every other plan is drawn through fixed function as before, in the same pass. Without local
 // read (or with Options::blend kBlendFixed) every plan is fixed function: divergence D-2D-1.
 //
+// (Step 8 batch 2, RENDERER_3D_DESIGN.md 10.2) The barriers and the split's groups go by covered pixels (GsCoverMap,
+// gs_cover.h) instead of by boxes: a reading primitive gets a barrier before it only when a pixel it covers was written
+// since the last barrier (or it is the pass's first reading primitive and something was drawn before it), and a split
+// group ends only before a primitive that shares a pixel with it. The box rule stays as Options::grouping kGroupBoxes.
+// K2 (PATH1's triangle lists, thousands a kick) is drawn by the same path; between consecutive draws only the
+// pipeline, bind groups and scissor that changed are recorded.
+//
 // Needs a device made with rhi_init (headless is enough) offering dual-source blending, a D32F attachment and
 // shaderFloat64 (the RHI edit of decision U2): create() refuses otherwise. One thread.
 
+#include "gs_cover.h"
 #include "gs_plan.h"
 #include "gs_state.h"
 
@@ -91,9 +99,26 @@ namespace rc::rd
             kFaultColourSwap = 1u << 5,     // a vertex colour's R and G swapped
             kFaultNoBarrier = 1u << 6,      // (read mode) the barrier before a reading group left out
             kFaultOneGroup = 1u << 7,       // (read mode) a reading batch drawn as one group
+            // (step 8 batch 2, RENDERER_3D_DESIGN.md 10.3 and 11.4) the pixel rule's and K2's faults
+            kFaultNoFirstBarrier = 1u << 8,   // (read, pixel rule) no barrier at a pass's first reading primitive
+            kFaultCoverOwnBatch = 1u << 9,    // (read, pixel rule) a reading batch sees only its own batch's stamps
+            kFaultNoStampOther = 1u << 10,    // (read, pixel rule) non-reading primitives leave no stamps
+            kFaultEpochNoBarrier = 1u << 11,  // (read, pixel rule) the read epoch advanced where a barrier was due, no barrier
+            kFaultGequalAsGreater = 1u << 12, // ZTST GEQUAL drawn as GREATER
+            kFaultZOffByOne = 1u << 13,       // the Z of a triangle's first vertex one more
+            kFaultRepeatAsClamp = 1u << 14,   // CLAMP's REPEAT drawn as CLAMP
+            kFaultNoQ = 1u << 15,             // Q left out (1.0 at every vertex)
             kFaultNoHalfPixel = 1u << 16,   // (shader) the half pixel left out of the position
             kFaultBiasAlways = 1u << 17,    // (shader) the bias applied where a < b
             kFaultTexelRow = 1u << 18,      // (shader) the texel fetch one row down
+            kFaultDrawCulled = 1u << 19,      // a triangle the cull leaves out (no area, box outside the scissor) drawn
+            kFaultCullDrawn = 1u << 20,       // every 16th triangle that would be drawn left out
+        };
+        // How the exact blend's barriers and the split's groups are decided (RENDERER_3D_DESIGN.md 10.2).
+        enum Grouping : uint32_t
+        {
+            kGroupPixels = 0, // (default, step 8 batch 2) by covered pixels: GsCoverMap
+            kGroupBoxes = 1,  // (step 7 batch 4b) groups of primitives with pairwise disjoint scissored boxes inside a batch
         };
         // How the plans with a fractional blend factor are drawn (RENDERER_2D_DESIGN.md 18.2).
         enum BlendMode : uint32_t
@@ -109,21 +134,27 @@ namespace rc::rd
             // layer -1..+1 against the GS on the RTX 2060's 8-bit blender, against -1..+2 without it (RENDERER_2D_DESIGN.md
             // 15.3, the batch 4 review's choice in 17.1).
             bool sourceBias = true;
+            Grouping grouping = kGroupPixels;
             uint32_t faults = 0;
         };
         struct Stats
         {
             uint64_t lists = 0, draws = 0, prims = 0, records = 0, linePixels = 0, points = 0, clears = 0, textures = 0;
             uint64_t splitPrims = 0, splitGroups = 0, decidedOnCpu = 0, unsupported = 0, spritesSkipped = 0;
-            uint64_t culled = 0, beyondViewport = 0, zClamped = 0;
+            uint64_t culled = 0, beyondViewport = 0;
             uint64_t readPrims = 0, readGroups = 0, barriers = 0; // the exact blend: primitives drawn by READ, their groups, barriers issued
+            uint64_t coverPixels = 0;  // pixels the cover map looked at or stamped (the pixel rule's work)
+            uint64_t zAbove24 = 0;     // drawn triangles with a vertex Z at or above 2^24 (the shader clamps it)
         };
         // The last draw()'s figures: reading primitives, groups and barriers, and the GPU time of its command list
         // (timestamps from before the first pass to after the last; 0 where the device has no timestamps).
         struct ListStats
         {
             uint64_t readPrims = 0, readGroups = 0, barriers = 0, draws = 0;
+            uint64_t prims = 0, splitGroups = 0, beyondViewport = 0, zAbove24 = 0, coverPixels = 0;
+            uint64_t binds = 0;      // pipeline, bind group and scissor commands recorded (only what changed between draws)
             double gpuMs = 0.0;
+            double buildMs = 0.0, coverMs = 0.0; // CPU: building the records and draws; of it, the cover map's spans and stamps
         };
 
         Gs2dVk() = default;
@@ -207,5 +238,7 @@ namespace rc::rd
         std::unordered_map<uint32_t, RhiTexture> m_textures; // TEXTURE id -> its latest upload
         std::vector<RhiTexture> m_retired;                    // replaced uploads, destroyed after the next submit
         std::vector<Gs2dPrim> m_scratch;
+        GsCoverMap m_cover;          // the pixel rule (Options::grouping kGroupPixels)
+        std::vector<GsSpan> m_spans; // the covered pixels of the batch being flushed
     };
 }

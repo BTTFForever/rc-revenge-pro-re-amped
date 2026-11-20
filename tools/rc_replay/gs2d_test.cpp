@@ -4,18 +4,23 @@
 // comes from), (2) gs_model on the CPU and (3) Gs2dVk on the RTX 2060 (headless RHI, read back), after going through
 // the reader (Gif2dReader) into a draw list.
 //
-//   rc_gs2d_test [--only model,T1,...,T8] [--blend read|ff|both] [--no-faults] [--validation] [--quiet]
+//   rc_gs2d_test [--only model,T1,...,T10] [--blend read|ff|both] [--no-faults] [--validation] [--quiet]
 //
 // Runs the model's self-check (9.1), T1-T8 (9.2, 18.3), then each planted fault of 9.3 and 18.3 against the test that
 // must catch it. --blend: how Gs2dVk draws the fractional blends (batch 4b, RENDERER_2D_DESIGN.md 18): read, the exact
 // blend by local read (every plane equal to the emulated GS); ff, fixed function with D-2D-1's measured bound (T1:
 // per channel -1..+1 with the source bias, -1..+2 without, the integer-exact rows equal; T2: -L..+L); both (the
 // default where the device has local read; else ff). T3-T6 and T8 run in read mode where it is available, T7 once.
+// (Step 8 batch 2, RENDERER_3D_DESIGN.md 9.2 and 10.3) T9: what K2 uses that K1 did not (per-vertex Z under GREATER
+// and GEQUAL, every PATH1 state on an alpha-ramped 256 x 128 texture, REPEAT to +-1,000 texels, big triangles, ADC
+// vertices); T10: the barriers by covered pixels (water's three passes over a mesh, exactly the predicted barriers;
+// reading and exact triangles interleaved; GsCoverMap's spans against gsTriCovers; the box rule on the same scenes).
 // --only blenddbg prints a small table of the fixed-function blender's results. Ends PASS or FAIL. GPU:
 // __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only (NOTES.md); synchronisation validation:
 // VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true with --validation.
 
 #include "../../render/gs2d/gif2d_reader.h"
+#include "../../render/gs2d/gs_cover.h"
 #include "../../render/gs2d/gs2d_vk.h"
 #include "../../render/gs2d/gs_model.h"
 #include "../../render/gs2d/gs_plan.h"
@@ -256,6 +261,7 @@ namespace
             Planes emu, model, vk;
             DrawList list;
             bool vkOk = true, modelRun = false;
+            uint64_t dropped = 0; // primitives the reader left out (FRAME.FBW 0, or a register with no default unknown)
         };
 
         Result run(const std::vector<uint8_t> &packet, const Planes &seed)
@@ -292,6 +298,7 @@ namespace
                 rd.feedPath3(packet.data(), static_cast<uint32_t>(packet.size()));
                 rd.cycleEnd(rc::rec::CycleInfo{}, nullptr);
                 r.list = rd.list();
+                r.dropped = rd.stats().dropped;
             }
             // (2) the model.
             if (useModel)
@@ -1483,6 +1490,610 @@ namespace
             m.vk->setOptions(before);
     }
 
+    // ---------------------------------------------------------------- step 8 batch 2: K2's paths and the pixel rule
+    // (RENDERER_3D_DESIGN.md 9.2 and 10.3)
+
+    // A vertex sent as XYZ3 (ADC: queued without the drawing kick), as 21.3 M PATH1 vertices arrive.
+    void vertexAdc(Gif &g, const V &v)
+    {
+        g.ad(kGsRgbaq, rgbaOf(v.r, v.g, v.b, v.a) | static_cast<uint64_t>(fbits(v.q)) << 32);
+        g.ad(kGsSt, fbits(v.s) | static_cast<uint64_t>(fbits(v.t)) << 32);
+        const uint64_t X = static_cast<uint64_t>(std::llround((v.x + kOfx) * 16.0)) & 0xFFFFu;
+        const uint64_t Y = static_cast<uint64_t>(std::llround((v.y + kOfy) * 16.0)) & 0xFFFFu;
+        g.ad(kGsXyz3, X | Y << 16 | static_cast<uint64_t>(v.z) << 32);
+    }
+
+    // The K2 texture: 256 x 128 CT32, random colour, alpha a ramp over x from 0 to 0x90 (crossing AREF 0x2f, 0x3f and
+    // PABE's 0x80), at TBP 0x3000 (TBW 4).
+    constexpr uint32_t kK2Tbp = 0x3000;
+    void uploadK2Texture(Gif &g, uint32_t seed)
+    {
+        std::vector<uint8_t> d;
+        uint32_t s = seed * 2246822519u + 7u;
+        for (uint32_t y = 0; y < 128; ++y)
+            for (uint32_t x = 0; x < 256; ++x)
+            {
+                s = s * 1664525u + 1013904223u;
+                d.push_back(static_cast<uint8_t>(s >> 8));
+                d.push_back(static_cast<uint8_t>(s >> 16));
+                d.push_back(static_cast<uint8_t>((s >> 24) ^ y));
+                d.push_back(static_cast<uint8_t>((x * 0x90u) / 255u));
+            }
+        g.image(kK2Tbp, 4, 0x00, 256, 128, d);
+    }
+    uint64_t k2Tex0() { return tex0Of(kK2Tbp, 4, 0x00, 8, 7, 1, 0); }
+
+    // Z planes: a ramp over the picture (x and y), so per-vertex Z crosses the stored values.
+    Planes zRamp(uint32_t seed, uint8_t alpha)
+    {
+        Planes p = pattern(seed, alpha);
+        for (uint32_t y = 0; y < kH; ++y)
+            for (uint32_t x = 0; x < kW; ++x)
+                p.z[y * kW + x] = (x * 0x6A00u + y * 0x9D00u + (x * y) % 0x3FFu) & 0xFFFFFFu;
+        return p;
+    }
+
+    // PATH1's draw states (RENDERER_3D_DESIGN.md 3.6; TEST and ALPHA as the dumps hold them).
+    struct K2State
+    {
+        const char *what;
+        uint32_t prim;
+        uint64_t alpha, test;
+        uint32_t pabe;
+        bool zmsk;
+        uint64_t tex1, clamp;
+    };
+    const K2State kK2States[] = {
+        {"0x44 PABE, LEQUAL 0x2f, Z GREATER (the track)", 0x5B, 0x44, 0x702F7, 1, false, 0xF6000000160ull, 5},
+        {"no blend, LEQUAL 0x2f, Z GREATER", 0x1B, 0, 0x702F7, 0, false, 0xF6000000160ull, 5},
+        {"0x29 FIX 0x80, LEQUAL 0x2f, Z GEQUAL (env pass)", 0x5B, 0x8000000029ull, 0x502F7, 0, false, 0xF6000000160ull, 5},
+        {"0x09, Z GREATER, ZMSK, REPEAT (water 1)", 0x5B, 0x09, 0x70000, 0, true, 0xF6000000160ull, 0},
+        {"0x62 FIX 0x15, Z GEQUAL, ZMSK, REPEAT (water 2)", 0x5B, 0x1500000062ull, 0x50000, 0, true, 0xF6000000160ull, 0},
+        {"0x68 FIX 0x15, Z GEQUAL, ZMSK, REPEAT (water 3)", 0x5B, 0x1500000068ull, 0x50000, 0, true, 0xF6000000160ull, 0},
+        {"0x29 FIX 0x80, LEQUAL 0x3f, ZMSK, TEX1 0x60", 0x5B, 0x8000000029ull, 0x703F7, 0, true, 0x60, 5},
+        {"0x08, LEQUAL 0x2f, Z GREATER", 0x5B, 0x08, 0x702F7, 0, false, 0xF6000000160ull, 5},
+        {"0x68 FIX 0x80, Z GREATER, ZMSK", 0x5B, 0x8000000068ull, 0x70000, 0, true, 0xF6000000160ull, 5},
+        {"0xa1 FIX 0x80, LEQUAL 0x3f, ZMSK, TEX1 0x60", 0x5B, 0x80000000A1ull, 0x703F7, 0, true, 0x60, 5},
+        {"0x01, Z GREATER, ZMSK", 0x5B, 0x01, 0x70000, 0, true, 0xF6000000160ull, 5},
+        {"0x29 FIX 0x7f, LEQUAL 0x2f, ZMSK", 0x5B, 0x7F00000029ull, 0x702F7, 0, true, 0xF6000000160ull, 5},
+        {"0x01, LEQUAL 0x3f RGB_ONLY, ZMSK, TEX1 0x60", 0x5B, 0x8000000001ull, 0x733F7, 0, true, 0x60, 5},
+        {"0x44 PABE, MXL 3 (mipmapped, level 0)", 0x5B, 0x44, 0x702F7, 1, false, 0xF600000016Cull, 5},
+        {"0x44 PABE, MXL 4 (mipmapped, level 0)", 0x5B, 0x44, 0x702F7, 1, false, 0xF6000000170ull, 5},
+        {"0x21 FIX 0x80 PABE, LEQUAL 0x3f", 0x5B, 0x8000000021ull, 0x703F7, 1, false, 0xF6000000160ull, 5},
+        {"0x09, LEQUAL 0x3f, Z GREATER, Z write", 0x5B, 0x09, 0x703F7, 0, false, 0xF6000000160ull, 5},
+        {"no blend, TEX1 0x60, ZMSK", 0x1B, 0, 0x70000, 0, true, 0x60, 5},
+    };
+    void k2StateWrites(Gif &g, const K2State &st)
+    {
+        g.ad(kGsAlpha, st.alpha);
+        g.ad(kGsTest, st.test);
+        g.ad(kGsPabe, st.pabe);
+        g.ad(kGsZbuf, kZbuf | (st.zmsk ? kZmsk : 0));
+        g.ad(kGsTex0, k2Tex0());
+        g.ad(kGsTex1, st.tex1);
+        g.ad(kGsClamp, st.clamp);
+        // The mip levels' addresses, as PATH1 writes them (the reference never reads them: level 0 is drawn).
+        g.ad(kGsMiptbp1, 0x3400ull | 2ull << 14 | 0x3480ull << 20 | 1ull << 34 | 0x34A0ull << 40 | 1ull << 54);
+        g.ad(kGsMiptbp2, 0x34B0ull | 1ull << 14 | 0x34B8ull << 20 | 1ull << 34 | 0x34BCull << 40 | 1ull << 54);
+    }
+    // A perspective quad (two triangles) over x0..x1 x y0..y1: Q per vertex, S and T over s0..s1 / t0..t1 (times Q),
+    // Gouraud colour, an alpha ramp over the vertices, Z per vertex.
+    void k2Quad(Gif &g, uint32_t prim, double x0, double y0, double x1, double y1, float s0, float s1, float t0, float t1, const uint32_t z[4],
+                const uint8_t a[4], uint32_t seed, bool adc = false)
+    {
+        const float qs[4] = {0.6f, 1.0f, 1.7f, 2.3f};
+        V v[4];
+        for (int k = 0; k < 4; ++k)
+        {
+            v[k].x = (k & 1) ? x1 : x0;
+            v[k].y = (k & 2) ? y1 : y0;
+            v[k].q = qs[(k + seed) & 3];
+            v[k].s = ((k & 1) ? s1 : s0) * v[k].q;
+            v[k].t = ((k & 2) ? t1 : t0) * v[k].q;
+            v[k].z = z[k];
+            v[k].r = static_cast<uint8_t>(0x40 + 37 * k + 11 * seed);
+            v[k].g = static_cast<uint8_t>(0x90 - 23 * k + 5 * seed);
+            v[k].b = static_cast<uint8_t>(0x60 + 17 * k);
+            v[k].a = a[k];
+        }
+        g.ad(kGsPrim, prim);
+        if (adc)
+            vertexAdc(g, v[0]);
+        else
+            vertex(g, v[0]);
+        vertex(g, v[1]);
+        vertex(g, v[2]);
+        g.ad(kGsPrim, prim);
+        if (adc)
+            vertexAdc(g, v[1]);
+        else
+            vertex(g, v[1]);
+        vertex(g, v[3]);
+        vertex(g, v[2]);
+    }
+
+    // --- T9: what K2 uses that K1 did not (9.2).
+    void testT9(Test &t, Machines &m)
+    {
+        auto run = [&](const std::string &what, Gif &g, const Planes &seed, bool model = true)
+        {
+            const Machines::Result r = m.run(g.bytes(), seed);
+            const uint64_t changed = compare(r.emu, seed).n;
+            if (!g_quiet)
+            {
+                const Diff d = compare(r.emu, r.model);
+                std::printf("  T9 %-56s %6" PRIu64 " values drawn; model %s\n", what.c_str(), changed, d.n ? diffText(d, "emu", "model").c_str() : "equal");
+            }
+            ++t.checks;
+            if (r.dropped || !changed)
+                return t.fail(what + ": " + std::to_string(r.dropped) + " primitives dropped by the reader, " + std::to_string(changed) +
+                              " values drawn by the emulated GS (the scene is not what it should test)");
+            return threeEqual(t, r, what.c_str(), model, true) || !t.failFast;
+        };
+        // (i) Per-vertex Z under GREATER and GEQUAL, with and without the Z write, against a stored ramp; every triangle
+        // drawn twice (the second with other colours: under GEQUAL it lands, under GREATER it does not).
+        for (uint32_t ztst : {3u, 2u})
+            for (int zmsk = 0; zmsk < 2; ++zmsk)
+            {
+                Gif g;
+                Env e;
+                e.zbuf = kZbuf | (zmsk ? kZmsk : 0);
+                e.test = 1u << 16 | ztst << 17;
+                env(g, e);
+                for (int pass = 0; pass < 2; ++pass)
+                {
+                    uint32_t s = 99;
+                    for (int k = 0; k < 14; ++k)
+                    {
+                        V v[3];
+                        for (int i = 0; i < 3; ++i)
+                        {
+                            s = s * 1664525u + 1013904223u;
+                            v[i].x = std::round((static_cast<double>(s >> 16 & 0x3FF) * 0.75 - 60.0) * 16.0) / 16.0 + (i == 2 ? 0.3125 : 0.0);
+                            s = s * 1664525u + 1013904223u;
+                            v[i].y = std::round((static_cast<double>(s >> 16 & 0x1FF) * 0.6 - 20.0) * 16.0) / 16.0;
+                            s = s * 1664525u + 1013904223u;
+                            v[i].z = (s >> 8) & 0xFFFFFFu;
+                            if (k % 5 == 0)
+                                v[i].z = 0xFFFFFF - (i * 3u); // near the top of Z24
+                            v[i].r = static_cast<uint8_t>(pass ? 0x20 + 9 * k : 0xF0 - 7 * k);
+                            v[i].g = static_cast<uint8_t>(0x30 * i + pass * 0x40);
+                            v[i].b = static_cast<uint8_t>(k * 13);
+                            v[i].a = 0x80;
+                        }
+                        tri(g, 0x0B, v[0], v[1], v[2]);
+                    }
+                }
+                char what[96];
+                std::snprintf(what, sizeof(what), "(i) per-vertex Z, %s, %s", ztst == 3 ? "GREATER" : "GEQUAL", zmsk ? "ZMSK" : "Z write");
+                if (!run(what, g, zRamp(31 + ztst + zmsk, 0x30)))
+                    return;
+            }
+        // (ii) every PATH1 state of 3.6 on a 256 x 128 CT32 texture with an alpha ramp (LEQUAL 0x2f and 0x3f, PABE's 0x80
+        // all crossed), perspective Q, Gouraud colour and an alpha ramp over the vertices, Z per vertex over a stored
+        // ramp; two overlapping quads a state (so the reading states read what the first drew).
+        const size_t nStates = sizeof(kK2States) / sizeof(kK2States[0]);
+        for (size_t first = 0; first < nStates; first += 6)
+        {
+            Gif g;
+            uploadK2Texture(g, 5);
+            Env e;
+            e.zbuf = kZbuf;
+            env(g, e);
+            int cell = 0;
+            for (size_t i = first; i < std::min(nStates, first + 6); ++i, ++cell)
+            {
+                const K2State &st = kK2States[i];
+                k2StateWrites(g, st);
+                const double x0 = (cell % 3) * 213.0 + 3.0625, y0 = (cell / 3) * 128.0 + 2.5;
+                const uint32_t z1[4] = {0x200000, 0x900000, 0x500000, 0xF00000};
+                const uint32_t z2[4] = {0xE00000, 0x100000, 0x800000, 0x480000};
+                const uint8_t a1[4] = {0x80, 0x60, 0x80, 0x18};
+                const uint8_t a2[4] = {0x80, 0x80, 0x30, 0x80};
+                k2Quad(g, st.prim, x0, y0, x0 + 150.0, y0 + 90.0, 0.02f, 0.97f, 0.03f, 0.99f, z1, a1, static_cast<uint32_t>(i));
+                k2Quad(g, st.prim, x0 + 40.0625, y0 + 25.75, x0 + 205.0, y0 + 122.0, -0.3f, 1.4f, 0.1f, 0.8f, z2, a2, static_cast<uint32_t>(i) + 1);
+            }
+            if (!run("(ii) PATH1 states " + std::to_string(first) + "-" + std::to_string(std::min(nStates, first + 6) - 1), g, zRamp(7 + first, 0x50)))
+                return;
+        }
+        // (iii) REPEAT to +-1,000 texels (S and T far outside 0..1, perspective), linear and nearest, both water states.
+        for (uint64_t tex1 : {0xF6000000160ull, 0ull})
+        {
+            Gif g;
+            uploadK2Texture(g, 9);
+            Env e;
+            env(g, e);
+            int cell = 0;
+            for (const float span : {3.9f, -3.9f, 7.8f})
+                for (const K2State *st : {&kK2States[3], &kK2States[8]})
+                {
+                    K2State s = *st;
+                    s.tex1 = tex1;
+                    s.clamp = 0;
+                    k2StateWrites(g, s);
+                    const double x0 = (cell % 3) * 213.0, y0 = (cell / 3) * 128.0;
+                    const uint32_t z[4] = {0xFFFE00, 0xFFFE40, 0xFFFE80, 0xFFFEC0}; // above the stored ramp: the Z test passes
+                    const uint8_t a[4] = {0x80, 0x70, 0x80, 0x50};
+                    k2Quad(g, s.prim, x0, y0, x0 + 200.0, y0 + 120.0, -span, span, span * 0.5f, -span * 2.0f, z, a, static_cast<uint32_t>(cell));
+                    ++cell;
+                }
+            if (!run(std::string("(iii) REPEAT to +-1,000 texels, ") + (tex1 ? "bilinear" : "nearest"), g, zRamp(77, 0x40)))
+                return;
+        }
+        // (iv) big triangles: vertices to 2,047 pixels from the window origin (the viewport's range), perspective,
+        // REPEAT, per-vertex Z.
+        {
+            Gif g;
+            uploadK2Texture(g, 13);
+            Env e;
+            e.zbuf = kZbuf;
+            e.test = 1u << 16 | 3u << 17;
+            env(g, e);
+            K2State s = kK2States[1];
+            s.clamp = 0;
+            k2StateWrites(g, s);
+            const double far[6][2] = {{-1727.5, -1927.0}, {2047.0, -200.0}, {300.0, 2047.0}, {-1700.0, 2040.0}, {2046.9375, 2046.0}, {-1000.0, -1900.0}};
+            for (int k = 0; k < 6; ++k)
+            {
+                V v[3];
+                v[0].x = far[k][0];
+                v[0].y = far[k][1];
+                v[1].x = 320.5 + 40 * k;
+                v[1].y = 30.25 + 20 * k;
+                v[2].x = 100.0 + 70 * k;
+                v[2].y = 230.0 - 15 * k;
+                for (int i = 0; i < 3; ++i)
+                {
+                    v[i].q = 0.4f + 0.9f * static_cast<float>((i + k) % 3);
+                    v[i].s = static_cast<float>(v[i].x / 64.0) * v[i].q;
+                    v[i].t = static_cast<float>(v[i].y / 64.0) * v[i].q;
+                    v[i].z = 0x10000u * static_cast<uint32_t>(20 + 30 * i + 7 * k);
+                    v[i].r = static_cast<uint8_t>(0x50 + 30 * i);
+                    v[i].g = static_cast<uint8_t>(0x80 - 10 * k);
+                    v[i].b = 0x70;
+                    v[i].a = 0x80;
+                }
+                tri(g, s.prim, v[0], v[1], v[2]);
+            }
+            if (!run("(iv) big triangles, vertices to 2,047 pixels out", g, zRamp(91, 0x20)))
+                return;
+        }
+        // (v) ADC vertices (XYZ3: queued, no kick) as PATH1 sends them, and one extra XYZ3 vertex shifting the queue.
+        {
+            Gif g;
+            uploadK2Texture(g, 17);
+            Env e;
+            e.zbuf = kZbuf;
+            env(g, e);
+            k2StateWrites(g, kK2States[0]);
+            const uint32_t z[4] = {0x300000, 0x310000, 0x320000, 0x330000};
+            const uint8_t a[4] = {0x10, 0x20, 0x28, 0x2F};
+            for (int k = 0; k < 6; ++k)
+                k2Quad(g, 0x5B, 20.0 + 100 * k, 10.0, 110.0 + 100 * k, 100.0, 0.0f, 1.0f, 0.0f, 1.0f, z, a, static_cast<uint32_t>(k), true);
+            // An extra XYZ3 vertex first: the queue then draws (extra, a, b), and (c, d, e) after it.
+            V w[6];
+            for (int k = 0; k < 6; ++k)
+            {
+                w[k].x = 300.0 + 40.0 * k + (k & 1) * 13.0;
+                w[k].y = (k & 1) ? 250.0 : 120.0 + 7 * k;
+                w[k].z = 0x380000 + 0x1000u * static_cast<uint32_t>(k);
+                w[k].q = 0.8f + 0.3f * k;
+                w[k].s = 0.15f * k * w[k].q;
+                w[k].t = ((k & 1) ? 0.9f : 0.1f) * w[k].q;
+                w[k].a = static_cast<uint8_t>(0x08 + 6 * k);
+                w[k].r = static_cast<uint8_t>(0x70 + 20 * k);
+            }
+            g.ad(kGsPrim, 0x5B);
+            vertexAdc(g, w[0]);
+            for (int k = 1; k < 6; ++k)
+                vertex(g, w[k]);
+            if (!run("(v) ADC (XYZ3) vertices", g, zRamp(5, 0x40)))
+                return;
+        }
+    }
+
+    // --- T10: the barrier rule by covered pixels (10.3).
+
+    // The rule computed independently (dense pixel sets from gsTriCovers per pixel, no spans): the barriers a draw list
+    // of one target needs. Reading: a fractional blend (planState: blend on, not exactBlend).
+    uint64_t predictBarriers(const DrawList &list)
+    {
+        std::vector<uint8_t> dirty(kPix, 0);
+        bool drawn = false, readSeen = false;
+        uint64_t barriers = 0;
+        GsState st{};
+        GsPlan plan{};
+        bool have = false;
+        int target = -1;
+        for (const DrawCmd &c : list.cmds)
+        {
+            if (c.op == kOpState)
+            {
+                st = list.state(c);
+                plan = planState(st);
+                have = !(plan.unsupported || (c.a & 1u));
+                continue;
+            }
+            if (c.op != kOpScreenPrims || !have || c.a != kKindTriangles)
+                continue;
+            if (static_cast<int>(plan.target) != target)
+            {
+                // Another target: another pass, which orders everything before it.
+                target = static_cast<int>(plan.target);
+                drawn = readSeen = false;
+                std::fill(dirty.begin(), dirty.end(), 0);
+            }
+            const GsVertex *v = list.vertices(c);
+            const uint32_t ofx = st.xyoffset & 0xFFFFu, ofy = (st.xyoffset >> 32) & 0xFFFFu;
+            const int sx0 = static_cast<int>(st.scissor & 0x7FFu), sx1 = std::min(static_cast<int>((st.scissor >> 16) & 0x7FFu), static_cast<int>(kW) - 1);
+            const int sy0 = static_cast<int>((st.scissor >> 32) & 0x7FFu), sy1 = std::min(static_cast<int>((st.scissor >> 48) & 0x7FFu), static_cast<int>(kH) - 1);
+            const bool reads = plan.blend != kBlendOff && !plan.exactBlend;
+            for (uint32_t p = 0; p < c.b; ++p)
+            {
+                GsTri t;
+                if (!gsTriSetup(v + p * 3u, ofx, ofy, t))
+                    continue;
+                std::vector<uint32_t> px;
+                for (int y = std::max(t.minY, sy0); y <= std::min(t.maxY, sy1); ++y)
+                    for (int x = std::max(t.minX, sx0); x <= std::min(t.maxX, sx1); ++x)
+                    {
+                        const int64_t e[3] = {gsTriEdge(t, 0, x, y), gsTriEdge(t, 1, x, y), gsTriEdge(t, 2, x, y)};
+                        if (gsTriCovers(t, e))
+                            px.push_back(static_cast<uint32_t>(y) * kW + static_cast<uint32_t>(x));
+                    }
+                if (px.empty())
+                    continue;
+                if (reads)
+                {
+                    bool need = false;
+                    if (!readSeen)
+                    {
+                        readSeen = true;
+                        need = drawn;
+                    }
+                    else
+                        for (uint32_t i : px)
+                            need |= dirty[i] != 0;
+                    if (need)
+                    {
+                        ++barriers;
+                        std::fill(dirty.begin(), dirty.end(), 0);
+                    }
+                }
+                if (readSeen)
+                    for (uint32_t i : px)
+                        dirty[i] = 1;
+                drawn = true;
+            }
+        }
+        return barriers;
+    }
+
+    void testT10(Test &t, Machines &m)
+    {
+        // (o) GsCoverMap's spans against the reference's per-pixel coverage: random triangles (subpixel, slivers, large,
+        // partly off the target), each span set equal to gsTriCovers over the box.
+        {
+            ++t.checks;
+            uint32_t s = 4242;
+            auto rnd = [&]() { return s = s * 1664525u + 1013904223u, s >> 8; };
+            uint64_t tris = 0, pixels = 0, bad = 0;
+            std::vector<GsSpan> sp;
+            for (int k = 0; k < 20000; ++k)
+            {
+                GsVertex v[3]{};
+                const int scale = (k % 4 == 0) ? 4000 : (k % 4 == 1) ? 60 : (k % 4 == 2) ? 700 : 3;
+                const int cx = static_cast<int>(rnd() % 800) - 80, cy = static_cast<int>(rnd() % 320) - 30;
+                for (int i = 0; i < 3; ++i)
+                {
+                    const int dx = static_cast<int>(rnd() % (2 * scale * 16 + 1)) - scale * 16, dy = static_cast<int>(rnd() % (2 * scale * 16 + 1)) - scale * 16;
+                    v[i].x = static_cast<uint16_t>(std::clamp((cx + kOfx) * 16 + dx, 0, 65535));
+                    v[i].y = static_cast<uint16_t>(std::clamp((cy + kOfy) * 16 + dy, 0, 65535));
+                }
+                if (k % 7 == 0)
+                    v[2].y = v[1].y; // a flat edge
+                GsTri tr;
+                if (!gsTriSetup(v, kOfx * 16, kOfy * 16, tr))
+                    continue;
+                const int x0 = std::max(tr.minX, 0), x1 = std::min(tr.maxX, static_cast<int>(kW) - 1);
+                const int y0 = std::max(tr.minY, 0), y1 = std::min(tr.maxY, static_cast<int>(kH) - 1);
+                if (x1 < x0 || y1 < y0)
+                    continue;
+                ++tris;
+                sp.clear();
+                GsCoverMap::triangle(tr, x0, y0, x1, y1, sp);
+                std::vector<uint8_t> byspan(static_cast<size_t>(x1 - x0 + 1) * (y1 - y0 + 1), 0);
+                for (const GsSpan &q : sp)
+                    for (int x = q.x0; x <= q.x1; ++x)
+                        byspan[static_cast<size_t>(q.y - y0) * (x1 - x0 + 1) + (x - x0)] = 1;
+                for (int y = y0; y <= y1; ++y)
+                    for (int x = x0; x <= x1; ++x)
+                    {
+                        const int64_t e[3] = {gsTriEdge(tr, 0, x, y), gsTriEdge(tr, 1, x, y), gsTriEdge(tr, 2, x, y)};
+                        const bool c = gsTriCovers(tr, e);
+                        pixels += c;
+                        bad += c != (byspan[static_cast<size_t>(y - y0) * (x1 - x0 + 1) + (x - x0)] != 0);
+                    }
+            }
+            if (!g_quiet)
+                std::printf("  T10 (o) spans against gsTriCovers: %" PRIu64 " triangles, %" PRIu64 " covered pixels, %" PRIu64 " differ\n", tris, pixels, bad);
+            if (bad)
+                t.fail("(o) GsCoverMap::triangle differs from gsTriCovers on " + std::to_string(bad) + " pixels");
+        }
+        const Gs2dVk::Options before = m.vk ? m.vk->options() : Gs2dVk::Options{};
+        setMode(m.vk, true);
+        auto run = [&](const std::string &what, Gif &g, const Planes &seed, int64_t expect)
+        {
+            const Machines::Result r = m.run(g.bytes(), seed);
+            const uint64_t predicted = predictBarriers(r.list);
+            const uint64_t issued = m.vk ? m.vk->lastList().barriers : 0;
+            const bool boxes = m.vk && m.vk->options().grouping == Gs2dVk::kGroupBoxes;
+            if (!g_quiet)
+                std::printf("  T10 %-62s barriers %" PRIu64 " (predicted %" PRIu64 "%s), draws %" PRIu64 "\n", what.c_str(), issued, predicted,
+                            expect >= 0 ? (", the design's " + std::to_string(expect)).c_str() : "", m.vk ? m.vk->lastList().draws : 0);
+            bool ok = threeEqual(t, r, what.c_str());
+            // The fault runs judge the pictures only; the box rule (kGroupBoxes) must pass with at least as many barriers.
+            if (m.vk && m.vk->options().faults == 0 && r.vkOk)
+            {
+                ++t.checks;
+                if (boxes ? issued < predicted : (issued != predicted || (expect >= 0 && static_cast<int64_t>(issued) != expect)))
+                    ok = t.fail(what + ": " + std::to_string(issued) + " barriers, predicted " + std::to_string(predicted) +
+                                (expect >= 0 ? ", the design's " + std::to_string(expect) : std::string()) + (boxes ? " (box rule: at least)" : "")) &&
+                         ok;
+            }
+            return ok || !t.failFast;
+        };
+        // The water mesh: a fan of 32 triangles around a centre and a strip-like mesh of 32 (a grid two cells high),
+        // sharing edges; `moved`: every fourth triangle shifted to overlap its neighbour.
+        auto mesh = [](bool moved)
+        {
+            std::vector<std::array<V, 3>> tris;
+            const double cx = 160.4375, cy = 128.5625, r = 110.0;
+            for (int k = 0; k < 32; ++k)
+            {
+                std::array<V, 3> tr;
+                tr[0].x = cx;
+                tr[0].y = cy;
+                for (int i = 0; i < 2; ++i)
+                {
+                    const double a = (k + i) * 2.0 * M_PI / 32.0;
+                    tr[1 + i].x = std::round((cx + r * std::cos(a)) * 16.0) / 16.0;
+                    tr[1 + i].y = std::round((cy + r * std::sin(a)) * 16.0) / 16.0;
+                }
+                tris.push_back(tr);
+            }
+            for (int k = 0; k < 32; ++k)
+            {
+                const int col = k / 2, row = 0;
+                const double x0 = 330.0 + col * 18.6875, y0 = 30.25 + row * 90.0, w = 18.6875, h = 95.5;
+                std::array<V, 3> tr;
+                if (k % 2 == 0)
+                {
+                    tr[0].x = x0, tr[0].y = y0, tr[1].x = x0 + w, tr[1].y = y0, tr[2].x = x0, tr[2].y = y0 + h;
+                }
+                else
+                {
+                    tr[0].x = x0 + w, tr[0].y = y0, tr[1].x = x0 + w, tr[1].y = y0 + h, tr[2].x = x0, tr[2].y = y0 + h;
+                }
+                tris.push_back(tr);
+            }
+            if (moved)
+                for (size_t k = 3; k < tris.size(); k += 4)
+                    for (V &v : tris[k])
+                    {
+                        v.x += 6.5;
+                        v.y += 3.25;
+                    }
+            for (size_t k = 0; k < tris.size(); ++k)
+                for (int i = 0; i < 3; ++i)
+                {
+                    V &v = tris[k][i];
+                    v.q = 0.7f + 0.5f * static_cast<float>((k + i) % 3);
+                    v.s = static_cast<float>(v.x / 37.0) * v.q;
+                    v.t = static_cast<float>(v.y / 23.0) * v.q;
+                    v.z = 0x400000 + static_cast<uint32_t>(k) * 0x100 + static_cast<uint32_t>(i);
+                    v.r = static_cast<uint8_t>(0x30 + 5 * k);
+                    v.g = static_cast<uint8_t>(0x80 - 2 * k + 30 * i);
+                    v.b = 0x60;
+                    v.a = static_cast<uint8_t>(0x30 + (k * 7 + i * 20) % 0x50);
+                }
+            return tris;
+        };
+        // An opaque background over the mesh (drawn in the pass before the first reading primitive).
+        auto background = [](Gif &g)
+        {
+            g.ad(kGsAlpha, 0);
+            g.ad(kGsTest, 1u << 16 | 1u << 17);
+            g.ad(kGsZbuf, kZbuf | kZmsk);
+            V a;
+            a.x = 0;
+            a.y = 0;
+            a.r = 0x22;
+            a.g = 0x44;
+            a.b = 0x66;
+            a.a = 0x80;
+            V b = a;
+            b.x = 640;
+            b.y = 256;
+            rect(g, 0x03, a, b);
+        };
+        // Water's three passes per triangle (0x09 reading; 0x62 FIX 0x15 and 0x68 FIX 0x15 exact, GEQUAL), ZMSK, REPEAT.
+        auto water = [&](Gif &g, const std::vector<std::array<V, 3>> &tris)
+        {
+            for (const auto &tr : tris)
+                for (int pass = 3; pass <= 5; ++pass)
+                {
+                    k2StateWrites(g, kK2States[pass]);
+                    tri(g, 0x5B, tr[0], tr[1], tr[2]);
+                }
+        };
+        const Planes patterned = zRamp(4040, 0x40);
+        for (int moved = 0; moved < 2; ++moved)
+        {
+            Gif g;
+            uploadK2Texture(g, 21);
+            Env e;
+            env(g, e);
+            background(g);
+            water(g, mesh(moved != 0));
+            if (!run(moved ? "(ii) the mesh with every fourth triangle moved" : "(i) water's three passes over a fan and a strip, one barrier", g, patterned,
+                     moved ? -1 : 1))
+                return;
+        }
+        // (iii) reading triangles interleaved with exact additive ones on the same pixels (0x01 lerp, then 0x68 FIX 0x80
+        // over a neighbour, then 0x01 again over both).
+        {
+            Gif g;
+            uploadK2Texture(g, 23);
+            Env e;
+            env(g, e);
+            const auto tris = mesh(false);
+            for (size_t k = 0; k + 1 < tris.size(); k += 2)
+            {
+                k2StateWrites(g, kK2States[10]); // 0x01 reading
+                tri(g, 0x5B, tris[k][0], tris[k][1], tris[k][2]);
+                k2StateWrites(g, kK2States[8]); // 0x68 FIX 0x80 exact
+                tri(g, 0x5B, tris[k + 1][0], tris[k + 1][1], tris[k + 1][2]);
+                k2StateWrites(g, kK2States[10]);
+                tri(g, 0x5B, tris[k + 1][0], tris[k + 1][1], tris[k + 1][2]);
+                tri(g, 0x5B, tris[k][0], tris[k][1], tris[k][2]);
+            }
+            if (!run("(iii) reading and exact additive triangles on the same pixels", g, patterned, -1))
+                return;
+        }
+        // (iv) a pass per target, alternating: in each, a large textured opaque triangle pair, then reading triangles
+        // over it (the barrier of each pass's first reading primitive).
+        {
+            Gif g;
+            uploadK2Texture(g, 29);
+            Env e;
+            env(g, e);
+            const auto tris = mesh(false);
+            for (int k = 0; k < 24; ++k)
+            {
+                g.ad(kGsFrame, (k & 1) ? kFrame1 : kFrame0);
+                k2StateWrites(g, kK2States[17]); // no blend: the mesh, last triangle first
+                for (size_t i = tris.size(); i-- > 0;)
+                {
+                    std::array<V, 3> tr = tris[i];
+                    for (V &v : tr)
+                    {
+                        v.r = static_cast<uint8_t>(v.r + 31 * k);
+                        v.g = static_cast<uint8_t>(v.g ^ (k * 8));
+                    }
+                    tri(g, 0x1B, tr[0], tr[1], tr[2]);
+                }
+                k2StateWrites(g, kK2States[10]); // 0x01 reading, over the mesh's triangles in order (the first over the last drawn)
+                for (const auto &tr : tris)
+                    tri(g, 0x5B, tr[0], tr[1], tr[2]);
+            }
+            if (!run("(iv) a pass per target: an opaque mesh, then reading it", g, patterned, 24))
+                return;
+        }
+        if (m.vk)
+            m.vk->setOptions(before);
+    }
+
     // --- T7 device arithmetic.
     void testT7(Test &t, Machines &m)
     {
@@ -1627,7 +2238,7 @@ int main(int argc, char **argv)
             blendArg = argv[++i];
         else
         {
-            std::fprintf(stderr, "usage: rc_gs2d_test [--only model,T1,...,T8,blenddbg] [--blend read|ff|both] [--no-faults] [--validation] [--quiet]\n");
+            std::fprintf(stderr, "usage: rc_gs2d_test [--only model,T1,...,T10,blenddbg] [--blend read|ff|both] [--no-faults] [--validation] [--quiet]\n");
             return 2;
         }
     }
@@ -1809,6 +2420,28 @@ int main(int argc, char **argv)
              else
                  t.notes.push_back("not run: no local read");
          }},
+        {"T9", [&](Test &t, Machines &mm) { primary(mm); testT9(t, mm); }},
+        {"T10", [&](Test &t, Machines &mm)
+         {
+             if (!runRead)
+             {
+                 t.notes.push_back("not run: no local read");
+                 return;
+             }
+             testT10(t, mm);
+             // The box rule of batch 4b (kGroupBoxes) on the same scenes: equal pictures, at least the pixel rule's barriers.
+             if (mm.vk && mm.vk->options().faults == 0)
+             {
+                 Gs2dVk::Options o = mm.vk->options();
+                 const Gs2dVk::Options keep = o;
+                 o.grouping = Gs2dVk::kGroupBoxes;
+                 mm.vk->setOptions(o);
+                 if (!g_quiet)
+                     std::printf("  T10 with the box rule (kGroupBoxes):\n");
+                 testT10(t, mm);
+                 mm.vk->setOptions(keep);
+             }
+         }},
     };
     bool allOk = true;
     std::vector<std::string> summary;
@@ -1839,6 +2472,7 @@ int main(int argc, char **argv)
             bool texa;
             const char *notApplicable = nullptr;
             bool readOnly = false;
+            const char *expectPass = nullptr; // cannot change a pixel (why); run and reported, not counted
         };
         const FaultCase cases[] = {
             {"ATST LEQUAL as LESS", "T3", Gs2dVk::kFaultAtstLess, false},
@@ -1854,6 +2488,17 @@ int main(int argc, char **argv)
             {"vertex colour channel swapped", "T6", Gs2dVk::kFaultColourSwap, false},
             {"barrier left out (read)", "T8", Gs2dVk::kFaultNoBarrier, false, nullptr, true},
             {"reading batch as one group (read)", "T8", Gs2dVk::kFaultOneGroup, false, nullptr, true},
+            {"no barrier at a pass's first read", "T10", Gs2dVk::kFaultNoFirstBarrier, false, nullptr, true},
+            {"a reading batch sees its own stamps", "T10", Gs2dVk::kFaultCoverOwnBatch, false, nullptr, true},
+            {"no stamps for non-reading prims", "T10", Gs2dVk::kFaultNoStampOther, false, nullptr, true},
+            {"read epoch advanced, no barrier", "T10", Gs2dVk::kFaultEpochNoBarrier, false, nullptr, true},
+            {"ZTST GEQUAL as GREATER", "T9", Gs2dVk::kFaultGequalAsGreater, false},
+            {"the Z of a vertex off by one", "T9", Gs2dVk::kFaultZOffByOne, false},
+            {"REPEAT drawn as CLAMP", "T9", Gs2dVk::kFaultRepeatAsClamp, false},
+            {"Q left out", "T9", Gs2dVk::kFaultNoQ, false},
+            {"a drawn triangle culled", "T9", Gs2dVk::kFaultCullDrawn, false},
+            {"a culled triangle drawn", "T9", Gs2dVk::kFaultDrawCulled, false, nullptr, false,
+             "the cull is the reference's own early exit (no area, or a box outside the scissor): drawn, such a triangle covers no pixel"},
         };
         std::printf("planted faults (each must fail its test; mode %s)\n", primaryRead ? "read" : "fixed function");
         const bool quiet = g_quiet;
@@ -1888,9 +2533,18 @@ int main(int argc, char **argv)
             else if (std::string(f.test) == "T8")
                 extra = " (" + std::to_string(t.failures) + " of " + std::to_string(t.checks) + " scenes differ)";
             const bool both = std::string(f.test) != "T1" || !primaryRead || f.vkFault != Gs2dVk::kFaultFixOffByOne || (t.readRowFails && t.exactRowFails);
-            std::printf("  %-36s %s: %s%s, %.1f s\n", f.name, f.test, caught && both ? "fails (caught)" : "PASSES (not caught)", extra.c_str(),
-                        std::chrono::duration<double>(std::chrono::steady_clock::now() - ts).count());
-            allOk &= caught && both;
+            if (f.expectPass)
+            {
+                std::printf("  %-36s %s: %s (expected: %s), %.1f s\n", f.name, f.test, caught ? "FAILS (unexpected)" : "passes", f.expectPass,
+                            std::chrono::duration<double>(std::chrono::steady_clock::now() - ts).count());
+                allOk &= !caught;
+            }
+            else
+            {
+                std::printf("  %-36s %s: %s%s, %.1f s\n", f.name, f.test, caught && both ? "fails (caught)" : "PASSES (not caught)", extra.c_str(),
+                            std::chrono::duration<double>(std::chrono::steady_clock::now() - ts).count());
+                allOk &= caught && both;
+            }
             m.reader.faultIgnoreTexa = false;
             m.useModel = true;
             vk.setOptions(Gs2dVk::Options{});

@@ -20,6 +20,13 @@
 // L is 0. The report: per setting, the pixels compared / equal / within the bound / out of it, the difference histogram
 // by draw state (the state of the last inexact primitive over the pixel), by L, the largest L, the worst differences,
 // the GPU time of the draws per kick and, for read, the reading primitives, groups and barriers.
+//
+// (d) (renderer plan P1 step 8 batch 2, RENDERER_3D_DESIGN.md 11.4) Channel 1 kicks (K2) are judged the same way: the
+// emulated GS memory is kept before the machine runs the kick, the frame reader's K2 commands (made by the vif consumer
+// behind the machine, from the C++ VU1 references) are drawn over it through Gs2dVk and compared with the machine's
+// memory after the kick, every pixel of 640 x 256 in R, G, B, A and Z. K1 (check (c)) and K2 (check (d)) are reported
+// apart, with the barriers by covered pixels, draws, binds, the CPU's cover map time and the GPU time per kick; a vertex
+// beyond the viewport's +-2,048 pixels fails (d).
 
 #include "consumer.h"
 
@@ -36,13 +43,16 @@ namespace rc::replay
         bool validation = false, quiet = false;
         std::string blend = "auto"; // read, ff, both, or auto: read where the device has local read, else ff
         uint32_t biasMask = 2u;     // fixed function: bit 0 with the source bias off, bit 1 on
+        bool boxes = false;         // (step 8 batch 2) also the read with batch 4b's box groups (--vk-boxes), for the cost comparison
         uint32_t faults = 0;     // Gs2dVk::Fault bits (planted, 9.3)
         bool faultTexa = false;  // the TEXA fault is the reader's (handled by gif2d)
         std::string pngDir;      // the first failing kick's planes (before, Vulkan, reference, difference)
     };
 
     // Planted fault names for --vk-fault: atst-less, drop-fail, split-per-batch, z-gequal, fix, colour-swap,
-    // no-half-pixel, bias-always, texel-row, no-barrier, one-group. False for an unknown name.
+    // no-half-pixel, bias-always, texel-row, no-barrier, one-group; (step 8 batch 2) no-first-barrier, cover-own-batch,
+    // no-stamp-other, epoch-no-barrier, gequal-greater, z-plus-one, repeat-clamp, no-q, draw-culled, cull-drawn. False
+    // for an unknown name.
     bool gif2dVkFault(const std::string &name, uint32_t &bits);
 
     class Gif2dVkCheck

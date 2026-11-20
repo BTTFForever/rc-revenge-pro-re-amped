@@ -81,6 +81,12 @@ namespace rc::replay
 
         // (c)
         std::unique_ptr<Gif2dVkCheck> vk;
+        // (d, step 8 batch 2) A channel 1 kick: GS memory before the machine ran it, and where its commands begin (the
+        // vif consumer behind the machine appends them when it runs the kick).
+        std::vector<uint8_t> path1Before;
+        bool path1Pending = false;
+        uint64_t path1Cycle = 0;
+        uint32_t path1Index = 0, path1First = 0;
 
         explicit Impl(const Gif2dOptions &o) : opt(o), fr(makeFrameOptions(o)), reader(fr.gif())
         {
@@ -267,8 +273,23 @@ namespace rc::replay
 
     void Gif2dCheck::afterKick(const KickView &k)
     {
-        if (m->vk && m->opt.vram)
-            m->vk->after(k, m->opt.vram());
+        if (!m->vk || !m->opt.vram)
+            return;
+        if (k.channel == 1u)
+        {
+            // (d) The machine has run the channel 1 kick and the frame reader (through the vif consumer) has read it:
+            // its K2 commands are list[path1First, end); judged over the memory saved before it.
+            if (!m->path1Pending || m->path1Cycle != k.cycle || m->path1Index != k.index)
+                return;
+            m->path1Pending = false;
+            const DrawList &l = m->reader.list();
+            const uint32_t last = static_cast<uint32_t>(l.cmds.size());
+            bool draws = false;
+            for (uint32_t i = m->path1First; i < last && !draws; ++i)
+                draws = l.cmds[i].op == kOpScreenPrims || l.cmds[i].op == kOpClear;
+            m->vk->kick(k, l, m->path1First, last, draws, m->path1Before.data());
+        }
+        m->vk->after(k, m->opt.vram());
     }
 
     void Gif2dCheck::kick(const KickView &k, const RamView &ram)
@@ -308,6 +329,17 @@ namespace rc::replay
         }
         uint64_t before[kGsRegFile];
         std::memcpy(before, k.regs ? k.regs : r.regs(), sizeof(before));
+
+        // (d) A channel 1 kick: the emulated GS memory before the machine runs it (its list is made behind the machine).
+        if (m->vk && k.channel == 1u && m->opt.vram && m->opt.withEmu)
+        {
+            const uint8_t *v = m->opt.vram();
+            m->path1Before.assign(v, v + (4u << 20));
+            m->path1Pending = true;
+            m->path1Cycle = k.cycle;
+            m->path1Index = k.index;
+            m->path1First = static_cast<uint32_t>(r.list().cmds.size());
+        }
 
         m->fr.kick(k, ram);
 
@@ -409,7 +441,8 @@ namespace rc::replay
         const Gif2dReader::Stats &s = m->reader.stats();
         uint64_t guards = 0;
         for (uint32_t g = 1; g < kGuardCount; ++g)
-            guards += s.guardPrims[g];
+            if (g != kGuardMipmap) // D-3D-2: MXL > 0 is drawn from level 0, as the reference draws it (counted, not a failure)
+                guards += s.guardPrims[g];
         return m->regMismatches != 0 || m->unrestorable != 0 || s.walkerDropped != 0 || s.absentPages != 0 ||
                (m->opt.withEmu && m->substituted != m->encodedKicks) || (m->vk && (m->vk->failed() || guards != 0));
     }

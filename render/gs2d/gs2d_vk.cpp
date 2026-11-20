@@ -12,6 +12,7 @@
 #include "gs2d_vert.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <unordered_set>
@@ -551,6 +552,38 @@ namespace rc::rd
         const bool readNow = readMode();
         auto planReads = [&]() { return readNow && plan.blend != kBlendOff && !plan.exactBlend; };
         bool reads = false, pendingBarrier = false;
+        // The pixel rule (RENDERER_3D_DESIGN.md 10.2): the target of the pass the draws go into (record() opens a pass at
+        // a change of target and after an IMAGE_BLIT), whether anything was drawn in it, whether a reading primitive was
+        // seen in it.
+        const bool pixelRule = m_opt.grouping == kGroupPixels;
+        int passTarget = -1;
+        bool passDrawn = false, passReadSeen = false;
+        uint64_t culledSeen = 0;
+        // 10.2's lever: no primitive after the list's last reading primitive needs stamping (nothing reads later).
+        size_t cmdIndex = 0, lastReadCmd = 0;
+        bool anyRead = false;
+        if (pixelRule && readNow)
+        {
+            bool drawable = false, reading = false;
+            for (size_t i = 0; i < list.cmds.size(); ++i)
+            {
+                const DrawCmd &c = list.cmds[i];
+                if (c.op == kOpState)
+                {
+                    const GsPlan pl = planState(list.state(c));
+                    drawable = !(pl.unsupported || (c.a & 1u));
+                    reading = pl.blend != kBlendOff && !pl.exactBlend;
+                }
+                else if ((c.op == kOpScreenPrims || c.op == kOpClear) && drawable && reading)
+                {
+                    lastReadCmd = i;
+                    anyRead = true;
+                }
+            }
+        }
+        const auto buildStart = std::chrono::steady_clock::now();
+        std::chrono::steady_clock::duration coverTime{};
+        const uint64_t coverBefore = m_cover.pixelsVisited();
 
         // Texture uploads: each TEXTURE command a new texture object (an id can change generation within a list).
         struct Up
@@ -577,11 +610,18 @@ namespace rc::rd
             r.test = atst | static_cast<uint32_t>(plan.aref) << 4 | static_cast<uint32_t>(plan.tfx) << 12 | static_cast<uint32_t>(plan.tcc) << 14 |
                      static_cast<uint32_t>(plan.linear) << 15 | static_cast<uint32_t>(plan.wrapU) << 16 | static_cast<uint32_t>(plan.wrapV) << 18 |
                      static_cast<uint32_t>(std::min<uint32_t>(t0.tw, 10u)) << 20 | static_cast<uint32_t>(std::min<uint32_t>(t0.th, 10u)) << 24;
+            if (f & kFaultRepeatAsClamp)
+            {
+                uint32_t wu = (r.test >> 16) & 3u, wv = (r.test >> 18) & 3u;
+                wu = wu == 0u ? 1u : wu;
+                wv = wv == 0u ? 1u : wv;
+                r.test = (r.test & ~(0xFu << 16)) | wu << 16 | wv << 18;
+            }
             r.clampU = static_cast<uint32_t>((state.clamp >> 4) & 0x3FFu) | static_cast<uint32_t>((state.clamp >> 14) & 0x3FFu) << 16;
             r.clampV = static_cast<uint32_t>((state.clamp >> 24) & 0x3FFu) | static_cast<uint32_t>((state.clamp >> 34) & 0x3FFu) << 16;
             r.flags = (state.tme() ? kPrimTme : 0u) | (state.iip() ? kPrimIip : 0u) | (state.fst() ? kPrimFst : 0u) |
                       (m_opt.sourceBias && !planReads() ? kPrimBias : 0u);
-            r.fault = f >> 16;
+            r.fault = (f >> 16) & 7u;
         };
         auto colourOf = [&](const GsVertex &v)
         {
@@ -595,6 +635,8 @@ namespace rc::rd
             uint32_t ztst = plan.depthCompare;
             if ((f & kFaultZGequal) && ztst == kDepthGreater)
                 ztst = kDepthGequal;
+            else if ((f & kFaultGequalAsGreater) && ztst == kDepthGequal)
+                ztst = kDepthGreater;
             const bool fail = part == kPartFail;
             const bool zw = fail ? plan.failDepthWrite : plan.passDepthWrite;
             const uint32_t mask = fail ? plan.failColorMask : plan.passColorMask;
@@ -603,6 +645,7 @@ namespace rc::rd
                 rec[i].flags |= part << kPrimPartShift;
             draws.push_back({plan.target, key, first, end - first, tex, scissor, points, reads, reads && pendingBarrier});
             pendingBarrier = false;
+            passDrawn = true;
             ++m_stats.draws;
         };
         // The As of a primitive when it is one value for all its pixels (5.2); -1 otherwise.
@@ -632,11 +675,173 @@ namespace rc::rd
             uint32_t pixel; // points: y * 4096 + x, for the overlap test
         };
         std::vector<Item> items;
+        // The pixels an item covers (10.2), from its record: a triangle's edge functions, a flat record's box.
+        auto spansOf = [&](const Item &it, std::vector<GsSpan> &out)
+        {
+            if (it.r.flags & kPrimFlat)
+                return GsCoverMap::rect(it.box.x0, it.box.y0, it.box.x1, it.box.y1, out);
+            GsTri t;
+            for (int k = 0; k < 3; ++k)
+            {
+                t.a[k] = it.r.ea[k];
+                t.b[k] = it.r.eb[k];
+                uint64_t bits = static_cast<uint64_t>(it.r.ec[2 * k]) | static_cast<uint64_t>(it.r.ec[2 * k + 1]) << 32;
+                double c;
+                std::memcpy(&c, &bits, 8);
+                t.c[k] = static_cast<int64_t>(c);
+                t.bias[k] = (it.r.flags >> (kPrimEdgeBiasShift + k)) & 1u;
+            }
+            return GsCoverMap::triangle(t, it.box.x0, it.box.y0, it.box.x1, it.box.y1, out);
+        };
+        // A group [a, b) of a split or reading plan: one draw, or the pass and fail parts (5.2), the barrier flag on the
+        // group's first draw.
+        auto emitGroup = [&](size_t a, size_t b, bool points, bool barrier)
+        {
+            if (plan.split)
+            {
+                ++m_stats.splitGroups;
+                ++m_last.splitGroups;
+            }
+            if (reads)
+            {
+                ++m_stats.readGroups;
+                ++m_last.readGroups;
+            }
+            pendingBarrier = barrier;
+            if (!plan.split)
+            {
+                const uint32_t first = static_cast<uint32_t>(rec.size());
+                for (size_t k = a; k < b; ++k)
+                    rec.push_back(items[k].r);
+                emit(first, static_cast<uint32_t>(rec.size()), points, plan.alphaByBlend ? kPartAlphaBlend : kPartPass);
+                pendingBarrier = false;
+                return;
+            }
+            for (int part = 0; part < 2; ++part)
+            {
+                const uint32_t first = static_cast<uint32_t>(rec.size());
+                for (size_t k = a; k < b; ++k)
+                {
+                    const Item &it = items[k];
+                    if (it.alpha >= 0)
+                    {
+                        ++m_stats.decidedOnCpu;
+                        const bool pass = gsAlphaPass(it.r.test & 7u, plan.aref, static_cast<uint32_t>(it.alpha));
+                        if (pass != (part == 0))
+                            continue;
+                    }
+                    rec.push_back(it.r);
+                }
+                if (part == 1 && (f & kFaultDropFail))
+                {
+                    rec.resize(first);
+                    continue;
+                }
+                emit(first, static_cast<uint32_t>(rec.size()), points, part == 0 ? kPartPass : kPartFail);
+            }
+            pendingBarrier = false;
+        };
+        // The pixel rule (10.2) over one batch.
+        auto flushPixels = [&](bool points)
+        {
+            const auto t0 = std::chrono::steady_clock::now();
+            if (static_cast<int>(plan.target) != passTarget)
+            {
+                m_cover.beginPass();
+                passTarget = static_cast<int>(plan.target);
+                passDrawn = passReadSeen = false;
+            }
+            if (plan.split)
+                m_stats.splitPrims += items.size();
+            if (reads)
+            {
+                m_stats.readPrims += items.size();
+                m_last.readPrims += items.size();
+            }
+            const bool needSpans = reads || plan.split || passReadSeen;
+            if (!plan.split && !reads)
+            {
+                // One draw; its pixels stamped once a reading primitive has been seen in the pass.
+                if (passReadSeen && !(f & kFaultNoStampOther) && anyRead && cmdIndex < lastReadCmd)
+                    for (const Item &it : items)
+                    {
+                        m_spans.clear();
+                        spansOf(it, m_spans);
+                        m_cover.stamp(m_spans.data(), m_spans.size(), GsCoverMap::kRead);
+                    }
+                coverTime += std::chrono::steady_clock::now() - t0;
+                const uint32_t first = static_cast<uint32_t>(rec.size());
+                for (const Item &it : items)
+                    rec.push_back(it.r);
+                emit(first, static_cast<uint32_t>(rec.size()), points, plan.alphaByBlend ? kPartAlphaBlend : kPartPass);
+                items.clear();
+                return;
+            }
+            (void)needSpans;
+            if (reads && (f & kFaultCoverOwnBatch) && passReadSeen)
+                m_cover.advance(GsCoverMap::kRead);
+            size_t groupStart = 0;
+            bool groupBarrier = false;
+            std::chrono::steady_clock::duration emitTime{};
+            for (size_t k = 0; k < items.size(); ++k)
+            {
+                m_spans.clear();
+                spansOf(items[k], m_spans);
+                const GsSpan *sp = m_spans.data();
+                const size_t n = m_spans.size();
+                bool barrier = false;
+                if (reads)
+                {
+                    if (!passReadSeen)
+                    {
+                        passReadSeen = true;
+                        barrier = passDrawn && !(f & kFaultNoFirstBarrier);
+                    }
+                    else if (!((f & kFaultOneGroup) && k > 0) && m_cover.any(sp, n, GsCoverMap::kRead))
+                    {
+                        if (f & kFaultEpochNoBarrier)
+                            m_cover.advance(GsCoverMap::kRead);
+                        else
+                            barrier = true;
+                    }
+                }
+                const bool splitHit = plan.split && k > groupStart && !(f & kFaultSplitPerBatch) && m_cover.any(sp, n, GsCoverMap::kSplit);
+                if (k > groupStart && (barrier || splitHit))
+                {
+                    const auto e0 = std::chrono::steady_clock::now();
+                    emitGroup(groupStart, k, points, groupBarrier);
+                    emitTime += std::chrono::steady_clock::now() - e0;
+                    m_cover.advance(GsCoverMap::kSplit);
+                    groupStart = k;
+                    groupBarrier = false;
+                }
+                if (barrier)
+                {
+                    groupBarrier = true;
+                    m_cover.advance(GsCoverMap::kRead);
+                }
+                if (passReadSeen && (reads || !(f & kFaultNoStampOther)))
+                    m_cover.stamp(sp, n, GsCoverMap::kRead);
+                if (plan.split)
+                    m_cover.stamp(sp, n, GsCoverMap::kSplit);
+            }
+            const auto e0 = std::chrono::steady_clock::now();
+            emitGroup(groupStart, items.size(), points, groupBarrier);
+            emitTime += std::chrono::steady_clock::now() - e0;
+            m_cover.advance(GsCoverMap::kSplit); // a change of state ends a group
+            coverTime += std::chrono::steady_clock::now() - t0 - emitTime;
+            items.clear();
+        };
         auto flush = [&](bool points)
         {
             if (items.empty())
                 return;
             reads = planReads();
+            if (pixelRule)
+            {
+                flushPixels(points);
+                return;
+            }
             if (!plan.split && !reads)
             {
                 const uint32_t first = static_cast<uint32_t>(rec.size());
@@ -728,8 +933,9 @@ namespace rc::rd
         m_blits.clear();
         std::vector<const uint8_t *> blitData;
         uint64_t blitBytes = 0;
-        for (const DrawCmd &cmd : list.cmds)
+        for (cmdIndex = 0; cmdIndex < list.cmds.size(); ++cmdIndex)
         {
+            const DrawCmd &cmd = list.cmds[cmdIndex];
             switch (cmd.op)
             {
             case kOpImageBlit:
@@ -741,6 +947,7 @@ namespace rc::rd
                 Draw d{};
                 d.target = cmd.a == 0x50u ? 1u : 0u;
                 d.blit = static_cast<int32_t>(m_blits.size());
+                passTarget = -1; // record() ends the pass for the copy: the next draw begins another
                 m_blits.push_back({d.target, RhiRect{static_cast<int32_t>(x), static_cast<int32_t>(y), w, h}, blitBytes});
                 blitData.push_back(list.data(cmd));
                 blitBytes += static_cast<uint64_t>(w) * h * 4u;
@@ -891,18 +1098,31 @@ namespace rc::rd
                         ++m_stats.culled;
                         continue;
                     }
-                    const Box box{std::max(t.minX, sbox.x0), std::max(t.minY, sbox.y0), std::min(t.maxX, sbox.x1), std::min(t.maxY, sbox.y1)};
+                    Box box{std::max(t.minX, sbox.x0), std::max(t.minY, sbox.y0), std::min(t.maxX, sbox.x1), std::min(t.maxY, sbox.y1)};
                     if (box.x1 < box.x0 || box.y1 < box.y0)
                     {
                         ++m_stats.culled;
-                        continue;
+                        if (!(f & kFaultDrawCulled))
+                            continue;
+                        // planted fault: drawn anyway (the scissor still applies; the box is the scissor's)
+                        box = sbox;
+                        ++culledSeen;
                     }
+                    if ((f & kFaultCullDrawn) && (m_last.prims++ % 16u) == 15u)
+                        continue;
                     for (int k = 0; k < 3; ++k)
-                        if (t.x[k] < -2048 * 16 || t.x[k] > 2048 * 16 || t.y[k] < -2048 * 16 || t.y[k] > 2048 * 16)
+                        if (t.x[k] < -4096 * 16 || t.x[k] > 4096 * 16 || t.y[k] < -4096 * 16 || t.y[k] > 4096 * 16)
                         {
-                            ++m_stats.beyondViewport; // drawn anyway; the GPU clips (never seen in K1)
+                            // drawn anyway; the GPU clips. A 16-bit vertex minus a 16-bit offset cannot get here: check (d) fails on it
+                            ++m_stats.beyondViewport;
+                            ++m_last.beyondViewport;
                             break;
                         }
+                    if (tv[0].z >= (1u << 24) || tv[1].z >= (1u << 24) || tv[2].z >= (1u << 24))
+                    {
+                        ++m_stats.zAbove24; // the shader clamps the pixel's Z to 2^24 - 1 (RENDERER_3D_DESIGN.md 9.1)
+                        ++m_last.zAbove24;
+                    }
                     Item it{};
                     baseRecord(it.r);
                     for (int k = 0; k < 3; ++k)
@@ -918,8 +1138,8 @@ namespace rc::rd
                         else
                             it.r.s[k] = tv[k].s;
                         it.r.t[k] = tv[k].t;
-                        it.r.q[k] = tv[k].q;
-                        it.r.z[k] = tv[k].z;
+                        it.r.q[k] = (f & kFaultNoQ) ? 1.0f : tv[k].q;
+                        it.r.z[k] = tv[k].z + ((f & kFaultZOffByOne) && k == 0 ? 1u : 0u);
                         it.r.ea[k] = static_cast<int32_t>(t.a[k]);
                         it.r.eb[k] = static_cast<int32_t>(t.b[k]);
                         doubleBits(static_cast<double>(t.c[k]), it.r.ec[2 * k], it.r.ec[2 * k + 1]);
@@ -931,6 +1151,8 @@ namespace rc::rd
                     it.pairWithPrevious = (p & 1u) && lastPushed == static_cast<int64_t>(p) - 1 && rectangleHalves(tv - 3, tv);
                     items.push_back(it);
                     lastPushed = p;
+                    if (!(f & kFaultCullDrawn))
+                        ++m_last.prims;
                 }
                 flush(false);
                 break;
@@ -939,6 +1161,11 @@ namespace rc::rd
                 break;
             }
         }
+        (void)culledSeen;
+        m_last.coverPixels = m_cover.pixelsVisited() - coverBefore;
+        m_stats.coverPixels += m_last.coverPixels;
+        m_last.coverMs = std::chrono::duration<double, std::milli>(coverTime).count();
+        m_last.buildMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - buildStart).count();
         if (!upload(rec))
             return false;
         m_stats.records += rec.size();
@@ -1062,6 +1289,10 @@ namespace rc::rd
         std::unordered_map<uint32_t, RhiBindGroup> textureGroups;
         int open = -1;
         bool drawnSinceBarrier = false; // in the open pass, since it began or since the last barrier
+        // What is bound in the open pass (RENDERER_3D_DESIGN.md 9.3: only what changed between draws is recorded).
+        uint64_t boundPipeline = 0, boundGroup0 = 0, boundGroup2 = 0;
+        RhiRect boundScissor{0, 0, 0u, 0u};
+        bool haveScissor = false;
         for (const Draw &d : draws)
         {
             if (d.blit >= 0)
@@ -1097,12 +1328,17 @@ namespace rc::rd
                 pass.width = kWidth;
                 pass.height = kHeight;
                 rhi_cmd_begin_render_pass(cl, &pass);
-                const RhiViewport vp{-2048.0f, -2048.0f, 4096.0f, 4096.0f, 0.0f, 1.0f};
+                const RhiViewport vp{-4096.0f, -4096.0f, 8192.0f, 8192.0f, 0.0f, 1.0f};
                 rhi_cmd_set_viewport(cl, &vp);
                 rhi_cmd_set_bind_group(cl, 0u, group0);
                 rhi_cmd_set_bind_group(cl, 1u, group1);
                 open = static_cast<int>(d.target);
                 drawnSinceBarrier = false;
+                boundPipeline = 0;
+                boundGroup0 = group0.id;
+                boundGroup2 = 0;
+                haveScissor = false;
+                m_last.binds += 2;
             }
             auto it = textureGroups.find(d.texture.id);
             if (it == textureGroups.end())
@@ -1129,11 +1365,38 @@ namespace rc::rd
                 ++m_last.barriers;
                 drawnSinceBarrier = false;
             }
-            rhi_cmd_set_pipeline(cl, d.read ? m_readPipelines[d.key] : m_pipelines[d.key]);
-            rhi_cmd_set_bind_group(cl, 0u, d.read ? group0Read[d.target] : group0);
-            rhi_cmd_set_bind_group(cl, 1u, group1);
-            rhi_cmd_set_bind_group(cl, 2u, it->second);
-            rhi_cmd_set_scissor(cl, &d.scissor);
+            const RhiPipeline pipe = d.read ? m_readPipelines[d.key] : m_pipelines[d.key];
+            const RhiBindGroup g0 = d.read ? group0Read[d.target] : group0;
+            if (pipe.id != boundPipeline)
+            {
+                // A pipeline of another layout (READ: group 0 is the target) disturbs the sets bound before it: rebind them.
+                rhi_cmd_set_pipeline(cl, pipe);
+                boundPipeline = pipe.id;
+                boundGroup0 = boundGroup2 = 0;
+                ++m_last.binds;
+            }
+            if (g0.id != boundGroup0)
+            {
+                rhi_cmd_set_bind_group(cl, 0u, g0);
+                rhi_cmd_set_bind_group(cl, 1u, group1);
+                boundGroup0 = g0.id;
+                boundGroup2 = 0;
+                m_last.binds += 2;
+            }
+            if (it->second.id != boundGroup2)
+            {
+                rhi_cmd_set_bind_group(cl, 2u, it->second);
+                boundGroup2 = it->second.id;
+                ++m_last.binds;
+            }
+            if (!haveScissor || d.scissor.x != boundScissor.x || d.scissor.y != boundScissor.y || d.scissor.w != boundScissor.w ||
+                d.scissor.h != boundScissor.h)
+            {
+                rhi_cmd_set_scissor(cl, &d.scissor);
+                boundScissor = d.scissor;
+                haveScissor = true;
+                ++m_last.binds;
+            }
             if (d.points)
                 rhi_cmd_draw(cl, d.count, d.first, 1u);
             else
@@ -1230,7 +1493,7 @@ namespace rc::rd
         pass.width = kWidth;
         pass.height = kHeight;
         rhi_cmd_begin_render_pass(cl, &pass);
-        const RhiViewport vp{-2048.0f, -2048.0f, 4096.0f, 4096.0f, 0.0f, 1.0f};
+        const RhiViewport vp{-4096.0f, -4096.0f, 8192.0f, 8192.0f, 0.0f, 1.0f};
         rhi_cmd_set_viewport(cl, &vp);
         RhiBinding rb{};
         rb.slot = 0u;
