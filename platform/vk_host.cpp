@@ -14,7 +14,8 @@
 //
 // (Renderer plan P1 step 7 batch 5) RC_VK_PICTURE=native presents the native picture instead (render/live/live_host.h:
 // the frame reader on the EE thread, the cycle's 2D drawn through Gs2dVk; K2, the 3D, not drawn yet). F7 switches
-// between it and the emulated GS picture; the window title says which is shown. Unset or "gs": exactly as before.
+// between it and the emulated GS picture; the window title says which is shown. RC_VK_PRESENT_FILTER=nearest draws the
+// native picture with nearest filtering (default linear, as the GS picture). Unset or "gs": exactly as before.
 #include "ps2_host_platform.h"
 
 #include "../render/live/live_host.h"
@@ -145,6 +146,8 @@ namespace
         RhiShader vertex{}, fragment{};
         RhiPipeline pipeline{};
         RhiSampler sampler{};
+        RhiSampler nearest{}; // RC_VK_PRESENT_FILTER=nearest (native picture only)
+        bool presentNearest = false;
         RhiTexture picture{};
         uint32_t pictureWidth = 0u, pictureHeight = 0u;
         bool pictureFilled = false; // in SHADER_READ with a picture in it
@@ -155,6 +158,7 @@ namespace
         // RC_VK_PICTURE=native (step 7 batch 5)
         bool native = false;     // the live 2D renderer is running
         bool showNative = false; // F7 toggles
+        uint32_t f7Presses = 0;  // F7 key-down events (not repeats) since the last present
         std::string title;
     };
 
@@ -189,6 +193,8 @@ namespace
         samplerDesc.s = samplerDesc.t = RHI_WRAP_CLAMP;
         samplerDesc.maxAnisotropy = 1.0f;
         h.sampler = rhi_create_sampler(&samplerDesc);
+        samplerDesc.mag = samplerDesc.min = samplerDesc.mip = RHI_FILTER_NEAREST;
+        h.nearest = rhi_create_sampler(&samplerDesc);
         RhiPipelineDesc desc{};
         desc.vertex = h.vertex;
         desc.fragment = h.fragment;
@@ -224,6 +230,8 @@ namespace
             rhi_destroy_shader(h.fragment);
         if (h.sampler.id)
             rhi_destroy_sampler(h.sampler);
+        if (h.nearest.id)
+            rhi_destroy_sampler(h.nearest);
         for (RhiBindGroupLayout &layout : h.layouts)
             if (layout.id)
                 rhi_destroy_bind_group_layout(layout);
@@ -280,6 +288,8 @@ namespace
                 std::fprintf(stderr, "[vk-host] RC_VK_PICTURE=native: the native renderer cannot run here (%s); showing the emulated GS picture\n",
                              why.empty() ? "presentation objects failed" : why.c_str());
             h.showNative = h.native;
+            const char *filter = std::getenv("RC_VK_PRESENT_FILTER");
+            h.presentNearest = filter && std::string_view(filter) == "nearest";
             updateTitle();
         }
         std::fprintf(stderr, "[vk-host] SDL %d.%d.%d (%s), adapter \"%s\", swapchain format %d, present mode %s%s\n",
@@ -366,6 +376,16 @@ namespace
                 h.mouseX += event.motion.xrel;
                 h.mouseY += event.motion.yrel;
                 break;
+            case SDL_EVENT_KEY_DOWN:
+                // RC_VK_PICTURE=native's toggle: an F7 key-down event (not a repeat), named with its keyboard, so a press
+                // can be told from a stray one (the keyboard state can change across a focus change).
+                if (h.native && event.key.scancode == SDL_SCANCODE_F7 && !event.key.repeat)
+                {
+                    ++h.f7Presses;
+                    const char *kb = SDL_GetKeyboardNameForID(event.key.which);
+                    std::fprintf(stderr, "[vk-host] F7 key down (keyboard %u \"%s\")\n", static_cast<unsigned>(event.key.which), kb ? kb : "?");
+                }
+                break;
             case SDL_EVENT_GAMEPAD_ADDED:
                 addGamepad(event.gdevice.which);
                 break;
@@ -416,9 +436,11 @@ namespace
         Host &h = g_host;
         if (!h.window || rhi_device_lost())
             return;
-        if (h.native && h.keys[SDL_SCANCODE_F7] && !h.previousKeys[SDL_SCANCODE_F7])
+        if (h.native && h.f7Presses)
         {
-            h.showNative = !h.showNative;
+            if (h.f7Presses & 1u)
+                h.showNative = !h.showNative;
+            h.f7Presses = 0;
             updateTitle();
             std::fprintf(stderr, "[vk-host] F7: showing the %s picture\n", h.showNative ? "native" : "emulated GS");
         }
@@ -438,6 +460,7 @@ namespace
         {
             if (!h.picture.id || h.pictureWidth != width || h.pictureHeight != height)
             {
+                std::fprintf(stderr, "[vk-host] emulated GS picture %ux%u\n", width, height);
                 if (h.picture.id)
                     rhi_destroy_texture(h.picture);
                 RhiTextureDesc desc{};
@@ -532,7 +555,7 @@ namespace
             bindings[0].aspect = RHI_ASPECT_COLOR;
             bindings[1].slot = 1u;
             bindings[1].type = RHI_BIND_SAMPLER;
-            bindings[1].sampler = h.sampler;
+            bindings[1].sampler = showNative && h.presentNearest && h.nearest.id ? h.nearest : h.sampler;
             const RhiBindGroupDesc group0{h.layouts[0], nullptr, 0u};
             const RhiBindGroupDesc group1{h.layouts[1], nullptr, 0u};
             const RhiBindGroupDesc group2{h.layouts[2], bindings, 2u};

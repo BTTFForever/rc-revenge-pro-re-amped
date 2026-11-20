@@ -117,16 +117,27 @@ namespace rc::rd
         {
             const GsMemory::TransferRect &r = m_xfers[i];
             ++m_stats.frameUploads;
-            const int t = r.dbp == 0u ? 0 : r.dbp == 0x50u * 32u ? 1 : -1;
-            if (t < 0 || r.dbw != 10u || r.psm != kPsmCt32)
+            // CT32 at FBW 10 from a page-row boundary: in a 640-wide buffer FBP 0x50 is line 256 of FBP 0x0, so a transfer
+            // is placed by its line in [0, 512) (the Europe loading screen uploads 640 x 512 at FBP 0x0, both buffers).
+            const uint32_t page = r.dbp / 32u;
+            if (r.dbw != 10u || r.psm != kPsmCt32 || (r.dbp % 32u) != 0u || (page % 10u) != 0u || page / 10u * 32u >= 512u)
             {
                 ++m_stats.frameUploadsOther;
                 continue;
             }
-            x0[t] = std::min<int>(x0[t], static_cast<int>(r.x));
-            y0[t] = std::min<int>(y0[t], static_cast<int>(r.y));
-            x1[t] = std::max<int>(x1[t], static_cast<int>(std::min<uint32_t>(r.x + r.w, 640u)) - 1);
-            y1[t] = std::max<int>(y1[t], static_cast<int>(std::min<uint32_t>(r.y + r.h, 256u)) - 1);
+            const int base = static_cast<int>(page / 10u * 32u);
+            const int gx0 = static_cast<int>(r.x), gx1 = static_cast<int>(std::min<uint32_t>(r.x + r.w, 640u)) - 1;
+            const int gy0 = base + static_cast<int>(r.y), gy1 = std::min(base + static_cast<int>(r.y + r.h), 512) - 1;
+            for (int t = 0; t < 2; ++t)
+            {
+                const int ty0 = std::max(gy0, t * 256) - t * 256, ty1 = std::min(gy1, t * 256 + 255) - t * 256;
+                if (ty1 < ty0 || gx1 < gx0)
+                    continue;
+                x0[t] = std::min(x0[t], gx0);
+                x1[t] = std::max(x1[t], gx1);
+                y0[t] = std::min(y0[t], ty0);
+                y1[t] = std::max(y1[t], ty1);
+            }
             // A transfer whose data has not all arrived (it goes on in the next kick) is copied again at the next flush.
             if (r.serial == mem.serial() && mem.transferOpen())
             {

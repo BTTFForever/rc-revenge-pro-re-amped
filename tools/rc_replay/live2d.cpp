@@ -12,7 +12,6 @@
 #include <algorithm>
 #include <cinttypes>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <map>
@@ -59,7 +58,8 @@ namespace rc::replay
         // K2's pixels this cycle: bit 0 target 0x0, bit 1 target 0x50, bit 2 Z
         std::vector<uint8_t> k2;
         std::vector<uint32_t> before[3], after[3];
-        bool haveBefore = false;
+        bool haveBefore = false, rewrite = false;
+        uint64_t rewriteKicks = 0;
         std::vector<rc::live::Published> lists;
         bool pngFirstFailWritten = false;
 
@@ -136,7 +136,11 @@ namespace rc::replay
 
     void Live2dCheck::cycleBegin(uint64_t cycle)
     {
-        m->k2.assign(kPixels, 0u);
+        // K2's pixels are kept across cycles (a buffer drawn by K2 in one cycle can be shown in the next with no draw):
+        // a pixel stops being K2's when a clear or an upload (a PATH3 kick of CLEAR / IMAGE_BLIT and no primitive)
+        // changes it.
+        if (m->k2.size() != kPixels)
+            m->k2.assign(kPixels, 0u);
         m->reader.cycleBegin(cycle);
     }
 
@@ -145,8 +149,19 @@ namespace rc::replay
     void Live2dCheck::kick(const KickView &k, const RamView &ram)
     {
         m->reader.kick(k, ram);
-        m->haveBefore = false;
-        if (k.channel == 1u && m->opt.vram)
+        m->haveBefore = m->rewrite = false;
+        if (k.channel == 2u)
+        {
+            const DrawList &l = m->reader.frame().list();
+            bool rewrites = false, draws = false;
+            for (size_t i = m->reader.frame().gif().kickFirstCommand(); i < l.cmds.size(); ++i)
+            {
+                rewrites |= l.cmds[i].op == kOpClear || l.cmds[i].op == kOpImageBlit;
+                draws |= l.cmds[i].op == kOpScreenPrims;
+            }
+            m->rewrite = rewrites && !draws;
+        }
+        if ((k.channel == 1u || m->rewrite) && m->opt.vram)
             if (const uint8_t *vram = m->opt.vram())
             {
                 readPlanes(vram, m->before);
@@ -156,17 +171,23 @@ namespace rc::replay
 
     void Live2dCheck::afterKick(const KickView &k)
     {
-        if (k.channel != 1u || !m->haveBefore || !m->opt.vram)
+        if (!m->haveBefore || !m->opt.vram)
             return;
         const uint8_t *vram = m->opt.vram();
         if (!vram)
             return;
-        ++m->k2Kicks;
         readPlanes(vram, m->after);
+        const bool k2 = k.channel == 1u;
+        k2 ? ++m->k2Kicks : ++m->rewriteKicks;
         for (uint32_t p = 0; p < 3; ++p)
             for (uint32_t i = 0; i < kPixels; ++i)
                 if (m->before[p][i] != m->after[p][i])
-                    m->k2[i] |= static_cast<uint8_t>(1u << p);
+                {
+                    if (k2)
+                        m->k2[i] |= static_cast<uint8_t>(1u << p);
+                    else
+                        m->k2[i] &= static_cast<uint8_t>(~(1u << p));
+                }
         m->haveBefore = false;
     }
 
@@ -211,19 +232,6 @@ namespace rc::replay
         m->box.take(m->lists);
         if (!m->up || m->lists.empty())
             return;
-        if (const char *dbg = std::getenv("RC_LIVE2D_DUMP_CYCLE"); dbg && std::strtoull(dbg, nullptr, 10) == info.end.cycle)
-            for (const rc::live::Published &p : m->lists)
-                for (const DrawCmd &c : p.list.cmds)
-                {
-                    std::printf("  cmd op %u a 0x%x b 0x%x c 0x%x bytes %u", c.op, c.a, c.b, c.c, c.payloadBytes);
-                    if (c.op == kOpState)
-                    {
-                        const GsState &st = p.list.state(c);
-                        std::printf(" frame 0x%llx zbuf 0x%llx test 0x%llx alpha 0x%llx", (unsigned long long)st.frame, (unsigned long long)st.zbuf,
-                                    (unsigned long long)st.test, (unsigned long long)st.alpha);
-                    }
-                    std::printf("\n");
-                }
         // The presenter's frame, as the vk host makes it (then waited for and read back).
         rhi_wait_frame();
         RhiCommandList cl = rhi_begin_commands();
@@ -388,9 +396,9 @@ namespace rc::replay
                     rs.guarded, ps.lists, gpu, gpuMax, ps.barriers, m->drawFailures, m->readFailures, m->validationErrors, layer ? "" : " (layer off)");
         std::printf("live2d: %" PRIu64 " cycles judged against the reference picture (%" PRIu64 " without one; %" PRIu64 " upload-only); %" PRIu64 " pixels, %" PRIu64
                     " K2's (left out), %" PRIu64 " compared: %" PRIu64 " equal; of them %" PRIu64 " changed by K1 (not the clear colour): %" PRIu64
-                    " equal; %" PRIu64 " VIF1 kicks masked; failing cycles %" PRIu64 "\n",
+                    " equal; %" PRIu64 " VIF1 kicks masked, %" PRIu64 " clear / upload kicks unmasking; failing cycles %" PRIu64 "\n",
                     m->cyclesJudged, m->cyclesNoRef, m->uploadCycles, m->pixels, m->k2Pixels, m->compared, m->equal, m->k1Pixels, m->k1Equal, m->k2Kicks,
-                    m->cyclesFailing);
+                    m->rewriteKicks, m->cyclesFailing);
         for (const std::string &l : m->shotLines)
             std::printf("live2d: %s\n", l.c_str());
         if (!m->shots.empty())

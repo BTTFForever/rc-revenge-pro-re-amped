@@ -71,7 +71,8 @@ namespace rc::rd
             // (step 7 batch 5, live 2D) host-to-local transfers into the frame buffers become IMAGE_BLIT commands (a: FBP,
             // b: x | y << 16, c: w | h << 16, payload w x h CT32 words as stored) in list order, so the targets hold what was
             // uploaded under what is drawn after it (the front end draws its menus over an uploaded picture, not a clear).
-            // CT32 into FBP 0x0 or 0x50 with FBW 10, the frame buffers RC uses; anything else is counted, not drawn.
+            // CT32 at FBW 10 from a page-row boundary, placed by its line in the two 640 x 256 buffers FBP 0x0 / 0x50 (a 640 x 512
+            // upload at FBP 0x0 fills both); anything else is counted, not drawn.
             bool frameUploads = false;
         };
         struct Stats
