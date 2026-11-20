@@ -112,7 +112,10 @@ set_property(SOURCE ${OVERRIDE_SOURCES} ${DECOMP_SOURCES}
 set(RC_TRACK_SHADER "${CMAKE_CURRENT_SOURCE_DIR}/decomp/shaders/trdr_shape.vert")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${RC_TRACK_SHADER}")
 file(READ "${RC_TRACK_SHADER}" RC_TRACK_SHADER_TEXT)
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/trdr_shape_glsl.h" "R\"RCGLSL(${RC_TRACK_SHADER_TEXT})RCGLSL\"\n")
+# Written through a temporary file and copied only when it differs, so a CMake re-run does not touch the header (and
+# relink the game) when the shader is unchanged.
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/trdr_shape_glsl.h.tmp" "R\"RCGLSL(${RC_TRACK_SHADER_TEXT})RCGLSL\"\n")
+file(COPY_FILE "${CMAKE_CURRENT_BINARY_DIR}/generated/trdr_shape_glsl.h.tmp" "${CMAKE_CURRENT_BINARY_DIR}/generated/trdr_shape_glsl.h" ONLY_IF_DIFFERENT)
 set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1/track_draw.cpp" APPEND PROPERTY INCLUDE_DIRECTORIES "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 file(GLOB VU1_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/vu1/*.cpp")
@@ -236,6 +239,7 @@ target_link_libraries(rc_replay PRIVATE rc_gs2d rc_tex)
 # shaders. Linked by rc_gs2d_test and (batch 3) rc_replay; not by the game or the oracle.
 set(RC_GS2D_SHADER_HEADERS "")
 foreach(_entry "gs2d.vert|gs2d_vert" "gs2d.vert|gs2d_points_vert|-DGS2D_POINTS" "gs2d.frag|gs2d_frag" "gs2d.frag|gs2d_probe_frag|-DGS2D_PROBE"
+             "gs2d.frag|gs2d_read_frag|-DGS2D_DSTREAD"
              "gs2d_seed.vert|gs2d_seed_vert" "gs2d_seed.frag|gs2d_seed_frag")
     string(REPLACE "|" ";" spec "${_entry}")
     list(GET spec 0 _file)

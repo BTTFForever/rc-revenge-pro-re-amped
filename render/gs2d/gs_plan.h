@@ -106,8 +106,4 @@ namespace rc::rd
 
     // The GS's own source-only term P(Cs) = ((A - B) * C >> 7) + D with Cd = 0 (no clamp): what kTermExact computes.
     int gsSourcePart(uint64_t alpha, int cs, int as);
-
-    // A flat untextured primitive under a kTermLinear plan with factor FIX is integer exact when every colour
-    // channel's source term is at least 127/256 of a level (4.3, 4.4): then it does not count in L.
-    bool flatSourceExact(const GsPlan &p, uint8_t r, uint8_t g, uint8_t b);
 }

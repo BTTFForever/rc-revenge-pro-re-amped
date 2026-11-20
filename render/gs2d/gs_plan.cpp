@@ -222,21 +222,4 @@ namespace rc::rd
         }
         return p;
     }
-
-    bool flatSourceExact(const GsPlan &p, uint8_t r, uint8_t g, uint8_t b)
-    {
-        if (p.exactBlend)
-            return true;
-        if (p.term != kTermLinear || p.factor != kFactorFix)
-            return false;
-        if (p.blend == kBlendMixSub)
-            return true; // the bias is on the subtracted side
-        // a = Cs * n / 128 must be at least 127/256 of a level: Cs * n >= 64.
-        const uint32_t n = p.ks == kCoefOne ? 128u : p.ks == kCoefF ? p.fix : p.ks == kCoefOneMinusF ? 128u - p.fix : 0u;
-        const uint8_t c[3] = {r, g, b};
-        for (uint8_t v : c)
-            if (static_cast<uint32_t>(v) * n < 64u)
-                return false;
-        return true;
-    }
 }

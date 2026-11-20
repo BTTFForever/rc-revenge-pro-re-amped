@@ -7,12 +7,19 @@
 // Records: Gs2dPrim (gs2d_vk.h), 44 words. Bind group 1 slot 0: the records (binding 16); group 2: the texture
 // (slot 1, binding 17) and a sampler (slot 1, binding 33; texelFetch only, no filtering by the GPU).
 // GS2D_PROBE (test T7): no alpha test or blend; writes the bits of the weights and 1/Q, or of uf, vf, fu, fv.
+// GS2D_DSTREAD (batch 4b, RENDERER_2D_DESIGN.md 18): the exact blend. The destination is read as an input attachment
+// (colour attachment 0 under dynamic rendering local read; bind group 0 slot 0, binding 16) and the GS rule is computed
+// in integers; one colour output, the pipeline's blend disabled. Gs2dVk issues a by-region barrier before each group of
+// primitives that cannot overlap, so the read sees every earlier write.
 layout(std430, set = 1, binding = 16) readonly buffer Prims { uint w[]; } prims;
 layout(set = 2, binding = 17) uniform texture2D uTex;
 layout(set = 2, binding = 33) uniform sampler uSampler;
 layout(location = 0) flat in uint vPrim;
 #ifdef GS2D_PROBE
 layout(location = 0) out uvec4 outProbe;
+#elif defined(GS2D_DSTREAD)
+layout(input_attachment_index = 0, set = 0, binding = 16) uniform subpassInput uDst;
+layout(location = 0) out vec4 out0;
 #else
 layout(location = 0, index = 0) out vec4 out0;
 layout(location = 0, index = 1) out vec4 out1;
@@ -246,6 +253,28 @@ void main()
     if (part == 2u && pass)
         discard;
 
+#ifdef GS2D_DSTREAD
+    // The GS rule (4.1) on the destination as stored: Cv = clamp(((A - B) * C >> 7) + D, 0, 255) per colour channel, A,
+    // B, D each Cs, Cd or 0, C As, Ad or FIX, the shift arithmetic (floor) on a signed int. The ALPHA selectors and FIX
+    // are the record's (word 36: abcd 24-31, fix 16-23). Alpha is As, but for an alpha-by-blend part (RGB_ONLY without
+    // a depth write) a failing pixel keeps the stored alpha.
+    const ivec4 cd = ivec4(subpassLoad(uDst) * 255.0 + 0.5);
+    const uint blendW = W(36u);
+    const uint fixR = (blendW >> 16) & 0xFFu, abcdR = blendW >> 24;
+    const uint asel = abcdR & 3u, bsel = (abcdR >> 2) & 3u, csel = (abcdR >> 4) & 3u, dsel = (abcdR >> 6) & 3u;
+    const int cf = csel == 0u ? int(as) : csel == 1u ? cd.a : int(fixR);
+    ivec3 cv;
+    for (uint k = 0u; k < 3u; ++k)
+    {
+        const int cs = int(src[k]);
+        const int va = asel == 0u ? cs : asel == 1u ? cd[k] : 0;
+        const int vb = bsel == 0u ? cs : bsel == 1u ? cd[k] : 0;
+        const int vd = dsel == 0u ? cs : dsel == 1u ? cd[k] : 0;
+        cv[k] = clamp((((va - vb) * cf) >> 7) + vd, 0, 255);
+    }
+    const int outA = (part == 3u && !pass) ? cd.a : int(as);
+    out0 = vec4(vec3(cv) / 255.0, float(outA) / 255.0);
+#else
     // Source term and destination factor (4.2, 4.3).
     const uint blend = W(36u);
     const uint term = blend & 3u, factor = (blend >> 2) & 3u, ks = (blend >> 4) & 15u, kd = (blend >> 8) & 15u;
@@ -283,6 +312,7 @@ void main()
     }
     out0 = vec4(a / 255.0, float(as) / 255.0);
     out1 = vec4(d, part == 3u ? (pass ? 1.0 : 0.0) : 1.0);
+#endif
 #endif
     gl_FragDepth = float(min(zu, 0xFFFFFFu)) * (1.0 / 16777216.0);
 }

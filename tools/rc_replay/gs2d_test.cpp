@@ -4,12 +4,16 @@
 // comes from), (2) gs_model on the CPU and (3) Gs2dVk on the RTX 2060 (headless RHI, read back), after going through
 // the reader (Gif2dReader) into a draw list.
 //
-//   rc_gs2d_test [--only model,T1,...,T7] [--no-faults] [--no-design-bound] [--validation] [--quiet] [--keep-going]
+//   rc_gs2d_test [--only model,T1,...,T8] [--blend read|ff|both] [--no-faults] [--validation] [--quiet]
 //
-// Runs the model's self-check (9.1), T1-T7 (9.2), then each planted fault of 9.3 against the test that must catch it.
-// --no-design-bound leaves out T1's and T2's bound for inexact blends (4.3, 4.4), which the RTX 2060's 8-bit blender
-// does not meet (RENDERER_2D_DESIGN.md 15.3); everything else is still checked. --only blenddbg prints a small table
-// of the blender's results. Ends PASS or FAIL. GPU: __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only (NOTES.md).
+// Runs the model's self-check (9.1), T1-T8 (9.2, 18.3), then each planted fault of 9.3 and 18.3 against the test that
+// must catch it. --blend: how Gs2dVk draws the fractional blends (batch 4b, RENDERER_2D_DESIGN.md 18): read, the exact
+// blend by local read (every plane equal to the emulated GS); ff, fixed function with D-2D-1's measured bound (T1:
+// per channel -1..+1 with the source bias, -1..+2 without, the integer-exact rows equal; T2: -L..+L); both (the
+// default where the device has local read; else ff). T3-T6 and T8 run in read mode where it is available, T7 once.
+// --only blenddbg prints a small table of the fixed-function blender's results. Ends PASS or FAIL. GPU:
+// __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only (NOTES.md); synchronisation validation:
+// VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true with --validation.
 
 #include "../../render/gs2d/gif2d_reader.h"
 #include "../../render/gs2d/gs2d_vk.h"
@@ -17,6 +21,10 @@
 #include "../../render/gs2d/gs_plan.h"
 
 #include "ps2_runtime.h"
+extern "C"
+{
+#include "rhi_native.h" // no extern "C" guard of its own
+}
 #include "vk/rhi_vk.h"
 
 #include <algorithm>
@@ -55,6 +63,17 @@ namespace
     constexpr uint64_t kTestNone = 0x30000ull; // no alpha test, ZTE 1, ZTST ALWAYS
 
     bool g_quiet = false;
+
+    // Gs2dVk's options for a run: the blend mode and, for fixed function, the bias; planted faults kept.
+    void setMode(Gs2dVk *vk, bool read, bool bias = true)
+    {
+        if (!vk)
+            return;
+        Gs2dVk::Options o = vk->options();
+        o.blend = read ? Gs2dVk::kBlendRead : Gs2dVk::kBlendFixed;
+        o.sourceBias = bias;
+        vk->setOptions(o);
+    }
 
     uint32_t fbits(float f)
     {
@@ -236,7 +255,7 @@ namespace
         {
             Planes emu, model, vk;
             DrawList list;
-            bool vkOk = true;
+            bool vkOk = true, modelRun = false;
         };
 
         Result run(const std::vector<uint8_t> &packet, const Planes &seed)
@@ -285,6 +304,7 @@ namespace
                 r.model.c[0] = m.colour[0];
                 r.model.c[1] = m.colour[1];
                 r.model.z = m.depth;
+                r.modelRun = true;
             }
             // (3) Vulkan.
             if (useVk && vk)
@@ -338,7 +358,7 @@ namespace
         std::string name;
         uint64_t checks = 0, failures = 0;
         bool failFast = false;
-        bool designCriteria = true; // T1/T2: the design's bound for inexact blends (4.3, 4.4); off in the fault runs
+        uint64_t readRowFails = 0, exactRowFails = 0; // T1: rows (scenes) failing, by plan (a reading one or integer exact)
         std::vector<std::string> notes;
         bool fail(const std::string &what)
         {
@@ -354,7 +374,7 @@ namespace
     {
         ++t.checks;
         bool good = true;
-        if (model)
+        if (model && r.modelRun) // the fault runs leave the model out
         {
             const Diff d = compare(r.emu, r.model);
             if (d.n)
@@ -500,13 +520,13 @@ namespace
     }
 
     // --- T1 blend sweep.
-    void testT1(Test &t, Machines &m, bool bias)
+    // read: Vulkan = gsBlend on every channel (the exact blend, 18.3). Fixed function: the integer-exact rows within
+    // ffBlend's lo..hi (equal to the GS), the others within D-2D-1's measured bound (-1..+1 with the bias, -1..+2 without).
+    void testT1(Test &t, Machines &m, bool bias, bool read)
     {
-        Gs2dVk::Options o = m.vk ? m.vk->options() : Gs2dVk::Options{};
-        const bool biasBefore = o.sourceBias;
-        o.sourceBias = bias;
-        if (m.vk)
-            m.vk->setOptions(o);
+        const Gs2dVk::Options before = m.vk ? m.vk->options() : Gs2dVk::Options{};
+        setMode(m.vk, read, bias);
+        const char *mode = read ? "read" : bias ? "ff bias on" : "ff bias off";
         Planes seed;
         for (uint32_t y = 0; y < kH; ++y)
             for (uint32_t x = 0; x < kW; ++x)
@@ -552,7 +572,7 @@ namespace
                 const GsState s = formState(f, fix);
                 const GsPlan p = planState(s);
                 char what[96];
-                std::snprintf(what, sizeof(what), "%s FIX %02x As %02x bias %s", f.what, fix, as, bias ? "on" : "off");
+                std::snprintf(what, sizeof(what), "%s FIX %02x As %02x %s", f.what, fix, as, mode);
                 // Emulated = gsBlend everywhere; Vulkan within ffBlend; stored alpha As.
                 uint64_t emuBad = 0, vkBad = 0, designBad = 0;
                 std::string first, firstDesign;
@@ -582,15 +602,19 @@ namespace
                         bool same = true, plus = false;
                         for (int k = 0; k < 3; ++k)
                         {
+                            uint32_t gs = gsBlend(e.alpha, sc[k], dc[k], as);
+                            if (f.pabe && as < 0x80)
+                                gs = sc[k];
+                            const int dv = static_cast<int>(vc[k]) - static_cast<int>(gs);
                             const Ff ff = ffBlend(p, sc[k], dc[k], as, bias);
-                            // The design's criterion (4.3): within ffBlend's lo..hi. For a row the plan calls integer
-                            // exact this is equality with the GS, which must hold on any device (a hard failure).
-                            if ((vc[k] < ff.lo || vc[k] > ff.hi))
+                            // read: equality with the GS. Fixed function: an integer-exact row within ffBlend's lo..hi
+                            // (equality with the GS), the others within D-2D-1's bound.
+                            const bool bad = read ? dv != 0 : p.exactBlend ? (vc[k] < ff.lo || vc[k] > ff.hi) : (dv < -1 || dv > (bias ? 1 : 2));
+                            if (bad)
                             {
-                                const std::string at = "Vulkan " + std::to_string(vc[k]) + " ffBlend " + std::to_string(ff.lo) + ".." + std::to_string(ff.hi) +
-                                                       " (GS " + std::to_string(ec[k]) + ") at " + std::to_string(x) + "," + std::to_string(y) + " channel " +
-                                                       std::to_string(k);
-                                if (p.exactBlend)
+                                const std::string at = "Vulkan " + std::to_string(vc[k]) + " GS " + std::to_string(gs) + " ffBlend " + std::to_string(ff.lo) + ".." +
+                                                       std::to_string(ff.hi) + " at " + std::to_string(x) + "," + std::to_string(y) + " channel " + std::to_string(k);
+                                if (p.exactBlend || read)
                                 {
                                     if (vkBad++ == 0)
                                         first = at;
@@ -615,50 +639,51 @@ namespace
                         pf[2] += plus;
                     }
                 ++t.checks;
+                if (vkBad + designBad)
+                    ++(p.exactBlend ? t.exactRowFails : t.readRowFails);
                 if (emuBad || vkBad)
                 {
                     if (!t.fail(std::string(what) + ": " + std::to_string(emuBad) + " emulated, " + std::to_string(vkBad) + " Vulkan; " + first))
-                        return;
+                        break;
                 }
                 designMisses += designBad;
-                if (designBad && t.designCriteria)
+                if (designBad)
                 {
-                    if (!t.fail(std::string(what) + ": design criterion (ffBlend lo..hi): " + std::to_string(designBad) + " channels; " + firstDesign))
-                        return;
+                    if (!t.fail(std::string(what) + ": D-2D-1's bound (-1.." + (bias ? "+1" : "+2") + "): " + std::to_string(designBad) + " channels; " + firstDesign))
+                        break;
                 }
                 if (!r.vkOk && !t.fail(std::string(what) + ": Vulkan path failed"))
-                    return;
+                    break;
             }
         }
         if (!g_quiet)
         {
             for (const auto &[name, h] : hist)
             {
-                std::printf("  T1 bias %s %-24s Vulkan - GS per channel:", bias ? "on " : "off", name.c_str());
+                std::printf("  T1 %-11s %-24s Vulkan - GS per channel:", mode, name.c_str());
                 for (int k = 0; k < 9; ++k)
                     if (h[k])
                         std::printf(" %+d: %" PRIu64, k - 4, h[k]);
                 std::printf("\n");
             }
             for (const auto &[name, c] : perForm)
-                std::printf("  T1 bias %s %-24s %9" PRIu64 " pixels: equal to the GS %6.2f%%, a channel one above %5.2f%%\n", bias ? "on " : "off", name.c_str(),
+                std::printf("  T1 %-11s %-24s %9" PRIu64 " pixels: equal to the GS %6.2f%%, a channel one above %5.2f%%\n", mode, name.c_str(),
                             c[0], 100.0 * c[1] / c[0], 100.0 * c[2] / c[0]);
-            std::printf("  T1 bias %s: %" PRIu64 " pixels, %" PRIu64 " equal to the GS in all channels, %" PRIu64 " with a channel one above\n", bias ? "on" : "off",
+            std::printf("  T1 %s: %" PRIu64 " pixels, %" PRIu64 " equal to the GS in all channels, %" PRIu64 " with a channel one above\n", mode,
                         pixels, equal, above);
         }
-        t.notes.push_back(std::string("bias ") + (bias ? "on" : "off") + ": " + std::to_string(pixels) + " pixels, " + std::to_string(equal) + " equal, " +
-                          std::to_string(above) + " +1; channels outside ffBlend's lo..hi (design criterion) " + std::to_string(designMisses));
+        t.notes.push_back(std::string(mode) + ": " + std::to_string(pixels) + " pixels, " + std::to_string(equal) + " equal, " +
+                          std::to_string(above) + " +1; channels outside D-2D-1's bound " + std::to_string(designMisses));
         for (const auto &[name, h] : hist)
         {
-            std::string line = std::string("bias ") + (bias ? "on " : "off") + " " + name + ":";
+            std::string line = std::string(mode) + " " + name + ":";
             for (int k = 0; k < 9; ++k)
                 if (h[k])
                     line += " " + std::string(k >= 4 ? "+" : "") + std::to_string(k - 4) + ": " + std::to_string(h[k]);
             t.notes.push_back(line);
         }
-        o.sourceBias = biasBefore;
         if (m.vk)
-            m.vk->setOptions(o);
+            m.vk->setOptions(before);
     }
 
     // --- L (4.4): inexactly blended primitives over each pixel, from the list.
@@ -680,7 +705,7 @@ namespace
                 for (uint32_t k = 0; k < c.b; ++k)
                 {
                     const GsVertex *tv = v + k * 3u;
-                    if (p.exactBlend || (!s.tme() && flatSourceExact(p, tv[2].r, tv[2].g, tv[2].b)))
+                    if (p.blend == kBlendOff || p.exactBlend)
                         continue;
                     GsTri t;
                     if (!gsTriSetup(tv, s.xyoffset & 0xFFFFu, (s.xyoffset >> 32) & 0xFFFFu, t))
@@ -697,8 +722,11 @@ namespace
     }
 
     // --- T2 layers.
-    void testT2(Test &t, Machines &m)
+    // read: every plane equal in the three machines (no L). Fixed function (bias on): -L..+L (D-2D-1).
+    void testT2(Test &t, Machines &m, bool read)
     {
+        const Gs2dVk::Options before = m.vk ? m.vk->options() : Gs2dVk::Options{};
+        setMode(m.vk, read, true);
         struct Layer
         {
             uint64_t alpha;
@@ -746,9 +774,9 @@ namespace
                     rect(g, 0x43, a, b);
                 }
                 const Machines::Result r = m.run(g.bytes(), seed);
-                const std::string what = "layers " + std::to_string(v) + " seed " + std::to_string(seedN);
-                threeEqual(t, r, what.c_str(), true, false);
-                if (!m.vk)
+                const std::string what = std::string(read ? "read" : "ff") + " layers " + std::to_string(v) + " seed " + std::to_string(seedN);
+                threeEqual(t, r, what.c_str(), true, read);
+                if (!m.vk || read)
                     continue;
                 const std::vector<uint8_t> L = layerCount(r.list);
                 uint64_t bad = 0, hard = 0;
@@ -761,7 +789,7 @@ namespace
                     bool plus = false;
                     for (int k = 0; k < 3; ++k)
                     {
-                        if ((d[k] < 0 || d[k] > L[i]) && bad++ == 0)
+                        if ((d[k] < -L[i] || d[k] > L[i]) && bad++ == 0)
                             first = "at " + std::to_string(i % kW) + "," + std::to_string(i / kW) + " channel " + std::to_string(k) + ": Vulkan - GS " +
                                     std::to_string(d[k]) + ", L " + std::to_string(L[i]);
                         if (L[i] == 0 && d[k] != 0 && hard++ == 0)
@@ -776,15 +804,19 @@ namespace
                 }
                 ++t.checks;
                 designMisses += bad;
-                if (bad && t.designCriteria)
-                    t.fail(what + ": design criterion: " + std::to_string(bad) + " channels outside 0..L; " + first);
+                if (bad)
+                    t.fail(what + ": D-2D-1's bound: " + std::to_string(bad) + " channels outside -L..+L; " + first);
                 if (hard)
                     t.fail(what + ": " + std::to_string(hard) + " exact pixels differ; " + firstHard);
                 if (r.emu.z != r.vk.z)
                     t.fail(what + ": Z differs");
             }
+        if (m.vk)
+            m.vk->setOptions(before);
+        if (read)
+            return;
         char buf[200];
-        std::snprintf(buf, sizeof(buf), "largest L %u, pixels with a channel above the GS %" PRIu64 " of %u, channels outside 0..L %" PRIu64
+        std::snprintf(buf, sizeof(buf), "ff: largest L %u, pixels with a channel above the GS %" PRIu64 " of %u, channels outside -L..+L %" PRIu64
                       ", (Vulkan - GS) / L from %.2f to %.2f", maxL, plusPixels, kPix * 8u, designMisses, lowest, highest);
         if (!g_quiet)
             std::printf("  T2: %s\n", buf);
@@ -792,7 +824,9 @@ namespace
     }
 
     // --- T3 alpha test.
-    void testT3(Test &t, Machines &m)
+    // read: also the front end's panel state (0x01 (Cd-Cs)*As+Cs, ATST LEQUAL, RGB_ONLY, Z GREATER with Z write) on
+    // the textured ramp and the overlapping rectangles: the split and the read together (18.3).
+    void testT3(Test &t, Machines &m, bool read)
     {
         static const uint32_t arefs[] = {0, 1, 0x2F, 0x3F, 0x80};
         Planes seed = pattern(7, 0x33);
@@ -880,8 +914,62 @@ namespace
                         if (!threeEqual(t, r, what) && t.failFast)
                             return;
                     }
+        uint32_t panels = 0;
+        for (uint32_t aref : {1u, 0x2Fu, 0x3Fu})
+            for (uint32_t frame = 0; read && frame < 2; ++frame)
+                for (uint32_t tfx : {0u, 1u})
+                {
+                    ++panels;
+                    Gif g;
+                    g.image(0x3000, 4, 0x00, 256, 1, ramp);
+                    Env e;
+                    e.frame = frame ? kFrame1 : kFrame0;
+                    e.zbuf = kZbuf;                                     // Z write on
+                    e.test = testOf(3, aref, 3, 3);                     // LEQUAL, RGB_ONLY, Z GREATER
+                    e.alpha = 0x01;                                     // (Cd - Cs) * As + Cs
+                    e.tex0 = tex0Of(0x3000, 4, 0x00, 8, 0, 1, tfx);     // TCC 1, MODULATE or DECAL
+                    e.tex1 = 0x60;                                      // bilinear, as the front end
+                    env(g, e);
+                    V a;
+                    a.x = 0;
+                    a.y = 8;
+                    a.z = 0x8000;
+                    a.r = 0x60;
+                    a.g = 0x90;
+                    a.b = 0x40;
+                    a.a = 0x80;
+                    a.s = 0.5f / 256.0f;
+                    a.t = 0.5f;
+                    V b = a;
+                    b.x = 129;
+                    b.y = 15;
+                    b.s = 129.5f / 256.0f;
+                    rect(g, 0x53, a, b);
+                    for (int k = 0; k < 2; ++k)
+                    {
+                        V p = a, q = b;
+                        p.y = 16 + k * 12;
+                        q.y = p.y + 10;
+                        p.x = 0;
+                        q.x = 120;
+                        p.s = 0.5f / 256.0f;
+                        q.s = 120.5f / 256.0f;
+                        rect(g, 0x53, p, q);
+                        p.x = 60;
+                        q.x = 200;
+                        p.s = 100.5f / 256.0f;
+                        q.s = 240.5f / 256.0f;
+                        p.z = q.z = k ? 0x9000u : 0x8000u;
+                        rect(g, 0x53, p, q);
+                    }
+                    const Machines::Result r = m.run(g.bytes(), seed);
+                    char what[96];
+                    std::snprintf(what, sizeof(what), "panels (0x01, RGB_ONLY) AREF %02x TFX %u FBP %s", aref, tfx, frame ? "0x50" : "0x0");
+                    if (!threeEqual(t, r, what) && t.failFast)
+                        return;
+                }
         if (!g_quiet)
-            std::printf("  T3: %u alpha-test configurations\n", config);
+            std::printf("  T3: %u alpha-test configurations, %u with the panels' state (read)\n", config, panels);
     }
 
     // --- T4 depth.
@@ -1279,6 +1367,122 @@ namespace
         }
     }
 
+    // --- T8 order (18.3): the exact blend's groups and barriers.
+    void testT8(Test &t, Machines &m)
+    {
+        const Gs2dVk::Options before = m.vk ? m.vk->options() : Gs2dVk::Options{};
+        setMode(m.vk, true);
+        auto run = [&](const std::string &what, Gif &g, const Planes &seed)
+        {
+            const Machines::Result r = m.run(g.bytes(), seed);
+            return threeEqual(t, r, what.c_str()) || !t.failFast;
+        };
+        // A colour and alpha per rectangle, all different, so every order of the layers gives another picture.
+        auto layer = [](uint32_t k, double x0, double y0, double x1, double y1, uint32_t z)
+        {
+            V a;
+            a.x = x0;
+            a.y = y0;
+            a.z = z;
+            a.r = static_cast<uint8_t>(17 + 53 * k);
+            a.g = static_cast<uint8_t>(240 - 29 * k);
+            a.b = static_cast<uint8_t>((91 * k + 5) & 0xFF);
+            a.a = static_cast<uint8_t>(0x09 + (k * 0x2B) % 0x78);
+            V b = a;
+            b.x = x1;
+            b.y = y1;
+            return std::make_pair(a, b);
+        };
+        const Planes patterned = pattern(808, 0x40);
+        // (i) 20 mutually overlapping rectangles of a reading state in one batch (each overlaps every other in the
+        // middle), for each fractional form, with Z ALWAYS and with Z GREATER at rising Z (as K1).
+        static const struct
+        {
+            uint64_t alpha;
+            uint32_t fix;
+            const char *what;
+        } forms[] = {{0x01, 0, "0x01 lerp As"}, {0x09, 0, "0x09 Cd*As+Cs"}, {0x21, 0x20, "0x21 FIX 0x20"}, {0x29, 0x3F, "0x29 FIX 0x3f"},
+                     {0x44, 0, "0x44 (Cs-Cd)*As+Cd"}, {0xA1, 0x55, "0xa1 FIX 0x55"}};
+        for (const auto &fm : forms)
+            for (int zmode = 0; zmode < 2; ++zmode)
+            {
+                Gif g;
+                Env e;
+                e.alpha = fm.alpha | static_cast<uint64_t>(fm.fix) << 32;
+                e.zbuf = zmode ? kZbuf : (kZbuf | kZmsk);
+                e.test = zmode ? (1u << 16 | 3u << 17) : kTestNone;
+                env(g, e);
+                for (uint32_t k = 0; k < 20; ++k)
+                {
+                    const auto [a, b] = layer(k, 10 + 9 * k, 5 + 5 * k, 260 + 9 * k, 150 + 5 * k, 0x100 + k);
+                    rect(g, 0x43, a, b);
+                }
+                if (!run(std::string("T8 (i) ") + fm.what + (zmode ? " Z GREATER" : " Z ALWAYS"), g, patterned))
+                    return;
+            }
+        // (ii) the same pixels by an alternation of fixed-function and reading states, in separate batches (one rectangle
+        // each) and in shared ones (four overlapping rectangles a batch).
+        static const struct
+        {
+            uint64_t alpha;
+            uint32_t fix;
+            uint32_t prim;
+        } alt[] = {{0x29, 0x80, 0x43}, {0x01, 0, 0x43}, {0xA1, 0x80, 0x43}, {0x09, 0, 0x43}, {0, 0, 0x03}, {0x21, 0x20, 0x43}, {0x68, 0x33, 0x43}};
+        for (int shared = 0; shared < 2; ++shared)
+        {
+            Gif g;
+            Env e;
+            env(g, e);
+            uint32_t k = 0;
+            for (int round = 0; round < 3; ++round)
+                for (const auto &st : alt)
+                {
+                    g.ad(kGsAlpha, st.alpha | static_cast<uint64_t>(st.fix) << 32);
+                    for (int n = 0; n < (shared ? 4 : 1); ++n, ++k)
+                    {
+                        const auto [a, b] = layer(k, 40 + 3 * (k % 11), 20 + 2 * (k % 13), 330 - 2 * (k % 7), 200 - (k % 5), 0);
+                        rect(g, st.prim, a, b);
+                    }
+                }
+            if (!run(std::string("T8 (ii) alternating states, ") + (shared ? "shared batches" : "separate batches"), g, patterned))
+                return;
+        }
+        // (iii) one reading batch of 256 rectangles that do not overlap (one group) over a patterned destination.
+        for (uint64_t alpha : {0x01ull, 0x09ull})
+        {
+            Gif g;
+            Env e;
+            e.alpha = alpha;
+            env(g, e);
+            for (uint32_t k = 0; k < 256; ++k)
+            {
+                const double x = (k % 32) * 20, y = (k / 32) * 32;
+                const auto [a, b] = layer(k, x, y, x + 19, y + 31, 0);
+                rect(g, 0x43, a, b);
+            }
+            if (!run(std::string("T8 (iii) 256 disjoint rectangles, ALPHA ") + (alpha == 1 ? "0x01" : "0x09"), g, patterned))
+                return;
+        }
+        // (iv) both targets alternately: overlapping reading rectangles into FBP 0x0 and 0x50 in turn.
+        {
+            Gif g;
+            Env e;
+            e.alpha = 0x01;
+            env(g, e);
+            for (uint32_t k = 0; k < 24; ++k)
+            {
+                g.ad(kGsFrame, (k & 1u) ? kFrame1 : kFrame0);
+                g.ad(kGsAlpha, (k % 3) == 2 ? (0x21ull | 0x40ull << 32) : 0x01ull);
+                const auto [a, b] = layer(k, 20 + 7 * k, 10 + 3 * k, 300 + 7 * k, 180 + 2 * k, 0);
+                rect(g, 0x43, a, b);
+            }
+            if (!run("T8 (iv) both targets alternately", g, patterned))
+                return;
+        }
+        if (m.vk)
+            m.vk->setOptions(before);
+    }
+
     // --- T7 device arithmetic.
     void testT7(Test &t, Machines &m)
     {
@@ -1397,7 +1601,8 @@ namespace
 int main(int argc, char **argv)
 {
     std::set<std::string> only;
-    bool faults = true, validation = false, keepGoing = false, design = true;
+    bool faults = true, validation = false;
+    std::string blendArg = "both";
     for (int i = 1; i < argc; ++i)
     {
         const std::string a = argv[i];
@@ -1418,17 +1623,14 @@ int main(int argc, char **argv)
             validation = true;
         else if (a == "--quiet")
             g_quiet = true;
-        else if (a == "--keep-going")
-            keepGoing = true;
-        else if (a == "--no-design-bound")
-            design = false;
+        else if (a == "--blend" && i + 1 < argc && (std::string(argv[i + 1]) == "read" || std::string(argv[i + 1]) == "ff" || std::string(argv[i + 1]) == "both"))
+            blendArg = argv[++i];
         else
         {
-            std::fprintf(stderr, "usage: rc_gs2d_test [--only model,T1,...,T7,blenddbg] [--no-faults] [--no-design-bound] [--validation] [--quiet] [--keep-going]\n");
+            std::fprintf(stderr, "usage: rc_gs2d_test [--only model,T1,...,T8,blenddbg] [--blend read|ff|both] [--no-faults] [--validation] [--quiet]\n");
             return 2;
         }
     }
-    (void)keepGoing;
     // The bare synchronous software GS (as rc_replay's emu machine).
     setenv("PS2X_GS_THREAD", "0", 1);
     setenv("PS2X_GS_GPU", "0", 1);
@@ -1445,9 +1647,68 @@ int main(int argc, char **argv)
         std::printf("rc_gs2d_test: rhi_init failed (no Vulkan device?)\nFAIL\n");
         return 1;
     }
-    std::printf("device: %s; shaderFloat64 %s, dual-source blend %s, D32F attachment %s, validation %s\n", rhi_adapter_name(),
+    const bool localRead = rhi_limits()->localRead;
+    std::printf("device: %s; shaderFloat64 %s, dual-source blend %s, D32F attachment %s, local read %s, validation %s\n", rhi_adapter_name(),
                 rhi_limits()->shaderFloat64 ? "yes" : "no", rhi_limits()->dualSourceBlend ? "yes" : "no", rhi_limits()->depth32Attachment ? "yes" : "no",
-                rhi_limits()->validationLayer ? "on" : "off");
+                localRead ? "yes" : "no", rhi_limits()->validationLayer ? "on" : "off");
+    if (blendArg != "ff" && !localRead)
+    {
+        std::printf("rc_gs2d_test: the device has no local read: the exact blend is not available; running fixed function only\n");
+        if (blendArg == "read")
+        {
+            rhi_shutdown();
+            std::printf("FAIL\n");
+            return 1;
+        }
+        blendArg = "ff";
+    }
+    const bool runRead = blendArg != "ff", runFf = blendArg != "read";
+    // Is synchronisation validation on? Two clears of one image with no barrier between them (recorded natively: the RHI
+    // orders its own copies) are a write-after-write hazard only it reports (with --validation and
+    // VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true); its errors are not counted against the run.
+    uint32_t probeErrors = 0;
+    if (validation)
+    {
+        const uint32_t e0 = rhi_vk_validation_error_count();
+        RhiTextureDesc td{};
+        td.width = td.height = 4u;
+        td.mipLevels = 1u;
+        td.format = RHI_FMT_RGBA8_UNORM;
+        td.usage = RHI_TEX_SAMPLED | RHI_TEX_COPY_DST;
+        td.debugName = "sync probe";
+        const RhiTexture tx = rhi_create_texture(&td);
+        RhiNativeDevice nd{};
+        RhiNativeTexture nt{};
+        struct Range
+        {
+            uint32_t aspect, baseMip, mips, baseLayer, layers;
+        };
+        using GetProc = void *(*)(void *, const char *);
+        using Clear = void (*)(void *, uint64_t, int, const float *, uint32_t, const Range *);
+        if (rhi_native_device(&nd) && nd.kind == RHI_NATIVE_VULKAN && rhi_native_texture(tx, &nt))
+            if (Clear clear = reinterpret_cast<Clear>(reinterpret_cast<GetProc>(nd.getDeviceProcAddr)(nd.device, "vkCmdClearColorImage")))
+            {
+                rhi_wait_frame();
+                RhiCommandList cl = rhi_begin_commands();
+                const RhiTextureBarrier toCopy{tx, RHI_STATE_UNDEFINED, RHI_STATE_COPY_DST};
+                rhi_cmd_barrier(cl, &toCopy, 1u);
+                void *cb = nullptr;
+                if (rhi_cmd_external_begin(cl) && rhi_native_command_list(cl, &cb))
+                {
+                    const float c[4] = {0, 0, 0, 0};
+                    const Range r{1u, 0u, 1u, 0u, 1u};
+                    clear(cb, nt.image, 7 /* TRANSFER_DST_OPTIMAL */, c, 1u, &r);
+                    clear(cb, nt.image, 7, c, 1u, &r);
+                    rhi_cmd_external_end(cl);
+                }
+                rhi_submit(cl);
+                rhi_wait_idle();
+            }
+        rhi_destroy_texture(tx);
+        probeErrors = rhi_vk_validation_error_count() - e0;
+        std::printf("synchronisation validation: %s (a planted write-after-write hazard gave %u error%s, not counted)\n", probeErrors ? "on" : "OFF", probeErrors,
+                    probeErrors == 1 ? "" : "s");
+    }
     Gs2dVk vk;
     std::string why;
     const auto tc = std::chrono::steady_clock::now();
@@ -1461,7 +1722,7 @@ int main(int argc, char **argv)
 
     Machines m;
     m.vk = &vk;
-    auto want = [&](const char *n) { return only.empty() ? std::string(n) != "T1off" : only.count(n) != 0; };
+    auto want = [&](const char *n) { return only.empty() || only.count(n) != 0; };
     struct Entry
     {
         const char *name;
@@ -1472,9 +1733,7 @@ int main(int argc, char **argv)
         for (uint32_t fix : {0x20u, 0x15u})
         for (int bias = 0; bias < 2; ++bias)
         {
-            Gs2dVk::Options o;
-            o.sourceBias = bias != 0;
-            vk.setOptions(o);
+            setMode(&vk, false, bias != 0);
             Planes seed;
             for (uint32_t y = 0; y < kH; ++y)
                 for (uint32_t x = 0; x < kW; ++x)
@@ -1516,16 +1775,40 @@ int main(int argc, char **argv)
         rhi_shutdown();
         return 0;
     }
+    // T3-T6 in read mode where it runs, else fixed function (bias on); T7 does not depend on the mode.
+    const bool primaryRead = runRead;
+    auto primary = [&](Machines &mm) { setMode(mm.vk, primaryRead, true); };
     const std::vector<Entry> tests = {
         {"model", [](Test &t, Machines &) { modelSelfCheck(t); }},
-        {"T1", [](Test &t, Machines &mm) { testT1(t, mm, true); testT1(t, mm, false); }},
-        {"T1off", [](Test &t, Machines &mm) { testT1(t, mm, false); }},
-        {"T2", testT2},
-        {"T3", testT3},
-        {"T4", testT4},
-        {"T5", testT5},
-        {"T6", testT6},
-        {"T7", testT7},
+        {"T1", [&](Test &t, Machines &mm)
+         {
+             if (runRead)
+                 testT1(t, mm, false, true);
+             if (runFf)
+             {
+                 testT1(t, mm, true, false);
+                 testT1(t, mm, false, false);
+             }
+         }},
+        {"T2", [&](Test &t, Machines &mm)
+         {
+             if (runRead)
+                 testT2(t, mm, true);
+             if (runFf)
+                 testT2(t, mm, false);
+         }},
+        {"T3", [&](Test &t, Machines &mm) { primary(mm); testT3(t, mm, primaryRead); }},
+        {"T4", [&](Test &t, Machines &mm) { primary(mm); testT4(t, mm); }},
+        {"T5", [&](Test &t, Machines &mm) { primary(mm); testT5(t, mm); }},
+        {"T6", [&](Test &t, Machines &mm) { primary(mm); testT6(t, mm); }},
+        {"T7", [&](Test &t, Machines &mm) { primary(mm); testT7(t, mm); }},
+        {"T8", [&](Test &t, Machines &mm)
+         {
+             if (runRead)
+                 testT8(t, mm);
+             else
+                 t.notes.push_back("not run: no local read");
+         }},
     };
     bool allOk = true;
     std::vector<std::string> summary;
@@ -1535,7 +1818,6 @@ int main(int argc, char **argv)
             continue;
         Test t;
         t.name = e.name;
-        t.designCriteria = design;
         const auto ts = std::chrono::steady_clock::now();
         std::printf("%s\n", e.name);
         e.run(t, m);
@@ -1548,12 +1830,15 @@ int main(int argc, char **argv)
 
     if (faults)
     {
+        // Each must fail its test. read: run in read mode (where available), else fixed function; "T1": the reading rows
+        // and the integer-exact rows are counted separately (FIX off by one must fail both in read mode).
         struct FaultCase
         {
             const char *name, *test;
             uint32_t vkFault;
             bool texa;
             const char *notApplicable = nullptr;
+            bool readOnly = false;
         };
         const FaultCase cases[] = {
             {"ATST LEQUAL as LESS", "T3", Gs2dVk::kFaultAtstLess, false},
@@ -1562,42 +1847,50 @@ int main(int argc, char **argv)
             {"ZTST GREATER as GEQUAL", "T4", Gs2dVk::kFaultZGequal, false},
             {"half pixel left out", "T5", Gs2dVk::kFaultNoHalfPixel, false},
             {"bias where a < b", "T1", Gs2dVk::kFaultBiasAlways, false,
-             "the bias is off (T1 fails with it on the RTX 2060), and the criterion that would catch it does not hold without a fault"},
+             "the exact blend has no bias; on fixed function D-2D-1's measured bound (-1..+1) cannot see it (15.4, 16.3)"},
             {"FIX off by one", "T1", Gs2dVk::kFaultFixOffByOne, false},
             {"TEXA ignored", "T6", 0, true},
             {"texel fetch one row off", "T6", Gs2dVk::kFaultTexelRow, false},
             {"vertex colour channel swapped", "T6", Gs2dVk::kFaultColourSwap, false},
+            {"barrier left out (read)", "T8", Gs2dVk::kFaultNoBarrier, false, nullptr, true},
+            {"reading batch as one group (read)", "T8", Gs2dVk::kFaultOneGroup, false, nullptr, true},
         };
-        std::printf("planted faults (each must fail its test)\n");
+        std::printf("planted faults (each must fail its test; mode %s)\n", primaryRead ? "read" : "fixed function");
         const bool quiet = g_quiet;
         g_quiet = true;
         for (const FaultCase &f : cases)
         {
-            if (f.notApplicable)
+            if (f.notApplicable || (f.readOnly && !runRead))
             {
-                std::printf("  %-36s %s: not applicable: %s\n", f.name, f.test, f.notApplicable);
+                std::printf("  %-36s %s: not applicable: %s\n", f.name, f.test, f.notApplicable ? f.notApplicable : "no local read");
                 continue;
             }
             Test t;
             t.name = f.test;
-            t.failFast = true;
-            t.designCriteria = false; // T1's design criterion does not hold on the RTX 2060 without a fault (as built, 14.7)
+            t.failFast = std::string(f.test) != "T1" && std::string(f.test) != "T8";
             Gs2dVk::Options o;
+            o.blend = primaryRead ? Gs2dVk::kBlendRead : Gs2dVk::kBlendFixed;
             o.faults = f.vkFault;
             vk.setOptions(o);
             m.reader.faultIgnoreTexa = f.texa;
             m.useModel = false;
-            for (const Entry &e : tests)
-                if (std::string(e.name) == f.test)
-                {
-                    if (std::string(f.test) == "T1")
-                        testT1(t, m, true);
-                    else
+            const auto ts = std::chrono::steady_clock::now();
+            if (std::string(f.test) == "T1")
+                testT1(t, m, true, primaryRead);
+            else
+                for (const Entry &e : tests)
+                    if (std::string(e.name) == f.test)
                         e.run(t, m);
-                }
             const bool caught = !t.ok();
-            std::printf("  %-36s %s: %s\n", f.name, f.test, caught ? "fails (caught)" : "PASSES (not caught)");
-            allOk &= caught;
+            std::string extra;
+            if (std::string(f.test) == "T1")
+                extra = " (rows failing: " + std::to_string(t.readRowFails) + " reading or fractional, " + std::to_string(t.exactRowFails) + " integer exact)";
+            else if (std::string(f.test) == "T8")
+                extra = " (" + std::to_string(t.failures) + " of " + std::to_string(t.checks) + " scenes differ)";
+            const bool both = std::string(f.test) != "T1" || !primaryRead || f.vkFault != Gs2dVk::kFaultFixOffByOne || (t.readRowFails && t.exactRowFails);
+            std::printf("  %-36s %s: %s%s, %.1f s\n", f.name, f.test, caught && both ? "fails (caught)" : "PASSES (not caught)", extra.c_str(),
+                        std::chrono::duration<double>(std::chrono::steady_clock::now() - ts).count());
+            allOk &= caught && both;
             m.reader.faultIgnoreTexa = false;
             m.useModel = true;
             vk.setOptions(Gs2dVk::Options{});
@@ -1608,16 +1901,17 @@ int main(int argc, char **argv)
     const Gs2dVk::Stats &st = vk.stats();
     std::printf("Gs2dVk: %" PRIu64 " lists, %" PRIu64 " draws, %" PRIu64 " primitives, %" PRIu64 " records, %" PRIu64 " line pixels, %" PRIu64
                 " clears, %" PRIu64 " textures, split: %" PRIu64 " primitives in %" PRIu64 " groups, %" PRIu64 " decided on the CPU; culled %" PRIu64
-                ", beyond the viewport %" PRIu64 ", unsupported states %" PRIu64 "\n",
+                ", beyond the viewport %" PRIu64 ", unsupported states %" PRIu64 "; exact blend: %" PRIu64 " reading primitives in %" PRIu64 " groups, %" PRIu64
+                " barriers\n",
                 st.lists, st.draws, st.prims, st.records, st.linePixels, st.clears, st.textures, st.splitPrims, st.splitGroups, st.decidedOnCpu, st.culled,
-                st.beyondViewport, st.unsupported);
+                st.beyondViewport, st.unsupported, st.readPrims, st.readGroups, st.barriers);
     const auto &fb = GSRaster::FallbackCounters();
     std::printf("emulated GS: %" PRIu64 " scenes; fast-path fallbacks", m.scenes);
     for (uint64_t c : fb)
         std::printf(" %" PRIu64, c);
     std::printf("\n");
     vk.destroy();
-    const uint32_t errors = rhi_vk_validation_error_count();
+    const uint32_t errors = rhi_vk_validation_error_count() - probeErrors;
     rhi_shutdown();
     std::printf("validation errors: %u%s\n", errors, validation ? "" : " (layer off)");
     std::printf("time %.1f s\n", std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());

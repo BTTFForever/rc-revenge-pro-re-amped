@@ -191,7 +191,7 @@ namespace rc::replay
             const int sx0 = static_cast<int>(s.scissor & 0x7FFu), sx1 = static_cast<int>((s.scissor >> 16) & 0x7FFu);
             const int sy0 = static_cast<int>((s.scissor >> 32) & 0x7FFu), sy1 = static_cast<int>((s.scissor >> 48) & 0x7FFu);
             const GsVertex *v = l.vertices(c);
-            uint64_t pixels = 0, flatExactPrims = 0;
+            uint64_t pixels = 0;
             for (uint32_t i = 0; i < count; ++i)
             {
                 const GsVertex *pv = v + i * per;
@@ -206,15 +206,10 @@ namespace rc::replay
                 if (kind == kKindSprites)
                     zmin = zmax = pv[1].z;
                 add("z", fmt("%s", kind == kKindSprites ? "sprite" : "2D") + fmt(" z=%08x%s", zmin, zmin == zmax ? "" : " (varies in the primitive)"), 1, px);
-                if (!tme && !p.exactBlend && !std::memcmp(&pv[0].r, &pv[per - 1].r, 4) && (per < 3 || !std::memcmp(&pv[0].r, &pv[1].r, 4)) &&
-                    flatSourceExact(p, pv[0].r, pv[0].g, pv[0].b))
-                    ++flatExactPrims;
             }
             add("state", stateKey, count, pixels);
             add("blend", blendKey, count, pixels);
             add("plan", blendKey + "  ->  " + planKey, count, pixels);
-            if (flatExactPrims)
-                add("plan", blendKey + "  ->  flat source, integer exact (4.4)", flatExactPrims, 0);
             add("reg", fmt("PRIM attributes iip=%u tme=%u fge=%u abe=%u aa1=%u fst=%u ctxt=%u fix=%u", iip, tme, s.fge(), abe, s.aa1(), s.fst(), s.ctxt(),
                            static_cast<unsigned>((s.prim >> 10) & 1u)),
                 count, pixels);

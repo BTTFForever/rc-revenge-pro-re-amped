@@ -15,6 +15,14 @@
 // the clear is two flat triangles. RGB_ONLY / FB_ONLY / ZB_ONLY with a write on failing pixels (plan.split) is drawn as
 // two draws per group of primitives that cannot overlap (5.2), the alpha decided on the CPU where it is one value.
 //
+// The exact blend (batch 4b, RENDERER_2D_DESIGN.md 18 and 19): where the device has dynamic rendering local read
+// (RhiLimits.localRead), the plans with a fractional blend factor (not exactBlend) are drawn by the READ pipelines
+// instead: blend disabled, gs2d.frag's GS2D_DSTREAD build reads its own pixel of the target as an input attachment and
+// computes the GS rule in integers. Their batches are cut into groups of primitives that cannot overlap (the split's
+// rule), and a by-region barrier goes before each group when anything was drawn in the pass since the last one; the
+// pass is begun readable. Every other plan is drawn through fixed function as before, in the same pass. Without local
+// read (or with Options::blend kBlendFixed) every plan is fixed function: divergence D-2D-1.
+//
 // Needs a device made with rhi_init (headless is enough) offering dual-source blending, a D32F attachment and
 // shaderFloat64 (the RHI edit of decision U2): create() refuses otherwise. One thread.
 
@@ -81,15 +89,26 @@ namespace rc::rd
             kFaultZGequal = 1u << 3,        // ZTST GREATER drawn as GEQUAL
             kFaultFixOffByOne = 1u << 4,    // FIX + 1
             kFaultColourSwap = 1u << 5,     // a vertex colour's R and G swapped
+            kFaultNoBarrier = 1u << 6,      // (read mode) the barrier before a reading group left out
+            kFaultOneGroup = 1u << 7,       // (read mode) a reading batch drawn as one group
             kFaultNoHalfPixel = 1u << 16,   // (shader) the half pixel left out of the position
             kFaultBiasAlways = 1u << 17,    // (shader) the bias applied where a < b
             kFaultTexelRow = 1u << 18,      // (shader) the texel fetch one row down
         };
+        // How the plans with a fractional blend factor are drawn (RENDERER_2D_DESIGN.md 18.2).
+        enum BlendMode : uint32_t
+        {
+            kBlendAuto = 0,  // the read where the device has local read, else fixed function
+            kBlendFixed = 1, // fixed function (dual-source, 4.2), the bias as sourceBias says: D-2D-1
+            kBlendRead = 2,  // the destination read; create() fails without local read
+        };
         struct Options
         {
-            // 4.3's source bias. Off: T1 fails with it on the RTX 2060, whose blender quantises the source and the
-            // dual-source factor to 8 bits (RENDERER_2D_DESIGN.md 14.7); the design switches it off then.
-            bool sourceBias = false;
+            BlendMode blend = kBlendAuto;
+            // 4.3's source bias, for the fixed-function blend only (never set on a reading record). On: per inexact
+            // layer -1..+1 against the GS on the RTX 2060's 8-bit blender, against -1..+2 without it (RENDERER_2D_DESIGN.md
+            // 15.3, the batch 4 review's choice in 17.1).
+            bool sourceBias = true;
             uint32_t faults = 0;
         };
         struct Stats
@@ -97,6 +116,14 @@ namespace rc::rd
             uint64_t lists = 0, draws = 0, prims = 0, records = 0, linePixels = 0, points = 0, clears = 0, textures = 0;
             uint64_t splitPrims = 0, splitGroups = 0, decidedOnCpu = 0, unsupported = 0, spritesSkipped = 0;
             uint64_t culled = 0, beyondViewport = 0, zClamped = 0;
+            uint64_t readPrims = 0, readGroups = 0, barriers = 0; // the exact blend: primitives drawn by READ, their groups, barriers issued
+        };
+        // The last draw()'s figures: reading primitives, groups and barriers, and the GPU time of its command list
+        // (timestamps from before the first pass to after the last; 0 where the device has no timestamps).
+        struct ListStats
+        {
+            uint64_t readPrims = 0, readGroups = 0, barriers = 0, draws = 0;
+            double gpuMs = 0.0;
         };
 
         Gs2dVk() = default;
@@ -123,6 +150,10 @@ namespace rc::rd
         bool probe(const DrawList &list, bool uv, std::vector<uint32_t> &out);
 
         const Stats &stats() const { return m_stats; }
+        const ListStats &lastList() const { return m_last; }
+        // The device has local read (known after create()), and whether the options in force draw by the read.
+        bool readAvailable() const { return m_haveRead; }
+        bool readMode() const { return m_haveRead && m_opt.blend != kBlendFixed; }
 
     private:
         struct Draw
@@ -130,18 +161,25 @@ namespace rc::rd
             uint32_t target, key, first, count;
             RhiTexture texture;
             RhiRect scissor;
+            bool points;
+            bool read;    // a READ pipeline (key: readKey)
+            bool barrier; // the first draw of a reading group: a barrier before it unless nothing was drawn since the last
         };
         bool build(const DrawList &list, std::vector<Draw> &draws, std::vector<RhiTexture> &fresh, RhiCommandList cl);
         bool upload(const std::vector<Gs2dPrim> &records);
         void transition(RhiCommandList cl, RhiTexture t, RhiState &current, RhiState to);
         uint32_t pipelineKey(uint32_t config, bool alphaBlend, bool points, uint32_t compare, bool depthWrite, uint32_t mask) const;
+        uint32_t readKey(bool points, uint32_t compare, bool depthWrite, uint32_t mask) const;
 
         Options m_opt;
         Stats m_stats;
-        bool m_created = false;
+        ListStats m_last;
+        bool m_created = false, m_haveRead = false;
         RhiBindGroupLayout m_layouts[3]{};
-        RhiShader m_vert{}, m_vertPoints{}, m_frag{}, m_fragProbe{}, m_seedVert{}, m_seedFrag{};
+        RhiBindGroupLayout m_readLayouts[3]{}; // group 0: the target as an input attachment (slot 0); groups 1 and 2 shared
+        RhiShader m_vert{}, m_vertPoints{}, m_frag{}, m_fragProbe{}, m_fragRead{}, m_seedVert{}, m_seedFrag{};
         std::vector<RhiPipeline> m_pipelines; // by pipelineKey
+        std::vector<RhiPipeline> m_readPipelines; // by readKey (64, where local read)
         RhiPipeline m_seedPipeline{}, m_probePipeline{};
         RhiSampler m_sampler{};
         RhiTexture m_targets[2]{}, m_depth{}, m_probeTarget{}, m_dummy{};

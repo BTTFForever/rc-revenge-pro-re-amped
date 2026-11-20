@@ -40,8 +40,10 @@
 // --no-tables skips them. --fault reg|prim|field:<cycle>:<n> plants a lost register (every write of GS register n in the cycle), a dropped
 // primitive (n of the cycle), a zeroed GsState field (n, gs2d_encode.h GsField). --vk (step 7 batch 3, gif2d_vk.h; implies
 // --with-emu): (c) every drawing PATH3 kick also drawn through Gs2dVk over the emulated frame and Z buffers and compared
-// with the emulated GS's result (RENDERER_2D_DESIGN.md 10.3 and 16), with the source bias off and on (--vk-bias);
-// --vk-fault plants the faults of 9.3 in the Vulkan path, --vk-png writes the first failing kick's planes.
+// with the emulated GS's result (RENDERER_2D_DESIGN.md 10.3, 16 and 18.4): --vk-blend read (the exact blend by local
+// read, every pixel equal; the default where the device has it), ff (fixed function with D-2D-1's bound; the default
+// without local read) or both; --vk-bias off|on|both is fixed function's source bias (default on); --vk-fault plants the
+// faults of 9.3 and 18.3 in the Vulkan path, --vk-png writes the first failing kick's planes.
 #include "chain_walk.h"
 #include "emu.h"
 #include "tex.h"
@@ -459,7 +461,7 @@ namespace
                              "                 [--fault page|kick|hw:<cycle>[:<n>]]\n"
                              "       tex: [--with-emu] [--png <dir>] [--fault transfer|kick:<cycle>:<n> | swizzle:<cycle>:<bits> | decode:0:<bits>]\n"
                              "       gif2d: [--with-emu] [--no-tables] [--fault reg|prim|field:<cycle>:<n>]\n"
-                             "              [--vk] [--vk-bias off|on|both] [--vk-fault <name>[,<name>...]] [--vk-png <dir>] [--validation]\n"
+                             "              [--vk] [--vk-blend read|ff|both] [--vk-bias off|on|both] [--vk-fault <name>[,<name>...]] [--vk-png <dir>] [--validation]\n"
                              "       blit: [--no-gpu] [--validation] [--png <dir>] [--fault tile:<cycle>:<n> | dispfb:<cycle> | byte|gpubyte:<cycle>:<pixel>]\n");
     }
 }
@@ -664,7 +666,7 @@ int main(int argc, char **argv)
 {
     std::string path, consumer = "stats";
     bool verify = false, quiet = false, withEmu = false, noGpu = false, validation = false, noTables = false, vk = false;
-    std::string vkBias = "both", vkFaults, vkPng;
+    std::string vkBias = "on", vkBlend = "auto", vkFaults, vkPng;
     uint64_t first = 0, last = ~0ull;
     rc::replay::EmuOptions emuOptions;
     auto cycleKick = [](const char *text, int64_t &cycle, uint32_t &kick)
@@ -714,6 +716,8 @@ int main(int argc, char **argv)
             vk = true;
         else if (a == "--vk-bias" && i + 1 < argc)
             vkBias = argv[++i];
+        else if (a == "--vk-blend" && i + 1 < argc)
+            vkBlend = argv[++i];
         else if (a == "--vk-fault" && i + 1 < argc)
             vkFaults = argv[++i];
         else if (a == "--vk-png" && i + 1 < argc)
@@ -820,6 +824,12 @@ int main(int argc, char **argv)
             g.vkOptions.quiet = quiet;
             g.vkOptions.pngDir = vkPng;
             g.vkOptions.biasMask = vkBias == "off" ? 1u : vkBias == "on" ? 2u : 3u;
+            if (vkBlend != "auto" && vkBlend != "read" && vkBlend != "ff" && vkBlend != "both")
+            {
+                std::fprintf(stderr, "unknown --vk-blend '%s' (read, ff, both)\n", vkBlend.c_str());
+                return 2;
+            }
+            g.vkOptions.blend = vkBlend;
             size_t at = 0;
             while (at < vkFaults.size())
             {
@@ -830,7 +840,7 @@ int main(int argc, char **argv)
                 else if (!rc::replay::gif2dVkFault(name, g.vkOptions.faults))
                 {
                     std::fprintf(stderr, "unknown --vk-fault '%s' (atst-less, drop-fail, split-per-batch, z-gequal, fix, colour-swap, no-half-pixel, "
-                                         "bias-always, texel-row, texa)\n",
+                                         "bias-always, texel-row, no-barrier, one-group, texa)\n",
                                  name.c_str());
                     return 2;
                 }

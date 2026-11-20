@@ -8,16 +8,18 @@
 //   1. the colour target(s) the kick draws into (FRAME FBP 0x0 / 0x50, CT32, 640 x 256) and the Z buffer (ZBP, Z32
 //      layout, the low 24 bits) are read from the emulated GS memory with render/tex's gs_layout;
 //   2. after the machine has run the kick, the same planes are read again: the reference;
-//   3. for each source-bias setting asked for (Gs2dVk::Options::sourceBias, off and on by default) the targets and the
-//      depth texture are seeded with the planes of 1, the kick's commands (with the state in force and every TEXTURE
-//      not given to the GPU yet) are drawn, and colour and depth are read back and compared with 2.
-// Pass, per pixel: alpha and Z equal; R, G, B: -L <= Vulkan - reference <= 2L with the bias off, -L <= ... <= L with it
-// on (divergence D-2D-1, RENDERER_2D_DESIGN.md 15.3 / 16), where L is the number of the kick's primitives with an
-// inexact blend plan (planState: blend on, not exactBlend) that cover the pixel (the reference's coverage rules inside the
-// scissor; the design said "whose scissored bounding box holds it", which counts both halves of every rectangle); so equal
-// wherever L is 0. The report: per bias, the pixels compared / equal / within the bound / out of it, the difference
-// histogram by draw state (the state of the last inexact primitive over the pixel), by L, the largest L, the worst
-// differences.
+//   3. for each setting asked for (--vk-blend, --vk-bias: the exact blend by local read, Gs2dVk::kBlendRead, and/or fixed
+//      function with the source bias off or on) the targets and the depth texture are seeded with the planes of 1, the
+//      kick's commands (with the state in force and every TEXTURE not given to the GPU yet) are drawn, and colour and
+//      depth are read back and compared with 2.
+// Pass, per pixel: read (batch 4b, RENDERER_2D_DESIGN.md 18.4): R, G, B, A and Z equal. Fixed function: alpha and Z
+// equal; R, G, B: -L <= Vulkan - reference <= 2L with the bias off, -L <= ... <= L with it on (divergence D-2D-1,
+// RENDERER_2D_DESIGN.md 15.3 / 16), where L is the number of the kick's primitives with an inexact blend plan
+// (planState: blend on, not exactBlend) that cover the pixel (the reference's coverage rules inside the scissor; the
+// design said "whose scissored bounding box holds it", which counts both halves of every rectangle); so equal wherever
+// L is 0. The report: per setting, the pixels compared / equal / within the bound / out of it, the difference histogram
+// by draw state (the state of the last inexact primitive over the pixel), by L, the largest L, the worst differences,
+// the GPU time of the draws per kick and, for read, the reading primitives, groups and barriers.
 
 #include "consumer.h"
 
@@ -32,14 +34,15 @@ namespace rc::replay
     struct Gif2dVkOptions
     {
         bool validation = false, quiet = false;
-        uint32_t biasMask = 3u;  // bit 0: run with the source bias off, bit 1: on
+        std::string blend = "auto"; // read, ff, both, or auto: read where the device has local read, else ff
+        uint32_t biasMask = 2u;     // fixed function: bit 0 with the source bias off, bit 1 on
         uint32_t faults = 0;     // Gs2dVk::Fault bits (planted, 9.3)
         bool faultTexa = false;  // the TEXA fault is the reader's (handled by gif2d)
         std::string pngDir;      // the first failing kick's planes (before, Vulkan, reference, difference)
     };
 
     // Planted fault names for --vk-fault: atst-less, drop-fail, split-per-batch, z-gequal, fix, colour-swap,
-    // no-half-pixel, bias-always, texel-row. False for an unknown name.
+    // no-half-pixel, bias-always, texel-row, no-barrier, one-group. False for an unknown name.
     bool gif2dVkFault(const std::string &name, uint32_t &bits);
 
     class Gif2dVkCheck

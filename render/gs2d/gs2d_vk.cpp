@@ -5,12 +5,14 @@
 
 #include "gs2d_frag.h"
 #include "gs2d_probe_frag.h"
+#include "gs2d_read_frag.h"
 #include "gs2d_points_vert.h"
 #include "gs2d_seed_frag.h"
 #include "gs2d_seed_vert.h"
 #include "gs2d_vert.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <unordered_set>
 
@@ -120,6 +122,11 @@ namespace rc::rd
                maskIndex(static_cast<uint8_t>(mask));
     }
 
+    uint32_t Gs2dVk::readKey(bool points, uint32_t compare, bool depthWrite, uint32_t mask) const
+    {
+        return (((points ? 1u : 0u) * 4u + (compare & 3u)) * 2u + (depthWrite ? 1u : 0u)) * kMasks + maskIndex(static_cast<uint8_t>(mask));
+    }
+
     bool Gs2dVk::create(std::string *why)
     {
         auto fail = [&](const char *w)
@@ -138,6 +145,12 @@ namespace rc::rd
             return fail("the device has no D32F depth attachment");
         if (!lim->shaderFloat64)
             return fail("the device has no shaderFloat64 (decision U2's fallback is not built)");
+        m_haveRead = lim->localRead;
+        if (!m_haveRead && m_opt.blend == kBlendRead)
+            return fail("the exact blend was asked for, but the device has no dynamic rendering local read (RhiLimits.localRead)");
+        if (!m_haveRead)
+            std::fprintf(stderr, "gs2d: the device has no local read: the fractional blends are drawn by fixed function with the source "
+                                 "bias (divergence D-2D-1, RENDERER_2D_DESIGN.md 12)\n");
 
         static const RhiBindSlot recordSlots[1] = {{0u, RHI_BIND_STORAGE_BUFFER, (1u << RHI_STAGE_VERTEX) | (1u << RHI_STAGE_FRAGMENT)}};
         static const RhiBindSlot textureSlots[3] = {{1u, RHI_BIND_SAMPLED_TEXTURE, 1u << RHI_STAGE_FRAGMENT},
@@ -158,6 +171,18 @@ namespace rc::rd
         if (!m_layouts[0].id || !m_layouts[1].id || !m_layouts[2].id || !m_vert.id || !m_vertPoints.id || !m_frag.id || !m_fragProbe.id ||
             !m_seedVert.id || !m_seedFrag.id)
             return fail("shaders or layouts");
+        if (m_haveRead)
+        {
+            // The exact blend: group 0 holds the target as an input attachment (binding 16, gs2d.frag GS2D_DSTREAD).
+            static const RhiBindSlot dstSlots[1] = {{0u, RHI_BIND_INPUT_ATTACHMENT, 1u << RHI_STAGE_FRAGMENT}};
+            const RhiBindGroupLayoutDesc g0r{dstSlots, 1u, "gs2d destination"};
+            m_readLayouts[0] = rhi_create_bind_group_layout(&g0r);
+            m_readLayouts[1] = m_layouts[1];
+            m_readLayouts[2] = m_layouts[2];
+            m_fragRead = makeShader(RHI_STAGE_FRAGMENT, spv_gs2d_read_frag, sizeof(spv_gs2d_read_frag), "gs2d.frag dstread");
+            if (!m_readLayouts[0].id || !m_fragRead.id)
+                return fail("the exact blend's shader or layout");
+        }
         RhiSamplerDesc sd{};
         sd.mag = sd.min = sd.mip = RHI_FILTER_NEAREST;
         sd.s = sd.t = RHI_WRAP_CLAMP;
@@ -205,13 +230,48 @@ namespace rc::rd
                                 descs.push_back(d);
                                 keys.push_back(pipelineKey(config, ab != 0u, points != 0u, cmp, zw != 0u, kMaskValues[m]));
                             }
+        // The exact blend's READ configuration (18.2): {triangles, points} x depth compare x depth write x colour mask,
+        // blend disabled, one colour output; the destination is read by the shader (dstRead stays NONE: the
+        // rasterization-order form is not used, the barriers order the reads).
+        const size_t ffCount = descs.size();
+        if (m_haveRead)
+        {
+            m_readPipelines.assign(2u * 4u * 2u * kMasks, RhiPipeline{});
+            for (uint32_t points = 0; points < 2u; ++points)
+                for (uint32_t cmp = 0; cmp < 4u; ++cmp)
+                    for (uint32_t zw = 0; zw < 2u; ++zw)
+                        for (uint32_t m = 0; m < kMasks; ++m)
+                        {
+                            RhiPipelineDesc d{};
+                            d.vertex = points ? m_vertPoints : m_vert;
+                            d.fragment = m_fragRead;
+                            d.layouts = m_readLayouts;
+                            d.layoutCount = 3u;
+                            d.topology = points ? RHI_TOPO_POINT_LIST : RHI_TOPO_TRIANGLE_LIST;
+                            d.cullNone = true;
+                            d.blend[0].enable = false;
+                            d.blend[0].writeMask = kMaskValues[m];
+                            d.depthStencil.depthTest = true;
+                            d.depthStencil.depthWrite = zw != 0u;
+                            d.depthStencil.depthCompare = compareOf(cmp);
+                            d.colorFormats[0] = RHI_FMT_RGBA8_UNORM;
+                            d.colorCount = 1u;
+                            d.depthFormat = RHI_FMT_D32F;
+                            d.debugName = "gs2d read";
+                            descs.push_back(d);
+                            keys.push_back(readKey(points != 0u, cmp, zw != 0u, kMaskValues[m]));
+                        }
+        }
         std::vector<RhiPipeline> made(descs.size());
         rhi_create_pipelines(descs.data(), static_cast<uint32_t>(descs.size()), made.data(), nullptr);
         for (size_t i = 0; i < made.size(); ++i)
         {
             if (!made[i].id)
                 return fail("a pipeline could not be made");
-            m_pipelines[keys[i]] = made[i];
+            if (i < ffCount)
+                m_pipelines[keys[i]] = made[i];
+            else
+                m_readPipelines[keys[i]] = made[i];
         }
 
         RhiPipelineDesc seed{};
@@ -251,7 +311,7 @@ namespace rc::rd
         td.height = kHeight;
         td.mipLevels = 1u;
         td.format = RHI_FMT_RGBA8_UNORM;
-        td.usage = RHI_TEX_RENDER_TARGET | RHI_TEX_COPY_SRC;
+        td.usage = RHI_TEX_RENDER_TARGET | RHI_TEX_COPY_SRC | (m_haveRead ? RHI_TEX_INPUT_ATTACHMENT : 0u);
         td.debugName = "gs2d target FBP 0x0";
         m_targets[0] = rhi_create_texture(&td);
         td.debugName = "gs2d target FBP 0x50";
@@ -304,13 +364,17 @@ namespace rc::rd
             if (p.id)
                 rhi_destroy_pipeline(p);
         m_pipelines.clear();
+        for (RhiPipeline &p : m_readPipelines)
+            if (p.id)
+                rhi_destroy_pipeline(p);
+        m_readPipelines.clear();
         for (RhiPipeline *p : {&m_seedPipeline, &m_probePipeline})
             if (p->id)
             {
                 rhi_destroy_pipeline(*p);
                 *p = RhiPipeline{};
             }
-        for (RhiShader *s : {&m_vert, &m_vertPoints, &m_frag, &m_fragProbe, &m_seedVert, &m_seedFrag})
+        for (RhiShader *s : {&m_vert, &m_vertPoints, &m_frag, &m_fragProbe, &m_fragRead, &m_seedVert, &m_seedFrag})
             if (s->id)
             {
                 rhi_destroy_shader(*s);
@@ -341,7 +405,11 @@ namespace rc::rd
                 rhi_destroy_bind_group_layout(l);
             l = RhiBindGroupLayout{};
         }
-        m_created = false;
+        if (m_readLayouts[0].id)
+            rhi_destroy_bind_group_layout(m_readLayouts[0]);
+        for (RhiBindGroupLayout &l : m_readLayouts)
+            l = RhiBindGroupLayout{};
+        m_created = m_haveRead = false;
     }
 
     void Gs2dVk::transition(RhiCommandList cl, RhiTexture t, RhiState &current, RhiState to)
@@ -472,6 +540,10 @@ namespace rc::rd
         RhiRect scissor{0, 0, 0u, 0u};
         Box sbox{0, 0, -1, -1};
         const uint32_t f = m_opt.faults;
+        // The exact blend (18.2): the plans with a fractional factor are drawn by the READ pipelines.
+        const bool readNow = readMode();
+        auto planReads = [&]() { return readNow && plan.blend != kBlendOff && !plan.exactBlend; };
+        bool reads = false, pendingBarrier = false;
 
         // Texture uploads: each TEXTURE command a new texture object (an id can change generation within a list).
         struct Up
@@ -501,7 +573,7 @@ namespace rc::rd
             r.clampU = static_cast<uint32_t>((state.clamp >> 4) & 0x3FFu) | static_cast<uint32_t>((state.clamp >> 14) & 0x3FFu) << 16;
             r.clampV = static_cast<uint32_t>((state.clamp >> 24) & 0x3FFu) | static_cast<uint32_t>((state.clamp >> 34) & 0x3FFu) << 16;
             r.flags = (state.tme() ? kPrimTme : 0u) | (state.iip() ? kPrimIip : 0u) | (state.fst() ? kPrimFst : 0u) |
-                      (m_opt.sourceBias ? kPrimBias : 0u);
+                      (m_opt.sourceBias && !planReads() ? kPrimBias : 0u);
             r.fault = f >> 16;
         };
         auto colourOf = [&](const GsVertex &v)
@@ -517,11 +589,13 @@ namespace rc::rd
             if ((f & kFaultZGequal) && ztst == kDepthGreater)
                 ztst = kDepthGequal;
             const bool fail = part == kPartFail;
-            const uint32_t key = pipelineKey(plan.blend, part == kPartAlphaBlend, points, ztst, fail ? plan.failDepthWrite : plan.passDepthWrite,
-                                             fail ? plan.failColorMask : plan.passColorMask);
+            const bool zw = fail ? plan.failDepthWrite : plan.passDepthWrite;
+            const uint32_t mask = fail ? plan.failColorMask : plan.passColorMask;
+            const uint32_t key = reads ? readKey(points, ztst, zw, mask) : pipelineKey(plan.blend, part == kPartAlphaBlend, points, ztst, zw, mask);
             for (uint32_t i = first; i < end; ++i)
                 rec[i].flags |= part << kPrimPartShift;
-            draws.push_back({plan.target, key, first, end - first, tex, scissor});
+            draws.push_back({plan.target, key, first, end - first, tex, scissor, points, reads, reads && pendingBarrier});
+            pendingBarrier = false;
             ++m_stats.draws;
         };
         // The As of a primitive when it is one value for all its pixels (5.2); -1 otherwise.
@@ -555,7 +629,8 @@ namespace rc::rd
         {
             if (items.empty())
                 return;
-            if (!plan.split)
+            reads = planReads();
+            if (!plan.split && !reads)
             {
                 const uint32_t first = static_cast<uint32_t>(rec.size());
                 for (const Item &it : items)
@@ -564,13 +639,19 @@ namespace rc::rd
                 items.clear();
                 return;
             }
-            m_stats.splitPrims += items.size();
+            if (plan.split)
+                m_stats.splitPrims += items.size();
+            if (reads)
+            {
+                m_stats.readPrims += items.size();
+                m_last.readPrims += items.size();
+            }
             size_t i = 0;
             while (i < items.size())
             {
-                // The group: a run of items whose pixel sets are pairwise disjoint.
+                // The group: a run of items whose pixel sets are pairwise disjoint (5.2; for the exact blend, 18.2).
                 size_t end = i + 1;
-                if (f & kFaultSplitPerBatch)
+                if (((f & kFaultSplitPerBatch) && plan.split) || ((f & kFaultOneGroup) && reads))
                     end = items.size();
                 else if (points)
                 {
@@ -589,7 +670,25 @@ namespace rc::rd
                             break;
                         ++end;
                     }
-                ++m_stats.splitGroups;
+                if (plan.split)
+                    ++m_stats.splitGroups;
+                if (reads)
+                {
+                    ++m_stats.readGroups;
+                    ++m_last.readGroups;
+                    pendingBarrier = true; // on the group's first draw
+                }
+                if (!plan.split)
+                {
+                    // A reading plan without the split: the group in one draw.
+                    const uint32_t first = static_cast<uint32_t>(rec.size());
+                    for (size_t k = i; k < end; ++k)
+                        rec.push_back(items[k].r);
+                    emit(first, static_cast<uint32_t>(rec.size()), points, plan.alphaByBlend ? kPartAlphaBlend : kPartPass);
+                    pendingBarrier = false;
+                    i = end;
+                    continue;
+                }
                 const uint32_t aref = plan.aref;
                 for (int part = 0; part < 2; ++part)
                 {
@@ -613,6 +712,7 @@ namespace rc::rd
                     }
                     emit(first, static_cast<uint32_t>(rec.size()), points, part == 0 ? kPartPass : kPartFail);
                 }
+                pendingBarrier = false;
                 i = end;
             }
             items.clear();
@@ -870,9 +970,10 @@ namespace rc::rd
 
     bool Gs2dVk::draw(const DrawList &list)
     {
-        if (!m_created)
+        if (!m_created || (m_opt.blend == kBlendRead && !m_haveRead))
             return false;
         ++m_stats.lists;
+        m_last = ListStats{};
         rhi_wait_frame();
         RhiCommandList cl = rhi_begin_commands();
         std::vector<Draw> draws;
@@ -882,26 +983,46 @@ namespace rc::rd
             rhi_submit(cl);
             return false;
         }
+        const bool readNow = readMode();
+        const bool stamps = rhi_timestamps_supported();
+        if (stamps)
+            rhi_cmd_write_timestamp(cl, 0u);
         RhiBinding rb{};
         rb.slot = 0u;
         rb.type = RHI_BIND_STORAGE_BUFFER;
         rb.buffer = m_records;
         const RhiBindGroupDesc g0{m_layouts[0], nullptr, 0u}, g1{m_layouts[1], &rb, 1u};
         const RhiBindGroup group0 = rhi_create_bind_group(&g0), group1 = rhi_create_bind_group(&g1);
+        // The exact blend: group 0 of the READ pipelines, the target as an input attachment.
+        RhiBindGroup group0Read[2]{};
+        if (readNow)
+            for (uint32_t t = 0; t < 2u; ++t)
+            {
+                RhiBinding b{};
+                b.slot = 0u;
+                b.type = RHI_BIND_INPUT_ATTACHMENT;
+                b.texture = m_targets[t];
+                const RhiBindGroupDesc gr{m_readLayouts[0], &b, 1u};
+                group0Read[t] = rhi_create_bind_group(&gr);
+            }
         std::unordered_map<uint32_t, RhiBindGroup> textureGroups;
         int open = -1;
+        bool drawnSinceBarrier = false; // in the open pass, since it began or since the last barrier
         for (const Draw &d : draws)
         {
             if (open != static_cast<int>(d.target))
             {
                 if (open >= 0)
                     rhi_cmd_end_render_pass(cl);
-                transition(cl, m_targets[d.target], m_targetState[d.target], RHI_STATE_RENDER_TARGET);
+                // In read mode every pass is begun readable (the target in RENDERING_LOCAL_READ), so the READ draws
+                // and the fixed-function ones share it.
+                transition(cl, m_targets[d.target], m_targetState[d.target], readNow ? RHI_STATE_RENDER_TARGET_READ : RHI_STATE_RENDER_TARGET);
                 transition(cl, m_depth, m_depthState, RHI_STATE_DEPTH_WRITE);
                 RhiRenderPassDesc pass{};
                 pass.color[0].texture = m_targets[d.target];
                 pass.color[0].load = RHI_LOAD_LOAD;
                 pass.color[0].store = RHI_STORE_STORE;
+                pass.color[0].readable = readNow;
                 pass.colorCount = 1u;
                 pass.depth.texture = m_depth;
                 pass.depth.depthLoad = RHI_LOAD_LOAD;
@@ -916,6 +1037,7 @@ namespace rc::rd
                 rhi_cmd_set_bind_group(cl, 0u, group0);
                 rhi_cmd_set_bind_group(cl, 1u, group1);
                 open = static_cast<int>(d.target);
+                drawnSinceBarrier = false;
             }
             auto it = textureGroups.find(d.texture.id);
             if (it == textureGroups.end())
@@ -933,24 +1055,45 @@ namespace rc::rd
                 const RhiBindGroupDesc g2{m_layouts[2], b, 3u};
                 it = textureGroups.emplace(d.texture.id, rhi_create_bind_group(&g2)).first;
             }
-            rhi_cmd_set_pipeline(cl, m_pipelines[d.key]);
-            rhi_cmd_set_bind_group(cl, 0u, group0);
+            // 18.1: the group's reads see every earlier write once a by-region barrier lies between them; none is
+            // needed when nothing was drawn in the pass since it began (the load) or since the last barrier.
+            if (d.read && d.barrier && drawnSinceBarrier && !(m_opt.faults & kFaultNoBarrier))
+            {
+                rhi_cmd_local_read_barrier(cl, RHI_LOCAL_READ_COLOR);
+                ++m_stats.barriers;
+                ++m_last.barriers;
+                drawnSinceBarrier = false;
+            }
+            rhi_cmd_set_pipeline(cl, d.read ? m_readPipelines[d.key] : m_pipelines[d.key]);
+            rhi_cmd_set_bind_group(cl, 0u, d.read ? group0Read[d.target] : group0);
             rhi_cmd_set_bind_group(cl, 1u, group1);
             rhi_cmd_set_bind_group(cl, 2u, it->second);
             rhi_cmd_set_scissor(cl, &d.scissor);
-            const bool points = ((d.key / kMasks / 2u / 4u) & 1u) != 0u;
-            if (points)
+            if (d.points)
                 rhi_cmd_draw(cl, d.count, d.first, 1u);
             else
                 rhi_cmd_draw(cl, d.count * 3u, d.first * 3u, 1u);
+            drawnSinceBarrier = true;
+            ++m_last.draws;
         }
         if (open >= 0)
             rhi_cmd_end_render_pass(cl);
+        if (stamps)
+            rhi_cmd_write_timestamp(cl, 1u);
         rhi_submit(cl);
         rhi_wait_idle();
         for (RhiTexture t : m_retired)
             rhi_destroy_texture(t);
         m_retired.clear();
+        if (stamps)
+        {
+            // The slot of this list is recycled (and its timestamps collected) two frames on; the GPU is idle.
+            rhi_wait_frame();
+            rhi_wait_frame();
+            uint64_t ns[2] = {};
+            if (rhi_read_timestamps(ns, 2u) >= 2u && ns[1] >= ns[0] && ns[0])
+                m_last.gpuMs = static_cast<double>(ns[1] - ns[0]) / 1.0e6;
+        }
         return true;
     }
 
@@ -1032,7 +1175,7 @@ namespace rc::rd
         rhi_cmd_set_bind_group(cl, 1u, rhi_create_bind_group(&g1));
         for (const Draw &d : draws)
         {
-            if ((d.key / kMasks / 2u / 4u) & 1u)
+            if (d.points)
                 continue; // points
             RhiBinding b[3]{};
             b[0].slot = 1u;

@@ -135,6 +135,7 @@ namespace rc::replay
             {"atst-less", Gs2dVk::kFaultAtstLess},       {"drop-fail", Gs2dVk::kFaultDropFail},       {"split-per-batch", Gs2dVk::kFaultSplitPerBatch},
             {"z-gequal", Gs2dVk::kFaultZGequal},         {"fix", Gs2dVk::kFaultFixOffByOne},          {"colour-swap", Gs2dVk::kFaultColourSwap},
             {"no-half-pixel", Gs2dVk::kFaultNoHalfPixel}, {"bias-always", Gs2dVk::kFaultBiasAlways}, {"texel-row", Gs2dVk::kFaultTexelRow},
+            {"no-barrier", Gs2dVk::kFaultNoBarrier},     {"one-group", Gs2dVk::kFaultOneGroup},
         };
         auto it = names.find(name);
         if (it == names.end())
@@ -143,9 +144,14 @@ namespace rc::replay
         return true;
     }
 
+    // The settings check (c) runs: fixed function with the bias off (0) or on (1), the exact blend by local read (2).
+    constexpr int kSettings = 3, kRead = 2;
+    const char *settingName(int s) { return s == kRead ? "read" : s ? "ff bias on" : "ff bias off"; }
+
     struct Gif2dVkCheck::Impl
     {
         Gif2dVkOptions opt;
+        uint32_t settings = 0; // bit per setting, resolved at start()
         Gs2dVk vk;
         bool rhiUp = false, up = false;
         std::string adapter;
@@ -191,15 +197,19 @@ namespace rc::replay
             std::vector<std::string> failures;
             uint64_t failingKicks = 0;
             bool pngWritten = false;
-            double ms = 0.0;
-        } tot[2];
+            double ms = 0.0, gpuMs = 0.0, gpuMaxMs = 0.0;
+            uint64_t gpuKicks = 0;
+            std::string gpuMaxWhere;
+            uint64_t readPrims = 0, readGroups = 0, barriers = 0, maxGroups = 0, maxBarriers = 0;
+            std::string maxGroupsWhere;
+        } tot[kSettings];
         uint32_t largestL = 0;
         std::string largestLWhere;
         uint64_t lHist[64] = {}; // pixel-kicks with L = n (n > 0; 63: 63 or more)
         uint64_t kicksSeen = 0, kicksNoState = 0, kicksUnjudged = 0, zTopByte = 0, drawFailures = 0, readFailures = 0;
         double readMs = 0.0;
 
-        void runBias(int bias, const std::vector<uint32_t> (&ref)[2], const std::vector<uint32_t> &refZ);
+        void runSetting(int setting, const std::vector<uint32_t> (&ref)[2], const std::vector<uint32_t> &refZ);
         std::string primsAt(int x, int y, uint32_t target) const;
     };
 
@@ -224,9 +234,23 @@ namespace rc::replay
         if (!m->vk.create(why))
             return false;
         m->up = true;
-        std::printf("gif2d --vk: %s, validation %s; source bias %s; planted faults 0x%x\n", m->adapter.c_str(),
-                    rhi_limits()->validationLayer ? "on" : "off", m->opt.biasMask == 3u ? "off and on" : (m->opt.biasMask & 2u) ? "on" : "off",
-                    m->opt.faults);
+        const bool local = m->vk.readAvailable();
+        const std::string &b = m->opt.blend;
+        if (b == "read" && !local)
+        {
+            if (why)
+                *why = "--vk-blend read: the device has no local read (RhiLimits.localRead)";
+            return false;
+        }
+        const bool read = b == "read" || b == "both" || (b == "auto" && local);
+        const bool ff = b == "ff" || b == "both" || (b == "auto" && !local);
+        m->settings = (read ? 1u << kRead : 0u) | (ff ? (m->opt.biasMask & 3u) : 0u);
+        std::string names;
+        for (int s = 0; s < kSettings; ++s)
+            if (m->settings & (1u << s))
+                names += std::string(names.empty() ? "" : ", ") + settingName(s);
+        std::printf("gif2d --vk: %s, validation %s; local read %s; settings: %s; planted faults 0x%x\n", m->adapter.c_str(),
+                    rhi_limits()->validationLayer ? "on" : "off", local ? "yes" : "no", names.c_str(), m->opt.faults);
         return true;
     }
 
@@ -417,12 +441,13 @@ namespace rc::replay
         return out.empty() ? std::string(" none") : out;
     }
 
-    void Gif2dVkCheck::Impl::runBias(int bias, const std::vector<uint32_t> (&ref)[2], const std::vector<uint32_t> &refZ)
+    void Gif2dVkCheck::Impl::runSetting(int setting, const std::vector<uint32_t> (&ref)[2], const std::vector<uint32_t> &refZ)
     {
-        Totals &T = tot[bias];
+        Totals &T = tot[setting];
         const auto t0 = std::chrono::steady_clock::now();
         Gs2dVk::Options o;
-        o.sourceBias = bias != 0;
+        o.blend = setting == kRead ? Gs2dVk::kBlendRead : Gs2dVk::kBlendFixed;
+        o.sourceBias = setting == 1;
         o.faults = opt.faults;
         vk.setOptions(o);
         for (uint32_t t = 0; t < 2; ++t)
@@ -436,6 +461,23 @@ namespace rc::replay
         {
             ++drawFailures;
             return;
+        }
+        const Gs2dVk::ListStats &ls = vk.lastList();
+        T.gpuMs += ls.gpuMs;
+        T.gpuKicks += ls.gpuMs > 0.0;
+        if (ls.gpuMs > T.gpuMaxMs)
+        {
+            T.gpuMaxMs = ls.gpuMs;
+            T.gpuMaxWhere = fmt("cycle %" PRIu64 " kick %u, %" PRIu64 " draws, %" PRIu64 " barriers", p.cycle, p.index, ls.draws, ls.barriers);
+        }
+        T.readPrims += ls.readPrims;
+        T.readGroups += ls.readGroups;
+        T.barriers += ls.barriers;
+        T.maxBarriers = std::max(T.maxBarriers, ls.barriers);
+        if (ls.readGroups > T.maxGroups)
+        {
+            T.maxGroups = ls.readGroups;
+            T.maxGroupsWhere = fmt("cycle %" PRIu64 " kick %u", p.cycle, p.index);
         }
         std::vector<uint32_t> got[2], gotZ;
         for (uint32_t t = 0; t < 2; ++t)
@@ -486,7 +528,7 @@ namespace rc::replay
                 ++T.pixels;
                 ++bs.pixels;
                 ++bl.pixels;
-                const int lo = -static_cast<int>(l), hi = bias ? static_cast<int>(l) : 2 * static_cast<int>(l);
+                const int lo = setting == kRead ? 0 : -static_cast<int>(l), hi = setting == kRead ? 0 : setting ? static_cast<int>(l) : 2 * static_cast<int>(l);
                 bool equal = true, inBound = true;
                 int worstD = 0, worstC = -1;
                 for (int c = 0; c < 4; ++c)
@@ -557,7 +599,7 @@ namespace rc::replay
                     {
                         const int x = static_cast<int>(i % kW), y = static_cast<int>(i / kW);
                         T.failures.push_back(fmt("cycle %" PRIu64 " kick %u target %u pixel %d,%d: %s Vulkan %08x, emulated %08x, before %08x (channel %d off by %d, L %u, bound %d..%d); primitives over it:%s",
-                                                 p.cycle, p.index, t, x, y, bias ? "bias on" : "bias off", g[i], r[i], p.before[t][i], worstC, worstD, l, lo, hi,
+                                                 p.cycle, p.index, t, x, y, settingName(setting), g[i], r[i], p.before[t][i], worstC, worstD, l, lo, hi,
                                                  primsAt(x, y, t).c_str()));
                     }
                     if (!kickFailed)
@@ -579,7 +621,7 @@ namespace rc::replay
         const uint32_t t = failT;
         if (!(p.targets & (1u << t)))
             return;
-        const std::string stem = fmt("%s/c%" PRIu64 "_k%u_bias%s_t%u", opt.pngDir.c_str(), p.cycle, p.index, bias ? "on" : "off", t);
+        const std::string stem = fmt("%s/c%" PRIu64 "_k%u_%s_t%u", opt.pngDir.c_str(), p.cycle, p.index, setting == kRead ? "read" : setting ? "ffbiason" : "ffbiasoff", t);
         std::vector<uint8_t> bytes, diff(static_cast<size_t>(kPixels) * 4u, 0u);
         toBytes(p.before[t], bytes);
         writePng(stem + "_before.png", bytes.data(), kW, kH);
@@ -635,17 +677,17 @@ namespace rc::replay
                         s.largestLWhere = fmt("cycle %" PRIu64 " kick %u pixel %u,%u target %u", p.cycle, p.index, i % kW, i / kW, t);
                     }
                 }
-        for (int bias = 0; bias < 2; ++bias)
-            if (s.opt.biasMask & (1u << bias))
-                s.runBias(bias, ref, refZ);
+        for (int setting = 0; setting < kSettings; ++setting)
+            if (s.settings & (1u << setting))
+                s.runSetting(setting, ref, refZ);
         s.carry.clear(); // given to the GPU with this kick
     }
 
     bool Gif2dVkCheck::failed() const
     {
         uint64_t bad = m->drawFailures + m->readFailures + m->validationErrors + m->kicksNoState;
-        for (int b = 0; b < 2; ++b)
-            if (m->opt.biasMask & (1u << b))
+        for (int b = 0; b < kSettings; ++b)
+            if (m->settings & (1u << b))
                 bad += m->tot[b].out + m->tot[b].depthDiff + m->tot[b].alphaDiff + (m->tot[b].kicks != m->kicksSeen - m->kicksNoState ? 1u : 0u);
         return bad != 0;
     }
@@ -672,16 +714,24 @@ namespace rc::replay
             }
         std::printf("(c) L (inexactly blended primitives covering a pixel): largest %u (%s); pixel-kicks with L > 0: %" PRIu64 " by L:%s\n",
                     s.largestL, s.largestLWhere.empty() ? "-" : s.largestLWhere.c_str(), lPix, lh.empty() ? " none" : lh.c_str());
-        for (int b = 0; b < 2; ++b)
+        for (int b = 0; b < kSettings; ++b)
         {
-            if (!(s.opt.biasMask & (1u << b)))
+            if (!(s.settings & (1u << b)))
                 continue;
             const Impl::Totals &T = s.tot[b];
-            const char *name = b ? "bias on" : "bias off";
+            const char *name = settingName(b);
+            std::printf("(c) %s: GPU time of the draws %.3f ms a kick on average (%" PRIu64 " kicks timed), largest %.3f ms (%s); wall time per kick (seed, "
+                        "draw, read-back) %.2f ms\n",
+                        name, T.gpuKicks ? T.gpuMs / static_cast<double>(T.gpuKicks) : 0.0, T.gpuKicks, T.gpuMaxMs, T.gpuMaxWhere.empty() ? "-" : T.gpuMaxWhere.c_str(),
+                        T.kicks ? T.ms / static_cast<double>(T.kicks) : 0.0);
+            if (b == kRead)
+                std::printf("(c) read: %" PRIu64 " reading primitives in %" PRIu64 " groups, %" PRIu64 " barriers; largest in a kick: %" PRIu64 " groups (%s), %" PRIu64
+                            " barriers\n",
+                            T.readPrims, T.readGroups, T.barriers, T.maxGroups, T.maxGroupsWhere.empty() ? "-" : T.maxGroupsWhere.c_str(), T.maxBarriers);
             std::printf("(c) %s (bound %s): %" PRIu64 " kicks (%" PRIu64 " with K1 primitives), %.1f s on the GPU; %" PRIu64 " pixels compared: %" PRIu64
                         " equal, %" PRIu64 " within the bound, %" PRIu64 " out of it; alpha differs %" PRIu64 ", depth differs %" PRIu64 " of %" PRIu64
                         "; colour channels differing %" PRIu64 " (sum of |d| %" PRIu64 "); worst %d (%s) .. %+d (%s); largest |d|/L %.2f; failing kicks %" PRIu64 "\n",
-                        name, b ? "-L..+L" : "-L..+2L", T.kicks, T.k1Kicks, T.ms / 1000.0, T.pixels, T.equal, T.within, T.out, T.alphaDiff, T.depthDiff, T.depthPixels,
+                        name, b == kRead ? "equal" : b ? "-L..+L" : "-L..+2L", T.kicks, T.k1Kicks, T.ms / 1000.0, T.pixels, T.equal, T.within, T.out, T.alphaDiff, T.depthDiff, T.depthPixels,
                         T.channelNonZero, T.absSum, T.minD, T.minWhere.empty() ? "-" : T.minWhere.c_str(), T.maxD, T.maxWhere.empty() ? "-" : T.maxWhere.c_str(),
                         T.maxRatio, T.failingKicks);
             auto histText = [](const Impl::Bucket &bk)
