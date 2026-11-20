@@ -789,6 +789,40 @@ dump). Measurement only (`tools/rc_replay/vif_survey.{h,cpp}`); the design it se
   instead of the VU1's round toward zero. `RC_VIFSTAT_PICTURES=<file>`: a plain run writes every cycle's picture
   to the file, a `--vif-round-nearest` run reads them back and prints the per-channel difference histogram.
 
+### The VIF1 reader and the frame reader (2026-11-20, renderer P1 step 8 batch 1)
+`render/vif` (library `rc_vif`): `Vif1Reader` walks a channel 1 kick with the chain walker, decodes the eight VIF
+codes into its own VIF1 registers, VU data and micro memory, and at each MSCAL runs the C++ reference of the
+loaded program (`vu1_programs.h`: recognised by the FNV-1a hash of the image prefix) through the references' new
+`rc::vu1::run(Program, Io&)` entry (`decomp/vu1/vu1_ref.h`: VU memory and the 32 registers changed in place, each
+XGKICK to a callback; the old `run*Shape` functions are wrappers). Anything else stops the kick with a guard
+(`VIF_CODE`, `VIF_UNPACK`, `VIF_TRUNCATED`, `VIF_PAGE`, `VU_PROGRAM`, `VU_ENTRY`). After every run the register lanes
+the references do not reproduce (`vu1_programs.cpp`, `RC_VU1_NOT_REPRODUCED`) are overwritten with a signalling NaN
+naming the lane. `render/frame` (`rc_frame`): `FrameReader`, the VIF1 reader feeding step 7's `Gif2dReader` as PATH1
+(`beginPath1Kick` / `feedPath1` / `endPath1Kick`), one register file and one draw list a cycle; `Gif2dReader::Options::
+cullOffscreen` leaves out triangles of no area or outside the scissor. Seeded from the first keyframe's `VIF1`, `VU1M`,
+`VU1R`. Neither library includes a runtime header; neither is linked into the game or the oracle.
+- `rc_replay <dump> --consumer vif --verify [--quiet]`: (a) VIF1 registers, both VU memories and the vector registers
+  at every later keyframe, the GS register file at every kick and against `GSRG`; (b) every channel 1 kick's PATH1
+  bytes against the recorded GIF hash. About 20 s a race dump; prints the reader's time a K2 kick (references, VIF
+  walk, GIF walk and list). Kicks with a water run the machine cut short at its 65,536-cycle budget fail (b) here
+  (and can pull the register file with them); that is expected until the runtime's limit goes (design batch R).
+- `--with-emu`: behind the emulated machine, whose six generated VU1 programs are wrapped (every run's packets, VU
+  memory and registers kept); the reader then runs the same kick and is compared run by run and packet by packet
+  (the first difference is named; `--vif-out <dir>` writes that run as `tools/shader_check`'s run record plus both
+  packet lists). A run the machine cut short is compared up to the cut, the reader's packets after it left out and
+  the machine's state taken (listed). `--vif-substitute bytes` (default) hands the reader's bytes to the GS in place
+  of the machine's (`Emu::setPath1Substitute`; the recorded GIF hash is still checked), `list` / `list-cull` the
+  kick's K2 draw list encoded back (cullOffscreen off / on), `none` leaves the machine's packets. About two minutes a
+  race dump. `--vif-no-poison` keeps the references' own values in the unreproduced lanes (to measure them; it prints
+  `L` lines per program and lane). `RC_VIF_LIST_TRACE=1` (list modes) compares the register file at every triangle of
+  the raw and the encoded stream.
+- `--fault unpack|tops|dbf|mpg|mscal|mxcsr|lane|packet|vumem:<cycle>[:<n>]`: the planted faults of the design's 11.6.
+- The `gif2d` consumer now drives a `FrameReader` (PATH1 from the references, nothing excused after a channel 1 kick);
+  with `--with-emu` a vif consumer behind the machine runs its channel 1 kicks beside it.
+- Found on the way: the reference GS gives a vertex the Q of the last PACKED ST or register RGBAQ and resets it to 1.0
+  at every GIF tag (`GifSink::vertexQ`; the frame record's RGBAQ register keeps its own convention); the draw list
+  encoder therefore ends a tag only before a PRIM.
+
 ### Level testing (2026-11-09)
 `RC_BOOT_LEVEL=<n> tools/play.sh` skips the intro and menus and loops the attract-mode demo on level n. `RC_SKIP_INTRO=1` skips only the legal screen, movie and Dolby screen and starts in the front end (for menu tests: `PS2X_PAD_REPLAY=<file>` plays a pad script of `epoch frame buttons axes` lines). `tools/level_sweep.sh <first> <last> <seconds> [VAR=value ...]` prints each level's frame rate.
 Sweep of levels 1-24 on the God of War renderer at 3x: 1, 3, 4, 10, 15, 16 and 22 hold about 55-60 fps; 6, 8, 9, 12, 17, 18 and 24 ran about 25-35 fps before the blend and palette fixes. On level 18 the default renderer reaches 35-43 fps with VU1 87% busy at 14.5 ms per field, so those levels are limited by VU1 on both renderers. About half the VU time is one block of program C3952C0FAEB52EAD; its cost is spread evenly over its instructions.

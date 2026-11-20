@@ -56,6 +56,8 @@ namespace rc::rd
         kVifGuardPage,      // VIF_PAGE: a range on a page the RAM view does not hold (off-line only)
         kVifGuardProgram,   // VU_PROGRAM: micro memory holds no program the table knows
         kVifGuardEntry,     // VU_ENTRY: an MSCAL to an address that is not an entry of the program
+        kVifGuardRunaway,   // VU_RUNAWAY: a run sent more packets than any program can (kMaxRunPackets), or a packet
+                            // of 64 K quadwords (copyGifPacket's cut): garbage input
         kVifGuardCount
     };
     const char *vifGuardName(uint32_t guard);
@@ -80,6 +82,8 @@ namespace rc::rd
     class Vif1Reader
     {
     public:
+        // More XGKICKs than any run can send (the largest kick of the 67 dumps sends 63,013): the run is abandoned.
+        static constexpr uint32_t kMaxRunPackets = 1u << 20;
         struct Stats
         {
             uint64_t kicks = 0, codes = 0, codesByOp[128] = {}, unpackBytes = 0, unpacks = 0, mpgs = 0, mpgBytes = 0;

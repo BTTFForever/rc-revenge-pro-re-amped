@@ -910,3 +910,143 @@ Batch R is independent of 1; 2 needs 1 and the answer to U1; 3 needs 2; 4 needs 
 - The one Z at or above 2^24 (9.1).
 - Scenes not recorded yet (section 12).
 - Whether every lane of the vector registers can be made equal by the references, or only those that matter (5.2).
+
+## 16. Batch 1 as built (2026-11-20): the reader and the references off-line
+
+Section 13 item 1. Built: `render/vif` (library `rc_vif`: `Vif1Reader`, the program table), `render/frame` (`rc_frame`:
+`FrameReader`), the references' `Io` entry in `decomp/vu1`, `Gif2dReader::feedPath1` and `cullOffscreen`,
+`Emu::setPath1Substitute`, and `rc_replay --consumer vif` (`tools/rc_replay/vif.{h,cpp}`). The `gif2d` consumer now
+drives a `FrameReader`. Usage: `NOTES.md`, "The VIF1 reader and the frame reader". Batch R and everything that waits
+for U1 was not built.
+
+```
+render/vif/vif1_reader.{h,cpp}   Vif1Reader: VIF1 registers, VU data and micro memory, VF; kick() walks, decodes, runs; guards; faults
+render/vif/vu1_programs.{h,cpp}  the program table (prefix length and hash, image hash), the lanes not reproduced, poison pattern
+render/frame/frame_reader.{h,cpp} FrameReader (rc::rec::Consumer): Vif1Reader -> Gif2dReader as PATH1; Path1Tap; side tags as scopes
+decomp/vu1/vu1_ref.h, *_shape.cpp rc::vu1::Io, Program, run(), isEntry(); the run*Shape functions are wrappers
+render/gs2d/gif2d_reader.*       beginPath1Kick / feedPath1 / endPath1Kick (a second GifWalker), cullOffscreen, scope()
+render/tex/gif_walk.*            GifSink::vertexQ (below, 16.1 item 6)
+render/gs2d/gs2d_encode.cpp      a tag ends only before a PRIM (16.1 item 6)
+tools/rc_replay/emu.*            setPath1Substitute: PATH1 packets in place of the machine's, after its run
+tools/rc_replay/vif.{h,cpp}      VifCheck: checks (a), (b), (c), the wrapped VU1 programs, faults
+```
+
+Nothing of it is linked into the game or the oracle except the references themselves (`decomp/vu1` is compiled into
+both, as before): their interface changed (16.1 items 1-3) and the game and the oracle were rebuilt and checked
+(16.5). The runtime and every decompiled game function are untouched.
+
+### 16.1 Changes to the design, and why
+
+1. **The registers out: the lanes of 3.4 exact, the rest poisoned.** Beside the emulated VU1 (vif `--with-emu
+   --vif-no-poison`, twelve dumps of both versions) the references left 15-57 lanes per program different from the
+   machine after a run: VF08.xyz, VF11-VF16, VF17.xyz, VF24-VF28 (not VF25.w or VF26.w), VF29.z, VF30, VF31. They are
+   the microcode's temporaries the C++ keeps in locals (the near-plane test in VF08, the facing products in VF24,
+   the tint in VF30, the block header in VF31...) and work the microcode does on a triangle it then rejects. One of
+   them mattered: **EnvRdr computes the environment-mapped corners (normals in VF26-VF28) before its facing test**, so
+   a rejected last triangle leaves VF26.w, which the water program's next run sends to the GS; the reference skipped
+   it. `env_shape.cpp` now keeps the normals in p[26..28] and runs the corner pass for rejected triangles too (no
+   packet or memory changes; RC_VU1_REF unchanged, 16.5). With that, VF05.w-VF07.w, VF25.w, VF26.w and VF29.w are
+   never different after any run of any program. The union of the measured lanes is written after every run as a
+   signalling NaN naming the lane (`vu1_programs.cpp`, `RC_VU1_NOT_REPRODUCED`, 72 lanes): over all 67 dumps no
+   packet and no byte of VU memory then differs, so nothing reads them. Check (a) excludes exactly those lanes (it
+   recognises the pattern) and prints how many it excluded. Making every lane equal (5.2's "and then on every lane it
+   can make equal") would mean auditing about a thousand instructions a program for state no output reads; not done.
+2. **Runs the machine cuts short.** Without the machine the reader cannot know where the runtime's 65,536-cycle limit
+   stopped a water run, so the kicks with such a run fail (b) there (as 6.3 says) and the state they leave can pull
+   the register file and later kicks with them. Beside the machine the run is compared up to the machine's last
+   packet, the reader's later packets are left out (not passed to the GIF reader) and the reader takes the machine's
+   VU memory and registers after the run; everything after it is compared normally and the list of kicks is
+   printed. This disappears with batch R.
+3. **The reader runs a kick after the machine, not before it.** In `--with-emu` mode the vif consumer sits behind the
+   emu consumer and runs each channel 1 kick from `Emu::setPath1Substitute`, called once the machine has run the
+   kick's DMA (its six generated programs wrapped: each run's packets, VU memory and registers kept, packets diverted
+   from the GS when the reader's are to be drawn). The reader then knows the cuts (item 2) and its bytes or encoded
+   list go to the GS after the machine's run, in the same kick: (c) needs no second pass. The `gif2d` consumer drives
+   its own `FrameReader`; with `--with-emu` a vif consumer attached to that reader runs the channel 1 kicks the same
+   way (`deferPath1`).
+4. **New guard VU_RUNAWAY.** The planted UNPACK fault made a reference loop on garbage, sending packets without end
+   (and `copyGifPacket` grow one packet without bound, which exhausted memory). A run that sends more than 2^20
+   packets, or a packet of 64 K quadwords, is now abandoned with that guard; `copyGifPacket` (shared with the game's
+   wrappers) cuts a packet there instead of growing, which no real packet comes near (the largest PATH1 packet in the dumps is 160 bytes).
+5. **`FrameBlit` is not in `FrameReader` yet.** Nothing in batch 1 reads uploads into the frame buffer; it joins with
+   the chained replay (batch 3), its first user. Side tags of a VIF1 kick are placed as scope commands before the run
+   at or after their stream offset (8).
+6. **Two findings in step 7's code.** (i) The reference GS gives a vertex the Q of the last PACKED ST or of an RGBAQ
+   written as a register, and sets it back to 1.0 at every GIF tag; a PACKED RGBAQ leaves it. The GIF walker reported
+   RGBAQ with the frame record's convention (the last PACKED ST's Q carried into it, which is what the recorded
+   register file holds); vertices now take the reference's Q (`GifSink::vertexQ`). On every dump the two agree on
+   every vertex (counted: 0 differ), so no list changed. (ii) `gs2d_encode` split its A+D stream into tags of 32,767
+   writes wherever the count fell; a tag boundary between a vertex's RGBAQ and its XYZ2 resets Q to 1.0 in the
+   reference. K1 never reached the limit; K2's lists do, and (c2) failed until a tag ends only before a PRIM.
+7. **Faults.** `--fault <name>:<cycle>[:<n>]` as 11.6; the "lane" fault zeroes VF25.w before every run of the cycle,
+   the "packet" fault drops the n-th PATH1 packet of the cycle made only of A+D writes (the game's state packets),
+   "vumem" zeroes VU data memory at each kick's start in the cycle.
+
+### 16.2 Checks (the 67 exact dumps; `build-decomp/frame-dumps/{s5,s6,b4-key,b4-key-1,b4-x2-0,b4-x2-1}`, `build-eu`'s
+`s5`, `s6`, `b4-key-0`, `b4-key-1`, `b4-x2-0`, `b4-x2-1`; `build-decomp`'s `rc_replay`, which reads both versions)
+
+Four `--with-emu --verify` passes (`--vif-substitute bytes`, `list`, `list-cull`, and `gif2d --with-emu --verify`) and
+one without the machine. **Every `--with-emu` pass: 67 / 67 `PASS`.**
+
+| | USA (34 dumps) | Europe (33) |
+|---|---|---|
+| cycles; VIF1 kicks; VU1 runs; PATH1 packets | 24,174; 23,433; 22,517,443; 559.6 M | 21,445; 20,767; 20,558,762; 486.1 M |
+| guards fired | 0 | 0 |
+| (a) keyframes: VIF1 registers, micro memory, data memory, vector registers (poisoned lanes excluded) equal | 69 / 69 each | 62 / 62 each |
+| (a) GS register file equal to the keyframe's `GSRG` (final keyframes included) | 103 / 103 | 95 / 95 |
+| (a) register file at every kick, every register, nothing excused (beside the machine) | 82,312,258 values at 839,921 kicks, 0 differ | 74,883,564 at 764,118, 0 differ |
+| (a) beside the machine: VU memory and registers after every run; VIF1 registers and micro memory after every kick | 0 differ (22.5 M runs, 23,433 kicks) | 0 differ (20.6 M, 20,767) |
+| (b) beside the machine, packet by packet | 22,517,443 runs, 559,628,234 packets, 0 differ; 0 runs or kicks with another count | 20,558,762, 486,108,434, 0 differ |
+| runs the machine cut short (compared to the cut, reader's later packets left out, machine's state taken) | 575 runs in 541 kicks, 17,794 packets | 520 in 513, 17,184 |
+| (b) without the machine, hash and count per VIF1 kick | 22,892 / 23,433: **the 541 failing kicks are exactly the kicks with a cut run** | 20,254 / 20,767: the 513 cut kicks |
+| (a) without the machine, register values that differ | 10 (on the dumps with cuts, after them) | 8 |
+| (c1) the reader's bytes in place of the machine's PATH1: recorded GIF hash per kick; register files before every kick; picture hashes; `REFI` pictures; GS memory at keyframes, final | 23,433 / 23,433; 839,921 / 839,921; 24,174 / 24,174; 1,430 / 1,430; 69 / 69, 34 / 34 | 20,767; 764,118; 21,445; 1,430; 62, 33 (all equal) |
+| (c2) the K2 draw list encoded back (`cullOffscreen` off): pictures, `REFI`, register files, GS memory | all equal; 292,106,072 primitives re-encoded | all equal; 264,129,343 |
+| (c2) with `cullOffscreen`: the same, all equal; triangles left out (no area + outside the scissor) | 3,443,271 + 161,151,224 of 292.6 M (56.2%); 127,594,995 drawn | 2,930,296 + 144,808,389 of 264.6 M (55.9%); 116,461,880 |
+| `gif2d --with-emu` (step 7's (a) and (b), K1 now on the frame reader's register file) | (a) 82,312,258 values, 0 differ; (b) 46,904 drawing PATH3 kicks substituted, every picture and GS memory equal | 74,883,564, 0; 41,570 |
+
+- The plain `gif2d` without the machine (`front`, `tedit`, `l13`, `s6/boot`) also passes: on a dump without cuts the
+  register file needs nothing from the recording after the first keyframe.
+- Draws needing a seeded or default register after a dump's first clear: FBA_1 only (written by neither path in any
+  dump; the keyframe's value is the default 0), so 7's "a register is unknown only before its first write" holds.
+- Run time (one process each, four at a time on the four cores of the Ryzen 7 3750H): 10-80 s a dump without the
+  machine, 70-200 s with it, about 200 MB.
+
+### 16.3 The reader's time a K2 kick (section 8's split; without the machine, four processes at a time)
+
+| dump | references | VIF walk | GIF walk and list | all, mean / largest |
+|---|---|---|---|---|
+| USA `s5/front` | 17.7 ms | 1.4 ms | 4.5 ms | 23.6 / 43.2 ms |
+| USA `s5/l17` | 20.6 ms | 1.6 ms | 5.3 ms | 27.5 / 40.9 ms |
+| USA `s5/l18` | 36.3 ms | 3.1 ms | 9.2 ms | 48.6 / 71.3 ms |
+| USA `s5/l5` | 20.3 ms | 1.6 ms | 5.1 ms | 27.0 / 40.2 ms |
+| Europe `s5/l18` (the largest kick of all) | 37.6 ms | 3.2 ms | 9.4 ms | 50.2 / 84.8 ms |
+
+The references' share is 3.10's figure; the VIF walk (5.8 MB of UNPACK copies a kick) is 6% and the GIF walk with the
+draw list about a fifth. Time stamps are TSC reads calibrated against `steady_clock` (the clock here is an HPET
+clocksource, a system call each read: timing every packet with it tripled the run time).
+
+### 16.4 Planted faults (11.6; `--with-emu --verify`, four cycles from the fault; the clean runs of the same ranges pass)
+
+| fault | USA `s5/l17` (cycle 120) | USA `s5/tedit` (cycle 2020) |
+|---|---|---|
+| `unpack` (every UNPACK one quadword on) | (b) first packet differs (A+D ALPHA_1), 2,003 packets; (a) 1,122 register values; (c1) a GIF hash, 112 register files, a picture | guard VU_RUNAWAY (16.1 item 4); (b) run counts; (c1) |
+| `tops` (no TOPS swap at MSCAL) | (b) the run's TOP differs from the machine's (515 runs); packets equal | the same (10 runs) |
+| `dbf` (OFFSET leaves DBF) | (b) run TOP differs (255 runs) | the same (2 runs) |
+| `mpg` (the cycle's first MPG not copied) | guard VU_PROGRAM; (b) 4 kicks with another run count; (c1) 4 GIF hashes, 6 register files, 4 pictures | the same |
+| `mscal:…:5` (the sixth MSCAL skipped) | (b) 1 kick with another run count, 1,200 packets; (c1) a GIF hash | (b); (c1) a GIF hash and a picture |
+| `mxcsr` (references not rounding toward zero) | (b) 12,767 packets (first: a PACKED ST word one unit apart); (c1) a picture | (b) 309 packets; (a) 2 register values; (c1) |
+| `lane` (VF25.w zeroed before every run) | (a) registers after the run; (b) 2,511 packets; (c1) a GIF hash | (a) 6 runs |
+| `lane` on USA `s5/l12` (water) | (a); (b) 699 packets; (c1) a GIF hash | |
+| `packet` (a state packet lost) | (c1) the kick's GIF hash | (c1) GIF hash and a picture |
+| `vumem` (VU memory zeroed at each kick) | (a) VU memory after 838 runs | (a) 84 runs |
+
+Two do not show in the bytes (b) compares: a lost TOPS swap or DBF clear moves where the next UNPACK lands and
+where the program reads, consistently, so the packets stay right and only TOP (b's run identity) and the state (a)
+show it; a lost state packet changes the GIF stream (c1's hash) but the next kick rewrites those registers, so the
+register file at the next kick is right again. Every fault fails a named check on both dumps.
+
+### 16.5 The references in the game and the oracle
+
+The references' interface changed (the `Io` entry, `ShapeProgram`'s packet callback, the env corner pass for rejected
+triangles, `copyGifPacket`'s cut), so the game and the oracle relinked in all four trees.

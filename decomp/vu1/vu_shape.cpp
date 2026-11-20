@@ -600,7 +600,9 @@ bool run(Program program, Io &io)
 void copyGifPacket(const uint8_t *memory, int quad, std::vector<uint8_t> &packet)
 {
     int at = quad & 0x3FF;
-    for (;;)
+    // A packet longer than 64 K quadwords can only come from garbage in VU memory (it would wrap round 1,024 quadwords
+    // of memory over and over without an end-of-packet tag): it is cut there instead of growing without bound.
+    for (uint32_t total = 0; total < 0x10000u;)
     {
         uint64_t tag[2];
         std::memcpy(tag, memory + at * 16, 16);
@@ -616,6 +618,7 @@ void copyGifPacket(const uint8_t *memory, int quad, std::vector<uint8_t> &packet
             packet.insert(packet.end(), memory + at * 16, memory + at * 16 + 16);
             at = (at + 1) & 0x3FF;
         }
+        total += quads + 1u;
         if (endOfPacket)
             break;
     }

@@ -27,7 +27,7 @@ namespace rc::rd
 
     const char *vifGuardName(uint32_t guard)
     {
-        static const char *const names[kVifGuardCount] = {"none", "VIF_CODE", "VIF_UNPACK", "VIF_TRUNCATED", "VIF_PAGE", "VU_PROGRAM", "VU_ENTRY"};
+        static const char *const names[kVifGuardCount] = {"none", "VIF_CODE", "VIF_UNPACK", "VIF_TRUNCATED", "VIF_PAGE", "VU_PROGRAM", "VU_ENTRY", "VU_RUNAWAY"};
         return guard < kVifGuardCount ? names[guard] : "?";
     }
 
@@ -135,10 +135,16 @@ namespace rc::rd
             Path1Sink *sink;
             Vif1Reader::Stats *stats;
             uint64_t sinkNs;
+            uint32_t packets;
+        };
+        struct Runaway
+        {
         };
         void onPacket(void *user, const uint8_t *data, uint32_t bytes)
         {
             IoUser *u = static_cast<IoUser *>(user);
+            if (++u->packets > Vif1Reader::kMaxRunPackets || bytes >= 0x10000u * 16u)
+                throw Runaway{}; // unwinds out of the reference (RAII only); the run is abandoned
             ++u->stats->packets;
             u->stats->packetBytes += bytes;
             const uint64_t t0 = nowNs();
@@ -178,7 +184,7 @@ namespace rc::rd
         uint64_t t0 = nowNs();
         sink.runBegin(run);
         const uint64_t t1 = nowNs();
-        IoUser user{&sink, &m_stats, t1 - t0};
+        IoUser user{&sink, &m_stats, t1 - t0, 0u};
         if (m_fault == VifFault::Lane && static_cast<int64_t>(k.cycle) == m_faultCycle)
         {
             const uint32_t lane = m_faultN ? m_faultN : 25u * 4u + 3u;
@@ -188,8 +194,22 @@ namespace rc::rd
         const uint32_t saved = _mm_getcsr();
         if (!(m_fault == VifFault::NoMxcsr && static_cast<int64_t>(k.cycle) == m_faultCycle))
             _mm_setcsr(mxcsr | 0x6000u);
-        rc::vu1::run(info.program, io);
+        bool runaway = false;
+        try
+        {
+            rc::vu1::run(info.program, io);
+        }
+        catch (const Runaway &)
+        {
+            runaway = true;
+        }
         _mm_setcsr(saved);
+        if (runaway)
+        {
+            char what[96];
+            std::snprintf(what, sizeof(what), "%s at 0x%04x sent more than %u packets", info.name, pc, kMaxRunPackets);
+            return guard(kVifGuardRunaway, k, offset, 0x14000000u | (pc / 8u), what);
+        }
         if (m_poison)
             for (uint32_t reg = 0; reg < 32; ++reg)
                 if (const uint8_t lanes = info.notReproduced[reg])
