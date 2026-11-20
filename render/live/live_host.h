@@ -13,6 +13,7 @@
 //   RC_VK_SHOT_DIR=<dir>   with RC_VK_SHOT_AT=<cycle>[,<cycle>...]: the native picture of the first presented cycle at or
 //                          after each, read back, as <dir>/native_<cycle>.png and .rgba (640 x lines, RGBA as stored)
 //   RC_VK_NATIVE_REPORT=<n> a reader line every n display cycles (default 600; 0 none)
+//   RC_VK_PRESENT_FILTER=nearest  (vk_host) the native picture sampled nearest instead of linear when presented
 
 #include "rhi.h"
 

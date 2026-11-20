@@ -3,8 +3,8 @@
 Designed 2026-11-20 for `RENDERER_PLAN.md` step 7 (GIF reader for the 2D packet K1, the `gif2d` consumer, Vulkan
 drawing of K1). "Build batches" at the end is the work order for the Opus build agent. Read with
 `RENDERER_FRAME_RECORD.md` (sections 9, 10.2, 17, 18), `RENDERER_SURVEY.md` and `ICO_RENDER_STUDY.md` 1.6. Paths are
-relative to the repository; as built: sections 14 (batch 1), 15, 16, 17 (the review) and 19 (batch 4b, the exact
-blend). The runtime is `third_party/ps2recomp/ps2xRuntime` (`RT/`); "the reference" is the
+relative to the repository; as built: sections 14 (batch 1), 15, 16, 17 (the review), 19 (batch 4b, the exact
+blend) and 20 (batch 5, live 2D). The runtime is `third_party/ps2recomp/ps2xRuntime` (`RT/`); "the reference" is the
 runtime's software GS (`RT/src/lib/gs/gs_cpu_raster.cpp` and its headers), the machine every `REFI` picture comes
 from. Nothing here touches a game function or the runtime.
 
@@ -755,6 +755,7 @@ menu screen equals `gif2d --vk` of the same cycle drawn over the clear only.
    `RC_RENDERER=vk` session (over black until step 8); the screenshot check of 10.3; recording off and the oracle
    unchanged (the game binary now links `rc_gs2d`: `playtest2` scene log and frame rate, `tools/oracle.sh --all`,
    both versions).
+   *Built 2026-11-20: section 20 (behind `RC_VK_PICTURE=native`).*
 
 Batches 1 and 2 are independent of each other; 3 needs both. Order from here (17.4): 4b, then step 8's design and
 its first batch (the VIF reader and the references off-line: PATH1's register writes), then batch 5.
@@ -1646,34 +1647,158 @@ at input clock 0:255 instead of 0:256; rerun unloaded, both as above.)
 - 18.2's optional part (C = Ad, BLEND_FORM drawn by the read) was not built; no RC draw uses either.
 - The fixed-function path on a device with a blender wider than 8 bits is still unmeasured (13).
 
-## 20. Batch 5: work in progress (2026-11-20, branch `wip/step7-batch5`, paused)
+## 20. Batch 5 as built (2026-11-20): live 2D under `RC_RENDERER=vk RC_VK_PICTURE=native`
 
-**Built, not yet fully checked or documented.** `render/live` (`rc_live`: `live2d.{h,cpp}` Reader/Mailbox/Presenter,
-`live_host.{h,cpp}` the vk host's facade), linked into the game (with rc_frame, rc_vif, rc_gs2d, rc_gs2d_vk, rc_blit,
-rc_tex; no usage requirements reach the game's sources). `RC_RENDERER=vk RC_VK_PICTURE=native`: the capture
-(`capture.cpp`, now also installed with no recording through `rc::rec::addLiveConsumer`) feeds a `FrameReader` (from
-reset, `Gif2dReader::Options::path1Prims = false`: K2's registers kept, its primitives left out; `frameUploads`: host
-transfers into FBP 0x0/0x50 become `IMAGE_BLIT` commands in list order) plus `FrameBlit` (upload-only pictures) on the
-EE thread; lists are published per cycle to a mailbox; `vk_host.cpp`'s present records all pending lists through
-`Gs2dVk::record` (new: records into the caller's command list, per-frame-slot record buffers, IMAGE_BLIT support,
-`sampleTarget`) and presents target[DISPFB2.FBP] (top 240/256 rows) or the upload-only picture. K2 not drawn (black).
-F7 toggles to the emulated GS picture (window title says which). `RC_VK_BLEND=ff|read`, `RC_VK_SHOT_DIR` +
-`RC_VK_SHOT_AT` (native screenshots, .png + .rgba), `RC_VK_NATIVE_REPORT`. Without `RC_VK_PICTURE=native` nothing of it
-runs. `rc_replay <exact dump> --consumer live2d [--live-shots <dir>] [--png <dir>] [--validation]`: the same reader and
-presenter off-line, each displayed picture against `REFI` outside the pixels K2 changed (colour of the shown target or Z
-at 0xa0), and the live screenshots against the off-line picture.
+Section 11 item 5, with step 8's `FrameReader` as the consumer (`RENDERER_3D_DESIGN.md` 12, 13 item 1) and read mode as
+the default blend (`RENDERER_3D_DESIGN.md` 10.1). Opt-in: `RC_RENDERER=vk` alone still presents the emulated GS picture
+exactly as before (none of this runs; checked by the `playtest2` replays, 20.4). Usage: `NOTES.md`, "Live 2D".
 
-**Results so far (USA):** live front-end session (`RC_SKIP_INTRO=1`, 45 s): menus readable (screenshot
-`native_900.png` of the main menu), 0 validation errors in a validation-on session, reader 27 ms a cycle on the EE thread
-(VIF1 kick 21 ms: the references, U2), GPU 0.5 ms a frame. `live2d` on USA `s6/boot` (900 cycles, validation on):
-**PASS**, 42.6 M non-K2 pixels all equal to the reference (39.8 M of them changed by K1), 0 validation errors (the first
-version failed two cycles where the front end draws over an uploaded picture, not a clear: hence `frameUploads`).
+```
+render/live/live2d.{h,cpp}     Reader (rc::rec::Consumer, EE thread): FrameReader + FrameBlit, publishes each cycle's list;
+                               Mailbox (EE -> main thread, nothing a later list needs is ever dropped); Presenter (main
+                               thread): every pending list recorded through Gs2dVk, the picture to show
+render/live/live_host.{h,cpp}  the vk host's facade: RC_VK_PICTURE, RC_VK_BLEND, RC_VK_SHOT_DIR / RC_VK_SHOT_AT,
+                               RC_VK_NATIVE_REPORT; the closing report
+render/record/capture.{h,cpp}  rc::rec::addLiveConsumer: the capture installed with or without a recording; live consumers
+                               get hw, crt, kick (guest RAM in place), cycle begin / end from boot, and after a save-state
+                               load a keyframe of the loaded machine (kKeyAfterStateLoad)
+render/gs2d/gs2d_vk.{h,cpp}    record() (into the caller's command list, no wait), one record buffer a frame slot,
+                               IMAGE_BLIT in list order, sampleTarget(); targets sampled and copy destinations
+render/gs2d/gif2d_reader.*     Options::path1Prims (false: K2's primitives left out, its registers kept),
+                               Options::frameUploads (transfers into the frame buffers as IMAGE_BLIT)
+render/tex/gs_memory.*         the transfer log (setTransferLog) frameUploads reads
+render/frame/frame_reader.*    startLive() (reset, no keyframe); render/blit/frame_blit.* startBlank()
+platform/vk_host.cpp           the native picture presented (letterboxed as the GS picture), F7, RC_VK_PRESENT_FILTER
+tools/rc_replay/live2d.{h,cpp} rc_replay --consumer live2d: the same reader and presenter on an exact dump, judged
+CMakeLists.txt                 rc_live (game and rc_replay); the game links rc_live, rc_frame, rc_vif, rc_gs2d, rc_gs2d_vk,
+                               rc_blit, rc_tex with no usage requirements reaching its other sources
+```
 
-**Remaining:** the live/off-line screenshot check (an exact-mode ring dump from a native session: exact mode plus the
-reader is slow, about 5 cycles/s in the front end, so take shots and F10 early, e.g. `RC_VK_SHOT_AT=230,280,320
-RC_FRAME_RECORD_F10=340`, timeout 150 s, without the validation layer); the same for Europe (`build-eu` not rebuilt
-yet); frame rates (front end and a race, `RC_DEBUG_DUMP` + `tools/fps.py`); a race screenshot; the oracle (`--all`, new
-seeds, both versions) and `playtest2` at 60.0/50.0 fps in default and plain vk mode, both versions (the game binary
-changed: capture.cpp, vk_host.cpp, the new libraries); unexplained "F7" toggles seen once in a session (keyboard focus
-changed; maybe a real key press, check); the debug env `RC_LIVE2D_DUMP_CYCLE` in `tools/rc_replay/live2d.cpp`; this
-section as "Batch 5 as built", RENDERER_PLAN.md item 7, NOTES.md. Not built: `DLST` (step 8 batch 4's).
+### 20.1 How it runs
+
+- **EE thread.** `vk_host.cpp`'s static initializer (only when `RC_RENDERER=vk`) calls `rc::live::installFromEnvironment`;
+  with `RC_VK_PICTURE=native` it makes the Reader and adds it to the capture (`addLiveConsumer`), which installs the
+  runtime's capture hooks if `RC_FRAME_RECORD` has not (both can run together: a ring dump of a native session is how
+  20.2 checks it). The FrameReader starts from reset with the game (VU1/VIF1 reset, blank GS memory, every register
+  unknown until written: `RENDERER_3D_DESIGN.md` 5.1); it runs the C++ VU1 references for every K2 kick, so PATH1's
+  register writes reach K1 exactly as on the GS, but K2's primitives are not put in the list. Transfers into the frame
+  buffers are placed in the list in order with the draws (`IMAGE_BLIT`), because the front end draws its menus over an
+  uploaded picture, not over a clear (USA `s6/boot` cycle 256), and the Europe loading screen uploads 640 x 512 at FBP
+  0x0, filling both buffers (Europe `s6/boot` cycle 768). `FrameBlit` says when the displayed picture is upload-only
+  (logos, movies, the splash); that picture is then shown as uploaded. At the cycle close the list, DISPFB2 and the
+  upload-only picture go to the mailbox.
+- **Main thread.** In the vk host's present, after `rhi_wait_frame`: the GPU time of the slot just recycled is read,
+  every list published since the last frame is merged (in order) and recorded through `Gs2dVk::record` into the frame's
+  command list, then `target[DISPFB2.FBP]` (0x50 is target 1, anything else target 0) is put in SHADER_READ and drawn
+  into the swapchain with the GS picture's own letterbox, sampler and shader: the viewport is stretched by 256 / lines so
+  that the top 240 (USA) or 256 (Europe) rows fill it, the scissor keeps the letterbox. Nothing waits for the GPU. The
+  lists of every cycle are drawn whichever picture F7 shows, so the targets and textures follow the game.
+- **Targets** start zero (GS memory at reset); every cycle's list draws into the persistent targets, as the GS draws into
+  persistent memory.
+- **K2 is not drawn:** where only K2 draws the picture is the cycle's clear (black). F7 switches to the emulated GS
+  picture and back; the window title says which is shown ("native picture: 2D only, 3D not drawn yet" / "emulated GS
+  picture"). Compositing K1 over the emulated picture was not built: it would not be the native picture of either.
+- **Switches:** `RC_VK_BLEND=ff|read` (default the read where the device has it: `Gs2dVk::kBlendAuto`; `ff` is the
+  fixed-function fallback, D-2D-1), `RC_VK_SHOT_DIR=<dir>` with `RC_VK_SHOT_AT=<cycle>[,...]` (the native picture of the
+  first presented cycle at or after each, read back: `native_<cycle>.png` and `.rgba`), `RC_VK_NATIVE_REPORT=<n>` (a
+  reader line every n cycles, default 600), `RC_VK_PRESENT_FILTER=nearest` (20.3).
+
+### 20.2 Checks
+
+**The live check (10.3's live half), both versions.** A native session in exact mode with a ring dump:
+`RC_RENDERER=vk RC_VK_PICTURE=native RC_SKIP_INTRO=1 RC_VK_SHOT_DIR=<dir> RC_VK_SHOT_AT=230,280,320
+RC_FRAME_RECORD=<dir>/ring%d.rcfr RC_FRAME_RECORD_AT=ring:300 RC_FRAME_RECORD_REF=1 RC_FRAME_RECORD_F10=340
+timeout 150 tools/frame_record.sh` (no validation layer: exact mode with the reader runs the front end at about 5-10
+cycles a second), then `rc_replay <dir>/ring0.rcfr --consumer live2d --verify --validation --live-shots <dir>`: the
+reader starts at the dump's first keyframe (the presenter's targets seeded from its GS memory), every cycle's list is
+drawn and the shown picture read back, and
+
+- each live screenshot must equal the off-line picture of its cycle on every pixel (the live session drew what the
+  reader and presenter draw from the recorded kicks);
+- every displayed picture must equal the cycle's reference picture (`REFI`, the emulated GS) on every pixel that is not
+  K2's. K2's pixels: those a channel 1 kick changed in the shown target or in the Z buffer (0xa0), read from the emulated
+  machine's memory before and after each such kick, kept across cycles until a clear or upload kick changes them again
+  (a buffer K2 drew can be shown a cycle later with nothing drawn).
+
+| dump (exact, every picture stored) | cycles judged | pixels compared (not K2's) | of them changed by K1 | equal | live screenshots equal to off-line |
+|---|---|---|---|---|---|
+| USA live session ring (front end) | 340 | 1,935,176 | 460,800 | all | 3 / 3 (cycles 230, 280, 320; 153,600 pixels each, 0 differ) |
+| Europe live session ring (front end) | 340 | 1,833,470 | 327,680 | all | 3 / 3 (163,840 pixels each, 0 differ) |
+| USA `s6/boot` (logos, movie, title, front end, attract) | 900 (258 upload-only) | 42,288,326 | 39,488,325 | all | - |
+| Europe `s6/boot` | 900 (258 upload-only) | 45,130,830 | 42,279,630 | all | - |
+| Europe `s6/load17` (level load, race) | 400 | 2,260,156 | 491,520 | all | - |
+| USA `b4-key-1`, Europe `b4-key-0`, `b4-key-1` | 100, 30, 100 | 437,525, 4,915,200, 445,501 | 0, 4,915,200, 0 | all | - |
+
+All `PASS`, validation layer on for every replay (0 errors). (`b4-x2-*` hold only picture hashes: replayed, nothing to
+judge.) In the front end and in races K2 covers almost the whole picture (the backdrop, the track) and K1 is drawn over
+it, so there the reference comparison sees the uncovered strip and the screenshot comparison carries the check; the
+boot dumps (K1 over uploads and clears) carry the per-pixel comparison of K1 itself. K1's own drawing was proven per kick
+by check (c) (section 19, equality on 67 dumps); this adds the live plumbing: the reader from reset, the registers from
+the live VIF reader, the uploads, the merge of lists, the presenter's frame and the shown target.
+
+**Readable front end, menus and race HUD (live, default play mode, USA):** `RC_RENDERER=vk RC_VK_PICTURE=native
+tools/play.sh replay playtest2`: the main menu, the cup confirmation menu, the race HUD over black (screenshots in the
+batch report; kept in `build-decomp/live2d-shots/`, not committed). Europe the same (the Europe replay, 20.4).
+
+**Validation layer, live:** `RC_VK_VALIDATION=1` native session through the front end: 0 errors (`[vk-host] closed:
+... 0 validation error(s)`); every `live2d` replay above with the layer on: 0 errors.
+
+**Draw lists live = off-line:** not checked by list (the `DLST` writer is step 8 batch 4's, `RENDERER_3D_DESIGN.md` 12);
+the screenshot equality above checks their pictures.
+
+**Planted faults:** none new; the reader's and Gs2dVk's are batch 1-4b's (the first version of the live check failed
+on the two missing upload cases, which is what it is for).
+
+### 20.3 Presentation (the native picture is native resolution)
+
+The native picture is the PS2's own 640 x 240 (USA) / 640 x 256 (Europe) presented with the GS picture's code: the same
+letterbox at the display aspect, the same shader and linear sampler, no extra offset (the stretched viewport maps row
+r to [r/lines, (r+1)/lines] of the letterbox) and no second filtering. With `PS2X_GS_HW_SCALE=1` the emulated GS picture
+is also 640 x 240 (the runtime logs `[vk-host] emulated GS picture 640x240`), and window captures of a static menu in
+both modes put the text on the same pixels (no offset found by search over +-4 pixels); what differs is what each draws
+(the hardware renderer's rasterisation and filtering, and the 3D, absent natively). At play.sh's default
+`PS2X_GS_HW_SCALE=2` the emulated picture is 1280 x 480 and the software GS gives 1280 x 480 too (pixel-doubled), so
+the native picture looks softer: that is the resolution, not the presentation. `RC_VK_PRESENT_FILTER=nearest` samples
+the native picture nearest (the doubled lines of the software GS's 1280 x 480); higher internal resolution is P3's
+resolution work, not built.
+
+### 20.4 Cost, frame rates, the game and the oracle
+
+Frame rates (`RC_DEBUG_DUMP`, `tools/fps.py`, game frames a second per 5 s; `RC_RENDERER=vk RC_VK_PICTURE=native
+tools/play.sh replay playtest2`, default play.sh settings, RTX 2060):
+
+| | front end | race (scene 3020) | reader on the EE thread a cycle (largest) | VIF1 kick (largest) | GPU a frame with lists (largest) |
+|---|---|---|---|---|---|
+| USA | 29.6-35.6 | 30.0 (half of 60) | 25.3 ms (48.2) | 23.0 ms (45.5) | 0.32 ms (8.1, the first frames) |
+| Europe | 30.8-33.2 | 25.0 (half of 50) | 25.6 ms (39.9) | 22.6 ms (36.2) | 0.45 ms (10.6) |
+
+As decision U2 expected: the references are the frame (a VIF1 kick costs 20-30 ms against a 16.7 / 20 ms field), so
+wherever K2 is drawn the game runs at about half speed; nothing was optimised. The 2D's GPU side is small (0.3-0.5 ms on
+average, 2-3 ms a frame in the busiest menus). The race is reached at the same game frame as in the other modes (USA
+658, Europe 1167).
+
+The game binary links `rc_live` and through it `rc_frame`, `rc_vif`, `rc_gs2d`, `rc_gs2d_vk`, `rc_blit`, `rc_tex`
+(the references were already in it). Without `RC_VK_PICTURE=native` nothing of it is made and the capture is not
+installed. Checked on the final build, idle machine: `RC_SCENE_LOG=... timeout 70 tools/play.sh replay playtest2`
+default and `RC_RENDERER=vk`: USA race scene 3020 at frame 658 in both (60.0 fps), Europe at 1167 in both (50.0 fps).
+`tools/oracle.sh --all`: USA seed 5501 1632 ok, Europe seed 5502 1563 ok, 0 FAIL (the oracle links none of it and was
+unchanged: `ninja: no work to do` in both oracle trees).
+
+### 20.5 Found on the way
+
+- The front end draws its menus over an uploaded black picture (no clear), and the Europe loading screen uploads one
+  640 x 512 picture at FBP 0x0 that fills both buffers: hence `frameUploads` and its placement by line.
+- A buffer K2 drew in one cycle is shown in the next with nothing drawn at the Europe level-load transition: the
+  check's K2 mask is kept across cycles.
+- F7 toggles seen in the first sessions were real key presses (SDL key-down events from the seat keyboard,
+  `Virtual core keyboard (seat0)`, now logged as `[vk-host] F7 key down`): the user trying the switch. The toggle now
+  counts key-down events (not repeats) instead of comparing keyboard states.
+
+### 20.6 Open
+
+- K2 (step 8 batches 2-4); the `DLST` live-list check (step 8 batch 4).
+- The reader's cost on the EE thread (U2): the game runs at about half speed wherever K2 is drawn.
+- After a save-state load the reader reseeds from the loaded machine, but every GS register is unknown until the game
+  writes it again; not exercised by a check.
+- Uploads into frame memory other than CT32 at FBW 10 on a page-row boundary are counted (`frameUploadsOther`), not drawn;
+  none seen.
