@@ -773,6 +773,22 @@ linked into the game or the oracle.
   3020 at frame 658 (USA) and 1167 (Europe). Under heavy CPU load (the oracle running) the replay drifts: one Europe
   run reached the race at 1168; run it on an idle machine.
 
+### VIF1 and PATH1 survey: vifstat (2026-11-20, renderer P1 step 8's design)
+`rc_replay <dump> --consumer vifstat [--with-emu] > out.txt`, then `tools/vif_agg.py out1.txt out2.txt ...` (sums the
+`V <category> <key> <n> <m>` lines, takes the maximum of the `X` lines; `--per-dump "<total key>"` for one row a
+dump). Measurement only (`tools/rc_replay/vif_survey.{h,cpp}`); the design it served and every table it produced:
+`RENDERER_3D_DESIGN.md` section 3.
+- Without `--with-emu`: the VIF codes of every channel 1 kick (UNPACK formats, write cycle, mode, mask, the TOPS
+  double buffer, MPG uploads, which program each MSCAL starts), from a model of the VIF1 registers seeded at the
+  keyframe and compared with the next keyframe's.
+- With `--with-emu` (about two minutes a 700-cycle race dump): each run of a generated VU1 program is repeated by
+  its C++ reference (`decomp/vu1`, linked as the library `rc_vu1_ref`) and compared packet by packet and in VU memory;
+  which register lanes of an earlier run reach the packets; every PATH1 and PATH3 packet walked into draw states,
+  geometry counts and, per kick, the reading primitives and the barriers six grouping rules would issue.
+- `--vif-round-nearest` (with `--with-emu`): PATH1's packets reach the machine's GS under the kick's rounding mode
+  instead of the VU1's round toward zero. `RC_VIFSTAT_PICTURES=<file>`: a plain run writes every cycle's picture
+  to the file, a `--vif-round-nearest` run reads them back and prints the per-channel difference histogram.
+
 ### Level testing (2026-11-09)
 `RC_BOOT_LEVEL=<n> tools/play.sh` skips the intro and menus and loops the attract-mode demo on level n. `RC_SKIP_INTRO=1` skips only the legal screen, movie and Dolby screen and starts in the front end (for menu tests: `PS2X_PAD_REPLAY=<file>` plays a pad script of `epoch frame buttons axes` lines). `tools/level_sweep.sh <first> <last> <seconds> [VAR=value ...]` prints each level's frame rate.
 Sweep of levels 1-24 on the God of War renderer at 3x: 1, 3, 4, 10, 15, 16 and 22 hold about 55-60 fps; 6, 8, 9, 12, 17, 18 and 24 ran about 25-35 fps before the blend and palette fixes. On level 18 the default renderer reaches 35-43 fps with VU1 87% busy at 14.5 ms per field, so those levels are limited by VU1 on both renderers. About half the VU time is one block of program C3952C0FAEB52EAD; its cost is spread evenly over its instructions.

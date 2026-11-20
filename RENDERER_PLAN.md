@@ -382,8 +382,42 @@ After step 1: fold its answers into this plan's open questions.
      ms against 0.44, about 20 us a barrier on the RTX 2060), 1.5x in a race; the specification's acceptance rule was
      to stop and report rather than optimise, so it is reported (section 19.5) for a decision before batch 5 and for
      step 8's K2 (where the interlock form may need reconsidering).
+   - **The cost, decided 2026-11-20 (`RENDERER_3D_DESIGN.md` section 10): read mode is the live default,** for K1
+     in batch 5 as built (3.6 ms at worst in a menu, where nothing else weighs on the frame yet) and for K2. The
+     barrier rule changes in step 8's batch 2 from box groups to covered pixels (a barrier only when a reading
+     primitive covers a pixel written since the last one): measured on the 67 exact dumps, K2 would need 173
+     barriers a kick on average and up to 879 as built, 16 and 85 by pixels; K1 119 -> 96 at most; a whole frame
+     26 on average, 126 at most (0.5 ms, 2.6 ms). Carrying groups across reading batches gains 2-7% and is not
+     built; the interlock form is not built; fixed function stays as the fallback and a switch. Batch 5's consumer
+     is step 8's `FrameReader` (the VIF reader gives the registers K1 inherits), which costs 22 ms of the EE thread
+     a front-end frame: see step 8, decision U2.
 8. VIF chain reader with the C++ VU references (Opus): races draw correctly (slowly); GIF bytes equal the emulated
    VU1's for recorded frames; full screenshots on levels 5, 17, 18, 20.
+   **Designed 2026-11-20: `RENDERER_3D_DESIGN.md`** (every point of the outline below settled, measured with the new
+   counting consumer `rc_replay --consumer vifstat --with-emu` on the 67 exact dumps: 44,200 VIF1 kicks, 43.1 M VU1
+   runs, 556 M PATH1 triangles). What it fixes: the chains use eight VIF codes (NOP, STCYCL 4/4, OFFSET, BASE, MPG,
+   MSCAL, FLUSHA, UNPACK V4-32) and nothing else; six programs recognised by the hash of their image prefix, every
+   run of the dumps at a known entry, and the C++ references give the emulated VU1's bytes on all 1,045.7 M packets
+   and its memory after every run; three register lanes of an earlier run reach a later run's packets, so the
+   references return their registers; the keyframes already hold everything a replay needs (`VIF1`, `VU1M`,
+   `VU1R`); PATH1's register writes reproduce the recorded register file after every kick; 56% of PATH1's
+   triangles cover no pixel and are dropped by the reader (a K2 list is 5,500 triangles under 544 states on
+   average, 17,768 and 2,619 at most); every PATH1 triangle takes the reference's one triangle routine, so step
+   7's shader arithmetic covers K2 (perspective, per-vertex Z, REPEAT, GEQUAL); the exact blend serves K2 by local
+   read once barriers go by covered pixels (item 7's cost note). **Two decisions are put to the user at the top
+   of that file. U1 (needed before batch 2): the reference rasterises PATH1 rounding toward zero** (the GS is
+   called from inside the VU1 run, which truncates), which changes a third of a race's pixels by a level against
+   round to nearest and would make K2 on Vulkan inexact; recommended: correct it in the runtime, lift the VU1
+   cycle limit that cuts 1,095 water runs short, and regenerate the dumps' references by replay (batch R). **U2
+   (a default is taken): live `vk` at step 8 does not hold 60 / 50 fps in 3D scenes,** because the exact
+   references take 22-47 ms of one thread per K2 kick; accepted until P2, `gs` stays the default.
+   Build batches, each with its check (that file, sections 11 and 13): **R** the reference machine (with U1 = A);
+   **1** the reader and the references off-line (`render/vif`, `rc_replay --consumer vif`: state at keyframes, GIF
+   hashes per kick and per packet beside the machine, the reader's bytes and draw list in front of the emulated
+   GS, planted faults); then step 7's batch 5; **2** K2 on Vulkan per kick (the pixel rule, T9 and T10, equality
+   in every plane on 44,200 kicks, GPU time reported); **3** the chained replay (seeded once at a keyframe, every
+   flipped picture's hash equal to the reference's, all 67 dumps); **4** live (the reader on the EE thread, the
+   live draw lists equal to the off-line ones for a recorded session).
    **Order and design (step 7's batch 4 review, 2026-11-20, `RENDERER_2D_DESIGN.md` 17.4).** Step 8 starts before
    step 7's live batch, because K1 inherits registers only PATH1 writes and they come out of the VU1 programs'
    packets. It needs a short design first (Fable, `RENDERER_3D_DESIGN.md`), then batches: (1) the reader and the
