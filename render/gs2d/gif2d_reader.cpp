@@ -409,6 +409,15 @@ namespace rc::rd
             return;
         m_regs[addr] = value;
         m_prov[addr] = kProvStream;
+        if (addr == kGsTex0 || addr == kGsTex0 + 1)
+        {
+            // (step 8 batch 2) The GS's CLUT buffer: a TEX0 write loads it from memory as CLD says, and an indexed texture
+            // is read through it, not through memory as it is at the draw (PATH3 re-uploads palettes between kicks while
+            // PATH1 keeps drawing with the TEX0 it wrote earlier).
+            if (m_clut.write(m_shadow.memory(), Tex0::unpack(value), m_regs[kGsTexclut]))
+                ++m_stats.clutLoads;
+            m_stateDirty = true;
+        }
         if (isVertexReg(addr))
         {
             vertex(addr, value);
@@ -563,7 +572,8 @@ namespace rc::rd
                 ++m_stats.cldOther;
             if (!missing)
             {
-                const CachedTexture &e = m_cache.get(t, m_opt.faultIgnoreTexa ? Texa::unpack(0x80ull << 32) : Texa::unpack(s.texa));
+                const Clut *clut = t.indexed() && m_clut.loads() ? &m_clut : nullptr; // before the first load: memory
+                const CachedTexture &e = m_cache.get(t, m_opt.faultIgnoreTexa ? Texa::unpack(0x80ull << 32) : Texa::unpack(s.texa), clut);
                 if (e.valid)
                 {
                     s.texture = textureId(&e);

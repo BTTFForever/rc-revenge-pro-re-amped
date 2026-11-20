@@ -1790,6 +1790,43 @@ namespace
             if (!run("(v) ADC (XYZ3) vertices", g, zRamp(5, 0x40)))
                 return;
         }
+        // (vi) a vertex with S, T and Q all 0, as PATH1's clipping sends them (the reference reads Q 0 as 1.0).
+        {
+            Gif g;
+            uploadK2Texture(g, 19);
+            Env e;
+            env(g, e);
+            k2StateWrites(g, kK2States[1]);
+            for (int k = 0; k < 8; ++k)
+            {
+                V v[3];
+                v[0].x = 40.0 + 70 * k;
+                v[0].y = 20.0;
+                v[0].q = 0.001f + 0.0002f * k;
+                v[0].s = 1.6f * v[0].q;
+                v[0].t = 0.0f;
+                v[1].x = 80.0 + 70 * k;
+                v[1].y = 128.0;
+                v[1].q = 0.0f;
+                v[1].s = v[1].t = 0.0f;
+                v[2].x = 20.0 + 70 * k;
+                v[2].y = 230.0;
+                v[2].q = 0.0008f;
+                v[2].s = 1.6f * v[2].q;
+                v[2].t = v[2].q;
+                for (V &w : v)
+                {
+                    w.z = 0x800000;
+                    w.r = 0x70;
+                    w.g = 0x60;
+                    w.b = 0x50;
+                    w.a = 0x80;
+                }
+                tri(g, 0x1B, v[0], v[1], v[2]);
+            }
+            if (!run("(vi) a vertex with Q 0 (read as 1.0)", g, zRamp(6, 0x40)))
+                return;
+        }
     }
 
     // --- T10: the barrier rule by covered pixels (10.3).

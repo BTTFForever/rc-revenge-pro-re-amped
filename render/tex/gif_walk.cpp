@@ -15,10 +15,22 @@ namespace rc::rd
         }
     }
 
+    namespace
+    {
+        // (step 8 batch 2) The reference GS gives a vertex Q 1.0 where the value written is 0.0 (gs_frontend.cpp, RGBAQ
+        // and PACKED ST): PATH1's clipped triangles send vertices with S, T and Q all zero.
+        inline uint32_t referenceQ(uint32_t bits)
+        {
+            float q;
+            std::memcpy(&q, &bits, 4);
+            return q == 0.0f ? 0x3F800000u : bits;
+        }
+    }
+
     void GifWalker::registerWrite(uint8_t addr, uint64_t value, GifSink &sink)
     {
         if (addr == 0x01)
-            m_vq = static_cast<uint32_t>(value >> 32);
+            m_vq = referenceQ(static_cast<uint32_t>(value >> 32));
         else if (addr == 0x04 || addr == 0x05 || addr == 0x0C || addr == 0x0D)
             sink.vertexQ(m_vq);
         sink.reg(addr, value);
@@ -36,7 +48,7 @@ namespace rc::rd
             break;
         case 0x2: // ST, and Q for the next RGBAQ
             m_q = static_cast<uint32_t>(hi);
-            m_vq = m_q;
+            m_vq = referenceQ(m_q);
             sink.reg(0x02, lo);
             break;
         case 0x3: sink.reg(0x03, (lo & 0x3FFFu) | ((lo >> 32) & 0x3FFFu) << 16); break; // UV

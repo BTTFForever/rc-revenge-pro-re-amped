@@ -95,6 +95,7 @@ namespace rc::rd
             // (step 8) PATH1
             uint64_t path1Packets = 0, path1Bytes = 0, path1OpenTags = 0, path1Transfers = 0, path1Guarded = 0;
             uint64_t culledZeroArea = 0, culledOffscreen = 0;
+            uint64_t clutLoads = 0; // TEX0 writes that loaded the CLUT buffer
             uint64_t vertexQNotRgbaq = 0; // vertices whose Q (the reference's) is not the RGBAQ register's
             uint64_t path1PrimsLeftOut = 0; // Options::path1Prims false: PATH1 primitives not put in the list
             uint64_t frameUploads = 0, frameUploadBlits = 0, frameUploadsOther = 0; // Options::frameUploads
@@ -166,6 +167,7 @@ namespace rc::rd
         Options m_opt;
         TexShadow m_shadow;
         TextureCache m_cache;
+        Clut m_clut; // (step 8 batch 2) the GS's CLUT buffer, loaded at TEX0 writes
         DrawList m_list;
         uint64_t m_regs[0x80] = {};
         uint8_t m_prov[0x80] = {};
