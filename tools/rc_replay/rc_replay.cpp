@@ -1,6 +1,6 @@
 // rc_replay: feeds a frame record dump (.rcfr, RENDERER_FRAME_RECORD.md) to consumers.
 //
-//   rc_replay <dump> [--consumer stats|emu|tex|blit|gif2d|gif2dstat|vifstat] [--cycles a-b] [--verify] [--quiet]
+//   rc_replay <dump> [--consumer stats|emu|tex|blit|gif2d|gif2dstat|vifstat|vif|live2d] [--cycles a-b] [--verify] [--quiet]
 //             [--png <dir>] [--picture-before <cycle>:<kick> <out.png>] [--path1 <cycle>:<kick> <out.bin>] [--kick-hashes]
 //             [--fault page|kick|hw:<cycle>[:<n>]]
 //             [--with-emu] [--fault transfer|kick|swizzle|decode:<cycle>:<n>] (tex)
@@ -65,6 +65,7 @@
 #include "gif2d.h"
 #include "vif.h"
 #include "consumer.h"
+#include "live2d.h"
 #include "reader.h"
 #include "../../render/gfx/tags.h"
 
@@ -478,7 +479,8 @@ namespace
                              "       vif: [--with-emu [--vif-substitute bytes|list|list-cull|none]] [--vif-out <dir>]\n"
                              "            [--fault unpack|tops|dbf|mpg|mscal|mxcsr|lane|packet|vumem:<cycle>[:<n>]]\n"
                              "              [--vk] [--vk-blend read|ff|both] [--vk-bias off|on|both] [--vk-fault <name>[,<name>...]] [--vk-png <dir>] [--validation]\n"
-                             "       blit: [--no-gpu] [--validation] [--png <dir>] [--fault tile:<cycle>:<n> | dispfb:<cycle> | byte|gpubyte:<cycle>:<pixel>]\n");
+                             "       blit: [--no-gpu] [--validation] [--png <dir>] [--fault tile:<cycle>:<n> | dispfb:<cycle> | byte|gpubyte:<cycle>:<pixel>]\n"
+                             "       live2d (exact dumps; the live 2D renderer, RC_VK_PICTURE=native): [--live-shots <dir>] [--vk-blend read|ff] [--validation] [--png <dir>]\n");
     }
 }
 
@@ -486,7 +488,8 @@ namespace
 {
     int runEmu(Reader &reader, const std::string &path, rc::replay::EmuOptions options, bool verify, bool quiet, uint64_t first, uint64_t last,
                const rc::replay::TexOptions *texOptions = nullptr, bool gif2dSurvey = false, const rc::replay::Gif2dOptions *gif2dOptions = nullptr,
-               bool vifSurvey = false, bool vifRoundNearest = false, const rc::replay::VifOptions *vifOptions = nullptr)
+               bool vifSurvey = false, bool vifRoundNearest = false, const rc::replay::VifOptions *vifOptions = nullptr,
+               const rc::replay::Live2dOptions *live2dOptions = nullptr)
     {
         options.verify = verify;
         options.quiet = quiet;
@@ -576,6 +579,22 @@ namespace
             emu.setAfterKick([&vif](const rc::rec::KickView &k) { vif->afterKick(k); });
             consumers.insert(consumers.begin(), vif.get());
         }
+        // (step 7 batch 5) The live 2D renderer's reader and presenter in front of the machine, judged per displayed picture.
+        std::unique_ptr<rc::replay::Live2dCheck> live2d;
+        if (live2dOptions)
+        {
+            rc::replay::Live2dOptions o = *live2dOptions;
+            o.vram = [] { return static_cast<const uint8_t *>(runtime.memory().getGSVRAM()); };
+            live2d = std::make_unique<rc::replay::Live2dCheck>(o);
+            std::string why;
+            if (!live2d->start(&why))
+            {
+                std::printf("live2d: %s\nFAIL\n", why.c_str());
+                return 2;
+            }
+            emu.setAfterKick([&live2d](const rc::rec::KickView &k) { live2d->afterKick(k); });
+            consumers.insert(consumers.begin(), live2d.get());
+        }
         const bool ok = reader.run(consumers, from, last);
         if (emu.fatal())
         {
@@ -593,6 +612,8 @@ namespace
             gif2d->summary();
         if (vifCheck)
             vifCheck->summary();
+        if (live2d)
+            live2d->summary();
         if (!reader.complete())
             std::printf("note: the dump was not closed (%s); read up to its last whole chunk\n",
                         reader.truncated() ? "a partial chunk at the end" : "no index");
@@ -603,7 +624,8 @@ namespace
         }
         if (verify && (h.flags & kFileExact))
         {
-            const bool failed = emu.failed() || (tex && tex->failed()) || (gif2d && gif2d->failed()) || (vifCheck && vifCheck->failed());
+            const bool failed = emu.failed() || (tex && tex->failed()) || (gif2d && gif2d->failed()) || (vifCheck && vifCheck->failed()) ||
+                                (live2d && live2d->failed());
             std::printf("%s\n", failed ? "FAIL" : "PASS");
             return failed ? 1 : 0;
         }
@@ -743,7 +765,7 @@ int main(int argc, char **argv)
     std::string path, consumer = "stats";
     bool verify = false, quiet = false, withEmu = false, noGpu = false, validation = false, noTables = false, vk = false, vifRoundNearest = false,
          vifNoPoison = false;
-    std::string vkBias = "on", vkBlend = "auto", vkFaults, vkPng, vifSubstitute = "bytes", vifOut;
+    std::string vkBias = "on", vkBlend = "auto", vkFaults, vkPng, vifSubstitute = "bytes", vifOut, liveShots;
     uint64_t first = 0, last = ~0ull;
     rc::replay::EmuOptions emuOptions;
     auto cycleKick = [](const char *text, int64_t &cycle, uint32_t &kick)
@@ -807,6 +829,8 @@ int main(int argc, char **argv)
             vkFaults = argv[++i];
         else if (a == "--vk-png" && i + 1 < argc)
             vkPng = argv[++i];
+        else if (a == "--live-shots" && i + 1 < argc)
+            liveShots = argv[++i];
         else if (a == "--no-tables")
             noTables = true;
         else if (a == "--validation")
@@ -867,9 +891,10 @@ int main(int argc, char **argv)
         survey.summary();
         return ok ? 0 : 2;
     }
-    if (consumer != "stats" && consumer != "emu" && consumer != "tex" && consumer != "blit" && consumer != "gif2d" && consumer != "vif")
+    if (consumer != "stats" && consumer != "emu" && consumer != "tex" && consumer != "blit" && consumer != "gif2d" && consumer != "vif" &&
+        consumer != "live2d")
     {
-        std::fprintf(stderr, "consumer '%s' is not built yet (stats, emu, tex, blit, gif2d, gif2dstat, vifstat, vif)\n", consumer.c_str());
+        std::fprintf(stderr, "consumer '%s' is not built yet (stats, emu, tex, blit, gif2d, gif2dstat, vifstat, vif, live2d)\n", consumer.c_str());
         return 2;
     }
     Reader reader;
@@ -990,6 +1015,18 @@ int main(int argc, char **argv)
         if (withEmu)
             return runEmu(reader, path, emuOptions, verify, true, first, last, nullptr, false, nullptr, false, false, &v);
         return runVif(reader, path, v, first, last);
+    }
+    if (consumer == "live2d")
+    {
+        // (step 7 batch 5) The live 2D renderer on an exact dump, behind nothing, in front of the machine.
+        rc::replay::Live2dOptions l;
+        l.quiet = quiet;
+        l.validation = validation;
+        l.blend = vkBlend;
+        l.shotsDir = liveShots;
+        l.pngDir = emuOptions.pngDir;
+        emuOptions.pngDir.clear();
+        return runEmu(reader, path, emuOptions, verify, true, first, last, nullptr, false, nullptr, false, false, nullptr, &l);
     }
     if (consumer == "emu")
         return runEmu(reader, path, emuOptions, verify, quiet, first, last);

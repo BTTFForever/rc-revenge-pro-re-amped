@@ -311,7 +311,7 @@ namespace rc::rd
         td.height = kHeight;
         td.mipLevels = 1u;
         td.format = RHI_FMT_RGBA8_UNORM;
-        td.usage = RHI_TEX_RENDER_TARGET | RHI_TEX_COPY_SRC | (m_haveRead ? RHI_TEX_INPUT_ATTACHMENT : 0u);
+        td.usage = RHI_TEX_RENDER_TARGET | RHI_TEX_COPY_SRC | RHI_TEX_COPY_DST | RHI_TEX_SAMPLED | (m_haveRead ? RHI_TEX_INPUT_ATTACHMENT : 0u);
         td.debugName = "gs2d target FBP 0x0";
         m_targets[0] = rhi_create_texture(&td);
         td.debugName = "gs2d target FBP 0x50";
@@ -392,10 +392,13 @@ namespace rc::rd
                 rhi_destroy_texture(*t);
                 *t = RhiTexture{};
             }
-        if (m_records.id)
-            rhi_destroy_buffer(m_records);
-        m_records = RhiBuffer{};
-        m_recordBytes = 0;
+        for (uint32_t i = 0; i < RHI_FRAMES_IN_FLIGHT; ++i)
+        {
+            if (m_records[i].id)
+                rhi_destroy_buffer(m_records[i]);
+            m_records[i] = RhiBuffer{};
+            m_recordBytes[i] = 0;
+        }
         if (m_sampler.id)
             rhi_destroy_sampler(m_sampler);
         m_sampler = RhiSampler{};
@@ -423,26 +426,30 @@ namespace rc::rd
 
     bool Gs2dVk::upload(const std::vector<Gs2dPrim> &records)
     {
+        // (batch 5) One buffer a frame slot: live, the list of the next frame is written while this one's is in flight.
+        const uint32_t slot = rhi_frame_slot();
+        RhiBuffer &buffer = m_records[slot];
+        uint64_t &capacity = m_recordBytes[slot];
         const uint64_t bytes = std::max<uint64_t>(sizeof(Gs2dPrim), records.size() * sizeof(Gs2dPrim));
-        if (bytes > m_recordBytes)
+        if (bytes > capacity)
         {
-            if (m_records.id)
-                rhi_destroy_buffer(m_records);
+            if (buffer.id)
+                rhi_destroy_buffer(buffer);
             uint64_t size = 1u << 16;
             while (size < bytes)
                 size <<= 1;
             const RhiBufferDesc bd{size, RHI_BUF_STORAGE_READ, RHI_MEM_UPLOAD, "gs2d records"};
-            m_records = rhi_create_buffer(&bd);
-            m_recordBytes = m_records.id ? size : 0u;
-            if (!m_records.id)
+            buffer = rhi_create_buffer(&bd);
+            capacity = buffer.id ? size : 0u;
+            if (!buffer.id)
                 return false;
         }
-        void *p = rhi_map_buffer(m_records);
+        void *p = rhi_map_buffer(buffer);
         if (!p)
             return false;
         if (!records.empty())
             std::memcpy(p, records.data(), records.size() * sizeof(Gs2dPrim));
-        rhi_unmap_buffer(m_records);
+        rhi_unmap_buffer(buffer);
         return true;
     }
 
@@ -513,7 +520,7 @@ namespace rc::rd
         rb.type = RHI_BIND_STORAGE_BUFFER;
         if (!upload({}))
             return false;
-        rb.buffer = m_records;
+        rb.buffer = m_records[rhi_frame_slot()];
         const RhiBindGroupDesc g0{m_layouts[0], nullptr, 0u}, g1{m_layouts[1], &rb, 1u}, g2{m_layouts[2], b, 3u};
         rhi_cmd_set_pipeline(cl, m_seedPipeline);
         rhi_cmd_set_bind_group(cl, 0u, rhi_create_bind_group(&g0));
@@ -718,10 +725,28 @@ namespace rc::rd
             items.clear();
         };
 
+        m_blits.clear();
+        std::vector<const uint8_t *> blitData;
+        uint64_t blitBytes = 0;
         for (const DrawCmd &cmd : list.cmds)
         {
             switch (cmd.op)
             {
+            case kOpImageBlit:
+            {
+                // (batch 5) CT32 words into a frame buffer, between the draws before and after it.
+                const uint32_t x = cmd.b & 0xFFFFu, y = cmd.b >> 16, w = cmd.c & 0xFFFFu, h = cmd.c >> 16;
+                if (!w || !h || cmd.payloadBytes < w * h * 4u || x + w > kWidth || y + h > kHeight || (cmd.a != 0u && cmd.a != 0x50u))
+                    break;
+                Draw d{};
+                d.target = cmd.a == 0x50u ? 1u : 0u;
+                d.blit = static_cast<int32_t>(m_blits.size());
+                m_blits.push_back({d.target, RhiRect{static_cast<int32_t>(x), static_cast<int32_t>(y), w, h}, blitBytes});
+                blitData.push_back(list.data(cmd));
+                blitBytes += static_cast<uint64_t>(w) * h * 4u;
+                draws.push_back(d);
+                break;
+            }
             case kOpTexture:
             {
                 RhiTextureDesc td{};
@@ -917,6 +942,18 @@ namespace rc::rd
         if (!upload(rec))
             return false;
         m_stats.records += rec.size();
+        m_blitStage = RhiBuffer{};
+        if (blitBytes)
+        {
+            const RhiBufferDesc bd{blitBytes, RHI_BUF_COPY_SRC, RHI_MEM_UPLOAD, "gs2d image blits"};
+            m_blitStage = rhi_create_buffer(&bd);
+            uint8_t *p = m_blitStage.id ? static_cast<uint8_t *>(rhi_map_buffer(m_blitStage)) : nullptr;
+            if (!p)
+                return false;
+            for (size_t i = 0; i < m_blits.size(); ++i)
+                std::memcpy(p + m_blits[i].offset, blitData[i], static_cast<size_t>(m_blits[i].rect.w) * m_blits[i].rect.h * 4u);
+            rhi_unmap_buffer(m_blitStage);
+        }
 
         // The uploads, before any pass.
         if (!ups.empty())
@@ -972,25 +1009,42 @@ namespace rc::rd
     {
         if (!m_created || (m_opt.blend == kBlendRead && !m_haveRead))
             return false;
-        ++m_stats.lists;
-        m_last = ListStats{};
         rhi_wait_frame();
         RhiCommandList cl = rhi_begin_commands();
+        const bool stamps = rhi_timestamps_supported();
+        const bool ok = record(list, cl, stamps);
+        rhi_submit(cl);
+        rhi_wait_idle();
+        if (ok && stamps)
+        {
+            // The slot of this list is recycled (and its timestamps collected) two frames on; the GPU is idle.
+            rhi_wait_frame();
+            rhi_wait_frame();
+            uint64_t ns[2] = {};
+            if (rhi_read_timestamps(ns, 2u) >= 2u && ns[1] >= ns[0] && ns[0])
+                m_last.gpuMs = static_cast<double>(ns[1] - ns[0]) / 1.0e6;
+        }
+        return ok;
+    }
+
+    bool Gs2dVk::record(const DrawList &list, RhiCommandList cl, bool stamps)
+    {
+        if (!m_created || (m_opt.blend == kBlendRead && !m_haveRead))
+            return false;
+        ++m_stats.lists;
+        m_last = ListStats{};
         std::vector<Draw> draws;
         std::vector<RhiTexture> fresh;
         if (!build(list, draws, fresh, cl))
-        {
-            rhi_submit(cl);
             return false;
-        }
         const bool readNow = readMode();
-        const bool stamps = rhi_timestamps_supported();
+        stamps = stamps && rhi_timestamps_supported();
         if (stamps)
             rhi_cmd_write_timestamp(cl, 0u);
         RhiBinding rb{};
         rb.slot = 0u;
         rb.type = RHI_BIND_STORAGE_BUFFER;
-        rb.buffer = m_records;
+        rb.buffer = m_records[rhi_frame_slot()];
         const RhiBindGroupDesc g0{m_layouts[0], nullptr, 0u}, g1{m_layouts[1], &rb, 1u};
         const RhiBindGroup group0 = rhi_create_bind_group(&g0), group1 = rhi_create_bind_group(&g1);
         // The exact blend: group 0 of the READ pipelines, the target as an input attachment.
@@ -1010,6 +1064,17 @@ namespace rc::rd
         bool drawnSinceBarrier = false; // in the open pass, since it began or since the last barrier
         for (const Draw &d : draws)
         {
+            if (d.blit >= 0)
+            {
+                // (batch 5) An upload into the frame buffer: outside a pass, in list order.
+                if (open >= 0)
+                    rhi_cmd_end_render_pass(cl);
+                open = -1;
+                const Blit &b = m_blits[static_cast<size_t>(d.blit)];
+                transition(cl, m_targets[b.target], m_targetState[b.target], RHI_STATE_COPY_DST);
+                rhi_cmd_copy_buffer_to_texture(cl, m_blitStage, b.offset, b.rect.w * 4u, m_targets[b.target], 0u, b.rect);
+                continue;
+            }
             if (open != static_cast<int>(d.target))
             {
                 if (open >= 0)
@@ -1080,21 +1145,23 @@ namespace rc::rd
             rhi_cmd_end_render_pass(cl);
         if (stamps)
             rhi_cmd_write_timestamp(cl, 1u);
-        rhi_submit(cl);
-        rhi_wait_idle();
+        if (m_blitStage.id)
+            rhi_destroy_buffer(m_blitStage); // deferred by the RHI until the frame's work is done
+        m_blitStage = RhiBuffer{};
+        // Replaced uploads: the RHI defers a destroy until the frame slot's work is done, so this is safe before the
+        // list is submitted.
         for (RhiTexture t : m_retired)
             rhi_destroy_texture(t);
         m_retired.clear();
-        if (stamps)
-        {
-            // The slot of this list is recycled (and its timestamps collected) two frames on; the GPU is idle.
-            rhi_wait_frame();
-            rhi_wait_frame();
-            uint64_t ns[2] = {};
-            if (rhi_read_timestamps(ns, 2u) >= 2u && ns[1] >= ns[0] && ns[0])
-                m_last.gpuMs = static_cast<double>(ns[1] - ns[0]) / 1.0e6;
-        }
         return true;
+    }
+
+    RhiTexture Gs2dVk::sampleTarget(RhiCommandList cl, uint32_t target)
+    {
+        if (!m_created || target > 1u)
+            return RhiTexture{};
+        transition(cl, m_targets[target], m_targetState[target], RHI_STATE_SHADER_READ);
+        return m_targets[target];
     }
 
     bool Gs2dVk::readColour(uint32_t target, std::vector<uint32_t> &rgba)
@@ -1168,7 +1235,7 @@ namespace rc::rd
         RhiBinding rb{};
         rb.slot = 0u;
         rb.type = RHI_BIND_STORAGE_BUFFER;
-        rb.buffer = m_records;
+        rb.buffer = m_records[rhi_frame_slot()];
         const RhiBindGroupDesc g0{m_layouts[0], nullptr, 0u}, g1{m_layouts[1], &rb, 1u};
         rhi_cmd_set_pipeline(cl, m_probePipeline);
         rhi_cmd_set_bind_group(cl, 0u, rhi_create_bind_group(&g0));

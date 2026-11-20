@@ -1645,3 +1645,35 @@ at input clock 0:255 instead of 0:256; rerun unloaded, both as above.)
 - The cost (19.5): a decision before batch 5 and for step 8.
 - 18.2's optional part (C = Ad, BLEND_FORM drawn by the read) was not built; no RC draw uses either.
 - The fixed-function path on a device with a blender wider than 8 bits is still unmeasured (13).
+
+## 20. Batch 5: work in progress (2026-11-20, branch `wip/step7-batch5`, paused)
+
+**Built, not yet fully checked or documented.** `render/live` (`rc_live`: `live2d.{h,cpp}` Reader/Mailbox/Presenter,
+`live_host.{h,cpp}` the vk host's facade), linked into the game (with rc_frame, rc_vif, rc_gs2d, rc_gs2d_vk, rc_blit,
+rc_tex; no usage requirements reach the game's sources). `RC_RENDERER=vk RC_VK_PICTURE=native`: the capture
+(`capture.cpp`, now also installed with no recording through `rc::rec::addLiveConsumer`) feeds a `FrameReader` (from
+reset, `Gif2dReader::Options::path1Prims = false`: K2's registers kept, its primitives left out; `frameUploads`: host
+transfers into FBP 0x0/0x50 become `IMAGE_BLIT` commands in list order) plus `FrameBlit` (upload-only pictures) on the
+EE thread; lists are published per cycle to a mailbox; `vk_host.cpp`'s present records all pending lists through
+`Gs2dVk::record` (new: records into the caller's command list, per-frame-slot record buffers, IMAGE_BLIT support,
+`sampleTarget`) and presents target[DISPFB2.FBP] (top 240/256 rows) or the upload-only picture. K2 not drawn (black).
+F7 toggles to the emulated GS picture (window title says which). `RC_VK_BLEND=ff|read`, `RC_VK_SHOT_DIR` +
+`RC_VK_SHOT_AT` (native screenshots, .png + .rgba), `RC_VK_NATIVE_REPORT`. Without `RC_VK_PICTURE=native` nothing of it
+runs. `rc_replay <exact dump> --consumer live2d [--live-shots <dir>] [--png <dir>] [--validation]`: the same reader and
+presenter off-line, each displayed picture against `REFI` outside the pixels K2 changed (colour of the shown target or Z
+at 0xa0), and the live screenshots against the off-line picture.
+
+**Results so far (USA):** live front-end session (`RC_SKIP_INTRO=1`, 45 s): menus readable (screenshot
+`native_900.png` of the main menu), 0 validation errors in a validation-on session, reader 27 ms a cycle on the EE thread
+(VIF1 kick 21 ms: the references, U2), GPU 0.5 ms a frame. `live2d` on USA `s6/boot` (900 cycles, validation on):
+**PASS**, 42.6 M non-K2 pixels all equal to the reference (39.8 M of them changed by K1), 0 validation errors (the first
+version failed two cycles where the front end draws over an uploaded picture, not a clear: hence `frameUploads`).
+
+**Remaining:** the live/off-line screenshot check (an exact-mode ring dump from a native session: exact mode plus the
+reader is slow, about 5 cycles/s in the front end, so take shots and F10 early, e.g. `RC_VK_SHOT_AT=230,280,320
+RC_FRAME_RECORD_F10=340`, timeout 150 s, without the validation layer); the same for Europe (`build-eu` not rebuilt
+yet); frame rates (front end and a race, `RC_DEBUG_DUMP` + `tools/fps.py`); a race screenshot; the oracle (`--all`, new
+seeds, both versions) and `playtest2` at 60.0/50.0 fps in default and plain vk mode, both versions (the game binary
+changed: capture.cpp, vk_host.cpp, the new libraries); unexplained "F7" toggles seen once in a session (keyboard focus
+changed; maybe a real key press, check); the debug env `RC_LIVE2D_DUMP_CYCLE` in `tools/rc_replay/live2d.cpp`; this
+section as "Batch 5 as built", RENDERER_PLAN.md item 7, NOTES.md. Not built: `DLST` (step 8 batch 4's).

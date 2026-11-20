@@ -85,6 +85,9 @@ namespace rc::rd
         void kick(const rc::rec::KickView &k, const rc::rec::RamView &ram) override;
         void cycleEnd(const rc::rec::CycleInfo &info, const uint8_t *refRgba) override; // builds picture()
 
+        // (step 7 batch 5) Live: start on blank GS memory with no register known (no keyframe).
+        void startBlank();
+
         // The picture DISPFB2 shows now, width x height (cycleEnd calls it with the cycle's reference size).
         void buildPicture(uint32_t width, uint32_t height);
         const Picture &picture() const { return m_picture; }

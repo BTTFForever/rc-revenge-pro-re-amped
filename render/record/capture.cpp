@@ -112,10 +112,16 @@ namespace rc::rec
         class Capture final : public rc::gfx::detail::Sink
         {
         public:
-            Capture(std::string path, Trigger trigger, uint64_t keyEvery)
-                : m_path(std::move(path)), m_trigger(std::move(trigger)),
-                  m_keyEvery(keyEvery ? keyEvery : m_trigger.kind == Trigger::Ring ? 120u : 300u)
+            // (step 7 batch 5) The capture with no recording: only live consumers (addLive). setRecording makes it record.
+            Capture() : m_keyEvery(300u) { m_state = Done; }
+
+            void setRecording(std::string path, Trigger trigger, uint64_t keyEvery)
             {
+                m_path = std::move(path);
+                m_trigger = std::move(trigger);
+                m_keyEvery = keyEvery ? keyEvery : m_trigger.kind == Trigger::Ring ? 120u : 300u;
+                m_recordingSet = true;
+                m_state = Armed;
                 // (batch 4) The ring keeps only the reference pictures' hashes unless told otherwise (section 6.2).
                 if (m_trigger.kind == Trigger::Ring)
                     m_refEvery = 0;
@@ -169,19 +175,23 @@ namespace rc::rec
             void hotkey()
             {
                 m_keyPresses.fetch_add(1, std::memory_order_relaxed);
-                std::fprintf(stderr, "[frame-record] F10\n");
+                if (m_recordingSet)
+                    std::fprintf(stderr, "[frame-record] F10\n");
             }
 
             // A save state is about to replace the machine (EE thread, between guest dispatches): the cycle in progress
             // closes here, with the picture the display shows now, so everything recorded so far replays as it was.
             void stateLoading()
             {
-                if (m_state != Recording || !m_eeKnown || std::this_thread::get_id() != m_ee)
+                if ((m_state != Recording && !live()) || !m_eeKnown || std::this_thread::get_id() != m_ee)
                     return;
                 flushPendingKick();
-                flushDeferred();
-                for (Consumer *c : m_consumers)
-                    c->note("save state load: the cycle closes here");
+                if (m_state == Recording)
+                {
+                    flushDeferred();
+                    for (Consumer *c : m_consumers)
+                        c->note("save state load: the cycle closes here");
+                }
                 const uint64_t dispfb2 = m_runtime->memory().gs().dispfb2;
                 m_stateLoadCut = true;
                 closeCycle(dispfb2, static_cast<uint32_t>(dispfb2 & 0x1FFu));
@@ -191,18 +201,49 @@ namespace rc::rec
             // The save state is loaded: a new segment starts with a keyframe of the loaded machine (section 3.4).
             void stateLoaded()
             {
-                if (m_state != Recording || !m_eeKnown || std::this_thread::get_id() != m_ee)
+                if (!m_eeKnown || std::this_thread::get_id() != m_ee)
                     return;
+                if (m_state != Recording)
+                {
+                    // (batch 5) Live consumers only: they reseed from the loaded machine (RENDERER_3D_DESIGN.md 5.1).
+                    if (live())
+                        liveKeyframe();
+                    return;
+                }
                 keyframe(false, kKeyAfterStateLoad);
                 ++m_stateLoads;
                 std::fprintf(stderr, "[frame-record] save state loaded: new segment from display cycle %llu\n",
                              static_cast<unsigned long long>(m_cycle));
             }
 
+            // (step 7 batch 5) A live consumer (RENDERER_FRAME_RECORD.md section 8, "The vk host loop"): it gets every
+            // event from boot on the EE thread, whether a dump is being recorded or not: hw, crt, kick (guest RAM in place),
+            // cycleBegin / cycleEnd (the closing DISPFB2 and DISPLAY2, no picture), and after a save-state load a keyframe of
+            // the loaded machine flagged kKeyAfterStateLoad. open() is called here with the version's picture size.
+            void addLive(Consumer *c)
+            {
+                FileInfo info;
+                info.header.gameVersion = RC_VERSION_EU ? 1u : 0u;
+                info.header.width = 640u;
+                info.header.height = RC_VERSION_EU ? 256u : 240u;
+                info.header.fieldRateMilliHz = RC_VERSION_EU ? 50000u : 59940u;
+                info.header.ramBytes = kRamBytes;
+                info.header.scratchpadBytes = kScratchpadBytes;
+                info.header.pageBytes = kPageBytes;
+                info.header.gsMemBytes = kGsMemBytes;
+                c->open(info);
+                c->cycleBegin(m_cycle);
+                m_live.push_back(c);
+            }
+
+            bool live() const { return !m_live.empty(); }
+
             // --- hooks -------------------------------------------------------------------------------------------
             void attach(PS2Runtime *runtime)
             {
                 m_runtime = runtime;
+                if (!m_recordingSet)
+                    return;
                 std::fprintf(stderr, "[frame-record] armed: %s, trigger %s, keyframe every %llu cycles\n", m_path.c_str(),
                              m_trigger.text.c_str(), static_cast<unsigned long long>(m_keyEvery));
                 if (m_trigger.kind == Trigger::Unsupported)
@@ -236,13 +277,17 @@ namespace rc::rec
                 m_tagRanges.clear();
                 m_streamPos = 0;
                 m_tteBytes = (chcr & 0x40u) != 0u && channel <= 1u && ((chcr >> 2) & 3u) == 1u ? 8u : 0u;
-                if (m_state != Recording)
+                const bool recording = m_state == Recording;
+                if (!recording && !live())
                     return;
                 flushPendingKick();
-                flushDeferred();
                 m_kickStart = Clock::now();
-                if (channel == 0u)
-                    emitOdd(ps2x::capture::OddVif0Kick, channelBase, chcr);
+                if (recording)
+                {
+                    flushDeferred();
+                    if (channel == 0u)
+                        emitOdd(ps2x::capture::OddVif0Kick, channelBase, chcr);
+                }
                 m_kick = KickView{};
                 m_kick.cycle = m_cycle;
                 m_kick.index = m_kickIndex;
@@ -256,7 +301,7 @@ namespace rc::rec
                 m_kick.asr0 = asr0;
                 m_kick.asr1 = asr1;
                 m_kick.callerRa = callerRa;
-                if (m_exact)
+                if (recording && m_exact)
                 {
                     // The GS register file before the kick (everything before it has been drawn: exact mode is synchronous).
                     std::memcpy(m_regs, ps2x::capture::g_gsRawRegs, sizeof(m_regs));
@@ -272,9 +317,11 @@ namespace rc::rec
                 m_kick.labels = m_labelViews.data();
                 m_kick.labelCount = static_cast<uint32_t>(m_labelViews.size());
                 m_labelledKicks += m_labelViews.empty() ? 0u : 1u;
-                m_tracker->beginKick();
+                if (recording)
+                    m_tracker->beginKick();
                 m_ranges.clear();
                 m_inKick = true;
+                m_kickRecorded = recording;
             }
 
             void kickTouch(uint32_t physAddr, uint32_t bytes, bool scratchpad, bool isTag)
@@ -284,7 +331,7 @@ namespace rc::rec
                     m_tagRanges.push_back({m_streamPos, scratchpad ? 0x70000000u + physAddr : physAddr, bytes, isTag});
                     m_streamPos += isTag ? m_tteBytes : bytes;
                 }
-                if (!m_inKick || !onEe(2))
+                if (!m_inKick || !m_kickRecorded || !onEe(2))
                     return;
                 m_tracker->touch(physAddr, bytes, scratchpad);
                 if (!isTag && m_kick.mode != 1u)
@@ -305,24 +352,27 @@ namespace rc::rec
                 m_inKick = false;
                 PS2Memory &memory = m_runtime->memory();
                 const uint8_t *ram = memory.getRDRAM(), *spr = memory.getScratchpad();
-                const uint32_t pages = m_tracker->collect(ram, spr, [&](uint32_t first, uint32_t count, const uint8_t *data)
-                                                          {
-                                                              for (Consumer *c : m_consumers)
-                                                                  c->pages(first, count, data);
-                                                          });
-                m_cyclePages += pages;
-                Hash64 hash;
-                if (m_kick.mode == 1u)
-                {
-                    if (flat && flatBytes)
-                        hash.update(flat, flatBytes);
-                }
-                else
-                    for (const Range &r : m_ranges)
-                        hash.update((r.scratch ? spr : ram) + r.offset, r.bytes);
                 m_kick.dmaTags = dmaTags;
-                m_kick.streamBytes = static_cast<uint32_t>(hash.length());
-                m_kick.streamHash = hash.finish();
+                if (m_kickRecorded)
+                {
+                    const uint32_t pages = m_tracker->collect(ram, spr, [&](uint32_t first, uint32_t count, const uint8_t *data)
+                                                              {
+                                                                  for (Consumer *c : m_consumers)
+                                                                      c->pages(first, count, data);
+                                                              });
+                    m_cyclePages += pages;
+                    Hash64 hash;
+                    if (m_kick.mode == 1u)
+                    {
+                        if (flat && flatBytes)
+                            hash.update(flat, flatBytes);
+                    }
+                    else
+                        for (const Range &r : m_ranges)
+                            hash.update((r.scratch ? spr : ram) + r.offset, r.bytes);
+                    m_kick.streamBytes = static_cast<uint32_t>(hash.length());
+                    m_kick.streamHash = hash.finish();
+                }
                 m_kick.field = memory.gs().vsyncTick.load(std::memory_order_relaxed);
                 m_kick.mxcsr = _mm_getcsr();
                 // As the runtime's VU1 start callback reads it: the running guest thread's context, else the runtime's.
@@ -360,7 +410,10 @@ namespace rc::rec
                 const RamView live{memory.getRDRAM(), memory.getScratchpad(), nullptr, nullptr};
                 m_kick.spans = m_spans.data();
                 m_kick.spanCount = static_cast<uint32_t>(m_spans.size());
-                for (Consumer *c : m_consumers)
+                if (m_kickRecorded)
+                    for (Consumer *c : m_consumers)
+                        c->kick(m_kick, live);
+                for (Consumer *c : m_live)
                     c->kick(m_kick, live);
                 m_spans.clear();
                 dropResolved();
@@ -395,6 +448,12 @@ namespace rc::rec
                     for (Consumer *c : m_consumers)
                         c->hw(address, width, value, callerRa);
                 }
+                if (live())
+                {
+                    flushPendingKick();
+                    for (Consumer *c : m_live)
+                        c->hw(address, width, value, callerRa);
+                }
                 const uint32_t phys = address & 0x1FFFFFFFu;
                 if (phys - 0x12000000u >= 0x2000u)
                     return;
@@ -414,6 +473,8 @@ namespace rc::rec
                 if (m_state == Recording)
                     for (Consumer *c : m_consumers)
                         c->crt(interlaced, mode, ffmd);
+                for (Consumer *c : m_live)
+                    c->crt(interlaced, mode, ffmd);
             }
 
             void odd(int kind, uint32_t address, uint64_t value)
@@ -722,6 +783,9 @@ namespace rc::rec
                 }
                 for (Consumer *c : m_consumers)
                     c->keyframe(kf);
+                if (extraFlags & kKeyAfterStateLoad)
+                    for (Consumer *c : m_live)
+                        c->keyframe(kf);
                 if (!final)
                 {
                     m_tracker->reset();
@@ -734,6 +798,25 @@ namespace rc::rec
                 m_keyNs += ns;
                 m_keyMaxNs = std::max(m_keyMaxNs, ns);
                 ++m_keyframes;
+            }
+
+            // (batch 5) A keyframe of the machine as it is now, for the live consumers only (after a save-state load).
+            void liveKeyframe()
+            {
+                KeyframeState state;
+                Keyframe kf;
+                kf.header.cycle = m_cycle;
+                kf.header.gameFrame = m_gameFrame;
+                kf.header.field = m_runtime->memory().gs().vsyncTick.load(std::memory_order_relaxed);
+                kf.header.flags = kKeyAfterStateLoad;
+                if (!captureKeyframeState(*m_runtime, state))
+                    std::fprintf(stderr, "[frame-record] live keyframe at cycle %llu: the GS has no memory yet\n",
+                                 static_cast<unsigned long long>(m_cycle));
+                if (state.gsMemory.empty())
+                    state.gsMemory.assign(kGsMemBytes, 0u);
+                kf.chunks = state.chunks(false);
+                for (Consumer *c : m_live)
+                    c->keyframe(kf);
             }
 
             void start()
@@ -934,10 +1017,33 @@ namespace rc::rec
                     ++m_recorded;
                     ++m_inSegment;
                 }
+                if (live())
+                {
+                    // (batch 5) The live consumers' close: the display registers, no picture.
+                    flushPendingKick();
+                    const GSRegisters &g = m_runtime->memory().gs();
+                    CycleInfo info;
+                    RecEndBody &e = info.end;
+                    e.cycle = m_cycle;
+                    e.gameFrame = m_gameFrame;
+                    e.field = g.vsyncTick.load(std::memory_order_relaxed);
+                    e.dispfb2 = dispfb2;
+                    e.display2 = g.display2;
+                    e.pmode = g.pmode;
+                    e.refFbp = fbp;
+                    e.refWidth = 640u;
+                    e.refHeight = RC_VERSION_EU ? 256u : 240u;
+                    e.kickCount = m_kickIndex;
+                    info.index = static_cast<uint32_t>(m_cycle);
+                    for (Consumer *c : m_live)
+                        c->cycleEnd(info, nullptr);
+                }
                 ++m_cycle;
                 m_kicksThisCycle = 0;
                 m_kickIndex = 0;
                 m_lastCloseFbp = fbp;
+                for (Consumer *c : m_live)
+                    c->cycleBegin(m_cycle);
                 expireTags();
                 // (batch 4) F10 (or a simulated press) since the last close. A cycle cut by a state load acts on none:
                 // the keyframe after the load comes next.
@@ -1062,6 +1168,9 @@ namespace rc::rec
             Clock::time_point m_segmentStart = Clock::now();
 
             bool m_inKick = false, m_kickPending = false;
+            bool m_kickRecorded = false; // the kick in progress goes to the recording consumers (page tracker, hashes)
+            bool m_recordingSet = false; // RC_FRAME_RECORD configured a recording
+            std::vector<Consumer *> m_live; // (batch 5) live consumers
             KickView m_kick{};
             // Exact mode (batch 2).
             bool m_exact = false, m_strict = false, m_refHash = true, m_inGif = false;
@@ -1122,14 +1231,25 @@ namespace rc::rec
             []() { g_capture->stateLoading(); },
         };
 
+        // The capture is made by whichever comes first: RC_FRAME_RECORD (below) or a live consumer (addLiveConsumer, from
+        // another static initializer: g_capture is constant-initialised to null, so the order does not matter).
+        Capture *ensureCapture()
+        {
+            if (!g_capture)
+            {
+                g_capture = new Capture();
+                ps2x::capture::install(&kHooks);
+            }
+            return g_capture;
+        }
+
         const bool g_installed = []
         {
             const char *path = std::getenv("RC_FRAME_RECORD");
             if (!path || !*path)
                 return false;
             const char *key = std::getenv("RC_FRAME_RECORD_KEY");
-            g_capture = new Capture(path, parseTrigger(std::getenv("RC_FRAME_RECORD_AT")), key ? std::strtoull(key, nullptr, 10) : 0u);
-            ps2x::capture::install(&kHooks);
+            ensureCapture()->setRecording(path, parseTrigger(std::getenv("RC_FRAME_RECORD_AT")), key ? std::strtoull(key, nullptr, 10) : 0u);
             // (batch 3) The side-tag channel feeds the capture from now on; RC_FRAME_RECORD_TAGS=0 leaves it detached.
             const char *tags = std::getenv("RC_FRAME_RECORD_TAGS");
             if (!tags || std::strcmp(tags, "0") != 0)
@@ -1139,6 +1259,12 @@ namespace rc::rec
             }
             return true;
         }();
+    }
+
+    void addLiveConsumer(Consumer *consumer)
+    {
+        if (consumer)
+            ensureCapture()->addLive(consumer);
     }
 
     bool captureInstalled() { return g_installed; }

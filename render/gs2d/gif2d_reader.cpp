@@ -5,6 +5,8 @@
 #include "gs_model.h"
 
 #include <algorithm>
+#include <climits>
+#include <cstdint>
 #include <cstring>
 
 namespace rc::rd
@@ -98,6 +100,60 @@ namespace rc::rd
     {
         m_shadow.setObserver(this);
         m_path1Feed.self = this;
+        if (m_opt.frameUploads)
+            m_shadow.memory().setTransferLog(&m_xfers);
+    }
+
+    void Gif2dReader::flushUploads()
+    {
+        if (m_xfers.empty())
+            return;
+        const GsMemory &mem = m_shadow.memory();
+        // One rectangle a target: the union of the transfers since the last flush (no draw lies between them, and the
+        // pixels are read from the shadow, which holds the last value of each).
+        int x0[2] = {INT32_MAX, INT32_MAX}, y0[2] = {INT32_MAX, INT32_MAX}, x1[2] = {-1, -1}, y1[2] = {-1, -1};
+        size_t keep = 0;
+        for (size_t i = 0; i < m_xfers.size(); ++i)
+        {
+            const GsMemory::TransferRect &r = m_xfers[i];
+            ++m_stats.frameUploads;
+            const int t = r.dbp == 0u ? 0 : r.dbp == 0x50u * 32u ? 1 : -1;
+            if (t < 0 || r.dbw != 10u || r.psm != kPsmCt32)
+            {
+                ++m_stats.frameUploadsOther;
+                continue;
+            }
+            x0[t] = std::min<int>(x0[t], static_cast<int>(r.x));
+            y0[t] = std::min<int>(y0[t], static_cast<int>(r.y));
+            x1[t] = std::max<int>(x1[t], static_cast<int>(std::min<uint32_t>(r.x + r.w, 640u)) - 1);
+            y1[t] = std::max<int>(y1[t], static_cast<int>(std::min<uint32_t>(r.y + r.h, 256u)) - 1);
+            // A transfer whose data has not all arrived (it goes on in the next kick) is copied again at the next flush.
+            if (r.serial == mem.serial() && mem.transferOpen())
+            {
+                m_xfers[keep++] = r;
+                --m_stats.frameUploads;
+            }
+        }
+        m_xfers.resize(keep);
+        for (int t = 0; t < 2; ++t)
+        {
+            if (x1[t] < x0[t] || y1[t] < y0[t])
+                continue;
+            closePrims();
+            const uint32_t w = static_cast<uint32_t>(x1[t] - x0[t] + 1), h = static_cast<uint32_t>(y1[t] - y0[t] + 1);
+            DrawCmd &c = m_list.add(kOpImageBlit);
+            c.a = t ? 0x50u : 0u;
+            c.b = static_cast<uint32_t>(x0[t]) | static_cast<uint32_t>(y0[t]) << 16;
+            c.c = w | h << 16;
+            std::vector<uint32_t> row(w);
+            for (uint32_t y = 0; y < h; ++y)
+            {
+                for (uint32_t x = 0; x < w; ++x)
+                    row[x] = mem.read32(t ? 0x50u * 32u : 0u, 10u, static_cast<uint32_t>(x0[t]) + x, static_cast<uint32_t>(y0[t]) + y);
+                m_list.append(row.data(), w * 4u);
+            }
+            ++m_stats.frameUploadBlits;
+        }
     }
 
     void Gif2dReader::Path1Feed::reg(uint8_t addr, uint64_t value)
@@ -126,6 +182,7 @@ namespace rc::rd
         m_kickFirstCmd = static_cast<uint32_t>(m_list.cmds.size());
         m_kickPrims = m_kickDropped = m_kickTransfers = 0;
         ++m_stats.path1Kicks;
+        m_inPath1 = true;
     }
 
     void Gif2dReader::feedPath1(const uint8_t *data, uint32_t bytes)
@@ -144,6 +201,7 @@ namespace rc::rd
     void Gif2dReader::endPath1Kick(bool guarded)
     {
         closePrims();
+        m_inPath1 = false;
         if (!guarded)
             return;
         ++m_stats.path1Guarded;
@@ -190,6 +248,8 @@ namespace rc::rd
 
     void Gif2dReader::cycleEnd(const CycleInfo &, const uint8_t *)
     {
+        if (!m_xfers.empty())
+            flushUploads();
         closePrims();
         ++m_stats.cycles;
     }
@@ -296,6 +356,8 @@ namespace rc::rd
         const WalkResult w = walkChain(k, ram, &feed);
         feed.until(~0u);
         m_kick = nullptr;
+        if (!m_xfers.empty())
+            flushUploads();
         closePrims();
         m_stats.absentPages += w.absentPageReads;
         m_stats.walkerDropped += m_shadow.walker().stats().droppedBytes - droppedBefore;
@@ -580,6 +642,13 @@ namespace rc::rd
 
     void Gif2dReader::primitive(const GsVertex *v, uint32_t n)
     {
+        if (!m_xfers.empty())
+            flushUploads();
+        if (m_inPath1 && !m_opt.path1Prims)
+        {
+            ++m_stats.path1PrimsLeftOut;
+            return;
+        }
         ++m_stats.prims;
         if (m_stateDirty || m_shadow.memory().serial() != m_stateSerial)
         {

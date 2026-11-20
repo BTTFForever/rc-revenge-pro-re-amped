@@ -65,6 +65,12 @@ namespace rc::rd
         ++m_stats.keyframesLoaded;
     }
 
+    void FrameBlit::startBlank()
+    {
+        std::memset(m_known, 0, sizeof(m_known));
+        m_started = true;
+    }
+
     void FrameBlit::cycleBegin(uint64_t)
     {
         m_cycle = CycleCounts{};

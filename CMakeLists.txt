@@ -295,6 +295,17 @@ target_sources(rc_replay PRIVATE tools/rc_replay/vif.cpp)
 set_property(SOURCE tools/rc_replay/vif.cpp APPEND PROPERTY INCLUDE_DIRECTORIES "${PS2RECOMP_DIR}/ps2xRuntime/src/lib/vu")
 set_property(SOURCE tools/rc_replay/vif.cpp APPEND PROPERTY COMPILE_OPTIONS "-O2")
 target_link_libraries(rc_replay PRIVATE rc_frame rc_vif rc_gs2d rc_tex rc_vu1_ref)
+# (step 7 batch 5, RENDERER_2D_DESIGN.md 20) rc_live: live 2D under RC_RENDERER=vk RC_VK_PICTURE=native: the frame reader
+# as a live consumer of the capture (EE thread), the draw list published at the cycle close, the presenter drawing it
+# through Gs2dVk (render/live). The game links it (and through it rc_frame, rc_vif, rc_gs2d, rc_gs2d_vk, rc_blit, rc_tex)
+# with no usage requirements reaching the game's other sources; platform/vk_host.cpp calls it only when RC_VK_PICTURE=native.
+# The oracle links none of it. rc_replay's live2d consumer runs the same reader and presenter on a dump.
+add_library(rc_live STATIC EXCLUDE_FROM_ALL render/live/live2d.cpp render/live/live_host.cpp)
+target_compile_options(rc_live PRIVATE -O2)
+target_link_libraries(rc_live PRIVATE rc_frame rc_vif rc_blit rc_gs2d_vk rc_gs2d rc_tex rc_record rc_ico_rhi ZLIB::ZLIB)
+target_link_libraries(rc_revenge_pro PRIVATE rc_live)
+target_sources(rc_replay PRIVATE tools/rc_replay/live2d.cpp)
+target_link_libraries(rc_replay PRIVATE rc_live rc_frame rc_vif rc_blit rc_gs2d_vk rc_gs2d rc_tex rc_record)
 add_executable(rc_tex_test EXCLUDE_FROM_ALL tools/rc_replay/tex_test.cpp)
 target_compile_options(rc_tex_test PRIVATE -O2)
 target_link_libraries(rc_tex_test PRIVATE rc_tex rc_record ZLIB::ZLIB)

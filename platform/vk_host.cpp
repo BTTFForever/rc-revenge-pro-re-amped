@@ -11,7 +11,13 @@
 //
 // Switches: RC_VK_VSYNC=0 presents without vsync (default on; the host loop is held to 60 per second either way);
 // the RHI's own ICO_VK_* switches (ICO_VK_VALIDATION=1, ICO_VK_DEVICE=<index or name part>) apply.
+//
+// (Renderer plan P1 step 7 batch 5) RC_VK_PICTURE=native presents the native picture instead (render/live/live_host.h:
+// the frame reader on the EE thread, the cycle's 2D drawn through Gs2dVk; K2, the 3D, not drawn yet). F7 switches
+// between it and the emulated GS picture; the window title says which is shown. Unset or "gs": exactly as before.
 #include "ps2_host_platform.h"
+
+#include "../render/live/live_host.h"
 
 #include "rhi.h"
 #include "vk/rhi_vk.h"
@@ -27,6 +33,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <string_view>
 
 namespace
@@ -144,6 +151,11 @@ namespace
         std::array<RhiBuffer, RHI_FRAMES_IN_FLIGHT> upload{};
         std::array<uint64_t, RHI_FRAMES_IN_FLIGHT> uploadSize{};
         uint64_t presents = 0u, uploads = 0u, skipped = 0u;
+
+        // RC_VK_PICTURE=native (step 7 batch 5)
+        bool native = false;     // the live 2D renderer is running
+        bool showNative = false; // F7 toggles
+        std::string title;
     };
 
     Host g_host;
@@ -217,6 +229,17 @@ namespace
                 rhi_destroy_bind_group_layout(layout);
     }
 
+    // RC_VK_PICTURE=native: the title says which picture is shown.
+    void updateTitle()
+    {
+        Host &h = g_host;
+        if (!h.window || !rc::live::nativeEnabled())
+            return;
+        const std::string t = h.title + (h.showNative ? " [native picture: 2D only, 3D not drawn yet; F7: emulated GS]"
+                                                      : " [emulated GS picture; F7: native]");
+        SDL_SetWindowTitle(h.window, t.c_str());
+    }
+
     bool open(const char *title)
     {
         Host &h = g_host;
@@ -248,6 +271,17 @@ namespace
             return false;
         }
         h.gpuReady = createGpuObjects();
+        h.title = title ? title : "PS2";
+        if (rc::live::nativeEnabled())
+        {
+            std::string why;
+            h.native = h.gpuReady && rc::live::createGpu(&why);
+            if (!h.native)
+                std::fprintf(stderr, "[vk-host] RC_VK_PICTURE=native: the native renderer cannot run here (%s); showing the emulated GS picture\n",
+                             why.empty() ? "presentation objects failed" : why.c_str());
+            h.showNative = h.native;
+            updateTitle();
+        }
         std::fprintf(stderr, "[vk-host] SDL %d.%d.%d (%s), adapter \"%s\", swapchain format %d, present mode %s%s\n",
                      SDL_VERSIONNUM_MAJOR(SDL_GetVersion()), SDL_VERSIONNUM_MINOR(SDL_GetVersion()),
                      SDL_VERSIONNUM_MICRO(SDL_GetVersion()), SDL_GetCurrentVideoDriver(), rhi_adapter_name(),
@@ -261,6 +295,11 @@ namespace
         Host &h = g_host;
         if (!h.window)
             return;
+        if (rc::live::nativeEnabled())
+        {
+            rc::live::report();
+            rc::live::destroyGpu();
+        }
         destroyGpuObjects();
         const uint32_t errors = rhi_vk_validation_error_count();
         rhi_shutdown();
@@ -377,9 +416,25 @@ namespace
         Host &h = g_host;
         if (!h.window || rhi_device_lost())
             return;
+        if (h.native && h.keys[SDL_SCANCODE_F7] && !h.previousKeys[SDL_SCANCODE_F7])
+        {
+            h.showNative = !h.showNative;
+            updateTitle();
+            std::fprintf(stderr, "[vk-host] F7: showing the %s picture\n", h.showNative ? "native" : "emulated GS");
+        }
         rhi_wait_frame();
         const uint32_t slot = rhi_frame_slot();
-        if (h.gpuReady && pixels && width && height)
+        // RC_VK_PICTURE=native: every list the EE thread published since the last frame is drawn, whichever picture is
+        // shown (the targets and textures must follow the game).
+        rc::live::HostView native{};
+        if (h.native)
+        {
+            RhiCommandList cl = rhi_begin_commands();
+            native = rc::live::recordFrame(cl);
+            rhi_submit(cl);
+        }
+        const bool showNative = h.native && h.showNative && native.valid && native.height;
+        if (h.gpuReady && pixels && width && height && !showNative)
         {
             if (!h.picture.id || h.pictureWidth != width || h.pictureHeight != height)
             {
@@ -447,7 +502,8 @@ namespace
         pass.width = targetWidth;
         pass.height = targetHeight;
         rhi_cmd_begin_render_pass(cl, &pass);
-        if (h.gpuReady && h.pictureFilled && width && height)
+        const RhiTexture shown = showNative ? native.texture : h.picture;
+        if (h.gpuReady && shown.id && (showNative || (h.pictureFilled && width && height)))
         {
             // The raylib loop's letterbox: the widest rectangle of the display's aspect, centred.
             const float screenWidth = static_cast<float>(targetWidth), screenHeight = static_cast<float>(targetHeight);
@@ -458,15 +514,21 @@ namespace
                 drawHeight = screenHeight;
                 drawWidth = screenHeight * shape;
             }
-            const RhiViewport viewport{(screenWidth - drawWidth) * 0.5f, (screenHeight - drawHeight) * 0.5f, drawWidth, drawHeight,
-                                       0.0f, 1.0f};
+            const float x0 = (screenWidth - drawWidth) * 0.5f, y0 = (screenHeight - drawHeight) * 0.5f;
+            // The native target is 640 x 256 of which the picture is the top `height` rows: the viewport is stretched
+            // down by texHeight / height and the scissor keeps the letterbox.
+            const float stretch = showNative && native.texHeight > native.height ? static_cast<float>(native.texHeight) / native.height : 1.0f;
+            const RhiViewport viewport{x0, y0, drawWidth, drawHeight * stretch, 0.0f, 1.0f};
             rhi_cmd_set_viewport(cl, &viewport);
-            const RhiRect scissor{0, 0, targetWidth, targetHeight};
+            const int32_t sx = static_cast<int32_t>(x0), sy = static_cast<int32_t>(y0);
+            const RhiRect scissor = showNative ? RhiRect{sx, sy, std::min<uint32_t>(targetWidth - static_cast<uint32_t>(sx), static_cast<uint32_t>(drawWidth + 0.5f)),
+                                                         std::min<uint32_t>(targetHeight - static_cast<uint32_t>(sy), static_cast<uint32_t>(drawHeight + 0.5f))}
+                                               : RhiRect{0, 0, targetWidth, targetHeight};
             rhi_cmd_set_scissor(cl, &scissor);
             RhiBinding bindings[2]{};
             bindings[0].slot = 1u;
             bindings[0].type = RHI_BIND_SAMPLED_TEXTURE;
-            bindings[0].texture = h.picture;
+            bindings[0].texture = shown;
             bindings[0].aspect = RHI_ASPECT_COLOR;
             bindings[1].slot = 1u;
             bindings[1].type = RHI_BIND_SAMPLER;
@@ -486,6 +548,8 @@ namespace
         rhi_submit(cl);
         rhi_present();
         ++h.presents;
+        if (h.native)
+            rc::live::afterPresent();
     }
 
     bool keyDown(int key)
@@ -621,6 +685,8 @@ namespace
         }
         ps2_host_platform::install(&kHooks);
         std::fprintf(stderr, "[vk-host] RC_RENDERER=vk: SDL3 window and input, RHI presentation, raylib audio only\n");
+        // RC_VK_PICTURE=native: the live 2D renderer's reader joins the capture's consumers now, before the runtime exists.
+        rc::live::installFromEnvironment();
         return true;
     }();
 }
