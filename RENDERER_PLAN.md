@@ -488,6 +488,8 @@ After step 1: fold its answers into this plan's open questions.
 Then `vk` becomes the default renderer; `gs` stays as the reference.
 
 ### P3: PC features on the native renderer (see "PC features")
+
+*User, 2026-11-20:* native resolution (640x240 / 640x256) is fine while the exact mode is being built and tested; the enhanced pipeline stays planned for once the bit-exact mode works well and most bugs are found. Exact and enhanced modes render the same draw lists (the enhanced mode scales positions into larger targets, no upscaling of pictures); the VU1 references are to hand over their float positions before the GS's 1/16-pixel rounding so high resolutions keep sub-pixel precision; widescreen changes the camera and HUD layout in the native game code; 2D art stays as drawn until the optional asset override layer.
 Resolution scaling, widescreen with HUD anchors, anti-aliasing, texture filtering, frame pacing, higher frame rates,
 modern effects.
 

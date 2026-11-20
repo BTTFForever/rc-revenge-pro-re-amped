@@ -15,6 +15,8 @@ with this design; nothing in it is the reader, and no game function or runtime f
 regenerate the dumps' references by replay, before K2 is drawn through Vulkan (batch 2).** Needs an answer before
 batch 2; batch 1 and step 7's batch 5 do not depend on it.
 
+**Decided by the user (2026-11-20): A.** Batch R (section 13) runs next, before batch 2.
+
 - *Found.* The runtime runs a VU1 program with the host FPU rounding toward zero (`ps2_vu1_core.cpp`: MXCSR
   `| 0x6000`, which the VU's arithmetic needs) and hands every XGKICK packet to the GS from inside the run
   (`VU1Interpreter::finishXgkick`). The software GS interpolates in floats on the calling thread (and, as its code
