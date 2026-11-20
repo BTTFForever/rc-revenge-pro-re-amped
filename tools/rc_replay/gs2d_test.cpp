@@ -1827,6 +1827,41 @@ namespace
             if (!run("(vi) a vertex with Q 0 (read as 1.0)", g, zRamp(6, 0x40)))
                 return;
         }
+        // (vii) texture coordinates beyond the int range (S / Q to +-1e10, as clipped PATH1 triangles send them): the
+        // reference's x86 float-to-int (0x80000000) and its bilinear value beyond 2^23; CLAMP and REPEAT, both filters.
+        for (uint64_t clamp : {uint64_t{5}, uint64_t{0}})
+            for (uint64_t tex1 : {0xF6000000160ull, 0ull})
+            {
+                Gif g;
+                uploadK2Texture(g, 31);
+                Env e;
+                env(g, e);
+                K2State st = kK2States[1];
+                st.clamp = clamp;
+                st.tex1 = tex1;
+                k2StateWrites(g, st);
+                const float big[6][2] = {{-5.0e4f, 5.0e4f}, {5.0e4f, -5.0e4f}, {3.0e7f, 2.0e6f}, {-1.0e9f, 7.0f}, {0.5f, 1.0e10f}, {2.5e9f, -2.5e9f}};
+                for (int k = 0; k < 6; ++k)
+                {
+                    V v[3];
+                    for (int i = 0; i < 3; ++i)
+                    {
+                        v[i].x = 10.0 + 105 * k + (i == 1 ? 90.0 : 0.0);
+                        v[i].y = i == 2 ? 240.0 : 15.0 + 9 * i;
+                        v[i].q = 0.0001f + 0.00002f * static_cast<float>(i + k);
+                        v[i].s = big[k][0] * v[i].q * (1.0f + 0.01f * i);
+                        v[i].t = big[k][1] * v[i].q * (1.0f - 0.02f * i);
+                        v[i].z = 0x900000;
+                        v[i].r = static_cast<uint8_t>(0x50 + 20 * i);
+                        v[i].g = 0x70;
+                        v[i].b = static_cast<uint8_t>(0x30 + 10 * k);
+                        v[i].a = 0x80;
+                    }
+                    tri(g, 0x1B, v[0], v[1], v[2]);
+                }
+                if (!run(std::string("(vii) S/Q to 1e10, ") + (clamp ? "CLAMP" : "REPEAT") + (tex1 ? ", bilinear" : ", nearest"), g, zRamp(8, 0x40)))
+                    return;
+            }
     }
 
     // --- T10: the barrier rule by covered pixels (10.3).

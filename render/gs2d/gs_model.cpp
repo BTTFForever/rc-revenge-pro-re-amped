@@ -1,5 +1,8 @@
 #include "gs_model.h"
 
+#include <cmath>
+#include <cstdint>
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -12,6 +15,35 @@ namespace rc::rd
 
         // Round half up of a non-negative float, by truncation and a comparison (the reference's ExactLround for the
         // bilinear filter's values, which lie in 0..255).
+        // (step 8 batch 2) float to int as the reference's x86 build converts it (cvttss2si): truncation, and the
+        // "integer indefinite" 0x80000000 for NaN and anything outside the int range. PATH1's clipped triangles reach
+        // texture coordinates of 1e10.
+        int cvtt(float v)
+        {
+            return (v >= -2147483648.0f && v < 2147483648.0f) ? static_cast<int>(v) : INT32_MIN;
+        }
+        // The reference's ExactLround then static_cast<int>: beyond 2^23 (or NaN) std::lround, a long whose low 32 bits are
+        // kept (x86 gives LONG_MIN for NaN, infinities and anything beyond 2^63).
+        int exactLroundInt(float v)
+        {
+            if (!(std::fabs(v) < 8388608.0f))
+            {
+                if (!(std::fabs(v) < 9223372036854775808.0f))
+                    return 0;
+                const int64_t l = std::llround(v);
+                return static_cast<int>(static_cast<uint32_t>(static_cast<uint64_t>(l)));
+            }
+            int t = static_cast<int>(v);
+            const float f = v - static_cast<float>(t);
+            if (v >= 0.0f)
+            {
+                if (f >= 0.5f)
+                    ++t;
+            }
+            else if (f <= -0.5f)
+                --t;
+            return t;
+        }
         int roundHalfUp(float v)
         {
             int t = static_cast<int>(v);
@@ -328,7 +360,7 @@ namespace rc::rd
         {
             const float top = static_cast<float>(a) + (static_cast<float>(b) - static_cast<float>(a)) * fu;
             const float bot = static_cast<float>(c) + (static_cast<float>(d) - static_cast<float>(c)) * fu;
-            return clampU8(roundHalfUp(top + (bot - top) * fv));
+            return clampU8(exactLroundInt(top + (bot - top) * fv));
         };
         return {ch(c00.r, c10.r, c01.r, c11.r), ch(c00.g, c10.g, c01.g, c11.g), ch(c00.b, c10.b, c01.b, c11.b), ch(c00.a, c10.a, c01.a, c11.a)};
     }
@@ -379,15 +411,15 @@ namespace rc::rd
         if (linear)
         {
             const float su = o.uf - 0.5f, sv = o.vf - 0.5f;
-            o.iu = static_cast<int>(std::floor(su));
-            o.iv = static_cast<int>(std::floor(sv));
+            o.iu = cvtt(std::floor(su));
+            o.iv = cvtt(std::floor(sv));
             o.fu = su - static_cast<float>(o.iu);
             o.fv = sv - static_cast<float>(o.iv);
         }
         else
         {
-            o.iu = static_cast<int>(o.uf);
-            o.iv = static_cast<int>(o.vf);
+            o.iu = cvtt(o.uf);
+            o.iv = cvtt(o.vf);
         }
     }
 

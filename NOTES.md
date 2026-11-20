@@ -854,6 +854,36 @@ cullOffscreen` leaves out triangles of no area or outside the scissor. Seeded fr
   at every GIF tag (`GifSink::vertexQ`; the frame record's RGBAQ register keeps its own convention); the draw list
   encoder therefore ends a tag only before a PRIM.
 
+### K2 on Vulkan per kick, barriers by covered pixels (2026-11-20, renderer P1 step 8 batch 2)
+The 3D packet (K2, PATH1's triangles from the C++ VU1 references) drawn through `Gs2dVk` and judged per kick against the
+emulated GS, check (d); the exact blend's barriers and the split's groups now go by covered pixels. Design and results:
+`RENDERER_3D_DESIGN.md` sections 10 and 18.
+- **The pixel rule:** `render/gs2d/gs_cover` (`GsCoverMap`, in `rc_gs2d`): two 16-bit stamps a pixel with epochs; a reading
+  primitive gets a by-region barrier only when a pixel it covers was written since the last one (or it is the pass's first
+  reading primitive and something was drawn before it); a split group ends only at a shared pixel. Coverage is the
+  reference's (`gsTriCovers`), per row as a span. Default in `Gs2dVk` (`Options::grouping kGroupPixels`); batch 4b's box
+  groups stay as `kGroupBoxes`. Stamping stops after the list's last reading primitive.
+- **Gs2dVk changes:** viewport 8192 x 8192 at -4096 (PATH1 sends vertices up to 2,368 pixels from the window origin; every
+  16-bit GS coordinate minus the offset now lies inside, the GPU never clips); only the pipeline, bind groups and scissor
+  that changed between draws are recorded; `ListStats` has draws, binds, primitives, the list build's and the cover map's
+  CPU time, vertices beyond the viewport, triangles with a vertex Z >= 2^24.
+- **Reader fixes found by check (d):** the reference GS reads Q 0.0 as 1.0 at every RGBAQ and PACKED ST write (PATH1's
+  clipping sends vertices with S, T, Q all 0): `GifWalker` gives vertices that Q (`gif_walk.cpp referenceQ`). The reader also
+  keeps the GS's CLUT buffer (loaded at TEX0 writes as CLD says, step 5's `Clut`) and reads indexed textures through it.
+- **Check (d):** `rc_replay <dump> --consumer gif2d --vk [--vk-blend read] [--vk-boxes] --verify --quiet --no-tables
+  [--validation]` now judges channel 1 kicks too (the emulated memory kept before the machine runs the kick; the frame reader's
+  K2 commands drawn over it; every pixel equal in R, G, B, A, Z). Report lines `(c) K1 ...` and `(d) K2 ...` (GPU time,
+  draws, binds, the cover map's CPU time, barriers and their histogram a kick). `--vk-boxes` adds the read with box groups
+  for comparison. MIPMAP (MXL > 0) is counted, no longer a failure: level 0 is drawn as the reference draws it (D-3D-2).
+  New faults: `--vk-fault no-first-barrier|cover-own-batch|no-stamp-other|epoch-no-barrier|gequal-greater|z-plus-one|
+  repeat-clamp|no-q|draw-culled|cull-drawn`.
+- **rc_gs2d_test** gains T9 (per-vertex Z under GREATER / GEQUAL, every PATH1 state on an alpha-ramped 256 x 128 texture,
+  REPEAT to +-1,000 texels, big triangles, ADC vertices, a vertex with Q 0) and T10 (water's three passes over a mesh with
+  exactly the predicted barriers, reading and exact triangles interleaved, a pass per target, GsCoverMap's spans against
+  `gsTriCovers`, the box rule on the same scenes) and their faults; `--only T9,T10`.
+- **Don't rebuild `rc_replay` while a batch of replays runs from `build-decomp/rc_replay`:** the link replaces the file and
+  every replay started afterwards fails to exec. Copy the binary for long runs.
+
 ### Live 2D: RC_VK_PICTURE=native (2026-11-20, renderer P1 step 7 batch 5)
 `RC_RENDERER=vk RC_VK_PICTURE=native tools/play.sh [replay <name>]` (`RC_VERSION=eu` as usual) presents the native picture:
 step 8's frame reader runs on the EE thread as a live consumer of the frame record's capture (`render/live`, library

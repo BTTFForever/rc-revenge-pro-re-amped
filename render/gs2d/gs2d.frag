@@ -45,6 +45,28 @@ int roundHalfUp(precise float v)
     return t;
 }
 
+// (step 8 batch 2) float to int as the reference's x86 build converts it (cvttss2si): 0x80000000 for NaN and anything
+// outside the int range (the GPU's int() saturates or is undefined there). PATH1's clipped triangles reach 1e10.
+int cvtt(float v)
+{
+    return (v >= -2147483648.0 && v < 2147483648.0) ? int(v) : int(0x80000000u);
+}
+
+// The reference's ExactLround then int, for a bilinear value: beyond 2^23 (or NaN) std::lround's long, its low 32 bits
+// kept (0 for NaN, infinities and beyond 2^63). The float is an integer there; its double is exact, and so is the modulo.
+int exactLroundInt(precise float v)
+{
+    if (!(abs(v) < 8388608.0))
+    {
+        if (!(abs(v) < 9223372036854775808.0))
+            return 0;
+        const double d = double(v);
+        const double q = floor(d / 4294967296.0lf);
+        return int(uint(d - q * 4294967296.0lf));
+    }
+    return roundHalfUp(v);
+}
+
 int wrapCoord(int c, int size, uint mode, int mn, int mx)
 {
     if (mode == 0u)
@@ -69,7 +91,7 @@ uint lerpChannel(uint c00, uint c10, uint c01, uint c11, float fu, float fv)
     precise float top = float(c00) + (float(c10) - float(c00)) * fu;
     precise float bot = float(c01) + (float(c11) - float(c01)) * fu;
     precise float v = top + (bot - top) * fv;
-    return uint(clamp(roundHalfUp(v), 0, 255));
+    return uint(clamp(exactLroundInt(v), 0, 255));
 }
 
 bool alphaPass(uint atst, uint aref, uint as)
@@ -194,15 +216,15 @@ void main()
             {
                 precise float su = uf - 0.5;
                 precise float sv = vf - 0.5;
-                iu = int(floor(su));
-                iv = int(floor(sv));
+                iu = cvtt(floor(su));
+                iv = cvtt(floor(sv));
                 fu = su - float(iu);
                 fv = sv - float(iv);
             }
             else
             {
-                iu = int(uf);
-                iv = int(vf);
+                iu = cvtt(uf);
+                iv = cvtt(vf);
             }
         }
     }
