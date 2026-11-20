@@ -48,12 +48,12 @@ const char *programName(Program);
 bool isEntry(Program, uint32_t startPc);
 // False (and nothing run) when the start address is not an entry of that program.
 bool run(Program, Io &);
-void runTrdrShape(Io &);
-void runEnvShape(Io &);
-void runWaterShape(Io &);
-void runSkinShape(Io &);
-void runTerdrShape(Io &);
-void runRdrShape(Io &);
+void runTrdrShapeIo(Io &);
+void runEnvShapeIo(Io &);
+void runWaterShapeIo(Io &);
+void runSkinShapeIo(Io &);
+void runTerdrShapeIo(Io &);
+void runRdrShapeIo(Io &);
 
 // Copies one GIF packet, starting at a VU memory quadword: tags and data up to the end-of-packet tag.
 void copyGifPacket(const uint8_t *memory, int quad, std::vector<uint8_t> &packet);

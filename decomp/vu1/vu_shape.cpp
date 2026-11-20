@@ -560,43 +560,6 @@ void ShapeProgram::drawTriangle()
     }
 }
 
-const char *programName(Program program)
-{
-    static const char *const names[kProgramCount] = {"TRdr_VUShapeProg", "EnvRdr_VUShapeProg", "Rdr_VUWaterProg", "Rdr_VUSkinProg",
-                                                     "TERdr_VUShapeProg", "Rdr_VUShapeProg"};
-    return program >= 0 && program < kProgramCount ? names[program] : "?";
-}
-
-// The entries of RENDERER_3D_DESIGN.md 5.3 (byte addresses); vu1_check.cpp's table of compared entries.
-bool isEntry(Program program, uint32_t startPc)
-{
-    switch (program)
-    {
-    case kTrdr: return startPc == 0u || startPc == 0x2050u;
-    case kEnv: return startPc == 0u || startPc == 0x78u || startPc == 0x2370u;
-    case kTerdr: return startPc == 0u || startPc == 0x2198u;
-    case kWater: case kSkin: case kRdr: return startPc == 0u;
-    default: return false;
-    }
-}
-
-bool run(Program program, Io &io)
-{
-    if (!isEntry(program, io.startPc))
-        return false;
-    switch (program)
-    {
-    case kTrdr: runTrdrShape(io); break;
-    case kEnv: runEnvShape(io); break;
-    case kWater: runWaterShape(io); break;
-    case kSkin: runSkinShape(io); break;
-    case kTerdr: runTerdrShape(io); break;
-    case kRdr: runRdrShape(io); break;
-    default: return false;
-    }
-    return true;
-}
-
 void copyGifPacket(const uint8_t *memory, int quad, std::vector<uint8_t> &packet)
 {
     int at = quad & 0x3FF;

@@ -47,7 +47,7 @@ void runTrdrShape(uint8_t *memory, const float registers[32][4], uint32_t startP
     body(p, startPc, top);
 }
 
-void runTrdrShape(Io &io)
+void runTrdrShapeIo(Io &io)
 {
     ShapeProgram p(io.memory, io.vf, kLayout, io.packet, io.user);
     body(p, io.startPc, io.top);

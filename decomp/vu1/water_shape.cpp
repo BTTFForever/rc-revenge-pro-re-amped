@@ -115,7 +115,7 @@ void runWaterShape(uint8_t *memory, const float registers[32][4], uint32_t, uint
         std::memcpy(after, p.r, sizeof(p.r));
 }
 
-void runWaterShape(Io &io)
+void runWaterShapeIo(Io &io)
 {
     ShapeProgram p(io.memory, io.vf, kLayout, io.packet, io.user);
     body(p, io.top);

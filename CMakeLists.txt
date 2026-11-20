@@ -274,7 +274,7 @@ target_link_libraries(rc_replay PRIVATE rc_gs2d_vk rc_gs2d rc_tex)
 set(RC_VU1_REF_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1/vu_shape.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1/trdr_shape.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1/env_shape.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1/water_shape.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1/skin_shape.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1/terdr_shape.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1/rdr_shape.cpp")
+    "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1/rdr_shape.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1/vu1_io.cpp")
 add_library(rc_vu1_ref STATIC EXCLUDE_FROM_ALL ${RC_VU1_REF_SOURCES})
 target_compile_options(rc_vu1_ref PRIVATE -O2 -fwrapv -fno-strict-aliasing)
 target_include_directories(rc_vu1_ref PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1")

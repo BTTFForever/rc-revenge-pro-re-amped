@@ -158,7 +158,7 @@ void runRdrShape(uint8_t *memory, const float registers[32][4], uint32_t, uint32
     body(p);
 }
 
-void runRdrShape(Io &io)
+void runRdrShapeIo(Io &io)
 {
     ShapeProgram p(io.memory, io.vf, kLayout, io.packet, io.user);
     body(p);

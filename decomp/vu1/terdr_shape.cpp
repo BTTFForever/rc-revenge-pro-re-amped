@@ -77,7 +77,7 @@ void runTerdrShape(uint8_t *memory, const float registers[32][4], uint32_t start
     body(p, startPc, top);
 }
 
-void runTerdrShape(Io &io)
+void runTerdrShapeIo(Io &io)
 {
     ShapeProgram p(io.memory, io.vf, kLayout, io.packet, io.user);
     body(p, io.startPc, io.top);

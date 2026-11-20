@@ -159,7 +159,7 @@ void runEnvShape(uint8_t *memory, const float registers[32][4], uint32_t startPc
     body(p, startPc, top);
 }
 
-void runEnvShape(Io &io)
+void runEnvShapeIo(Io &io)
 {
     ShapeProgram p(io.memory, io.vf, kLayout, io.packet, io.user);
     body(p, io.startPc, io.top);
