@@ -1,6 +1,6 @@
 // rc_replay: feeds a frame record dump (.rcfr, RENDERER_FRAME_RECORD.md) to consumers.
 //
-//   rc_replay <dump> [--consumer stats|emu|tex|blit|gif2d|gif2dstat] [--cycles a-b] [--verify] [--quiet]
+//   rc_replay <dump> [--consumer stats|emu|tex|blit|gif2d|gif2dstat|vifstat] [--cycles a-b] [--verify] [--quiet]
 //             [--png <dir>] [--picture-before <cycle>:<kick> <out.png>] [--path1 <cycle>:<kick> <out.bin>] [--kick-hashes]
 //             [--fault page|kick|hw:<cycle>[:<n>]]
 //             [--with-emu] [--fault transfer|kick|swizzle|decode:<cycle>:<n>] (tex)
@@ -13,6 +13,9 @@
 // FIFO stores, which are counted apart). Exit 0 pass, 1 a check failed,
 // 2 unusable dump.
 //
+// vifstat (vif_survey.cpp; RENDERER_3D_DESIGN.md section 3): counts what the VIF1 chains use; with --with-emu also the
+// C++ VU1 references against the emulated VU1, PATH1's draw states and the exact blend's barriers per kick
+// (--vif-round-nearest: the experiment of that design's decision U1). Output for tools/vif_agg.py.
 // emu (emu.cpp): a headless runtime replays every recorded store and kick through its own VIF1, VU1 and software GS.
 // With --verify on an exact-mode dump every kick's GIF output, every GS register file before a kick, every reference
 // picture and GS memory at every later keyframe and the final one must come out bit for bit. --png writes the replayed
@@ -49,6 +52,7 @@
 #include "tex.h"
 #include "blit.h"
 #include "gif2d_survey.h"
+#include "vif_survey.h"
 #include "gif2d.h"
 #include "consumer.h"
 #include "reader.h"
@@ -456,7 +460,7 @@ namespace
 
     void usage()
     {
-        std::fprintf(stderr, "usage: rc_replay <dump.rcfr> [--consumer stats|emu|tex|blit|gif2d|gif2dstat] [--cycles a-b] [--verify] [--quiet] [--png <dir>]\n"
+        std::fprintf(stderr, "usage: rc_replay <dump.rcfr> [--consumer stats|emu|tex|blit|gif2d|gif2dstat|vifstat] [--cycles a-b] [--verify] [--quiet] [--png <dir>]\n"
                              "                 [--picture-before <cycle>:<kick> <out.png>] [--path1 <cycle>:<kick> <out.bin>] [--kick-hashes]\n"
                              "                 [--fault page|kick|hw:<cycle>[:<n>]]\n"
                              "       tex: [--with-emu] [--png <dir>] [--fault transfer|kick:<cycle>:<n> | swizzle:<cycle>:<bits> | decode:0:<bits>]\n"
@@ -469,7 +473,8 @@ namespace
 namespace
 {
     int runEmu(Reader &reader, const std::string &path, rc::replay::EmuOptions options, bool verify, bool quiet, uint64_t first, uint64_t last,
-               const rc::replay::TexOptions *texOptions = nullptr, bool gif2dSurvey = false, const rc::replay::Gif2dOptions *gif2dOptions = nullptr)
+               const rc::replay::TexOptions *texOptions = nullptr, bool gif2dSurvey = false, const rc::replay::Gif2dOptions *gif2dOptions = nullptr,
+               bool vifSurvey = false, bool vifRoundNearest = false)
     {
         options.verify = verify;
         options.quiet = quiet;
@@ -533,6 +538,18 @@ namespace
             emu.setGifTap([&tex](int p, const uint8_t *data, uint32_t bytes) { tex->gifPacket(p, data, bytes); });
             consumers.push_back(tex.get());
         }
+        // (step 8's design) The vifstat survey in front of the machine: it walks the VIF1 chains itself, takes every GIF
+        // packet from the machine's tap and repeats each VU1 run with the C++ reference.
+        std::unique_ptr<rc::replay::VifSurvey> vif;
+        if (vifSurvey)
+        {
+            vif = std::make_unique<rc::replay::VifSurvey>(&runtime);
+            vif->installVu1Wrappers();
+            vif->setRoundNearest(vifRoundNearest);
+            emu.setGifTap([&vif](int p, const uint8_t *data, uint32_t bytes) { vif->gifPacket(p, data, bytes); });
+            emu.setAfterKick([&vif](const rc::rec::KickView &k) { vif->afterKick(k); });
+            consumers.insert(consumers.begin(), vif.get());
+        }
         const bool ok = reader.run(consumers, from, last);
         if (emu.fatal())
         {
@@ -544,6 +561,8 @@ namespace
             tex->summary();
         if (survey)
             survey->summary();
+        if (vif)
+            vif->summary();
         if (gif2d)
             gif2d->summary();
         if (!reader.complete())
@@ -665,7 +684,7 @@ namespace
 int main(int argc, char **argv)
 {
     std::string path, consumer = "stats";
-    bool verify = false, quiet = false, withEmu = false, noGpu = false, validation = false, noTables = false, vk = false;
+    bool verify = false, quiet = false, withEmu = false, noGpu = false, validation = false, noTables = false, vk = false, vifRoundNearest = false;
     std::string vkBias = "on", vkBlend = "auto", vkFaults, vkPng;
     uint64_t first = 0, last = ~0ull;
     rc::replay::EmuOptions emuOptions;
@@ -708,6 +727,8 @@ int main(int argc, char **argv)
                 emuOptions.faultN = n;
             }
         }
+        else if (a == "--vif-round-nearest")
+            vifRoundNearest = true;
         else if (a == "--with-emu")
             withEmu = true;
         else if (a == "--no-gpu")
@@ -765,9 +786,26 @@ int main(int argc, char **argv)
         survey.summary();
         return ok ? 0 : 2;
     }
+    if (consumer == "vifstat")
+    {
+        // (step 8's design) What the VIF1 chains and their PATH1 output use. With --with-emu the emulated machine runs
+        // beside it: the C++ VU1 references against the emulated VU1, PATH1's draw states, the exact blend's barriers.
+        Reader reader;
+        if (!reader.open(path))
+        {
+            std::fprintf(stderr, "%s: %s\n", path.c_str(), reader.error().c_str());
+            return 2;
+        }
+        if (withEmu)
+            return runEmu(reader, path, emuOptions, verify, true, first, last, nullptr, false, nullptr, true, vifRoundNearest);
+        rc::replay::VifSurvey survey(nullptr);
+        const bool ok = reader.run({&survey}, first, last);
+        survey.summary();
+        return ok ? 0 : 2;
+    }
     if (consumer != "stats" && consumer != "emu" && consumer != "tex" && consumer != "blit" && consumer != "gif2d")
     {
-        std::fprintf(stderr, "consumer '%s' is not built yet (stats, emu, tex, blit, gif2d, gif2dstat)\n", consumer.c_str());
+        std::fprintf(stderr, "consumer '%s' is not built yet (stats, emu, tex, blit, gif2d, gif2dstat, vifstat)\n", consumer.c_str());
         return 2;
     }
     Reader reader;

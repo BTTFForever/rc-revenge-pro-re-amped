@@ -268,6 +268,20 @@ target_link_libraries(rc_gs2d_test PRIVATE rc_gs2d_vk rc_gs2d rc_tex rc_record p
 # (step 7 batch 3) rc_replay's gif2d --vk: check (c), the draw list through Gs2dVk over the emulated frame and Z buffers.
 target_sources(rc_replay PRIVATE tools/rc_replay/gif2d_vk.cpp)
 target_link_libraries(rc_replay PRIVATE rc_gs2d_vk rc_gs2d rc_tex)
+# (step 8's design) rc_replay's vifstat consumer: measurement for RENDERER_3D_DESIGN.md. It repeats every emulated VU1
+# run with the C++ references of decomp/vu1 (the shape programs only: not vu1_check.cpp or track_draw.cpp, which belong
+# to the game), compiled as the game compiles them.
+set(RC_VU1_REF_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1/vu_shape.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1/trdr_shape.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1/env_shape.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1/water_shape.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1/skin_shape.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1/terdr_shape.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1/rdr_shape.cpp")
+add_library(rc_vu1_ref STATIC EXCLUDE_FROM_ALL ${RC_VU1_REF_SOURCES})
+target_compile_options(rc_vu1_ref PRIVATE -O2 -fwrapv -fno-strict-aliasing)
+target_include_directories(rc_vu1_ref PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1")
+target_sources(rc_replay PRIVATE tools/rc_replay/vif_survey.cpp)
+set_property(SOURCE tools/rc_replay/vif_survey.cpp APPEND PROPERTY INCLUDE_DIRECTORIES "${PS2RECOMP_DIR}/ps2xRuntime/src/lib/vu")
+set_property(SOURCE tools/rc_replay/vif_survey.cpp APPEND PROPERTY COMPILE_OPTIONS "-O2")
+target_link_libraries(rc_replay PRIVATE rc_vu1_ref)
 add_executable(rc_tex_test EXCLUDE_FROM_ALL tools/rc_replay/tex_test.cpp)
 target_compile_options(rc_tex_test PRIVATE -O2)
 target_link_libraries(rc_tex_test PRIVATE rc_tex rc_record ZLIB::ZLIB)
