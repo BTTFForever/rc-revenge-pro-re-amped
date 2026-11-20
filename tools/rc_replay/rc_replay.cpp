@@ -480,6 +480,7 @@ namespace
                              "            [--fault unpack|tops|dbf|mpg|mscal|mxcsr|lane|packet|vumem:<cycle>[:<n>]]\n"
                              "              [--vk] [--vk-blend read|ff|both] [--vk-bias off|on|both] [--vk-fault <name>[,<name>...]] [--vk-png <dir>] [--validation]\n"
                              "       blit: [--no-gpu] [--validation] [--png <dir>] [--fault tile:<cycle>:<n> | dispfb:<cycle> | byte|gpubyte:<cycle>:<pixel>]\n"
+                             "       emu --rereference <out.rcfr> (exact dumps): a copy with the references this machine makes\n"
                              "       live2d (exact dumps; the live 2D renderer, RC_VK_PICTURE=native): [--live-shots <dir>] [--vk-blend read|ff] [--validation] [--png <dir>]\n");
     }
 }
@@ -489,7 +490,7 @@ namespace
     int runEmu(Reader &reader, const std::string &path, rc::replay::EmuOptions options, bool verify, bool quiet, uint64_t first, uint64_t last,
                const rc::replay::TexOptions *texOptions = nullptr, bool gif2dSurvey = false, const rc::replay::Gif2dOptions *gif2dOptions = nullptr,
                bool vifSurvey = false, bool vifRoundNearest = false, const rc::replay::VifOptions *vifOptions = nullptr,
-               const rc::replay::Live2dOptions *live2dOptions = nullptr)
+               const rc::replay::Live2dOptions *live2dOptions = nullptr, const std::string *rereferenceOut = nullptr)
     {
         options.verify = verify;
         options.quiet = quiet;
@@ -509,7 +510,7 @@ namespace
         rc::replay::Emu emu(runtime, options);
         const FileHeader &h = reader.header();
         std::printf("dump %s\n  %s, %ux%u, recorded with %.16s, build %.40s, %s%s\n", path.c_str(), h.gameVersion ? "Europe" : "USA", h.width,
-                    h.height, h.gsBackend, h.build, (h.flags & kFileExact) ? "exact" : "plain", (h.flags & kFileComplete) ? "" : ", not closed");
+                    h.height, h.gsBackend, h.build, (h.flags & kFileExact) ? ((h.flags & kFileRereferenced) ? "exact, re-referenced" : "exact") : "plain", (h.flags & kFileComplete) ? "" : ", not closed");
         // The emulated machine needs every kick since the segment's keyframe: replay from there, write pictures only
         // for the cycles asked for.
         uint64_t from = 0;
@@ -595,13 +596,42 @@ namespace
             emu.setAfterKick([&live2d](const rc::rec::KickView &k) { live2d->afterKick(k); });
             consumers.insert(consumers.begin(), live2d.get());
         }
+        // (batch R) The re-referenced copy, written behind the machine.
+        std::unique_ptr<rc::replay::Rereference> reref;
+        if (rereferenceOut)
+        {
+            reref = std::make_unique<rc::replay::Rereference>(emu, *rereferenceOut, path);
+            if (!reref->ok())
+            {
+                std::printf("rereference: cannot write %s\n", rereferenceOut->c_str());
+                return 2;
+            }
+            consumers.push_back(reref.get());
+        }
         const bool ok = reader.run(consumers, from, last);
         if (emu.fatal())
         {
             std::printf("unusable for emu: %s\n", emu.fatalError().c_str());
+            if (reref)
+            {
+                reref.reset();
+                std::remove(rereferenceOut->c_str());
+            }
             return 2;
         }
         emu.summary();
+        if (reref)
+        {
+            reref->summary();
+            reref.reset(); // closes the copy (index, ENDF)
+            if (!ok || !reader.complete())
+            {
+                std::printf("rereference: the source %s; the copy %s is not complete\n", ok ? "was not closed" : "has a read error",
+                            rereferenceOut->c_str());
+                return 2;
+            }
+            std::printf("rereference: wrote %s\n", rereferenceOut->c_str());
+        }
         if (tex)
             tex->summary();
         if (survey)
@@ -636,7 +666,7 @@ namespace
     {
         const FileHeader &h = reader.header();
         std::printf("dump %s\n  %s, %ux%u, recorded with %.16s, build %.40s, %s%s\n", path.c_str(), h.gameVersion ? "Europe" : "USA", h.width,
-                    h.height, h.gsBackend, h.build, (h.flags & kFileExact) ? "exact" : "plain", (h.flags & kFileComplete) ? "" : ", not closed");
+                    h.height, h.gsBackend, h.build, (h.flags & kFileExact) ? ((h.flags & kFileRereferenced) ? "exact, re-referenced" : "exact") : "plain", (h.flags & kFileComplete) ? "" : ", not closed");
         rc::replay::TexCheck tex(options, nullptr);
         // The shadow needs every transfer since the segment's keyframe.
         uint64_t from = 0;
@@ -668,7 +698,7 @@ namespace
     {
         const FileHeader &h = reader.header();
         std::printf("dump %s\n  %s, %ux%u, recorded with %.16s, build %.40s, %s%s\n", path.c_str(), h.gameVersion ? "Europe" : "USA", h.width,
-                    h.height, h.gsBackend, h.build, (h.flags & kFileExact) ? "exact" : "plain", (h.flags & kFileComplete) ? "" : ", not closed");
+                    h.height, h.gsBackend, h.build, (h.flags & kFileExact) ? ((h.flags & kFileRereferenced) ? "exact, re-referenced" : "exact") : "plain", (h.flags & kFileComplete) ? "" : ", not closed");
         rc::replay::Gif2dCheck gif2d(options);
         // The shadow needs every upload since the segment's keyframe.
         uint64_t from = 0;
@@ -699,7 +729,7 @@ namespace
     {
         const FileHeader &h = reader.header();
         std::printf("dump %s\n  %s, %ux%u, recorded with %.16s, build %.40s, %s%s\n", path.c_str(), h.gameVersion ? "Europe" : "USA", h.width,
-                    h.height, h.gsBackend, h.build, (h.flags & kFileExact) ? "exact" : "plain", (h.flags & kFileComplete) ? "" : ", not closed");
+                    h.height, h.gsBackend, h.build, (h.flags & kFileExact) ? ((h.flags & kFileRereferenced) ? "exact, re-referenced" : "exact") : "plain", (h.flags & kFileComplete) ? "" : ", not closed");
         rc::replay::VifCheck vif(options, nullptr);
         // The readers start at the segment's keyframe.
         uint64_t from = 0;
@@ -728,7 +758,7 @@ namespace
     {
         const FileHeader &h = reader.header();
         std::printf("dump %s\n  %s, %ux%u, recorded with %.16s, build %.40s, %s%s\n", path.c_str(), h.gameVersion ? "Europe" : "USA", h.width,
-                    h.height, h.gsBackend, h.build, (h.flags & kFileExact) ? "exact" : "plain", (h.flags & kFileComplete) ? "" : ", not closed");
+                    h.height, h.gsBackend, h.build, (h.flags & kFileExact) ? ((h.flags & kFileRereferenced) ? "exact, re-referenced" : "exact") : "plain", (h.flags & kFileComplete) ? "" : ", not closed");
         rc::replay::BlitCheck blit(options);
         if (!blit.startGpu())
         {
@@ -765,7 +795,7 @@ int main(int argc, char **argv)
     std::string path, consumer = "stats";
     bool verify = false, quiet = false, withEmu = false, noGpu = false, validation = false, noTables = false, vk = false, vifRoundNearest = false,
          vifNoPoison = false;
-    std::string vkBias = "on", vkBlend = "auto", vkFaults, vkPng, vifSubstitute = "bytes", vifOut, liveShots;
+    std::string vkBias = "on", vkBlend = "auto", vkFaults, vkPng, vifSubstitute = "bytes", vifOut, liveShots, rereference;
     uint64_t first = 0, last = ~0ull;
     rc::replay::EmuOptions emuOptions;
     auto cycleKick = [](const char *text, int64_t &cycle, uint32_t &kick)
@@ -835,6 +865,8 @@ int main(int argc, char **argv)
             noTables = true;
         else if (a == "--validation")
             validation = true;
+        else if (a == "--rereference" && i + 1 < argc)
+            rereference = argv[++i];
         else if (a == "--verify")
             verify = true;
         else if (a == "--quiet")
@@ -1027,6 +1059,22 @@ int main(int argc, char **argv)
         l.pngDir = emuOptions.pngDir;
         emuOptions.pngDir.clear();
         return runEmu(reader, path, emuOptions, verify, true, first, last, nullptr, false, nullptr, false, false, nullptr, &l);
+    }
+    if (consumer == "emu" && !rereference.empty())
+    {
+        // (step 8 batch R) A copy of the dump with the references the replaying machine makes.
+        if (first != 0 || last != ~0ull || verify || !emuOptions.faultKind.empty())
+        {
+            std::fprintf(stderr, "rc_replay: --rereference replays the whole dump (no --cycles, --verify or --fault)\n");
+            return 2;
+        }
+        if (!(reader.header().flags & kFileExact))
+        {
+            std::fprintf(stderr, "rc_replay: --rereference needs an exact-mode dump\n");
+            return 2;
+        }
+        emuOptions.rereference = true;
+        return runEmu(reader, path, emuOptions, false, quiet, first, last, nullptr, false, nullptr, false, false, nullptr, nullptr, &rereference);
     }
     if (consumer == "emu")
         return runEmu(reader, path, emuOptions, verify, quiet, first, last);

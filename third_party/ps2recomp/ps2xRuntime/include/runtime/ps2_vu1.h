@@ -59,6 +59,8 @@ public:
                 GS &gs, PS2Memory *memory = nullptr,
                 uint32_t top = 0, uint32_t itop = 0, uint32_t maxCycles = 65536);
 
+    // (local change) VU1 cycles the last run (execute / resume) took.
+    uint64_t lastRunCycles() const { return m_lastRunCycles; }
     VU1State &state() { return m_state; }
     const VU1State &state() const { return m_state; }
 
@@ -243,6 +245,12 @@ private:
     uint32_t m_activeVuDataSize = 0;
     GS *m_activeGs = nullptr;
     PS2Memory *m_activeMemory = nullptr;
+    // (local change) The MXCSR rounding bits (0x6000) of the thread that entered the run in progress, valid while
+    // m_runRoundingValid: finishXgkick hands PATH1 packets to the GS under them, as PATH3 is handed over under the
+    // kick's own mode, not under the run's round-toward-zero mode the VU arithmetic needs.
+    uint32_t m_runRounding = 0;
+    bool m_runRoundingValid = false;
+    uint64_t m_lastRunCycles = 0;
     bool m_stopRequested = false;
     bool m_pendingHaltD = false;
     bool m_pendingHaltT = false;
@@ -311,5 +319,23 @@ private:
     void reportReservedInstruction(bool upper, uint32_t instruction);
     float broadcast(const float *vf, uint8_t bc);
 };
+
+namespace ps2x::vu1run
+{
+    // (local change) The VU1 cycle budget of an MSCAL / MSCNT run. Upstream stopped a run after 65,536 cycles and never
+    // resumed it, which cut RC Revenge Pro's longer water runs short; the hardware finishes them. The budget is now a
+    // guard against a genuinely runaway program only (about a frame of VU1 time).
+    constexpr uint32_t kRunGuardCycles = 1u << 22;
+    constexpr uint32_t kUpstreamRunCycles = 65536u;
+    struct RunStats
+    {
+        uint64_t runs = 0, largestCycles = 0, overUpstreamLimit = 0, guardStops = 0;
+    };
+    // Called by the runtime after each MSCAL / MSCNT run with its cycle count (a run that reaches the guard was stopped
+    // there, as upstream stopped every run at 65,536).
+    void accountRun(uint64_t cycles);
+    RunStats runStats();
+}
+
 
 #endif

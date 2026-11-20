@@ -187,6 +187,8 @@ target_link_libraries(rc_revenge_pro PRIVATE rc_record_emu rc_record)
 add_executable(rc_replay EXCLUDE_FROM_ALL tools/rc_replay/rc_replay.cpp tools/rc_replay/emu.cpp)
 target_include_directories(rc_replay PRIVATE "${RC_RECORD_DIR}")
 target_link_libraries(rc_replay PRIVATE rc_record rc_record_emu ps2_runtime ZLIB::ZLIB)
+# (step 8 batch R) --rereference names the build in the copy's NOTE.
+set_source_files_properties(tools/rc_replay/emu.cpp PROPERTIES COMPILE_DEFINITIONS "RC_BUILD_DESCRIBE=\"${RC_BUILD_DESCRIBE}\"")
 if(TARGET rc_vu1_code)
     target_compile_definitions(rc_replay PRIVATE RC_HAVE_VU1_CODE=1)
     target_link_libraries(rc_replay PRIVATE -Wl,--whole-archive rc_vu1_code -Wl,--no-whole-archive)

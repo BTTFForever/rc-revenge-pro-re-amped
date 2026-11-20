@@ -953,10 +953,19 @@ inline void VU1Interpreter::finishXgkick()
     if (g_vu1KickObserver)
         g_vu1KickObserver(m_xgkick.packet.data(), m_xgkick.totalBytes);
 #endif
+    // (local change) The run holds MXCSR at round toward zero for the VU arithmetic; the GS (the software GS
+    // interpolates in host floats, and its band and GS threads take the caller's MXCSR) gets the packet under the
+    // rounding mode the run was entered with, as PATH3 gets the kick's.
+    const uint32_t runCsr = _mm_getcsr();
+    const bool kickRounding = m_runRoundingValid && (runCsr & 0x6000u) != m_runRounding;
+    if (kickRounding)
+        _mm_setcsr((runCsr & ~0x6000u) | m_runRounding);
     if (m_activeMemory)
         m_activeMemory->submitGifPacket(GifPathId::Path1, m_xgkick.packet.data(), m_xgkick.totalBytes);
     else if (m_activeGs)
         m_activeGs->processGIFPacket(m_xgkick.packet.data(), m_xgkick.totalBytes);
+    if (kickRounding)
+        _mm_setcsr((_mm_getcsr() & ~0x6000u) | (runCsr & 0x6000u));
     m_xgkick.active = false;
 }
 

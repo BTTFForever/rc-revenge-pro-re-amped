@@ -1045,8 +1045,14 @@ bool VU1InterpreterAccess::runLoopWith(VU1Interpreter &vu, uint8_t *vuCode, uint
 
     const unsigned previousCsr = _mm_getcsr();
     const bool changeRounding = (previousCsr & 0x6000u) != 0x6000u;
+    // (local change) Remembered for finishXgkick: PATH1 goes to the GS under the mode the run was entered with.
+    const uint32_t outerRounding = vu.m_runRounding;
+    const bool outerRoundingValid = vu.m_runRoundingValid;
+    vu.m_runRounding = previousCsr & 0x6000u;
+    vu.m_runRoundingValid = true;
     if (changeRounding)
         _mm_setcsr(previousCsr | 0x6000u);
+    const uint64_t runStartCycle = vu.m_cycle;
     const uint64_t budgetEnd = vu.m_cycle + maxCycles;
     bool programEnded = false;
     const Vu1RunArgs compiledArgs{vuData, dataSize, &gs, memory, codeSize, budgetEnd};
@@ -1100,6 +1106,9 @@ bool VU1InterpreterAccess::runLoopWith(VU1Interpreter &vu, uint8_t *vuCode, uint
         vu.m_pendingHaltT = false;
     }
     vu.m_state.cycles = vu.m_cycle;
+    vu.m_lastRunCycles = vu.m_cycle - runStartCycle;
+    vu.m_runRounding = outerRounding;
+    vu.m_runRoundingValid = outerRoundingValid;
     if (changeRounding)
         _mm_setcsr((_mm_getcsr() & ~0x6000u) | (previousCsr & 0x6000u));
     return programEnded;

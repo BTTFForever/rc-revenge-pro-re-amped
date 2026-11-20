@@ -540,6 +540,33 @@ namespace
 
 // tex null (RC: a host platform presents, ps2_host_platform.h): no raylib texture; *pixels then points at the
 // latest picture (RGBA8, outWidth x outHeight) and *fresh says whether it was copied in this call.
+namespace ps2x::vu1run
+{
+    namespace
+    {
+        std::atomic<uint64_t> g_runs{0}, g_largest{0}, g_overUpstream{0}, g_guardStops{0};
+    }
+
+    void accountRun(uint64_t cycles)
+    {
+        g_runs.fetch_add(1u, std::memory_order_relaxed);
+        uint64_t largest = g_largest.load(std::memory_order_relaxed);
+        while (cycles > largest && !g_largest.compare_exchange_weak(largest, cycles, std::memory_order_relaxed))
+        {
+        }
+        if (cycles > kUpstreamRunCycles && g_overUpstream.fetch_add(1u, std::memory_order_relaxed) == 0u)
+            std::cerr << "[vu1] a run took " << cycles << " cycles (upstream's limit of " << kUpstreamRunCycles
+                      << " would have cut it; the guard is " << kRunGuardCycles << ")" << std::endl;
+        if (cycles >= kRunGuardCycles && g_guardStops.fetch_add(1u, std::memory_order_relaxed) < 8u)
+            std::cerr << "[vu1] run stopped by the guard after " << cycles << " cycles (a runaway program?)" << std::endl;
+    }
+
+    RunStats runStats()
+    {
+        return {g_runs.load(), g_largest.load(), g_overUpstream.load(), g_guardStops.load()};
+    }
+}
+
 static void UploadFrame(Texture2D *tex, PS2Runtime *rt, uint32_t &outWidth, uint32_t &outHeight,
                         bool hashImages, GSSharedPresent::Frame &diagnostic,
                         const std::vector<uint8_t> **pixels = nullptr, bool *fresh = nullptr)
@@ -841,7 +868,8 @@ bool PS2Runtime::syncCoreSubsystems()
                                      m_vu1.state().tBitEnabled = (fbrst & (1u << 11)) != 0u;
                                      m_vu1.execute(m_memory.getVU1Code(), PS2_VU1_CODE_SIZE,
                                                    m_memory.getVU1Data(), PS2_VU1_DATA_SIZE,
-                                                   m_gs, &m_memory, startPC, top, itop, 65536);
+                                                   m_gs, &m_memory, startPC, top, itop, ps2x::vu1run::kRunGuardCycles);
+                                     ps2x::vu1run::accountRun(m_vu1.lastRunCycles());
                                      if (cpuContext)
                                          cpuContext->vu0_vpu_stat =
                                              (cpuContext->vu0_vpu_stat & ~0x0600u) |
@@ -868,7 +896,8 @@ bool PS2Runtime::syncCoreSubsystems()
                                      m_vu1.state().tBitEnabled = (fbrst & (1u << 11)) != 0u;
                                      m_vu1.resume(m_memory.getVU1Code(), PS2_VU1_CODE_SIZE,
                                                   m_memory.getVU1Data(), PS2_VU1_DATA_SIZE,
-                                                  m_gs, &m_memory, top, itop, 65536);
+                                                  m_gs, &m_memory, top, itop, ps2x::vu1run::kRunGuardCycles);
+                                     ps2x::vu1run::accountRun(m_vu1.lastRunCycles());
                                      if (cpuContext)
                                          cpuContext->vu0_vpu_stat =
                                              (cpuContext->vu0_vpu_stat & ~0x0600u) |

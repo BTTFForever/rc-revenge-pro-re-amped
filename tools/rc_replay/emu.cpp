@@ -4,9 +4,11 @@
 #include "emu_state.h"
 #include "picture.h"
 #include "png.h"
+#include "writer.h"
 
 #include "ps2_capture_hooks.h"
 #include "ps2_runtime.h"
+#include "runtime/ps2_vu1.h"
 
 #include <immintrin.h>
 
@@ -95,6 +97,18 @@ namespace rc::replay
         if (fatal())
             return;
         const bool final = (kf.header.flags & kKeyFinal) != 0;
+        m_keyCaptured = false;
+        if (m_opt.rereference && m_started && !(kf.header.flags & kKeyAfterStateLoad))
+        {
+            // (batch R) The machine's own state here replaces the recorded one; the machine runs on without loading.
+            if (!captureKeyframeState(m_rt, m_keyState))
+            {
+                m_fatal = "keyframe at cycle " + std::to_string(kf.header.cycle) + ": the machine's state could not be taken";
+                return;
+            }
+            m_keyCaptured = true;
+            return;
+        }
         // (batch 4) A keyframe after a save-state load holds the loaded machine, not what the cycles before it drew:
         // it is loaded, not compared.
         if (kf.header.flags & kKeyAfterStateLoad)
@@ -230,6 +244,7 @@ namespace rc::replay
             return;
         ++m_t.kicks;
         PS2Memory &mem = m_rt.memory();
+        std::memcpy(m_lastRegs, ps2x::capture::g_gsRawRegs, sizeof(m_lastRegs));
         if (!m_faultDone && m_opt.faultKind == "kick" && static_cast<int64_t>(k.cycle) == m_opt.faultCycle && k.index == m_opt.faultN)
         {
             m_faultDone = true;
@@ -308,7 +323,8 @@ namespace rc::replay
             const Path1Substitute s = m_path1Sub(k, ram);
             if (s.bytes)
             {
-                _mm_setcsr(k.mxcsr | 0x6000u);
+                // Under the kick's own rounding, as the machine's VU1 now hands its packets over (batch R).
+                _mm_setcsr(k.mxcsr);
                 const uint8_t *p = s.bytes->data();
                 if (s.packets)
                     for (const uint32_t n : *s.packets)
@@ -328,6 +344,8 @@ namespace rc::replay
         m_collect = false;
         const uint64_t gifHash = m_gif.finish();
         const uint64_t gifBytes = m_gif.length();
+        m_lastGifHash = gifHash;
+        m_lastGifBytes = gifBytes;
         m_t.gifBytes += gifBytes;
         if (m_opt.kickHashes)
             std::printf("kick %s: GIF %" PRIu64 " bytes %s, GS memory %s\n", where(k.cycle, k.index).c_str(), gifBytes, hex64(gifHash).c_str(),
@@ -402,6 +420,8 @@ namespace rc::replay
         const uint32_t fbp = static_cast<uint32_t>(m_rt.memory().gs().dispfb2 & 0x1FFu);
         readPicture(m_rt.memory().getGSVRAM(), kGsMemBytes, fbp, 10u, w, h, m_picture.data());
         const uint64_t hash = Hash64::of(m_picture.data(), m_picture.size());
+        m_lastPictureHash = hash;
+        m_lastFbp = fbp;
         m_digest = (m_digest ^ hash) * 0x100000001B3ull;
         if (!m_opt.pngDir.empty() && info.end.cycle >= m_opt.pngFirst)
             writePng(m_opt.pngDir + "/cycle" + std::to_string(info.end.cycle) + ".png", m_picture.data(), w, h);
@@ -442,5 +462,204 @@ namespace rc::replay
                         "; stored pictures %" PRIu64 "/%" PRIu64 " bit for bit; GS memory at keyframes %" PRIu64 "/%" PRIu64 ", final %" PRIu64 "/%" PRIu64 "\n",
                         m_t.gifOk, m_t.gifChecked, m_t.regsOk, m_t.regsChecked, m_t.refHashOk, m_t.refHashChecked, m_t.picturesOk, m_t.picturesChecked,
                         m_t.keyframesOk, m_t.keyframesChecked, m_t.finalOk, m_t.finalChecked);
+        const ps2x::vu1run::RunStats runs = ps2x::vu1run::runStats();
+        std::printf("emu: %" PRIu64 " VU1 runs, the largest %" PRIu64 " cycles; %" PRIu64 " over upstream's limit of %u, %" PRIu64
+                    " stopped by the guard (%u)\n",
+                    runs.runs, runs.largestCycles, runs.overUpstreamLimit, ps2x::vu1run::kUpstreamRunCycles, runs.guardStops,
+                    ps2x::vu1run::kRunGuardCycles);
+    }
+
+    // ---- (batch R) Rereference ----
+
+    Rereference::Rereference(const Emu &emu, const std::string &out, const std::string &source)
+        : m_emu(emu), m_writer(std::make_unique<Writer>(out)), m_source(source)
+    {
+    }
+
+    Rereference::~Rereference() = default;
+
+    bool Rereference::ok() const { return m_writer->ok(); }
+
+    void Rereference::open(const FileInfo &info)
+    {
+        FileInfo copy = info;
+        copy.header.flags |= kFileRereferenced;
+        m_writer->open(copy);
+    }
+
+    void Rereference::keyframe(const Keyframe &kf)
+    {
+        ++m_t.keyframes;
+        const KeyframeState *mine = m_emu.keyState();
+        if (!mine)
+        {
+            ++m_t.keyframesKept;
+            m_writer->keyframe(kf);
+            return;
+        }
+        ++m_t.keyframesReplaced;
+        const bool final = (kf.header.flags & kKeyFinal) != 0;
+        const std::vector<StateChunk> machine = mine->chunks(final);
+        static const uint32_t kIds[8] = {kStateGsMemory, kStateGsPriv, kStateGsRegs, kStateVu1Memory, kStateVu1Regs, kStateVif1, kStateEmu, 0};
+        Keyframe out;
+        out.header = kf.header;
+        for (const StateChunk &c : kf.chunks)
+        {
+            const StateChunk *m = nullptr;
+            for (const StateChunk &mc : machine)
+                if (mc.id == c.id)
+                    m = &mc;
+            if (!m)
+            {
+                out.chunks.push_back(c); // TAGP and anything this build does not make
+                continue;
+            }
+            const bool changed = m->bytes != c.bytes || std::memcmp(m->data, c.data, c.bytes) != 0;
+            for (int i = 0; i < 7; ++i)
+                if (kIds[i] == c.id && changed)
+                    ++m_t.chunkChanged[i];
+            if (c.id == kStateGsPriv && m->bytes == c.bytes && c.bytes == sizeof(GsPrivRegs))
+                for (uint32_t f = 0; f < 20; ++f)
+                    m_t.gsprField[f] += std::memcmp(m->data + f * 8u, c.data + f * 8u, 8) != 0;
+            if (c.id == kStateGsMemory && m->bytes == c.bytes)
+                for (uint64_t i = 0; i < c.bytes; ++i)
+                    m_t.gsvrBytesChanged += m->data[i] != c.data[i];
+            // GSPR is the privileged registers: set by stores (replayed, so equal) and by the vertical blank, which the
+            // replay machine does not run (CSR's field bits and vsyncTick stay where the last load put them). Nothing
+            // in it is the GS's output: the recorded one is kept.
+            out.chunks.push_back(c.id == kStateGsPriv ? c : *m);
+        }
+        m_writer->keyframe(out);
+    }
+
+    void Rereference::cycleBegin(uint64_t cycle)
+    {
+        m_writer->cycleBegin(cycle);
+        if (!m_noteDone)
+        {
+            m_noteDone = true;
+            m_writer->note(std::string("rereferenced by rc_replay --rereference, build ") + RC_BUILD_DESCRIBE +
+                           " (PATH1 rasterised under the kick's MXCSR, VU1 runs not cut at 65,536 cycles), from " + m_source);
+        }
+    }
+
+    void Rereference::pages(uint32_t firstPage, uint32_t count, const uint8_t *data) { m_writer->pages(firstPage, count, data); }
+    void Rereference::hw(uint32_t address, uint32_t width, uint64_t value, uint32_t callerRa) { m_writer->hw(address, width, value, callerRa); }
+    void Rereference::crt(int interlaced, int mode, int ffmd) { m_writer->crt(interlaced, mode, ffmd); }
+    void Rereference::tag(const TagView &tag) { m_writer->tag(tag); }
+    void Rereference::odd(int kind, uint32_t address, uint64_t value) { m_writer->odd(kind, address, value); }
+    void Rereference::note(const std::string &text) { m_writer->note(text); }
+
+    void Rereference::kick(const KickView &k, const RamView &ram)
+    {
+        ++m_t.kicks;
+        KickView out = k;
+        if (k.regs)
+        {
+            ++m_t.regsChecked;
+            uint32_t n = 0;
+            for (uint32_t r = 0; r < kGsRegCount; ++r)
+                n += k.regs[r] != m_emu.lastRegs()[r];
+            m_t.regValuesChanged += n;
+            m_t.regsChanged += n != 0;
+            out.regs = m_emu.lastRegs();
+        }
+        if (k.hasGifHash)
+        {
+            if (k.gifHash != m_emu.lastGifHash() || k.gifBytes != m_emu.lastGifBytes())
+                ++m_t.gifChanged;
+            if (k.gifBytes != m_emu.lastGifBytes())
+                ++m_t.gifBytesChanged;
+            out.gifHash = m_emu.lastGifHash();
+            out.gifBytes = static_cast<uint32_t>(m_emu.lastGifBytes());
+        }
+        m_writer->kick(out, ram);
+    }
+
+    void Rereference::cycleEnd(const CycleInfo &info, const uint8_t *refRgba)
+    {
+        ++m_t.cycles;
+        CycleInfo out = info;
+        if (info.end.refWidth)
+        {
+            ++m_t.refHashes;
+            m_t.refHashChanged += info.end.refHash != m_emu.lastPictureHash();
+            out.end.refHash = m_emu.lastPictureHash();
+            m_t.fbpChanged += info.end.refFbp != m_emu.lastFbp();
+        }
+        const std::vector<uint8_t> &pic = m_emu.lastPicture();
+        const uint8_t *picture = nullptr;
+        if (refRgba && info.end.hasImage)
+        {
+            const size_t bytes = static_cast<size_t>(info.end.refWidth) * info.end.refHeight * 4u;
+            if (pic.size() == bytes)
+            {
+                picture = pic.data();
+                ++m_t.pictures;
+                bool any = false;
+                for (size_t i = 0; i < bytes; i += 4)
+                {
+                    bool px = false;
+                    for (int c = 0; c < 4; ++c)
+                    {
+                        const int d = int(pic[i + c]) - int(refRgba[i + c]);
+                        if (!d)
+                            continue;
+                        px = true;
+                        const int bin = d <= -3 ? 0 : d == -2 ? 1 : d == -1 ? 2 : d == 1 ? 3 : d == 2 ? 4 : 5;
+                        ++m_t.hist[c][bin];
+                    }
+                    m_t.pixelsChanged += px;
+                    any |= px;
+                }
+                m_t.pixels += bytes / 4u;
+                m_t.picturesChanged += any;
+            }
+        }
+        if (refRgba && info.end.hasImage && !picture)
+        {
+            // Should not happen (the picture has the recorded size): keep the cycle's picture out rather than wrong.
+            out.end.hasImage = 0;
+            std::printf("rereference: cycle %" PRIu64 ": the replayed picture has another size; REFI dropped\n", info.end.cycle);
+        }
+        m_writer->cycleEnd(out, picture);
+    }
+
+    void Rereference::close() { m_writer->close(); }
+
+    void Rereference::summary() const
+    {
+        const Totals &t = m_t;
+        std::printf("rereference: %" PRIu64 " cycles, %" PRIu64 " kicks; GIF output changed on %" PRIu64 " kicks (%" PRIu64
+                    " in length); register files changed before %" PRIu64 " of %" PRIu64 " kicks (%" PRIu64 " values)\n",
+                    t.cycles, t.kicks, t.gifChanged, t.gifBytesChanged, t.regsChanged, t.regsChecked, t.regValuesChanged);
+        std::printf("rereference: picture hashes changed %" PRIu64 " of %" PRIu64 " (FBP changed %" PRIu64 "); REFI pictures changed %" PRIu64
+                    " of %" PRIu64 ", pixels changed %" PRIu64 " of %" PRIu64 " (%.2f%%)\n",
+                    t.refHashChanged, t.refHashes, t.fbpChanged, t.picturesChanged, t.pictures, t.pixelsChanged, t.pixels,
+                    t.pixels ? 100.0 * t.pixelsChanged / t.pixels : 0.0);
+        const char *names = "RGBA";
+        for (int c = 0; c < 4; ++c)
+        {
+            const double n = t.pixels ? 100.0 / t.pixels : 0.0;
+            std::printf("rereference: %c: -3 or less %.3f%%, -2 %.3f%%, -1 %.3f%%, +1 %.3f%%, +2 %.3f%%, +3 or more %.3f%%\n", names[c],
+                        t.hist[c][0] * n, t.hist[c][1] * n, t.hist[c][2] * n, t.hist[c][3] * n, t.hist[c][4] * n, t.hist[c][5] * n);
+        }
+        std::printf("rereference: keyframes %" PRIu64 ": %" PRIu64 " from the machine, %" PRIu64 " kept (the first, after a state load); "
+                    "chunks changed GSVR %" PRIu64 " (%" PRIu64 " bytes), GSPR %" PRIu64 ", GSRG %" PRIu64 ", VU1M %" PRIu64 ", VU1R %" PRIu64
+                    ", VIF1 %" PRIu64 ", EMUS %" PRIu64 "\n",
+                    t.keyframes, t.keyframesReplaced, t.keyframesKept, t.chunkChanged[0], t.gsvrBytesChanged, t.chunkChanged[1],
+                    t.chunkChanged[2], t.chunkChanged[3], t.chunkChanged[4], t.chunkChanged[5], t.chunkChanged[6]);
+        if (t.chunkChanged[1])
+        {
+            static const char *const kGspr[20] = {"PMODE", "SMODE1", "SMODE2", "SRFSH", "SYNCH1", "SYNCH2", "SYNCV", "DISPFB1", "DISPLAY1", "DISPFB2",
+                                                  "DISPLAY2", "EXTBUF", "EXTDATA", "EXTWRITE", "BGCOLOR", "CSR", "vsyncTick", "IMR", "BUSDIR", "SIGLBLID"};
+            std::printf("rereference: GSPR (kept as recorded) fields the machine has otherwise:");
+            for (int f = 0; f < 20; ++f)
+                if (t.gsprField[f])
+                    std::printf(" %s %" PRIu64, kGspr[f], t.gsprField[f]);
+            std::printf("\n");
+        }
+        if (!m_writer->ok())
+            std::printf("rereference: the output could not be written\n");
     }
 }
