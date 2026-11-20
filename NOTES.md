@@ -819,6 +819,8 @@ cullOffscreen` leaves out triangles of no area or outside the scissor. Seeded fr
 - `--fault unpack|tops|dbf|mpg|mscal|mxcsr|lane|packet|vumem:<cycle>[:<n>]`: the planted faults of the design's 11.6.
 - The `gif2d` consumer now drives a `FrameReader` (PATH1 from the references, nothing excused after a channel 1 kick);
   with `--with-emu` a vif consumer behind the machine runs its channel 1 kicks beside it.
+- Checking the references in the game after a change: `RC_BOOT_LEVEL=17 RC_VU1_REF=1 RC_VU1_SYNTH=decomp/generated/vusrc
+  RC_TRACK_SHADER=0 PS2X_MTVU=0 tools/play.sh` (with the VU1 thread on, `RC_VU1_REF` reported no run on 2026-11-20).
 - Found on the way: the reference GS gives a vertex the Q of the last PACKED ST or register RGBAQ and resets it to 1.0
   at every GIF tag (`GifSink::vertexQ`; the frame record's RGBAQ register keeps its own convention); the draw list
   encoder therefore ends a tag only before a PRIM.

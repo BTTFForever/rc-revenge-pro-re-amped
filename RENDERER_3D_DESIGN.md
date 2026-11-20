@@ -923,7 +923,7 @@ for U1 was not built.
 render/vif/vif1_reader.{h,cpp}   Vif1Reader: VIF1 registers, VU data and micro memory, VF; kick() walks, decodes, runs; guards; faults
 render/vif/vu1_programs.{h,cpp}  the program table (prefix length and hash, image hash), the lanes not reproduced, poison pattern
 render/frame/frame_reader.{h,cpp} FrameReader (rc::rec::Consumer): Vif1Reader -> Gif2dReader as PATH1; Path1Tap; side tags as scopes
-decomp/vu1/vu1_ref.h, *_shape.cpp rc::vu1::Io, Program, run(), isEntry(); the run*Shape functions are wrappers
+decomp/vu1/vu1_ref.h, vu1_io.cpp rc::vu1::Io, Program, run(), isEntry(); run*ShapeIo(Io&) in each *_shape.cpp; run*Shape are wrappers
 render/gs2d/gif2d_reader.*       beginPath1Kick / feedPath1 / endPath1Kick (a second GifWalker), cullOffscreen, scope()
 render/tex/gif_walk.*            GifSink::vertexQ (below, 16.1 item 6)
 render/gs2d/gs2d_encode.cpp      a tag ends only before a PRIM (16.1 item 6)
@@ -1050,3 +1050,29 @@ register file at the next kick is right again. Every fault fails a named check o
 
 The references' interface changed (the `Io` entry, `ShapeProgram`'s packet callback, the env corner pass for rejected
 triangles, `copyGifPacket`'s cut), so the game and the oracle relinked in all four trees.
+Checked on the final build, both versions where it applies:
+
+- `tools/oracle.sh --all`: USA seed 9131, 1,632 ok, 0 FAIL; Europe seed 9132, 1,563 ok, 0 FAIL (and seeds 8817 / 8818
+  on the build before the last rename, the same).
+- `RC_SCENE_LOG=... timeout 70 tools/play.sh replay playtest2`: USA race scene 3020 at frame 658, Europe at 1167, as
+  before.
+- Level 17 (`RC_BOOT_LEVEL=17 RC_VU1_REF=1 RC_VU1_SYNTH=decomp/generated/vusrc RC_TRACK_SHADER=0 PS2X_MTVU=0`, 120 s):
+  1,828,480 runs (track 1,228,437, env 348,925 of them 110,549 env-mapped, water 111,595, skin 139,523), 56.9 M packets,
+  0 packet, memory or count mismatches; the synthetic TERdr and Rdr_VUShape runs 6,093 each, 0 mismatches. (With the
+  default `PS2X_MTVU=1` the checks reported no run at all in 240 s; not looked into, the session above turns the VU1
+  thread off.)
+- `tools/shader_check decomp/shaders/trdr_shape.vert` on 1,500 TRdr runs captured in that session (`RC_VU1_CAPTURE`),
+  built by the line at the top of the file: 52,634 triangles, no facing disagreement, worst error 1.11/16 pixel, z 2,
+  colour 0, nothing over tolerance (as `NOTES.md` recorded on 2026-11-10). The `Io` entries are `run*ShapeIo` and the
+  dispatch lives in `vu1_io.cpp` so that the old names stay unoverloaded and shader_check still links from its five
+  files.
+
+### 16.6 Open
+
+- **U1 and batch R** (not built, as instructed): until the runtime's VU1 cycle limit goes, the 1,054 kicks with a cut
+  water run fail (b) without the machine, and beside it the reader is given the machine's state after the cut.
+- The 72 poisoned lanes: the references could be made to keep them (5.2's second half); nothing needs them now.
+- `FrameBlit` joins `FrameReader` with batch 3.
+- Step 7's batch 5 (live 2D) can now take its PATH1 registers from `FrameReader` (FBA_1 is the only register no
+  path writes; the keyframe gives 0, the default).
+- The reader's time (16.3) is the references' as 3.10 predicted; nothing in batch 1 reduces it (U2).

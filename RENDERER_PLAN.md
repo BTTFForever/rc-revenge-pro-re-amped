@@ -418,6 +418,16 @@ After step 1: fold its answers into this plan's open questions.
    in every plane on 44,200 kicks, GPU time reported); **3** the chained replay (seeded once at a keyframe, every
    flipped picture's hash equal to the reference's, all 67 dumps); **4** live (the reader on the EE thread, the
    live draw lists equal to the off-line ones for a recorded session).
+   **Batch 1 built 2026-11-20 (`RENDERER_3D_DESIGN.md` 16):** `render/vif` (`Vif1Reader`, the program table),
+   `render/frame` (`FrameReader`: the VIF1 reader into the step 7 GIF reader as PATH1, one register file), the
+   references' `Io` entry (registers out, packet callback; the old functions are wrappers), `rc_replay --consumer vif`.
+   On all 67 exact dumps: 0 of 1,045.7 M packets differ from the emulated VU1's, VU memory and registers equal after
+   every one of 43.1 M runs (72 register lanes the references do not reproduce are poisoned, and nothing reads them),
+   the full register file equal at every kick with nothing excused, and the emulated GS drawing the reader's bytes, its
+   K2 draw list and the culled list (56% of PATH1's triangles left out) gives every picture, `REFI` and GS memory
+   image bit for bit; step 7's `gif2d` checks pass on the frame reader. Without the machine only the 1,054 kicks with a
+   water run the runtime cuts short fail (batch R removes the cut). Nine planted faults fail. The reader costs 24-49 ms
+   a K2 kick (references 75%). Step 7's batch 5 can follow; batch 2 waits for U1.
    **Order and design (step 7's batch 4 review, 2026-11-20, `RENDERER_2D_DESIGN.md` 17.4).** Step 8 starts before
    step 7's live batch, because K1 inherits registers only PATH1 writes and they come out of the VU1 programs'
    packets. It needs a short design first (Fable, `RENDERER_3D_DESIGN.md`), then batches: (1) the reader and the
