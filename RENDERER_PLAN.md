@@ -544,6 +544,22 @@ After step 1: fold its answers into this plan's open questions.
    for the nine textures in ten whose alpha is 0 throughout. No
    fog; real mip levels on two textures only. K2 walks the level's static triangle lists by reference every frame
    (5-12 MB), so uploading them once is where the speed is.
+   **Designed 2026-11-22: `RENDERER_P2_DESIGN.md`** (measured with `rc_replay --consumer shapestat` on the 67 dumps).
+   It changes this item, and asks for decisions (its U4 to U7). Found: the VU1 programs are not vertex shaders (they
+   cull, drop and clip triangles themselves; 1.3% of the 1,470 M triangles they read go through their own clippers,
+   which carry state from one triangle to the next), and the exact fragment path and its barriers need the vertices
+   on the CPU. What is fast and exact is the references' own arithmetic on the host under `MXCSR` round toward zero +
+   FTZ + DAZ: a build of the references with only that change gives the same 1,045.8 M packets in half the time, and
+   the track program's common path written with SSE gives the same bits for all 281.5 M triangles compared at a
+   twelfth of the references' cost (0.7 to 2.1 ms a cycle). **Recommended (U4 = A, U5): step 9 reaches 60 / 50 fps
+   with a fast exact reader on its own thread whose draw lists are P1's byte for byte** (so every P1 check stands,
+   on any GPU), emits `SHAPE_BATCH` / `CONSTANTS` as proven annotations of the same list, and leaves the GPU vertex
+   shader that draws them from buffers uploaded once a level to P3's enhanced mode, where its divergences belong.
+   Options costed there: the same arithmetic in a GPU compute pass (possible on both devices here, frees a quarter
+   of the track's triangles, about 1 ms), and a plain vertex shader with a divergence list. Real mip levels stay
+   out of exact mode (the reference machine samples none: U6). Batches: 1 the lean references, 2 triangles straight
+   into the list, 3 the track's fast path, 4 env, skin, TERdr, 5 TOPS views, 6 the reader's thread, 7 frame rates
+   and U3, 8 `SHAPE_BATCH` and units; the new check is (e), list equality with the strict (P1) reader.
 10. Pipelines built at start-up, performance pass on the heavy levels (18, 17, 24, 6, 8, 9, 12), a DIVERGENCES list.
 Then `vk` becomes the default renderer; `gs` stays as the reference.
 

@@ -1,6 +1,6 @@
 // rc_replay: feeds a frame record dump (.rcfr, RENDERER_FRAME_RECORD.md) to consumers.
 //
-//   rc_replay <dump> [--consumer stats|emu|tex|blit|gif2d|gif2dstat|vifstat|vif|live2d|vk|dlst] [--cycles a-b] [--verify] [--quiet]
+//   rc_replay <dump> [--consumer stats|emu|tex|blit|gif2d|gif2dstat|vifstat|shapestat|vif|live2d|vk|dlst] [--cycles a-b] [--verify] [--quiet]
 //             [--png <dir>] [--picture-before <cycle>:<kick> <out.png>] [--path1 <cycle>:<kick> <out.bin>] [--kick-hashes]
 //             [--fault page|kick|hw:<cycle>[:<n>]]
 //             [--with-emu] [--fault transfer|kick|swizzle|decode:<cycle>:<n>] (tex)
@@ -13,6 +13,8 @@
 // FIFO stores, which are counted apart). Exit 0 pass, 1 a check failed,
 // 2 unusable dump.
 //
+// shapestat (shape_survey.cpp, shape_lean.cpp; RENDERER_P2_DESIGN.md section 3): the units K2's chains call, what each
+// run's triangles do in the VU1 program, and a lean build of the references compared with them. No machine.
 // vifstat (vif_survey.cpp; RENDERER_3D_DESIGN.md section 3): counts what the VIF1 chains use; with --with-emu also the
 // C++ VU1 references against the emulated VU1, PATH1's draw states and the exact blend's barriers per kick
 // (--vif-round-nearest: the experiment of that design's decision U1). Output for tools/vif_agg.py.
@@ -73,6 +75,7 @@
 #include "blit.h"
 #include "gif2d_survey.h"
 #include "vif_survey.h"
+#include "shape_survey.h"
 #include "gif2d.h"
 #include "vif.h"
 #include "consumer.h"
@@ -984,6 +987,25 @@ int main(int argc, char **argv)
             return runEmu(reader, path, emuOptions, verify, true, first, last, nullptr, false, nullptr, true, vifRoundNearest);
         rc::replay::VifSurvey survey(nullptr);
         const bool ok = reader.run({&survey}, first, last);
+        survey.summary();
+        return ok ? 0 : 2;
+    }
+    if (consumer == "shapestat")
+    {
+        // (step 9's design, RENDERER_P2_DESIGN.md 3) What a batch reader for K2 would meet: the units the chains call, what
+        // each run's triangles do in the program, and the lean build of the references beside the references. No machine.
+        Reader reader;
+        if (!reader.open(path))
+        {
+            std::fprintf(stderr, "%s: %s\n", path.c_str(), reader.error().c_str());
+            return 2;
+        }
+        rc::replay::ShapeSurvey survey;
+        uint64_t from = 0;
+        for (const IndexSegment &seg : reader.segments())
+            if (seg.firstCycle <= first)
+                from = seg.firstCycle;
+        const bool ok = reader.run({&survey}, from, last);
         survey.summary();
         return ok ? 0 : 2;
     }

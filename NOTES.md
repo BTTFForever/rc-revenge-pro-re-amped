@@ -818,6 +818,23 @@ dump). Measurement only (`tools/rc_replay/vif_survey.{h,cpp}`); the design it se
   instead of the VU1's round toward zero. `RC_VIFSTAT_PICTURES=<file>`: a plain run writes every cycle's picture
   to the file, a `--vif-round-nearest` run reads them back and prints the per-channel difference histogram.
 
+### Shape survey: shapestat (2026-11-22, renderer P2 step 9's design)
+`rc_replay <dump> --consumer shapestat > out.txt`, then `tools/vif_agg.py out1.txt out2.txt ...` (the same `V` and
+`X` lines as `vifstat`). No emulated machine; a 700-cycle race dump takes one to three minutes. Measurement only
+(`tools/rc_replay/shape_survey.{h,cpp}`, `shape_lean.{h,cpp}`); the design it served and its tables:
+`RENDERER_P2_DESIGN.md` section 3.
+- Units: every packet a VIF1 chain calls from the tag array, by address and a hash of what it delivers: fixed (the
+  triangle lists) or rewritten (the rings, the polygon and alpha buffers), with their bytes, runs and triangles.
+- Per run: what each triangle read does in its program (culled, all behind, beyond one guard-band edge, quick,
+  hard), plain runs, the bounding-box test, constants changes, texture blocks.
+- The lean build: `shape_lean.cpp` includes the sources of `decomp/vu1` as text under the namespace `rc::vu1lean`
+  with the four arithmetic operations replaced (the host's own under RZ + FTZ + DAZ, the reference's operation for
+  the cases that mode cannot give), repeats every run with it and compares packets, VU memory and registers; a
+  self-test of the operations on 16 M random results runs first. `fastTrdr` in the same file is the track
+  program's common path in SSE intrinsics, compared triangle by triangle in every run without a hard triangle.
+- The last line prints the references', the lean build's and the SSE path's time a cycle (time single runs on an
+  idle machine).
+
 ### The VIF1 reader and the frame reader (2026-11-20, renderer P1 step 8 batch 1)
 `render/vif` (library `rc_vif`): `Vif1Reader` walks a channel 1 kick with the chain walker, decodes the eight VIF
 codes into its own VIF1 registers, VU data and micro memory, and at each MSCAL runs the C++ reference of the
@@ -1233,7 +1250,14 @@ alone, the driver stays in P8 and level 21 takes 11.9 ms a kick: U3 to be timed 
 thread, U2), so `gs` stays the default; that is P2's (step 9 replaces the references by shader batches, step 10 is the
 performance pass). Also open from this batch: the podium, results and more two-player scenes (no recording reaches them; a hand-made
 recording of a won race, and a second pad in the replay or a split-screen `RC_BOOT_LEVEL`, would). The re-referencing originals under `frame-dumps/pre-r/`
-(6.5 GB) can go now that step 8's checks are done. The rest of this section is the decompilation's.
+(6.5 GB) can go now that step 8's checks are done.
+
+**Renderer, next (2026-11-22): P2 step 9 is designed, `RENDERER_P2_DESIGN.md`; nothing of it is built.** It needs the
+user's answers to U4 to U7 (its top), none of which blocks its batch 1. In short: the frame rate comes from a fast
+exact reader (the references' arithmetic under `MXCSR` RZ + FTZ + DAZ, SSE paths per VU1 program, triangles written
+straight into the draw list) moved to its own thread, with lists equal to P1's byte for byte; the GPU vertex shader
+for `SHAPE_BATCH` is proposed for P3. Start with its section 11, batch 1 (the lean references). The measurements
+are `rc_replay <dump> --consumer shapestat` ("Shape survey" above). The rest of this section is the decompilation's.
 
 305 of 2,486 functions native on 2026-11-12 (1510 on 2026-11-18, after the FRONT batch at the end of this section, 1710 after TEDIT part 2, 1730 on 2026-11-19 after LEFTOVERS: every function of the game's own source files is native, only the SDK and C libraries remain; 1,653 of them registered in the Europe build, see "Europe version"). Done since 2026-11-10: collision, route nodes, AI (all) and the smaller PLAYER functions, and the renderer from the DMA chain up: RDRSTATE, RDR, RDRPOLY, RDR_SHAPE, RDR_SKIN, RDR_WATER, RDRALPHA, RDR_PARTICLE, SPRITE and most of GFX_P2, with the SDK's VIF packet library and three libvu0 helpers.
 

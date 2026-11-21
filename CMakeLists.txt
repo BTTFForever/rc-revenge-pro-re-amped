@@ -297,6 +297,11 @@ target_sources(rc_replay PRIVATE tools/rc_replay/vif.cpp)
 set_property(SOURCE tools/rc_replay/vif.cpp APPEND PROPERTY INCLUDE_DIRECTORIES "${PS2RECOMP_DIR}/ps2xRuntime/src/lib/vu")
 set_property(SOURCE tools/rc_replay/vif.cpp APPEND PROPERTY COMPILE_OPTIONS "-O2")
 target_link_libraries(rc_replay PRIVATE rc_frame rc_vif rc_gs2d rc_tex rc_vu1_ref)
+# (step 9's design, RENDERER_P2_DESIGN.md 3) rc_replay's shapestat consumer: measurement. shape_lean.cpp includes the
+# references' sources as text under another namespace (their arithmetic replaced), compiled as rc_vu1_ref compiles them.
+target_sources(rc_replay PRIVATE tools/rc_replay/shape_survey.cpp tools/rc_replay/shape_lean.cpp)
+set_property(SOURCE tools/rc_replay/shape_survey.cpp tools/rc_replay/shape_lean.cpp APPEND PROPERTY COMPILE_OPTIONS "-O2;-fwrapv;-fno-strict-aliasing")
+set_property(SOURCE tools/rc_replay/shape_lean.cpp APPEND PROPERTY INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1")
 # (step 7 batch 5, RENDERER_2D_DESIGN.md 20) rc_live: live 2D under RC_RENDERER=vk RC_VK_PICTURE=native: the frame reader
 # as a live consumer of the capture (EE thread), the draw list published at the cycle close, the presenter drawing it
 # through Gs2dVk (render/live). The game links it (and through it rc_frame, rc_vif, rc_gs2d, rc_gs2d_vk, rc_blit, rc_tex)
