@@ -905,6 +905,8 @@ Batch R is independent of 1; 2 needs 1 and the answer to U1; 3 needs 2; 4 needs 
 
 ## 14. Divergences this design accepts or inherits (for P2 step 10's list)
 
+**Drafted with measured sizes after batch 3: section 19.5** (these rows and the ones batches R-3 added).
+
 | id | what | where | size |
 |---|---|---|---|
 | D-3D-1 | With U1 = A: the reference machine itself changes (PATH1 rasterised rounding to nearest, water runs finished) | every 3D picture of the software GS | a level on a third of the pixels; the hardware's own rule is unknown here |
@@ -1522,3 +1524,217 @@ final code:
 - The fixed-function fallback draws K2 within D-2D-1's bound only; it was timed here (18.5) and compared on five dumps,
   not on all 67.
 - Batch 3 (the chained replay) can start: nothing in it waits for a decision except 18.5's, which does not block it.
+
+## 19. Batch 3 as built (2026-11-21): the chained replay
+
+Section 13 item 3. Built: `rc_replay --consumer vk` (`tools/rc_replay/frame_vk.{h,cpp}`, `FrameVkCheck`): the frame
+reader and `Gs2dVk` on an exact dump with no emulated machine beside them, seeded once, every cycle's list drawn, every
+flipped picture and every later keyframe compared. **It passed on all 67 dumps at the first run; no check found a
+difference, so nothing in the reader, the references, the shader or `Gs2dVk` was changed.** Usage: `NOTES.md`, "The
+chained replay". Live is batch 4.
+
+```
+tools/rc_replay/frame_vk.{h,cpp}  FrameVkCheck (rc::rec::Consumer): FrameReader + Gs2dVk, seeding, the comparisons, PNGs, faults, the report
+tools/rc_replay/rc_replay.cpp     --consumer vk, runFrameVk (no runtime machine is made), --fault depth|clear|texture|flip
+CMakeLists.txt                    frame_vk.cpp in rc_replay
+```
+
+Nothing outside `tools/rc_replay` changed but a comment in `render/frame/frame_reader.h` (19.1 item 4): no library's code,
+no shader, no game source, not the runtime. The game relinked for that comment and its build string and was checked
+(19.6).
+
+### 19.1 Changes to the design, and why
+
+1. **One chain a dump, not one a segment.** 11.5 seeds at each segment's keyframe. As built the targets, the depth
+   buffer, texture memory, the register file and the VU1 / VIF1 state are seeded at the dump's first keyframe only (and
+   at a keyframe after a save-state load, where the recording's own machine was replaced: one in each version's
+   `b4-x2-0`). Every later keyframe is compared and then *not* loaded, so a dump is one chain from its first cycle to
+   its final keyframe (up to 2,700 cycles, `s5/l17long`) and an error cannot be hidden by a re-seed 300 cycles later.
+   `--cycles a-b` starts at the keyframe of the segment that holds `a`, as the other consumers do.
+2. **The final keyframe is compared too** (`GSVR` only, as it holds): targets and Z after the last cycle.
+3. **`Gs2dVk` directly, not the live presenter.** `rc::live::Presenter` (step 7 batch 5) merges lists, shows upload-only
+   pictures from `FrameBlit`'s CPU picture and never waits; the check wants each cycle's list drawn, waited for and read
+   back. The live path's own check is batch 4's (section 12).
+4. **Uploads into the frame buffers are the GIF reader's `IMAGE_BLIT` commands** (`Gif2dReader::Options::frameUploads`,
+   built by step 7's batch 5), in list order with the draws. `FrameBlit` therefore does not join `FrameReader` (16.1
+   item 5 and 16.6 expected it here): the logos, the movie's tiles, the splashes and the front end's backdrop reach the
+   targets through the list, and a picture that is all upload is read back from the target like any other (727 + 666
+   cycles whose list is uploads only, all equal). An upload the reader cannot place (not CT32, not FBW 10, not on a page row) fails the run:
+   0 of 1,445,504 transfers.
+5. **The register file: `GSRG` once, through `Gif2dReader::Options::seed`.** After a `GSRG` seed no register is unknown,
+   so the option's other half (unknown registers taken from a kick's recorded file) never runs; no `KICK.regs` is read
+   in the chain. Draws that still used a register as the keyframe left it (never written by the stream since): FBA_1 on
+   every draw (written by neither path in any dump, value 0, the default; 16.2); in the four boot dumps PABE (3 draws
+   each) and, USA only, CLAMP (8 draws, a value other than the default); in each version's `b4-x2-0` (the dump with the
+   save-state load) 10 draws take FRAME, ZBUF, XYOFFSET, PRIM, COLCLAMP and DTHE from `GSRG`. Nothing
+   else in 557.8 M primitives: the reader's register file is the stream's.
+6. **A pass per target as `Gs2dVk` already makes them:** one render pass from a change of target (or an upload, which
+   ends the pass) to the next, readable in read mode; a cycle's list is one submitted frame, waited for.
+7. **Also a failure:** a guard of the VIF1 reader, an unsupported state, a skipped sprite, a vertex beyond the viewport,
+   DISPFB2 showing neither target or not `END.refFbp`, a refused list, a failed read-back, a validation error. None
+   occurred. `MIPMAP` and a vertex Z at or above 2^24 are counted (18.4).
+8. **Z is compared in its 24 bits** (the Z buffer is read through the Z32 layout as in check (d); the depth read-back
+   must be a whole Z).
+9. **The faults** (11.5), `--fault <name>:<cycle>[:<cycles>]` (default 1 cycle, 0 to the end): `depth` zeroes the depth
+   buffer after each channel 1 kick's commands (the list is drawn in parts); `clear` leaves out the cycle's `CLEAR`;
+   `texture` leaves out every `TEXTURE` command for an id already sent (the new generation after an upload); `flip`
+   reads the other target. 19.3.
+10. **The largest list is 4.7 MB**, not "under 2.2 MB" (section 8): a level's first cycles carry their textures
+    (3.75 MB in most level dumps; `s5/l18` 4.47 MB, `s5/l7` 4.66 / 4.70 MB). The mean is 0.4-1.2 MB a cycle.
+
+### 19.2 Checks
+
+`rc_replay <dump> --consumer vk --verify --quiet --validation` with `VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true`, RTX 2060
+(driver 620.70.06) by PRIME offload, read mode (the exact blend, the pixel rule), four at a time, all 67 exact dumps
+(the re-referenced ones; `build-decomp/frame-dumps/{s5,s6,b4-key*,b4-x2-*}` and `build-eu`'s; nothing from `pre-r/`):
+**67 / 67 `PASS`**, 661 s. Again without the validation layer: 67 / 67 `PASS`, 545 s, the same counts.
+
+| | USA (34 dumps) | Europe (33) | both |
+|---|---|---|---|
+| keyframes seeded (first; after a save-state load) | 35 (34; 1) | 34 (33; 1) | 69 |
+| cycles drawn | 24,174 | 21,445 | 45,619 |
+| ... with K2 / PATH3 draws only / uploads only / nothing | 23,433 / 14 / 727 / 0 | 20,767 / 12 / 666 / 0 | |
+| VIF1 kicks; PATH3 kicks through the readers | 23,433; 816,488 | 20,767; 743,351 | 44,200; 1,559,839 |
+| **flipped pictures whose hash equals `END.refHash`** | **24,174 / 24,174** | **21,445 / 21,445** | **45,619 / 45,619** |
+| stored pictures (`REFI`) equal pixel by pixel | 1,430 / 1,430 (219,648,000 pixels, 0 differ) | 1,430 / 1,430 (234,291,200, 0) | 2,860; 453,939,200 pixels |
+| **later keyframes: targets 0x0 and 0x50 (R, G, B, A) and Z equal over 640 x 256** | **103 / 103** (69 inside, 34 final) | **95 / 95** (62, 33) | **198**; 97,320,960 values, 0 differ |
+| DISPFB2 on neither target; FBP not the reference's | 0; 0 | 0; 0 | |
+| guarded VIF1 kicks; unsupported states; sprites skipped; vertices beyond the viewport | 0; 0; 0; 0 | 0; 0; 0; 0 | |
+| draw failures; read-back failures; validation errors (layer on, synchronisation validation) | 0; 0; 0 | 0; 0; 0 | |
+| primitives read; dropped (all FRAME.FBW 0, before a boot's first draw environment: 0 pixels) | 292,959,100; 326 | 264,805,898; 274 | |
+| culled: no area; outside the scissor | 3,443,291; 161,153,394 | 2,930,323; 144,810,767 | |
+| `MIPMAP` primitives; triangles with a vertex Z >= 2^24 | 87,086; 0 | 90,406; 1 | (18.4's) |
+| uploads into the frame buffers; as `IMAGE_BLIT`s; not placed | 710,272; 1,212; 0 | 735,232; 1,262; 0 | |
+| `TEXTURE` commands sent | 32,646 (408.5 MB) | 33,947 (419.0 MB) | |
+| draws; a cycle; largest cycle | 13,561,483; 561; 2,609 | 11,241,803; 524; 2,218 | |
+| barriers; a cycle; largest cycle | 636,373; 26.3; 123 | 543,950; 25.4; 126 | 10.1 expected 26 and 126 |
+
+- The plan's first list (levels 5, 17, 18, 20, the front end and the Track Editor of both versions) is in it: `s5/l5`,
+  `l17`, `l17long`, `l18`, `l20`, `front`, `tedit`, 700-2,700 cycles each, every picture and keyframe equal. `s5/boot`
+  and `s6/boot` bring the legal screen, the logos, the movie (600 tiles a picture), the title and the attract demo's
+  level load through the same chain; `s6/load17` the loading splash into a race; `b4-x2-0` a save-state load.
+- The longest chains: USA `s5/l17long`, 2,700 cycles from one seed (2,685 VIF1 kicks, 101,681 PATH3 kicks, nine later keyframes); `s5/boot`
+  and `s5/front`, 900.
+- **What it proves beyond check (d):** per kick, (d) seeded the targets from the machine before every kick; here
+  nothing comes from the machine after the first keyframe, so the depth buffer carried between kicks and cycles, the
+  targets under the uploads and the clear, texture memory and the CLUT buffer across 2,700 cycles, the VU1 memory and
+  registers across kicks, and the flip all have to be right for the last picture to hash equal.
+- Fixed function (`--vk-blend ff`, the fallback of D-2D-1) is not expected to pass and does not; its size over whole
+  frames is in 19.5.
+
+### 19.3 Faults
+
+`--fault <name>:<cycle>:4` (four cycles from the fault), `--cycles 0-<cycle + 40>`, no validation. The clean runs of the
+same dumps pass (19.2). A fault is caught when the run ends `FAIL`.
+
+| fault | USA `s5/l17` (cycle 120) | USA `s5/front` (200) | USA `s5/tedit` (2020) | Europe `s5/l17` (120) |
+|---|---|---|---|---|
+| `clear` (the flip's clear left out) | fails: 4 pictures | fails: 4 | fails: 4 | fails: 4 |
+| `flip` (the picture read from the other target) | fails: 4 pictures; cycle 121's wrong picture hashes as cycle 120's reference | fails: 4 | fails: 4 | fails: 4 |
+| `texture` (a generation not re-sent after an upload) | fails: 3 `TEXTURE` commands left out, 3 pictures (121-123) | fails: 6 left out, 5 pictures | passes, as it must: nothing to leave out (no texture is sent twice in the whole dump, checked with `texture:1903:0`) | fails: 3 left out, 12 pictures |
+| `depth` (the depth buffer zeroed after K2's draws) | no picture changes; with the fault at cycle 299 the keyframe at 300 fails: Z differs on 153,423 pixels | no picture changes; at 299: keyframe Z, 128,640 pixels | fails: 4 pictures | no picture changes; at 299: keyframe Z, 163,663 pixels |
+
+- **The depth fault and what the pictures depend on.** A cycle's kicks run clear, K2, K1 (K1 has primitives in every
+  Track Editor cycle, in 743 of 900 front-end cycles and in every second cycle of a race: USA `s5/l17` 349 of 700).
+  With the depth buffer zeroed between K2 and K1 no picture of a race or of the front end changes, also with the
+  fault held for long: USA `s5/l17` and Europe `s5/l5` 150 cycles each, USA `s5/front` 180, USA `b4-x2-1` all 404
+  (there the four later keyframes fail, Z on 153,423-153,600 pixels each). K1's Z tests are GREATER and zero is the
+  smallest Z, so the fault can only let through K1 pixels that K2's depth would have rejected: in those scenes K2's
+  depth rejects none, in the Track Editor it does. Everywhere else the fault is caught by the Z plane at the next
+  keyframe, which is why the keyframe comparison includes Z. So 11.5's "the depth buffer not carried from K2 to K1"
+  fails on pictures in the Track Editor and on keyframes elsewhere; in a cycle not followed by a keyframe before
+  the next clear nothing that is drawn depends on it.
+- `flip`'s hashes show the chain's order: the other target holds the previous cycle's picture.
+- `--png`: a failing cycle writes `fail_<cycle>_vk.png`, and with a stored picture `_ref.png` and `_diff.png` (red: colour
+  differs, blue: alpha only); a failing keyframe `keyframe_<cycle>_{fb00,fb50,z}_{vk,ref,diff}.png` for each plane that
+  differs (Z as its three bytes); at most 12 sets a run. Without a stored picture the `FAIL` line gives the
+  `rc_replay <dump> --consumer emu --cycles n-n --png <dir>` command that makes the reference. Tried with `clear` on
+  USA `s6/load17` (72,160 and 72,431 of 153,600 pixels differ in the two cycles) and `depth` before a keyframe.
+
+### 19.4 Run time
+
+Ryzen 7 3750H, RTX 2060. The chain is one process and one thread plus the driver's.
+
+| a dump (cycles) | alone, no validation: s; ms a cycle | of it the reader (a VIF1 kick, largest) | the draw, waited for (the list's build) | read-back and hash | GPU a list, mean / largest | GPU clock meanwhile |
+|---|---|---|---|---|---|---|
+| USA `s5/l17` (700) | 32.9; 46.9 | 30.8 (30.7, 53.7) | 11.4 (1.2) | 2.3 | 7.27 / 16.59 ms | P8, 300-375 MHz |
+| USA `s5/l18` (700) | 49.9; 71.3 | 52.1 (52.1, 81.1) | 15.1 (1.8) | 2.4 | 9.07 / 12.96 | P8, 300-375 |
+| USA `s5/l21` (700) | 37.6; 53.7 | 36.0 (35.8, 54.3) | 13.7 (2.2) | 2.2 | 8.74 / 15.67 | P8, 300-375 |
+| USA `s5/l5` (700) | 29.3; 41.9 | 30.0 (29.9, 46.5) | 8.1 (1.3) | 2.2 | 4.24 / 11.27 | P8, 300-375 |
+| USA `s5/l20` (700) | 32.3; 46.1 | 30.2 (30.0, 46.9) | 11.5 (1.4) | 2.3 | 7.05 / 10.89 | P8, 300-375 |
+| USA `s5/front` (900) | 32.4; 36.0 | 24.3 (24.2, 45.9) | 8.4 (1.4) | 2.1 | 4.34 / 6.13 | P8, 300-375 (one sample 1,005) |
+| USA `s5/boot` (900) | 23.4; 26.0 | 16.2 (21.9, 32.1) | 6.7 (1.0) | 1.8 | 3.45 / 5.55 | P8, 375-600 |
+| USA `s5/tedit` (700) | 3.6; 5.1 | 0.8 (0.7, 1.6) | 2.3 (0.6) | 1.1 | 0.95 / 1.15 | P8, 300 |
+| Europe `s5/l17` (700) | 34.7; 49.5 | 33.1 (32.9, 54.7) | 12.6 (1.4) | 2.3 | 8.14 / 23.14 | P8, 300-375 (one sample 1,005) |
+| Europe `s5/l18` (700) | 48.5; 69.3 | 49.9 (49.9, 79.8) | 15.2 (1.8) | 2.4 | 9.30 / 12.53 | P8, 300-375 |
+
+- **All 67, four at a time:** 661 s with the validation layer (2,609 s of process time: 0.8-64 s a dump, `s5/l17long`
+  173 s; 26-92 ms a cycle, the Track Editor 10-13), 545 s without it (2,149 s of process time).
+- Three quarters of a race dump's time is the reader, and that is the C++ VU1 references (16.3, U2). The GPU's part
+  is the draw waited for; the read-back with its hash is 2-3 ms a cycle.
+- **The GPU times are off-line times at a low clock (U3):** every sample of `nvidia-smi` during the runs alone shows
+  P8 at 300-375 MHz of 2,100 (two samples of 1,005 and one of 600 among 87), 12-20% busy. A cycle's list (K2, the clear, K1,
+  uploads) then takes 4.2-9.3 ms on a level and 0.95 ms in the Track Editor; with four replays sharing the GPU and the
+  validation layer on the same lists took 1.4-6.1 ms (level 21: 6.1). As in 18.5 these numbers order the dumps and
+  nothing more; no driver setting was changed. Batch 4's live timestamps decide 10.4 (U3 = B).
+
+### 19.5 Divergences, drafted for `DIVERGENCES` (P2 step 10)
+
+Section 14's rows with what batches R, 1, 2 and 3 measured, and the rows those batches added. "Inherited" means the
+reference (the runtime's software GS, the machine the dumps' pictures come from) does it and the renderer reproduces
+it on purpose, so that the checks can be equalities; a real GS differs. With the exact blend (read mode: the default
+where the device has the local read) **the renderer's picture differs from the reference's in no pixel of any flipped
+picture of the 67 dumps (19.2)**, so every row below is either inherited, a change to the reference itself, a
+fallback, or a guard that never fired.
+
+| id | what | size | where |
+|---|---|---|---|
+| D-3D-1 (batch R, U1 = A; a change to the reference) | PATH1 is rasterised under the kick's rounding mode (round to nearest) instead of the VU1 run's (toward zero), and VU1 runs are no longer cut at 65,536 cycles. The `gs` renderer's software path changed with it; the GPU back ends did not | a level on a third of a race's pixels (USA level 17 31.8%, Europe 36.9%; mostly +1), 4-12% in the front end, none without 3D; 575 + 520 water runs finished (17.2) | every 3D picture of the software GS; the hardware's own rule is not known here |
+| D-3D-2 (inherited) | mip levels are not sampled: TEX1 with MXL 3 / 4 is drawn from level 0 with the reference's filter | 177,492 primitives: USA 27,399 (level 2) and 59,687 (level 14), Europe 31,071 and 59,335; every pixel equal to the reference (18.4) | two textures; real mip levels are P2's (plan step 9) |
+| D-3D-3 (inherited) | the reference's float interpolation applies to PATH1 as to PATH3: weights, colours, S/T/Q and Z in host floats and doubles, the bilinear filter with float weights (I-1 and I-2 of `RENDERER_2D_DESIGN.md` 12) | at most a level | every 3D pixel |
+| D-3D-4 (guard) | a VIF code, UNPACK form, program or entry outside sections 4 and 5, or a run that sends more than 2^20 packets (`VU_RUNAWAY`), stops the kick's 3D | none fired in 44,200 VIF1 kicks | logged, counted; the chained replay fails on one |
+| D-3D-5 (inherited; batch 2) | a vertex Q of 0.0 is read as 1.0 (the reference's front end, at every RGBAQ and PACKED ST write) | the vertices PATH1's clipping sends with S, T and Q all zero; pixels not counted | 18.1 item 5, T9 (vi) |
+| D-3D-6 (inherited; batch 2) | float to int as the reference's x86 build: out of range gives 0x80000000 (`cvttss2si`), and the bilinear rounding beyond 2^23 keeps the low 32 bits | texels of clipped triangles whose texture coordinates reach 1e10; pixels not counted | 18.1 item 7, T9 (vii) |
+| D-3D-7 (unreached) | a pixel Z at or above 2^24: the shader clamps where the reference's Z24 store keeps the low 24 bits | one triangle has such a vertex (Europe `s5/l22` cycle 283); no pixel of it reaches 2^24 (18.4) | reported by `gif2d --vk` and counted by `vk` whenever one appears |
+| D-3D-8 (state, no picture) | 72 lanes of the VU1 vector registers are not reproduced by the references (the microcode's temporaries); they are overwritten with a signalling NaN after every run | no packet and no byte of VU memory depends on them in 43.1 M runs (16.1 item 1) | `vu1_programs.cpp` |
+| D-3D-9 (guard) | an upload into a frame buffer that is not CT32 at FBW 10 from a page row is not drawn | none in 1,445,504 uploads (19.1 item 4) | counted; the chained replay fails on one |
+| D-3D-10 (the reader, no picture) | triangles of no area or outside the scissor are left out of the list, and a draw with FRAME.FBW 0 is dropped | 56% of PATH1's triangles; 326 + 274 primitives; the reference draws no pixel for any of them (16.2 (c2), 18.3 `draw-culled`) | |
+| D-2D-1 (fallback; unchanged) | fixed-function blending on a device without the local read, or with `ff` chosen: per inexact layer -1..+1. Over whole frames, chained (`vk --vk-blend ff`, the four `s6` dumps, 2,600 stored pictures): a race differs on 41% of its pixels (USA `s6/load17` 25.2 M of 61.4 M; Europe 27.2 M of 65.5 M), 22% of the colour values by one level, 0.1% by more, largest 8; the front end and the attract demo on 4-7% (largest 4); alpha and Z never; nothing accumulates across cycles (the clear) | as left | K2's and K1's layers with a fractional blend factor |
+
+Not divergences of the renderer, for the same list: the first keyframe of a re-referenced dump (and one after a
+save-state load) still holds the old machine's drawing in `GSVR` (17.2; both chains start from it); DISPLAY2 is
+ignored and the stored alpha is not shown (step 6).
+
+### 19.6 The game, the oracle
+
+The batch added two files to `rc_replay` and changed `rc_replay.cpp` and `CMakeLists.txt`; a comment in
+`render/frame/frame_reader.h` was corrected (19.1 item 4). The game relinked in `build-decomp` and `build-eu` for two
+reasons that change no behaviour: `render/record/capture.cpp` carries the build's `git describe` (recompiled at the
+first configure after the change), and `rc_frame` / `rc_live` recompiled for the comment. `rc_oracle` had nothing to
+rebuild in either tree (its binaries date from batch R). Checked all the same, 2026-11-21, on the final build:
+
+- `tools/oracle.sh --all --seed 3371` (USA): **1,632 ok, 0 FAIL** (511 s).
+- `RC_VERSION=eu tools/oracle.sh --all --seed 3372`: **1,562 ok, 1 FAIL** (909 s): `WeaponProcess` on `level17_cc`, 1 of
+  20 inputs (iteration 1: the original stores 0xdb at address 0x8, the native does not; `v0` 5 against 8). It repeats
+  with `--only WeaponProcess --seed 3372 --cases 20` and passes with seed 2112. **Not this batch's:** the oracle
+  binary was not rebuilt and links nothing of `render/`; it is a difference between the native `WeaponProcess` and the
+  original, or in the harness's setup for it, that this seed reaches (as seeds 7170 and 9494 found theirs). Not
+  looked into here; left for its own fix. USA passes with its seed.
+- `RC_SCENE_LOG=... RC_DEBUG_DUMP=... timeout 70 tools/play.sh replay playtest2`: USA race scene 3020 at frame 658,
+  60.0 fps; Europe at frame 1167, 50.0-50.2 fps (`tools/fps.py`, the 5 s samples after the load): as before.
+  `RC_RENDERER=vk RC_VK_PICTURE=native` (USA): scene 3020 at frame 658, about 30 fps as in 18.6 (U2).
+- `build-eu`'s `rc_replay`: Europe `s5/tedit`, `s5/front` and `s6/load17` `PASS` (`s6/load17` with validation, 0 errors,
+  400 / 400 stored pictures equal).
+
+### 19.7 Open
+
+- Nothing from the batch's own checks. The chained replay is equal on every cycle and keyframe of the 67 dumps.
+- **Europe `WeaponProcess`, oracle seed 3372** (19.6): one input of 20 on `level17_cc` differs (a store to address 0x8
+  and the return value). In the native or the harness, unrelated to the renderer; to be looked into on its own.
+- The depth fault shows that outside the Track Editor no picture of the dumps depends on the depth K2 leaves for K1
+  (19.3); the scenes not recorded yet (podium, results, the Track Editor's race, more two-player; section 12) may.
+- U3 (K2's GPU time) is batch 4's to measure; 19.4's times carry 18.5's caveat.
+- `FrameBlit` stays outside `FrameReader` (19.1 item 4); the live presenter still uses it for upload-only pictures
+  (step 7 batch 5). Batch 4 decides whether the live path keeps that or shows the target, as the chain does.
+- The originals under `frame-dumps/pre-r/` (6.5 GB) can go when step 8 is closed.
+- Batch 4 (live) can start.

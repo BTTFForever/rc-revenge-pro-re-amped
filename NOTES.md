@@ -913,6 +913,51 @@ emulated GS, check (d); the exact blend's barriers and the split's groups now go
   2112 1563 ok, 0 FAIL; `playtest2` scene 3020 at frame 658 (USA, 60.0 fps) and 1167 (Europe, 50 fps), default and
   `RC_RENDERER=vk`; `RC_VK_PICTURE=native` with validation 0 errors; `live2d --verify --validation` 8 / 8 dumps `PASS`.
 
+### The chained replay: rc_replay --consumer vk (2026-11-21, renderer P1 step 8 batch 3)
+The whole frame through the new renderer with no emulated machine: the frame reader (VIF1 reader, the C++ VU1 references,
+the GIF reader) and `Gs2dVk` on an exact dump, seeded once, every flipped picture compared with the dump's reference.
+Design and results: `RENDERER_3D_DESIGN.md` 11.5 and section 19. Code: `tools/rc_replay/frame_vk.{h,cpp}` only; no library,
+shader or game source changed.
+- **Run:** `ninja -C build-decomp rc_replay`, then `__NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only
+  build-decomp/rc_replay <exact dump> --consumer vk --verify [--quiet] [--validation] [--vk-blend read|ff] [--png <dir>]
+  [--cycles a-b]` (`VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true` with `--validation` for synchronisation validation). It makes
+  no runtime machine, so a race dump takes 30-50 s (the references are three quarters of it), the Track Editor 4 s.
+- **What it does:** at the first keyframe (and at one after a save-state load) both colour targets and the depth buffer
+  come from `GSVR`, texture memory goes to the reader's shadow, the register file comes from `GSRG`, VU1 and VIF1 state
+  from `VU1M` / `VU1R` / `VIF1`. Nothing is seeded after that: later keyframes are compared, not loaded, and no kick's
+  recorded register file is read. Each cycle's list (uploads into the frame buffers as `IMAGE_BLIT`, the clear, K2, K1) is
+  drawn and waited for. **Pass:** at every cycle close the top rows of `target[DISPFB2.FBP]` hash to `END.refHash` (and
+  equal `REFI` pixel by pixel where the dump stores it); at every later keyframe, the final one included, both targets
+  (R, G, B, A) and Z (24 bits) equal `GSVR` over 640 x 256; no guard, unsupported state, unplaced upload, vertex beyond
+  the viewport or validation error. Without `--quiet` a line a cycle: FBP, the cycle's kicks in order (`u` an upload into
+  a frame buffer, `c` the clear, `1` a VIF1 kick, `3` a PATH3 kick with primitives), commands, the result.
+- **On a mismatch:** the `FAIL vk cycle ...` line gives the first differing pixel (with `REFI`) or both hashes and the
+  `rc_replay <dump> --consumer emu --cycles n-n --png <dir>` command that writes the reference picture; `--png <dir>` writes
+  `fail_<cycle>_vk.png` (and `_ref.png`, `_diff.png` with `REFI`) and, for a keyframe, the planes that differ. The summary
+  names the first failing cycle and the last equal one before it; `gif2d --vk` (check (d)) on that cycle then finds the kick.
+- **Faults:** `--fault depth|clear|texture|flip:<cycle>[:<cycles>]` (cycles: default 1, 0 to the end): the depth buffer
+  zeroed after each VIF1 kick's draws, the clear left out, a `TEXTURE` command for an id sent before left out, the
+  picture read from the other target. `clear` and `flip` fail on every scene; `texture` wherever a texture is re-sent (not
+  in the Track Editor dump: none is); `depth` changes pictures only in the Track Editor and is caught elsewhere by the Z
+  plane at the next keyframe (in races and the front end K2's depth rejects no K1 pixel).
+- **Result (2026-11-21):** all 67 exact dumps of both versions `PASS` at the first run, with validation and
+  synchronisation validation on (0 errors) and again without: **45,619 flipped pictures hash equal, 2,860 stored pictures
+  equal on all 453.9 M pixels, 198 later keyframes equal in both targets and Z**; 44,200 VIF1 kicks and 1.56 M PATH3 kicks
+  in chains of up to 2,700 cycles from one seed. Nothing had to be fixed. 26 barriers a cycle on average, 126 at most.
+  All 67, four at a time from a copy of the binary: 661 s with validation, 545 s without.
+- **Fixed function** (`--vk-blend ff`) fails, as D-2D-1 says it must: a race differs on 41% of its pixels by a level (largest
+  8), the front end on 4-7%; alpha and Z never, and nothing accumulates across cycles.
+- **GPU times** it prints are off-line times with the GPU at 300-375 MHz (4-9 ms a level cycle alone, 1.4-6 ms with four
+  replays sharing it): not a measure of the live cost (U3, batch 4).
+- **Rebuilding the game after a commit:** `render/record/capture.cpp` carries the build's `git describe`, so after any
+  commit the next configure recompiles it and relinks the game although no source changed.
+- **The game and the oracle (2026-11-21):** the game relinked (the build string, a comment in `frame_reader.h`), the
+  oracle did not rebuild. `playtest2`: USA scene 3020 at frame 658 at 60.0 fps, Europe 1167 at 50 fps. Oracle `--all`:
+  USA seed 3371 1632 ok, 0 FAIL; **Europe seed 3372 1562 ok, 1 FAIL: `WeaponProcess` on `level17_cc`, 1 of 20 inputs**
+  (the original stores 0xdb at address 0x8, the native does not; `v0` 5 against 8; repeats with `RC_VERSION=eu
+  tools/oracle.sh --only WeaponProcess --seed 3372 --cases 20`, passes with seed 2112). Not the renderer's (the oracle
+  binary is batch R's and links nothing of `render/`): open, in the native or the harness's setup, not looked into.
+
 ### Live 2D: RC_VK_PICTURE=native (2026-11-20, renderer P1 step 7 batch 5)
 `RC_RENDERER=vk RC_VK_PICTURE=native tools/play.sh [replay <name>]` (`RC_VERSION=eu` as usual) presents the native picture:
 step 8's frame reader runs on the EE thread as a live consumer of the frame record's capture (`render/live`, library

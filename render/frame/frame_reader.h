@@ -12,8 +12,9 @@
 // and can take channel 1 kicks out of kick() to hand them over itself (deferPath1: rc_replay runs them once the
 // emulated machine has run the same kick).
 //
-// Step 6's FrameBlit (uploads into the frame buffer) joins it with the chained replay (step 8 batch 3), which is the
-// first user that needs it.
+// Uploads into the frame buffers are the GIF reader's IMAGE_BLIT commands (Gif2dReader::Options::frameUploads, step 7
+// batch 5), in list order with the draws; the chained replay (step 8 batch 3, rc_replay --consumer vk) draws them with
+// everything else, so step 6's FrameBlit stays outside this class (RENDERER_3D_DESIGN.md 19.1 item 4).
 
 #include "../gs2d/gif2d_reader.h"
 #include "../vif/vif1_reader.h"

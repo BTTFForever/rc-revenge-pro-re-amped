@@ -465,6 +465,21 @@ After step 1: fold its answers into this plan's open questions.
    off-line replays leave the GPU in its lowest power state (300-525 MHz of 2,100) and the same kicks measure 6.0
    to 21.9 ms depending on the GPU's other load, so the limit cannot be judged until the clock is held or K2 is
    live (18.5, 18.7). Batch 3 (the chained replay) does not wait for it.
+   **Batch 3 built 2026-11-21 (`RENDERER_3D_DESIGN.md` 19):** the chained replay, `rc_replay --consumer vk`: the
+   frame reader and `Gs2dVk` with no emulated machine, GS memory, the register file and the VU1 state seeded once at
+   the dump's first keyframe (and after a save-state load), every cycle's list drawn (uploads, the clear, K2, K1),
+   later keyframes compared and never loaded. **All 67 dumps pass at the first run, with validation on: 45,619
+   flipped pictures hash equal to the reference's, the 2,860 stored pictures are equal on all 453.9 M pixels, and
+   both targets and Z equal the machine's memory at all 198 later keyframes** (chains of up to 2,700 cycles; levels
+   5, 17, 18, 20, the front end, the Track Editor, the boot with its movie, a level load, a save-state load). No
+   check found anything to fix. The planted faults: the clear left out and the flip on the other target fail
+   everywhere, a texture not re-sent wherever one is re-sent; the depth buffer not carried from K2 to K1 changes
+   pictures only in the Track Editor and is caught elsewhere by Z at the next keyframe (in races and menus K2's
+   depth hides no 2D). A race dump replays in 30-50 s, all 67 in 9-11 minutes. The DIVERGENCES rows are drafted
+   with their measured sizes (19.5). `playtest2` unchanged (658 at 60 fps, 1167 at 50); oracle USA 1,632 ok, Europe
+   1,562 ok and 1 FAIL with the new seed 3372 (`WeaponProcess`, one input; the oracle was not rebuilt by this batch
+   and links nothing of the renderer: an open item of the decompilation). **Next: batch 4 (live),** which also
+   measures K2's GPU time (U3 = B).
    **Order and design (step 7's batch 4 review, 2026-11-20, `RENDERER_2D_DESIGN.md` 17.4).** Step 8 starts before
    step 7's live batch, because K1 inherits registers only PATH1 writes and they come out of the VU1 programs'
    packets. It needs a short design first (Fable, `RENDERER_3D_DESIGN.md`), then batches: (1) the reader and the
