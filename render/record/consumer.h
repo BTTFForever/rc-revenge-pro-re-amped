@@ -110,6 +110,9 @@ namespace rc::rec
         virtual void odd(int /*kind*/, uint32_t /*address*/, uint64_t /*value*/) {}
         virtual void note(const std::string & /*text*/) {}
         virtual void cycleEnd(const CycleInfo &, const uint8_t * /*refRgba*/) {}
+        // (step 8 batch 4) Off-line only: a chunk the reader does not interpret that follows a delivered cycle (DLST),
+        // after that cycle's cycleEnd; its payload uncompressed.
+        virtual void chunk(uint32_t /*id*/, const uint8_t * /*data*/, uint64_t /*bytes*/) {}
         virtual void close() {}
         virtual ~Consumer() = default;
     };

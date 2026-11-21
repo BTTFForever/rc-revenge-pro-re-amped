@@ -941,8 +941,10 @@ namespace rc::rd
         m_blits.clear();
         std::vector<const uint8_t *> blitData;
         uint64_t blitBytes = 0;
+        m_cmdDraw.resize(list.cmds.size() + 1u);
         for (cmdIndex = 0; cmdIndex < list.cmds.size(); ++cmdIndex)
         {
+            m_cmdDraw[cmdIndex] = static_cast<uint32_t>(draws.size());
             const DrawCmd &cmd = list.cmds[cmdIndex];
             switch (cmd.op)
             {
@@ -1169,6 +1171,7 @@ namespace rc::rd
                 break;
             }
         }
+        m_cmdDraw[list.cmds.size()] = static_cast<uint32_t>(draws.size());
         (void)culledSeen;
         m_last.coverPixels = m_cover.pixelsVisited() - coverBefore;
         m_stats.coverPixels += m_last.coverPixels;
@@ -1262,7 +1265,7 @@ namespace rc::rd
         return ok;
     }
 
-    bool Gs2dVk::record(const DrawList &list, RhiCommandList cl, bool stamps)
+    bool Gs2dVk::record(const DrawList &list, RhiCommandList cl, bool stamps, const std::vector<uint32_t> *ranges)
     {
         if (!m_created || (m_opt.blend == kBlendRead && !m_haveRead))
             return false;
@@ -1276,6 +1279,31 @@ namespace rc::rd
         stamps = stamps && rhi_timestamps_supported();
         if (stamps)
             rhi_cmd_write_timestamp(cl, 0u);
+        // (step 8 batch 4) The ranges' draws: stamp 2 + 2k before the first, 3 + 2k after the last (the held-back image
+        // barriers stay held back, so the list's barriers are as without the stamps).
+        std::vector<std::pair<uint32_t, uint32_t>> stampAt; // draw index, stamp index; in draw order
+        if (stamps && ranges)
+        {
+            const uint32_t cmdCount = static_cast<uint32_t>(list.cmds.size());
+            for (size_t i = 0; i + 1u < ranges->size(); i += 2u)
+            {
+                const uint32_t b = std::min((*ranges)[i], cmdCount), e = std::min((*ranges)[i + 1u], cmdCount);
+                const uint32_t db = m_cmdDraw[b], de = m_cmdDraw[e];
+                if (de <= db)
+                    continue;
+                if (m_last.rangeStamps >= kMaxRangeStamps)
+                {
+                    ++m_last.rangesUnstamped;
+                    continue;
+                }
+                stampAt.push_back({db, 2u + 2u * m_last.rangeStamps});
+                stampAt.push_back({de, 3u + 2u * m_last.rangeStamps});
+                ++m_last.rangeStamps;
+            }
+            std::stable_sort(stampAt.begin(), stampAt.end(), [](const auto &x, const auto &y) { return x.first < y.first; });
+        }
+        size_t nextStamp = 0;
+        uint32_t drawIndex = 0;
         RhiBinding rb{};
         rb.slot = 0u;
         rb.type = RHI_BIND_STORAGE_BUFFER;
@@ -1303,6 +1331,9 @@ namespace rc::rd
         bool haveScissor = false;
         for (const Draw &d : draws)
         {
+            while (nextStamp < stampAt.size() && stampAt[nextStamp].first <= drawIndex)
+                rhi_cmd_write_timestamp(cl, stampAt[nextStamp++].second | RHI_TIMESTAMP_KEEP_BARRIERS);
+            ++drawIndex;
             if (d.blit >= 0)
             {
                 // (batch 5) An upload into the frame buffer: outside a pass, in list order.
@@ -1415,6 +1446,8 @@ namespace rc::rd
             drawnSinceBarrier = true;
             ++m_last.draws;
         }
+        while (nextStamp < stampAt.size())
+            rhi_cmd_write_timestamp(cl, stampAt[nextStamp++].second | RHI_TIMESTAMP_KEEP_BARRIERS);
         if (open >= 0)
             rhi_cmd_end_render_pass(cl);
         if (stamps)

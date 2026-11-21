@@ -82,6 +82,9 @@ namespace rc::rd
         Vif1Reader &vif() { return m_vif; }
         const Vif1Reader &vif() const { return m_vif; }
         const DrawList &list() const { return m_gif.list(); }
+        // (step 8 batch 4) The cycle's channel 1 kicks as command ranges of list(): begin, end pairs, in kick order (the
+        // live presenter times K2's draws on the GPU by them).
+        const std::vector<uint32_t> &path1Ranges() const { return m_path1Ranges; }
         const Stats &stats() const { return m_stats; }
         bool started() const { return m_started; }
 
@@ -104,6 +107,7 @@ namespace rc::rd
         uint64_t m_path1HashValue = 0, m_path1Count = 0;
         std::vector<uint8_t> m_path1Bytes;
         std::vector<uint32_t> m_path1Packets;
+        std::vector<uint32_t> m_path1Ranges;
         // The kick's side tags in stream order, placed as scope commands before the run at or after their offset.
         const rc::rec::KickView *m_kick = nullptr;
         std::vector<uint32_t> m_spanOrder;

@@ -72,6 +72,7 @@ namespace rc::rd
     {
         m_cycle = cycle;
         m_faultSeen = 0;
+        m_path1Ranges.clear();
         m_gif.cycleBegin(cycle);
     }
 
@@ -141,6 +142,7 @@ namespace rc::rd
         m_path1Hash = Hash64{};
         m_path1Bytes.clear();
         m_path1Packets.clear();
+        const uint32_t firstCmd = static_cast<uint32_t>(m_gif.list().cmds.size());
         m_gif.beginPath1Kick();
         m_kick = &k;
         m_spanOrder.resize(k.spanCount);
@@ -152,6 +154,8 @@ namespace rc::rd
         scopesUntil(~0u);
         m_kick = nullptr;
         m_gif.endPath1Kick(!ok);
+        m_path1Ranges.push_back(firstCmd);
+        m_path1Ranges.push_back(static_cast<uint32_t>(m_gif.list().cmds.size()));
         if (!ok)
             ++m_stats.guardedKicks;
         m_path1Count = m_path1Hash.length();

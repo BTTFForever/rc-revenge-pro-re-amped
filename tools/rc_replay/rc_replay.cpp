@@ -1,6 +1,6 @@
 // rc_replay: feeds a frame record dump (.rcfr, RENDERER_FRAME_RECORD.md) to consumers.
 //
-//   rc_replay <dump> [--consumer stats|emu|tex|blit|gif2d|gif2dstat|vifstat|vif|live2d|vk] [--cycles a-b] [--verify] [--quiet]
+//   rc_replay <dump> [--consumer stats|emu|tex|blit|gif2d|gif2dstat|vifstat|vif|live2d|vk|dlst] [--cycles a-b] [--verify] [--quiet]
 //             [--png <dir>] [--picture-before <cycle>:<kick> <out.png>] [--path1 <cycle>:<kick> <out.bin>] [--kick-hashes]
 //             [--fault page|kick|hw:<cycle>[:<n>]]
 //             [--with-emu] [--fault transfer|kick|swizzle|decode:<cycle>:<n>] (tex)
@@ -77,6 +77,7 @@
 #include "vif.h"
 #include "consumer.h"
 #include "live2d.h"
+#include "dlst.h"
 #include "frame_vk.h"
 #include "reader.h"
 #include "../../render/gfx/tags.h"
@@ -495,7 +496,8 @@ namespace
                              "       emu --rereference <out.rcfr> (exact dumps): a copy with the references this machine makes\n"
                              "       live2d (exact dumps; the live 2D renderer, RC_VK_PICTURE=native): [--live-shots <dir>] [--vk-blend read|ff] [--validation] [--png <dir>]\n"
                              "       vk (exact dumps; the chained replay, no emulated machine): [--vk-blend read|ff] [--validation] [--png <dir>]\n"
-                             "            [--fault depth|clear|texture|flip:<cycle>[:<cycles>]]\n");
+                             "            [--fault depth|clear|texture|flip:<cycle>[:<cycles>]]\n"
+                             "       dlst (a dump from boot with RC_FRAME_RECORD_DRAWLISTS=1): the live reader's lists against the recorded DLST chunks\n");
     }
 }
 
@@ -985,9 +987,9 @@ int main(int argc, char **argv)
         return ok ? 0 : 2;
     }
     if (consumer != "stats" && consumer != "emu" && consumer != "tex" && consumer != "blit" && consumer != "gif2d" && consumer != "vif" &&
-        consumer != "live2d" && consumer != "vk")
+        consumer != "live2d" && consumer != "vk" && consumer != "dlst")
     {
-        std::fprintf(stderr, "consumer '%s' is not built yet (stats, emu, tex, blit, gif2d, gif2dstat, vifstat, vif, live2d, vk)\n", consumer.c_str());
+        std::fprintf(stderr, "consumer '%s' is not built yet (stats, emu, tex, blit, gif2d, gif2dstat, vifstat, vif, live2d, vk, dlst)\n", consumer.c_str());
         return 2;
     }
     Reader reader;
@@ -1130,6 +1132,35 @@ int main(int argc, char **argv)
             return 2;
         }
         return runFrameVk(reader, path, o, first, last);
+    }
+    if (consumer == "dlst")
+    {
+        // (step 8 batch 4) The live check: the live reader's lists (DLST) against the same reader on the recorded kicks.
+        if (first != 0 || last != ~0ull)
+        {
+            std::fprintf(stderr, "rc_replay dlst: the reader starts at boot, so the whole dump is read (no --cycles)\n");
+            return 2;
+        }
+        const FileHeader &h = reader.header();
+        std::printf("dump %s\n  %s, %ux%u, recorded with %.16s, build %.40s, %s\n", path.c_str(), h.gameVersion ? "Europe" : "USA", h.width, h.height,
+                    h.gsBackend, h.build, (h.flags & kFileExact) ? "exact" : "plain");
+        rc::replay::DlstOptions o;
+        o.quiet = quiet;
+        rc::replay::DlstCheck check(o);
+        const bool ok = reader.run({&check}, 0, ~0ull);
+        check.summary();
+        if (!ok)
+        {
+            std::printf("read error: %s\n", reader.error().c_str());
+            return 2;
+        }
+        if (check.refused())
+        {
+            std::printf("UNUSABLE (%s)\n", reader.chunkStats.count(kChunkDrawList) ? "not from boot" : "no DLST chunk");
+            return 2;
+        }
+        std::printf("%s\n", check.failed() ? "FAIL" : "PASS");
+        return check.failed() ? 1 : 0;
     }
     if (consumer == "live2d")
     {

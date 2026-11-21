@@ -351,6 +351,7 @@ namespace rc::rec
         std::vector<const TagView *> labels;
         uint32_t cycleIndex = 0;
         bool ok = true;
+        bool lastDelivered = false; // the last CYCL was delivered (a DLST after it goes to the consumers)
         for (; ci < m_chunks.size() && ok; ++ci)
         {
             const ChunkRef &ref = m_chunks[ci];
@@ -361,8 +362,20 @@ namespace rc::rec
                 ++cs.count;
                 cs.stored += ref.header.storedBytes;
                 cs.raw += ref.header.rawBytes;
+                // (step 8 batch 4) A draw list after a delivered cycle goes to the consumers.
+                if (id == kChunkDrawList && lastDelivered)
+                {
+                    if (!readPayload(ref, raw))
+                    {
+                        ok = false;
+                        break;
+                    }
+                    for (Consumer *c : consumers)
+                        c->chunk(id, raw.data(), raw.size());
+                }
                 continue; // REFI is read with its cycle; INDX, ENDF, TNAM and unknown chunks are skipped
             }
+            lastDelivered = false;
             if (!readPayload(ref, raw))
             {
                 ok = false;
@@ -444,6 +457,7 @@ namespace rc::rec
             if (end.cycle > lastCycle)
                 break;
             const bool deliver = end.cycle >= firstCycle;
+            lastDelivered = deliver;
             const uint8_t *refRgba = nullptr;
             if (deliver && end.hasImage && ci + 1 < m_chunks.size() && m_chunks[ci + 1].header.id == kChunkPicture)
             {

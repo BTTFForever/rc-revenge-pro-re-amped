@@ -13,7 +13,7 @@
 // the RHI's own ICO_VK_* switches (ICO_VK_VALIDATION=1, ICO_VK_DEVICE=<index or name part>) apply.
 //
 // (Renderer plan P1 step 7 batch 5) RC_VK_PICTURE=native presents the native picture instead (render/live/live_host.h:
-// the frame reader on the EE thread, the cycle's 2D drawn through Gs2dVk; K2, the 3D, not drawn yet). F7 switches
+// the frame reader on the EE thread, the cycle's list, 3D and 2D, drawn through Gs2dVk). F7 switches
 // between it and the emulated GS picture; the window title says which is shown. RC_VK_PRESENT_FILTER=nearest draws the
 // native picture with nearest filtering (default linear, as the GS picture). Unset or "gs": exactly as before.
 #include "ps2_host_platform.h"
@@ -243,7 +243,7 @@ namespace
         Host &h = g_host;
         if (!h.window || !rc::live::nativeEnabled())
             return;
-        const std::string t = h.title + (h.showNative ? " [native picture: 2D only, 3D not drawn yet; F7: emulated GS]"
+        const std::string t = h.title + (h.showNative ? " [native picture; F7: emulated GS]"
                                                       : " [emulated GS picture; F7: native]");
         SDL_SetWindowTitle(h.window, t.c_str());
     }
@@ -572,7 +572,7 @@ namespace
         rhi_present();
         ++h.presents;
         if (h.native)
-            rc::live::afterPresent();
+            rc::live::afterPresent(pixels, width, height);
     }
 
     bool keyDown(int key)

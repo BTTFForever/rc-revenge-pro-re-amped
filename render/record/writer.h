@@ -52,6 +52,9 @@ namespace rc::rec
         void note(const std::string &text) override;
         void cycleEnd(const CycleInfo &info, const uint8_t *refRgba) override;
         void close() override;
+        // (step 8 batch 4) A DLST chunk (the live reader's list of `cycle`, encoded by render/frame/dlst.h), written after
+        // the cycle closed last; call it after that cycleEnd and before the next keyframe or cycle.
+        void drawList(uint64_t cycle, std::vector<uint8_t> &&payload);
 
         struct Stats
         {
@@ -59,6 +62,7 @@ namespace rc::rec
             uint64_t cycles = 0, keyframes = 0;
             uint64_t cycleRawBytes = 0, cycleStoredBytes = 0, keyRawBytes = 0, keyStoredBytes = 0, fileBytes = 0;
             uint64_t maxCycleRaw = 0, maxCycleStored = 0;
+            uint64_t drawLists = 0, drawListRawBytes = 0, drawListStoredBytes = 0; // (step 8 batch 4) DLST chunks (worker side)
         };
         // Complete after close().
         const Stats &stats() const { return m_stats; }
@@ -73,10 +77,10 @@ namespace rc::rec
     private:
         struct Job
         {
-            enum Kind { Cycle, Key, Picture, Close, Dump } kind = Cycle;
+            enum Kind { Cycle, Key, Picture, Close, Dump, DrawList } kind = Cycle;
             std::string path;                                           // Dump
             uint64_t cycle = 0;
-            std::vector<uint8_t> raw;                                   // Cycle, Picture
+            std::vector<uint8_t> raw;                                   // Cycle, Picture, DrawList
             KeyframeHeader key{};                                       // Key
             std::vector<std::pair<uint32_t, std::vector<uint8_t>>> state; // Key
         };

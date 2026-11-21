@@ -158,6 +158,7 @@ namespace rc::rd
             uint64_t binds = 0;      // pipeline, bind group and scissor commands recorded (only what changed between draws)
             double gpuMs = 0.0;
             double buildMs = 0.0, coverMs = 0.0; // CPU: building the records and draws; of it, the cover map's spans and stamps
+            uint32_t rangeStamps = 0, rangesUnstamped = 0; // (step 8 batch 4) record()'s ranges timed, and those past the cap
         };
 
         Gs2dVk() = default;
@@ -180,7 +181,11 @@ namespace rc::rd
         bool draw(const DrawList &list);
         // (batch 5, live) The same recorded into the caller's command list, in the caller's frame: no wait, no submit.
         // stamps: timestamps 0 and 1 of the frame slot around the passes (the caller reads them when the slot comes round).
-        bool record(const DrawList &list, RhiCommandList cl, bool stamps = false);
+        // (step 8 batch 4) ranges: begin, end command index pairs; with stamps, each pair that draws anything gets
+        // timestamps 2 + 2k and 3 + 2k around its draws (k counts the stamped pairs, at most kMaxRangeStamps;
+        // lastList().rangeStamps says how many).
+        static constexpr uint32_t kMaxRangeStamps = 126u;
+        bool record(const DrawList &list, RhiCommandList cl, bool stamps = false, const std::vector<uint32_t> *ranges = nullptr);
         // (batch 5, live) The colour target `target` put in SHADER_READ for the presenter to sample (the next record()
         // takes it back); its id, or 0.
         RhiTexture sampleTarget(RhiCommandList cl, uint32_t target);
@@ -215,6 +220,7 @@ namespace rc::rd
             uint64_t offset; // in m_blitStage
         };
         std::vector<Blit> m_blits;
+        std::vector<uint32_t> m_cmdDraw; // build(): the index of the first draw made from each command (and the count at the end)
         RhiBuffer m_blitStage{}; // the list's IMAGE_BLIT pixels (destroyed, deferred, once recorded)
         bool build(const DrawList &list, std::vector<Draw> &draws, std::vector<RhiTexture> &fresh, RhiCommandList cl);
         bool upload(const std::vector<Gs2dPrim> &records);

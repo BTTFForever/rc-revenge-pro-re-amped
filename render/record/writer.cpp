@@ -297,6 +297,18 @@ namespace rc::rec
         m_inCycle = false;
     }
 
+    void Writer::drawList(uint64_t cycle, std::vector<uint8_t> &&payload)
+    {
+        if (!m_open)
+            return;
+        Job job;
+        job.kind = Job::DrawList;
+        job.cycle = cycle;
+        job.raw = std::move(payload);
+        const uint64_t bytes = job.raw.size();
+        push(std::move(job), bytes);
+    }
+
     void Writer::worker()
     {
         for (;;)
@@ -332,6 +344,14 @@ namespace rc::rec
                 m_stats.cycleStoredBytes += stored;
                 m_stats.maxCycleRaw = std::max<uint64_t>(m_stats.maxCycleRaw, job.raw.size());
                 m_stats.maxCycleStored = std::max<uint64_t>(m_stats.maxCycleStored, stored);
+            }
+            else if (job.kind == Job::DrawList)
+            {
+                done = job.raw.size();
+                const uint64_t stored = writeChunk(kChunkDrawList, job.raw.data(), job.raw.size(), true);
+                ++m_stats.drawLists;
+                m_stats.drawListRawBytes += job.raw.size();
+                m_stats.drawListStoredBytes += stored;
             }
             else if (job.kind == Job::Picture)
             {

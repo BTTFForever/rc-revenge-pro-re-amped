@@ -64,7 +64,7 @@ namespace rc::replay
         bool pngFirstFailWritten = false;
 
         uint64_t cyclesJudged = 0, cyclesNoRef = 0, cyclesFailing = 0, pixels = 0, k2Pixels = 0, compared = 0, equal = 0, k1Pixels = 0, k1Equal = 0;
-        uint64_t uploadCycles = 0, k2Kicks = 0, drawFailures = 0, readFailures = 0;
+        uint64_t k2Kicks = 0, drawFailures = 0, readFailures = 0;
         uint64_t shotsJudged = 0, shotsEqual = 0, shotPixelsDiffer = 0;
         std::vector<std::string> failures;
         std::vector<std::string> shotLines;
@@ -255,8 +255,6 @@ namespace rc::replay
         for (uint32_t y = 0; y < h; ++y)
             for (uint32_t x = 0; x < w; ++x)
                 mask[y * w + x] = (m->k2[y * kW + x] & ((1u << t) | 4u)) ? 1u : 0u;
-        if (v.upload)
-            ++m->uploadCycles;
         // The cycle's clear colour (the flip's draw environment), for the count of pixels K1 changed.
         uint32_t clear = 0;
         bool haveClear = false;
@@ -279,10 +277,7 @@ namespace rc::replay
             {
                 ++m->pixels;
                 if (mask[i])
-                {
-                    ++m->k2Pixels;
-                    continue;
-                }
+                    ++m->k2Pixels; // (step 8 batch 4) K2 is drawn: its pixels are judged too
                 ++m->compared;
                 const bool eq = std::memcmp(&native[i * 4u], refRgba + i * 4u, 4) == 0;
                 uint32_t word;
@@ -308,8 +303,8 @@ namespace rc::replay
                 {
                     char line[256];
                     const uint8_t *n = &native[(fy * w + fx) * 4u], *r = refRgba + (fy * w + fx) * 4u;
-                    std::snprintf(line, sizeof line, "cycle %" PRIu64 ": %" PRIu64 " pixels outside K2's differ; first (%d, %d) native %02x%02x%02x%02x reference %02x%02x%02x%02x%s",
-                                  cycle, bad, fx, fy, n[0], n[1], n[2], n[3], r[0], r[1], r[2], r[3], v.upload ? " (upload-only picture)" : "");
+                    std::snprintf(line, sizeof line, "cycle %" PRIu64 ": %" PRIu64 " pixels differ; first (%d, %d) native %02x%02x%02x%02x reference %02x%02x%02x%02x",
+                                  cycle, bad, fx, fy, n[0], n[1], n[2], n[3], r[0], r[1], r[2], r[3]);
                     m->failures.push_back(line);
                 }
                 if (!m->pngFirstFailWritten)
@@ -322,7 +317,7 @@ namespace rc::replay
         else
             ++m->cyclesNoRef;
         if (!m->opt.quiet && hasRef)
-            std::printf("cycle %" PRIu64 ": %s, FBP 0x%x, K2 pixels %" PRIu64 "%s\n", cycle, v.upload ? "upload-only" : "target", fbp,
+            std::printf("cycle %" PRIu64 ": FBP 0x%x, K2 pixels %" PRIu64 "%s\n", cycle, fbp,
                         static_cast<uint64_t>(std::count(mask.begin(), mask.end(), 1u)), failedHere ? ", FAIL" : "");
 
         if (const auto it = m->shots.find(cycle); it != m->shots.end())
@@ -343,10 +338,7 @@ namespace rc::replay
             for (uint32_t i = 0; hasRef && i < w * h; ++i)
             {
                 if (mask[i])
-                {
                     ++k2;
-                    continue;
-                }
                 ++cmp;
                 uint32_t word;
                 std::memcpy(&word, refRgba + i * 4u, 4);
@@ -360,9 +352,9 @@ namespace rc::replay
             }
             char line[400];
             std::snprintf(line, sizeof line,
-                          "live screenshot of cycle %" PRIu64 " (%s): %s; against the off-line native picture %" PRIu64 " of %u pixels differ; against the reference "
-                          "picture%s: %" PRIu64 " K2 pixels left out, %" PRIu64 " of %" PRIu64 " compared equal (%" PRIu64 " of the %" PRIu64 " K1 changed)",
-                          cycle, v.upload ? "upload-only" : "target", read ? "read" : "NOT READ", differ, w * h, hasRef ? "" : " (none in the dump)", k2, eq, cmp, k1Eq, k1);
+                          "live screenshot of cycle %" PRIu64 ": %s; against the off-line native picture %" PRIu64 " of %u pixels differ; against the reference "
+                          "picture%s: %" PRIu64 " K2 pixels, %" PRIu64 " of %" PRIu64 " compared equal (%" PRIu64 " of the %" PRIu64 " not the clear colour)",
+                          cycle, read ? "read" : "NOT READ", differ, w * h, hasRef ? "" : " (none in the dump)", k2, eq, cmp, k1Eq, k1);
             m->shotLines.push_back(line);
             m->writePngs("shot", cycle, native, hasRef ? refRgba : nullptr, mask, read ? &live : nullptr, w, h);
             if (!read || differ)
@@ -394,10 +386,10 @@ namespace rc::replay
                     "; validation errors %u%s\n",
                     rs.cycles, rs.cycles ? rs.ns / rs.cycles / 1e6 : 0.0, rs.maxCycleNs / 1e6, rs.path1Kicks, rs.path1Kicks ? rs.path1Ns / rs.path1Kicks / 1e6 : 0.0,
                     rs.guarded, ps.lists, gpu, gpuMax, ps.barriers, m->drawFailures, m->readFailures, m->validationErrors, layer ? "" : " (layer off)");
-        std::printf("live2d: %" PRIu64 " cycles judged against the reference picture (%" PRIu64 " without one; %" PRIu64 " upload-only); %" PRIu64 " pixels, %" PRIu64
-                    " K2's (left out), %" PRIu64 " compared: %" PRIu64 " equal; of them %" PRIu64 " changed by K1 (not the clear colour): %" PRIu64
-                    " equal; %" PRIu64 " VIF1 kicks masked, %" PRIu64 " clear / upload kicks unmasking; failing cycles %" PRIu64 "\n",
-                    m->cyclesJudged, m->cyclesNoRef, m->uploadCycles, m->pixels, m->k2Pixels, m->compared, m->equal, m->k1Pixels, m->k1Equal, m->k2Kicks,
+        std::printf("live2d: %" PRIu64 " cycles judged against the reference picture (%" PRIu64 " without one); %" PRIu64 " pixels, %" PRIu64
+                    " of them K2's (drawn, judged), %" PRIu64 " compared: %" PRIu64 " equal; of them %" PRIu64 " not the clear colour: %" PRIu64
+                    " equal; %" PRIu64 " VIF1 kicks, %" PRIu64 " clear / upload kicks; failing cycles %" PRIu64 "\n",
+                    m->cyclesJudged, m->cyclesNoRef, m->pixels, m->k2Pixels, m->compared, m->equal, m->k1Pixels, m->k1Equal, m->k2Kicks,
                     m->rewriteKicks, m->cyclesFailing);
         for (const std::string &l : m->shotLines)
             std::printf("live2d: %s\n", l.c_str());

@@ -115,8 +115,24 @@ namespace rc::rec
             // (step 7 batch 5) The capture with no recording: only live consumers (addLive). setRecording makes it record.
             Capture() : m_keyEvery(300u) { m_state = Done; }
 
+            // (step 8 batch 4) RC_FRAME_RECORD_DRAWLISTS=1: a live consumer's list of a recorded cycle, as a DLST chunk.
+            bool drawListWanted(uint64_t cycle) const
+            {
+                return m_drawLists && m_writer && m_state == Recording && static_cast<int64_t>(cycle) == m_lastRecordedCycle &&
+                       std::this_thread::get_id() == m_ee;
+            }
+            void drawList(uint64_t cycle, std::vector<uint8_t> &&payload)
+            {
+                if (!drawListWanted(cycle))
+                    return;
+                m_writer->drawList(cycle, std::move(payload));
+                ++m_drawListsWritten;
+            }
+
             void setRecording(std::string path, Trigger trigger, uint64_t keyEvery)
             {
+                if (const char *dl = std::getenv("RC_FRAME_RECORD_DRAWLISTS"); dl && std::strcmp(dl, "1") == 0)
+                    m_drawLists = true;
                 m_path = std::move(path);
                 m_trigger = std::move(trigger);
                 m_keyEvery = keyEvery ? keyEvery : m_trigger.kind == Trigger::Ring ? 120u : 300u;
@@ -917,6 +933,10 @@ namespace rc::rec
                         line += std::string(" ") + names[t] + " " + std::to_string(s.recordCount[t]) + " (" +
                                 std::to_string(s.recordBytes[t] / 1024u) + " KB)";
                 std::fprintf(stderr, "[frame-record] records:%s\n", line.c_str());
+                if (m_drawLists)
+                    std::fprintf(stderr, "[frame-record] draw lists (DLST): %llu of %llu cycles, %.1f MB raw -> %.1f MB stored\n",
+                                 static_cast<unsigned long long>(s.drawLists), static_cast<unsigned long long>(m_recorded),
+                                 s.drawListRawBytes / 1048576.0, s.drawListStoredBytes / 1048576.0);
                 std::fprintf(stderr,
                              "[frame-record] recorder time: %.2f ms a cycle on average in the kick hooks (largest %.2f ms), keyframes %.1f ms "
                              "on average (largest %.1f ms); %llu odd events recorded, %llu hook calls off the EE thread\n",
@@ -1011,6 +1031,7 @@ namespace rc::rec
                     }
                     for (Consumer *c : m_consumers)
                         c->cycleEnd(info, picture);
+                    m_lastRecordedCycle = static_cast<int64_t>(m_cycle);
                     m_hookNsTotal += m_cycleHookNs;
                     m_hookNsMax = std::max(m_hookNsMax, m_cycleHookNs);
                     m_statusHookMax = std::max(m_statusHookMax, m_cycleHookNs);
@@ -1171,6 +1192,9 @@ namespace rc::rec
             bool m_kickRecorded = false; // the kick in progress goes to the recording consumers (page tracker, hashes)
             bool m_recordingSet = false; // RC_FRAME_RECORD configured a recording
             std::vector<Consumer *> m_live; // (batch 5) live consumers
+            bool m_drawLists = false;        // (step 8 batch 4) RC_FRAME_RECORD_DRAWLISTS=1
+            int64_t m_lastRecordedCycle = -1;
+            uint64_t m_drawListsWritten = 0;
             KickView m_kick{};
             // Exact mode (batch 2).
             bool m_exact = false, m_strict = false, m_refHash = true, m_inGif = false;
@@ -1268,4 +1292,12 @@ namespace rc::rec
     }
 
     bool captureInstalled() { return g_installed; }
+
+    bool drawListWanted(uint64_t cycle) { return g_capture && g_capture->drawListWanted(cycle); }
+
+    void recordDrawList(uint64_t cycle, std::vector<uint8_t> &&payload)
+    {
+        if (g_capture)
+            g_capture->drawList(cycle, std::move(payload));
+    }
 }

@@ -38,6 +38,10 @@ namespace rc::rec
     constexpr uint32_t kChunkPicture = fourcc("REFI");
     constexpr uint32_t kChunkIndex = fourcc("INDX");
     constexpr uint32_t kChunkEnd = fourcc("ENDF");
+    // (renderer P1 step 8 batch 4) The live frame reader's draw list of the cycle just before it (RC_FRAME_RECORD_DRAWLISTS=1;
+    // RENDERER_FRAME_RECORD.md section 9): written after that cycle's CYCL (and REFI), zlib-compressed, not indexed.
+    // Payload: render/frame/dlst.h.
+    constexpr uint32_t kChunkDrawList = fourcc("DLST");
     // State chunks nested in a KEYF.
     constexpr uint32_t kStateGsMemory = fourcc("GSVR");   // GS local memory, kGsMemBytes, as the runtime stores it
     constexpr uint32_t kStateGsPriv = fourcc("GSPR");     // the privileged registers: 20 x u64 (GsPrivRegs)

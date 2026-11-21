@@ -11,11 +11,11 @@ namespace rc::live
     using namespace rc::rec;
     using namespace rc::rd;
 
-    void appendList(DrawList &to, const DrawList &from, bool textureOnly)
+    void appendList(DrawList &to, const DrawList &from, bool persistentOnly)
     {
         for (const DrawCmd &c : from.cmds)
         {
-            if (textureOnly && c.op != kOpTexture)
+            if (persistentOnly && c.op != kOpTexture && c.op != kOpImageBlit)
                 continue;
             DrawCmd &n = to.add(c.op, from.data(c), c.payloadBytes);
             const uint32_t offset = n.payloadOffset;
@@ -33,13 +33,16 @@ namespace rc::live
         while (m_queue.size() > kMaxPending)
         {
             // The presenter is behind (a minimised window, a stall): the oldest list's draws are of a picture nobody will
-            // see (every cycle clears the frame), but its TEXTURE commands name generations later lists rely on.
+            // see, but its TEXTURE commands name generations later lists rely on and its uploads stay in the targets.
             Published &oldest = m_queue.front();
             Published &next = m_queue[1];
             DrawList merged;
             appendList(merged, oldest.list, true);
+            const uint32_t shift = static_cast<uint32_t>(merged.cmds.size());
             appendList(merged, next.list);
             next.list = std::move(merged);
+            for (uint32_t &r : next.k2Ranges)
+                r += shift;
             m_queue.pop_front();
             ++m_stripped;
         }
@@ -60,7 +63,7 @@ namespace rc::live
         {
             FrameReader::Options o;
             o.gif.cullOffscreen = true;
-            o.gif.path1Prims = false; // K2 is not drawn yet (step 8): its registers only
+            o.gif.path1Prims = true;   // (step 8 batch 4) K2 is drawn
             o.gif.frameUploads = true; // uploads into the frame buffers, in order with the draws
             return o;
         }
@@ -69,16 +72,12 @@ namespace rc::live
     Reader::Reader(Mailbox &box, bool live) : m_box(box), m_frame(readerOptions()), m_live(live)
     {
         if (live)
-        {
             m_frame.startLive();
-            m_blit.startBlank();
-        }
     }
 
     void Reader::open(const FileInfo &info)
     {
         m_frame.open(info);
-        m_blit.open(info);
         if (info.header.height)
             m_height = info.header.height;
     }
@@ -88,20 +87,17 @@ namespace rc::live
         // Live: only a save-state load sends one (the capture's live keyframe). Off-line: the dump's, as the frame
         // reader and FrameBlit take them (the first, and one after a load).
         m_frame.keyframe(kf);
-        m_blit.keyframe(kf);
     }
 
     void Reader::cycleBegin(uint64_t cycle)
     {
         m_cycleNs = 0.0;
         m_frame.cycleBegin(cycle);
-        m_blit.cycleBegin(cycle);
     }
 
     void Reader::hw(uint32_t address, uint32_t width, uint64_t value, uint32_t callerRa)
     {
         m_frame.hw(address, width, value, callerRa);
-        m_blit.hw(address, width, value, callerRa);
     }
 
     void Reader::kick(const KickView &k, const RamView &ram)
@@ -109,7 +105,6 @@ namespace rc::live
         const Clock::time_point t0 = Clock::now();
         const uint64_t guarded = m_frame.stats().guardedKicks;
         m_frame.kick(k, ram);
-        m_blit.kick(k, ram);
         const double ns = static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t0).count());
         m_cycleNs += ns;
         if (k.channel == 1u)
@@ -140,7 +135,6 @@ namespace rc::live
     {
         const Clock::time_point t0 = Clock::now();
         m_frame.cycleEnd(info, refRgba);
-        m_blit.cycleEnd(info, refRgba);
         Published p;
         p.cycle = info.end.cycle;
         p.dispfb2 = info.end.dispfb2;
@@ -148,14 +142,9 @@ namespace rc::live
         p.width = 640u;
         p.height = info.end.refHeight ? info.end.refHeight : m_height;
         p.list = m_frame.list();
-        const FrameBlit::Picture &pic = m_blit.picture();
-        p.uploadOnly = m_blit.started() && pic.uploadOnly() && pic.width == p.width && pic.height == p.height;
-        if (p.uploadOnly)
-        {
-            p.picture = pic.rgba;
-            ++m_stats.uploadOnly;
-            ++m_window.uploadOnly;
-        }
+        p.k2Ranges = m_frame.path1Ranges();
+        if (m_sink)
+            m_sink(p.cycle, p.list, static_cast<uint32_t>(p.k2Ranges.size() / 2u));
         m_cycleNs += static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t0).count());
         p.readerMs = m_cycleNs / 1e6;
         m_box.push(std::move(p));
@@ -170,11 +159,10 @@ namespace rc::live
             const Stats &w = m_window;
             std::fprintf(stderr,
                          "[vk-native] cycles %llu-%llu: reader %.2f ms a cycle on the EE thread (largest %.2f); VIF1 kicks %llu, %.2f ms each "
-                         "(largest %.2f); PATH3 kicks %llu; upload-only pictures %llu; guarded %llu\n",
+                         "(largest %.2f); PATH3 kicks %llu; guarded %llu\n",
                          static_cast<unsigned long long>(m_windowFirst), static_cast<unsigned long long>(info.end.cycle), w.ns / w.cycles / 1e6,
                          w.maxCycleNs / 1e6, static_cast<unsigned long long>(w.path1Kicks), w.path1Kicks ? w.path1Ns / w.path1Kicks / 1e6 : 0.0,
-                         w.maxPath1Ns / 1e6, static_cast<unsigned long long>(w.path3Kicks), static_cast<unsigned long long>(w.uploadOnly),
-                         static_cast<unsigned long long>(w.guarded));
+                         w.maxPath1Ns / 1e6, static_cast<unsigned long long>(w.path3Kicks), static_cast<unsigned long long>(w.guarded));
             m_window = Stats{};
             m_windowFirst = info.end.cycle + 1u;
         }
@@ -234,9 +222,6 @@ namespace rc::live
         if (!m_created)
             return;
         rhi_wait_idle();
-        if (m_picture.id)
-            rhi_destroy_texture(m_picture);
-        m_picture = RhiTexture{};
         m_vk.destroy();
         m_created = false;
     }
@@ -246,98 +231,105 @@ namespace rc::live
         if (!m_created)
             return m_view;
         ++m_stats.frames;
+        ++m_window.frames;
         const uint32_t slot = rhi_frame_slot();
         if (m_stamped[slot])
         {
-            // This slot's last lists are done (rhi_wait_frame recycled it): their GPU time.
+            // This slot's last lists are done (rhi_wait_frame recycled it): their GPU time, and K2's (U3).
             m_stamped[slot] = false;
-            uint64_t ns[2] = {};
-            if (rhi_read_timestamps(ns, 2u) >= 2u && ns[0] && ns[1] >= ns[0])
+            uint64_t ns[RHI_MAX_TIMESTAMPS] = {};
+            const uint32_t n = rhi_read_timestamps(ns, RHI_MAX_TIMESTAMPS);
+            if (n >= 2u && ns[0] && ns[1] >= ns[0])
             {
                 const double ms = static_cast<double>(ns[1] - ns[0]) / 1e6;
-                ++m_stats.gpuSamples;
-                m_stats.gpuMs += ms;
-                m_stats.maxGpuMs = std::max(m_stats.maxGpuMs, ms);
+                for (Stats *s : {&m_stats, &m_window})
+                {
+                    ++s->gpuSamples;
+                    s->gpuMs += ms;
+                    s->maxGpuMs = std::max(s->maxGpuMs, ms);
+                }
             }
+            double frameK2 = 0.0;
+            uint32_t timed = 0;
+            for (uint32_t k = 0; k < m_k2Stamps[slot]; ++k)
+            {
+                const uint32_t b = 2u + 2u * k, e = b + 1u;
+                if (e >= n || !ns[b] || ns[e] < ns[b])
+                    continue;
+                const double ms = static_cast<double>(ns[e] - ns[b]) / 1e6;
+                frameK2 += ms;
+                ++timed;
+                for (Stats *s : {&m_stats, &m_window})
+                {
+                    ++s->k2KicksTimed;
+                    s->k2Ms += ms;
+                    s->maxK2KickMs = std::max(s->maxK2KickMs, ms);
+                }
+            }
+            if (timed)
+                for (Stats *s : {&m_stats, &m_window})
+                {
+                    ++s->k2FramesTimed;
+                    s->k2FrameMs += frameK2;
+                    s->maxK2FrameMs = std::max(s->maxK2FrameMs, frameK2);
+                }
+            m_k2Stamps[slot] = 0;
         }
         if (lists.empty())
             return m_view;
         ++m_stats.framesWithLists;
+        ++m_window.framesWithLists;
         m_stats.lists += lists.size();
+        m_window.lists += lists.size();
         const DrawList *one = &lists.front().list;
+        const std::vector<uint32_t> *ranges = &lists.front().k2Ranges;
         if (lists.size() > 1u)
         {
             m_merged.clear();
+            m_ranges.clear();
             for (const Published &p : lists)
+            {
+                const uint32_t shift = static_cast<uint32_t>(m_merged.cmds.size());
                 appendList(m_merged, p.list);
+                for (uint32_t r : p.k2Ranges)
+                    m_ranges.push_back(r + shift);
+            }
             one = &m_merged;
+            ranges = &m_ranges;
         }
-        if (m_vk.record(*one, cl, m_opt.timestamps))
+        if (m_vk.record(*one, cl, m_opt.timestamps, ranges))
         {
             m_stamped[slot] = m_opt.timestamps && rhi_timestamps_supported();
             const Gs2dVk::ListStats &l = m_vk.lastList();
-            m_stats.readPrims += l.readPrims;
-            m_stats.barriers += l.barriers;
-            m_stats.draws += l.draws;
+            m_k2Stamps[slot] = m_stamped[slot] ? l.rangeStamps : 0u;
+            for (Stats *s : {&m_stats, &m_window})
+            {
+                s->readPrims += l.readPrims;
+                s->barriers += l.barriers;
+                s->draws += l.draws;
+                s->k2KicksUntimed += l.rangesUnstamped;
+            }
         }
         else
+        {
             ++m_stats.failures;
+            ++m_window.failures;
+        }
 
         const Published &last = lists.back();
         View v;
         v.cycle = last.cycle;
         v.width = last.width;
         v.height = last.height;
-        if (last.uploadOnly && last.picture.size() >= static_cast<size_t>(last.width) * last.height * 4u)
+        if (last.fbp != 0x0u && last.fbp != 0x50u)
         {
-            if (!m_picture.id || m_pictureW != last.width || m_pictureH != last.height)
-            {
-                if (m_picture.id)
-                    rhi_destroy_texture(m_picture);
-                RhiTextureDesc td{};
-                td.width = last.width;
-                td.height = last.height;
-                td.mipLevels = 1u;
-                td.format = RHI_FMT_RGBA8_UNORM;
-                td.usage = RHI_TEX_SAMPLED | RHI_TEX_COPY_DST | RHI_TEX_COPY_SRC;
-                td.debugName = "live upload-only picture";
-                m_picture = rhi_create_texture(&td);
-                m_pictureW = last.width;
-                m_pictureH = last.height;
-                m_pictureState = RHI_STATE_UNDEFINED;
-            }
-            const uint64_t bytes = static_cast<uint64_t>(last.width) * last.height * 4u;
-            const RhiBufferDesc bd{bytes, RHI_BUF_COPY_SRC, RHI_MEM_UPLOAD, "live picture upload"};
-            RhiBuffer ub = m_picture.id ? rhi_create_buffer(&bd) : RhiBuffer{};
-            void *p = ub.id ? rhi_map_buffer(ub) : nullptr;
-            if (p)
-            {
-                std::memcpy(p, last.picture.data(), bytes);
-                rhi_unmap_buffer(ub);
-                const RhiTextureBarrier toCopy{m_picture, m_pictureState, RHI_STATE_COPY_DST};
-                rhi_cmd_barrier(cl, &toCopy, 1u);
-                rhi_cmd_copy_buffer_to_texture(cl, ub, 0u, last.width * 4u, m_picture, 0u, RhiRect{0, 0, last.width, last.height});
-                const RhiTextureBarrier toRead{m_picture, RHI_STATE_COPY_DST, RHI_STATE_SHADER_READ};
-                rhi_cmd_barrier(cl, &toRead, 1u);
-                m_pictureState = RHI_STATE_SHADER_READ;
-                v.texture = m_picture;
-                v.texHeight = last.height;
-                v.upload = v.valid = true;
-                m_pictureCpu = last.picture;
-                ++m_stats.uploadsShown;
-            }
-            if (ub.id)
-                rhi_destroy_buffer(ub); // deferred until the frame's work is done
+            ++m_stats.otherFbp; // drawn as Gs2dVk's plan does: FBP 0x50 is target 1, anything else target 0
+            ++m_window.otherFbp;
         }
-        if (!v.valid)
-        {
-            if (last.fbp != 0x0u && last.fbp != 0x50u)
-                ++m_stats.otherFbp; // drawn as Gs2dVk's plan does: FBP 0x50 is target 1, anything else target 0
-            m_viewTarget = last.fbp == 0x50u ? 1u : 0u;
-            v.texture = m_vk.sampleTarget(cl, m_viewTarget);
-            v.texHeight = Gs2dVk::kHeight;
-            v.valid = v.texture.id != 0u;
-        }
+        m_viewTarget = last.fbp == 0x50u ? 1u : 0u;
+        v.texture = m_vk.sampleTarget(cl, m_viewTarget);
+        v.texHeight = Gs2dVk::kHeight;
+        v.valid = v.texture.id != 0u;
         m_view = v;
         return m_view;
     }
@@ -347,13 +339,6 @@ namespace rc::live
         if (!m_view.valid)
             return false;
         const size_t bytes = static_cast<size_t>(m_view.width) * m_view.height * 4u;
-        if (m_view.upload)
-        {
-            if (m_pictureCpu.size() < bytes)
-                return false;
-            rgba.assign(m_pictureCpu.begin(), m_pictureCpu.begin() + static_cast<ptrdiff_t>(bytes));
-            return true;
-        }
         std::vector<uint32_t> words;
         if (!m_vk.readColour(m_viewTarget, words) || words.size() < static_cast<size_t>(Gs2dVk::kWidth) * m_view.height)
             return false;
