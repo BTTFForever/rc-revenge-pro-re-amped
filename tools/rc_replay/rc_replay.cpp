@@ -1,6 +1,6 @@
 // rc_replay: feeds a frame record dump (.rcfr, RENDERER_FRAME_RECORD.md) to consumers.
 //
-//   rc_replay <dump> [--consumer stats|emu|tex|blit|gif2d|gif2dstat|vifstat|shapestat|vif|live2d|vk|dlst] [--cycles a-b] [--verify] [--quiet]
+//   rc_replay <dump> [--consumer stats|emu|tex|blit|gif2d|gif2dstat|vifstat|shapestat|vif|live2d|vk|dlst|lists] [--cycles a-b] [--verify] [--quiet]
 //             [--png <dir>] [--picture-before <cycle>:<kick> <out.png>] [--path1 <cycle>:<kick> <out.bin>] [--kick-hashes]
 //             [--fault page|kick|hw:<cycle>[:<n>]]
 //             [--with-emu] [--fault transfer|kick|swizzle|decode:<cycle>:<n>] (tex)
@@ -83,6 +83,7 @@
 #include "consumer.h"
 #include "live2d.h"
 #include "dlst.h"
+#include "lists.h"
 #include "frame_vk.h"
 #include "reader.h"
 #include "../../render/gfx/tags.h"
@@ -503,7 +504,9 @@ namespace
                              "       vk (exact dumps; the chained replay, no emulated machine): [--vk-blend read|ff] [--validation] [--png <dir>]\n"
                              "            [--fault depth|clear|texture|flip:<cycle>[:<cycles>]]\n"
                              "       dlst (a dump from boot with RC_FRAME_RECORD_DRAWLISTS=1): the live reader's lists against the recorded DLST chunks\n"
-                             "            [--fault list:<cycle>[:<byte>]]\n");
+                             "            [--fault list:<cycle>[:<byte>]]\n"
+                             "       lists (check (e)): the fast reader against the strict reader [--from-reset] [--fault adc|clut-memo|state-memo[:<cycle>]]\n"
+                             "       vif, lists: [--vu1 strict|lean] (vif) [--reader strict|fast] (vif: the reader timed)\n");
     }
 }
 
@@ -858,8 +861,8 @@ int main(int argc, char **argv)
     std::string path, consumer = "stats";
     bool verify = false, quiet = false, withEmu = false, noGpu = false, validation = false, noTables = false, vk = false, vifRoundNearest = false,
          vifNoPoison = false;
-    bool vkBoxes = false, vkNoFill = false, faultHasCount = false;
-    std::string vkBias = "on", vkBlend = "auto", vkFaults, vkPng, vifSubstitute = "bytes", vifOut, liveShots, rereference, vu1Library = "strict";
+    bool vkBoxes = false, vkNoFill = false, faultHasCount = false, fromReset = false;
+    std::string vkBias = "on", vkBlend = "auto", vkFaults, vkPng, vifSubstitute = "bytes", vifOut, liveShots, rereference, vu1Library = "strict", readerKind = "strict";
     uint64_t first = 0, last = ~0ull;
     rc::replay::EmuOptions emuOptions;
     auto cycleKick = [](const char *text, int64_t &cycle, uint32_t &kick)
@@ -912,6 +915,10 @@ int main(int argc, char **argv)
             vifNoPoison = true;
         else if (a == "--vu1" && i + 1 < argc)
             vu1Library = argv[++i];
+        else if (a == "--from-reset")
+            fromReset = true;
+        else if (a == "--reader" && i + 1 < argc)
+            readerKind = argv[++i];
         else if (a == "--with-emu")
             withEmu = true;
         else if (a == "--no-gpu")
@@ -1014,9 +1021,9 @@ int main(int argc, char **argv)
         return ok ? 0 : 2;
     }
     if (consumer != "stats" && consumer != "emu" && consumer != "tex" && consumer != "blit" && consumer != "gif2d" && consumer != "vif" &&
-        consumer != "live2d" && consumer != "vk" && consumer != "dlst")
+        consumer != "live2d" && consumer != "vk" && consumer != "dlst" && consumer != "lists")
     {
-        std::fprintf(stderr, "consumer '%s' is not built yet (stats, emu, tex, blit, gif2d, gif2dstat, vifstat, vif, live2d, vk, dlst)\n", consumer.c_str());
+        std::fprintf(stderr, "consumer '%s' is not built yet (stats, emu, tex, blit, gif2d, gif2dstat, vifstat, vif, live2d, vk, dlst, lists)\n", consumer.c_str());
         return 2;
     }
     Reader reader;
@@ -1125,6 +1132,17 @@ int main(int argc, char **argv)
             std::fprintf(stderr, "unknown --vu1 '%s' (strict, lean)\n", vu1Library.c_str());
             return 2;
         }
+        if (readerKind != "strict" && readerKind != "fast")
+        {
+            std::fprintf(stderr, "unknown --reader '%s' (strict, fast)\n", readerKind.c_str());
+            return 2;
+        }
+        v.fast = readerKind == "fast";
+        if (v.fast && withEmu)
+        {
+            std::fprintf(stderr, "rc_replay vif: --reader fast is off-line only (its check is --consumer lists)\n");
+            return 2;
+        }
         if (vifSubstitute != "none" && vifSubstitute != "bytes" && vifSubstitute != "list" && vifSubstitute != "list-cull")
         {
             std::fprintf(stderr, "unknown --vif-substitute '%s' (none, bytes, list, list-cull)\n", vifSubstitute.c_str());
@@ -1164,6 +1182,49 @@ int main(int argc, char **argv)
             return 2;
         }
         return runFrameVk(reader, path, o, first, last);
+    }
+    if (consumer == "lists")
+    {
+        // (P2 step 9 batch 2) Check (e): the fast reader's lists against the strict reader's.
+        rc::replay::ListsOptions o;
+        o.quiet = quiet;
+        o.fromReset = fromReset;
+        if (fromReset && (first != 0 || last != ~0ull))
+        {
+            std::fprintf(stderr, "rc_replay lists --from-reset: the readers start at boot, so the whole dump is read (no --cycles)\n");
+            return 2;
+        }
+        if (!emuOptions.faultKind.empty())
+        {
+            if (!rc::replay::parseListsFault(emuOptions.faultKind))
+            {
+                std::fprintf(stderr, "rc_replay lists: --fault adc|clut-memo|state-memo[:<cycle>]\n");
+                return 2;
+            }
+            o.fault = emuOptions.faultKind;
+            o.faultCycle = emuOptions.faultCycle < 0 ? 0 : emuOptions.faultCycle;
+            std::printf("lists: planted fault %s in the fast reader from cycle %" PRId64 "\n", o.fault.c_str(), o.faultCycle);
+        }
+        const FileHeader &h = reader.header();
+        std::printf("dump %s\n  %s, %ux%u, build %.40s, %s\n", path.c_str(), h.gameVersion ? "Europe" : "USA", h.width, h.height, h.build,
+                    (h.flags & kFileExact) ? "exact" : "plain");
+        rc::replay::ListsCheck check(o);
+        uint64_t from = first;
+        if (o.fromReset)
+            from = 0;
+        else
+            for (const IndexSegment &seg : reader.segments())
+                if (seg.firstCycle <= first)
+                    from = seg.firstCycle;
+        const bool ok = reader.run({&check}, from, last);
+        check.summary();
+        if (!ok)
+        {
+            std::printf("read error: %s\n", reader.error().c_str());
+            return 2;
+        }
+        std::printf("%s\n", check.failed() ? "FAIL" : "PASS");
+        return check.failed() ? 1 : 0;
     }
     if (consumer == "dlst")
     {

@@ -59,9 +59,10 @@ namespace rc::live
     // --- Reader ----------------------------------------------------------------------------------------------------
     namespace
     {
-        FrameReader::Options readerOptions()
+        FrameReader::Options readerOptions(bool fast)
         {
             FrameReader::Options o;
+            o.fast = fast;
             o.gif.cullOffscreen = true;
             o.gif.path1Prims = true;   // (step 8 batch 4) K2 is drawn
             o.gif.frameUploads = true; // uploads into the frame buffers, in order with the draws
@@ -69,7 +70,7 @@ namespace rc::live
         }
     }
 
-    Reader::Reader(Mailbox &box, bool live) : m_box(box), m_frame(readerOptions()), m_live(live)
+    Reader::Reader(Mailbox &box, bool live, bool fast) : m_box(box), m_frame(readerOptions(fast)), m_live(live)
     {
         if (live)
             m_frame.startLive();

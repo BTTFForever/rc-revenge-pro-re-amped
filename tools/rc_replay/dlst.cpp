@@ -116,24 +116,45 @@ namespace rc::replay
 
     std::string DlstCheck::Impl::firstDifference(const uint8_t *live, uint64_t liveBytes)
     {
-        DlstHeader a{}, b{};
-        decodeDlstHeader(offline.data(), offline.size(), a);
-        const bool liveOk = decodeDlstHeader(live, liveBytes, b);
-        char text[320];
-        if (!liveOk)
+        DlstHeader b{};
+        if (!decodeDlstHeader(live, liveBytes, b))
             return "the recorded DLST is not a draw list (bad magic or size)";
+        return dlstFirstDifference(offline.data(), offline.size(), live, liveBytes, "off-line / live");
+    }
+
+    std::string dlstFirstDifference(const uint8_t *first, uint64_t firstBytes, const uint8_t *second, uint64_t secondBytes, const char *names)
+    {
+        DlstHeader a{}, b{};
+        if (!decodeDlstHeader(first, firstBytes, a) || !decodeDlstHeader(second, secondBytes, b))
+            return "not a draw list (bad magic or size)";
+        char text[320];
         if (a.cycle != b.cycle || a.cmdCount != b.cmdCount || a.payloadBytes != b.payloadBytes || a.k2Kicks != b.k2Kicks)
         {
             std::snprintf(text, sizeof text,
-                          "header: cycle %" PRIu64 " / %" PRIu64 ", commands %u / %u, payload %" PRIu64 " / %" PRIu64 " bytes, VIF1 kicks %u / %u (off-line / live)",
-                          a.cycle, b.cycle, a.cmdCount, b.cmdCount, a.payloadBytes, b.payloadBytes, a.k2Kicks, b.k2Kicks);
-            return text;
+                          "header: cycle %" PRIu64 " / %" PRIu64 ", commands %u / %u, payload %" PRIu64 " / %" PRIu64 " bytes, VIF1 kicks %u / %u (%s)",
+                          a.cycle, b.cycle, a.cmdCount, b.cmdCount, a.payloadBytes, b.payloadBytes, a.k2Kicks, b.k2Kicks, names);
+            if (a.cmdCount == b.cmdCount && a.payloadBytes == b.payloadBytes)
+                return text;
+            // Name the first differing command too: a list that grew or shrank usually differs well before its end.
+            std::string head = text;
+            const uint32_t n = std::min(a.cmdCount, b.cmdCount);
+            const DrawCmd *ca = reinterpret_cast<const DrawCmd *>(first + sizeof(DlstHeader));
+            const DrawCmd *cb = reinterpret_cast<const DrawCmd *>(second + sizeof(DlstHeader));
+            for (uint32_t i = 0; i < n; ++i)
+                if (ca[i].op != cb[i].op || ca[i].a != cb[i].a || ca[i].b != cb[i].b || ca[i].c != cb[i].c || ca[i].d != cb[i].d ||
+                    ca[i].payloadBytes != cb[i].payloadBytes)
+                {
+                    std::snprintf(text, sizeof text, "; first differing command %u: op %u / %u, a %08x / %08x, b %08x / %08x, c %08x / %08x, d %" PRIx64 " / %" PRIx64,
+                                  i, ca[i].op, cb[i].op, ca[i].a, cb[i].a, ca[i].b, cb[i].b, ca[i].c, cb[i].c, ca[i].d, cb[i].d);
+                    return head + text;
+                }
+            return head;
         }
         const uint32_t n = std::min(a.cmdCount, b.cmdCount);
-        const DrawCmd *ca = reinterpret_cast<const DrawCmd *>(offline.data() + sizeof(DlstHeader));
-        const DrawCmd *cb = reinterpret_cast<const DrawCmd *>(live + sizeof(DlstHeader));
-        const uint8_t *pa = offline.data() + sizeof(DlstHeader) + static_cast<size_t>(a.cmdCount) * sizeof(DrawCmd);
-        const uint8_t *pb = live + sizeof(DlstHeader) + static_cast<size_t>(b.cmdCount) * sizeof(DrawCmd);
+        const DrawCmd *ca = reinterpret_cast<const DrawCmd *>(first + sizeof(DlstHeader));
+        const DrawCmd *cb = reinterpret_cast<const DrawCmd *>(second + sizeof(DlstHeader));
+        const uint8_t *pa = first + sizeof(DlstHeader) + static_cast<size_t>(a.cmdCount) * sizeof(DrawCmd);
+        const uint8_t *pb = second + sizeof(DlstHeader) + static_cast<size_t>(b.cmdCount) * sizeof(DrawCmd);
         for (uint32_t i = 0; i < n; ++i)
         {
             const DrawCmd &x = ca[i], &y = cb[i];
@@ -153,11 +174,6 @@ namespace rc::replay
                                       pa[x.payloadOffset + o], pb[y.payloadOffset + o]);
                         return text;
                     }
-        }
-        if (a.cmdCount != b.cmdCount)
-        {
-            std::snprintf(text, sizeof text, "commands %u off-line, %u live (equal up to the shorter)", a.cmdCount, b.cmdCount);
-            return text;
         }
         return "the payload arenas differ between payloads (padding)";
     }

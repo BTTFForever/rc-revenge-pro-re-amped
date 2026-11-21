@@ -10,6 +10,8 @@
 #include "gs_memory.h"
 
 #include <cstdint>
+#include <unordered_map>
+#include <vector>
 
 namespace rc::rd
 {
@@ -76,6 +78,22 @@ namespace rc::rd
     // The GS's CLUT buffer: 512 16-bit entries; a 32-bit palette keeps its low halves in [0, 256) and its high halves
     // in [256, 512). A TEX0 (or TEX2) write loads it as CLD says; sampling reads the buffer, not memory, so a palette
     // rewritten in memory takes effect only at the next load.
+    // (P2 step 9 batch 2) The fast reader's CLUT loads (Gif2dReader::Options::clutMemo, RENDERER_P2_DESIGN.md 4.4): what a
+    // load reads is a function of the palette's place and format (CBP, CPSM, CSM, CSA, 4 or 8 bits, TEXCLUT for CSM2) and of
+    // memory, so between two changes of memory (GsMemory::writes) each palette is read once and its values kept here.
+    struct ClutLoadMemo
+    {
+        uint64_t writes = ~0ull; // the GsMemory::writes() the kept values hold for
+        std::unordered_map<uint64_t, uint32_t> index;
+        struct Values
+        {
+            uint16_t lo[256], hi[256]; // by entry: the value's low and high halves (high: 32-bit palettes only)
+        };
+        std::vector<Values> raw;
+        uint64_t hits = 0, reads = 0;
+        bool faultIgnoreWrites = false; // planted fault (rc_replay lists --fault clut-memo): kept values outlive a change of memory
+    };
+
     class Clut
     {
     public:
@@ -88,12 +106,18 @@ namespace rc::rd
         // The 16 or 256 colours texture `t` indexes, widened (out: 256 entries).
         void palette(const Tex0 &t, const Texa &texa, uint32_t *out) const;
         uint64_t loads() const { return m_loads; }
+        // (P2 step 9 batch 2) write() with the load's values taken from `memo` when that palette was read since memory last
+        // changed: the same buffer as write() leaves, entry for entry.
+        bool writeMemo(const GsMemory &mem, const Tex0 &t, uint64_t texclut, ClutLoadMemo &memo);
+        // Changes whenever the buffer's contents may have changed (every load(); a writeMemo load that changed an entry).
+        uint64_t version() const { return m_version; }
         const uint16_t *raw() const { return m_buf; }
 
     private:
         uint16_t m_buf[512] = {};
         uint32_t m_cbp[2] = {~0u, ~0u};
         uint64_t m_loads = 0;
+        uint64_t m_version = 0;
     };
 
     // The lower levels of a mipmapped texture: TEX0 is level 0, MIPTBP1 levels 1-3, MIPTBP2 levels 4-6.

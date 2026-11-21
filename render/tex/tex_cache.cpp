@@ -17,12 +17,12 @@ namespace rc::rd
         Texa texaOf(uint32_t key) { return {static_cast<uint8_t>(key & 0xFFu), static_cast<uint8_t>((key >> 8) & 1u), static_cast<uint8_t>(key >> 16)}; }
     }
 
-    const CachedTexture &TextureCache::get(const Tex0 &t, const Texa &texa, const Clut *clut)
+    const CachedTexture &TextureCache::get(const Tex0 &t, const Texa &texa, const Clut *clut, bool clutVersioned)
     {
-        return get(t, mipLevel(t, 0, 0, 0), texa, clut);
+        return get(t, mipLevel(t, 0, 0, 0), texa, clut, clutVersioned);
     }
 
-    const CachedTexture &TextureCache::get(const Tex0 &t, const MipLevel &place, const Texa &texa, const Clut *clut)
+    const CachedTexture &TextureCache::get(const Tex0 &t, const MipLevel &place, const Texa &texa, const Clut *clut, bool clutVersioned)
     {
         ++m_stats.lookups;
         TexKey key;
@@ -53,6 +53,12 @@ namespace rc::rd
             if (t.indexed() && t.csm == 0u)
                 coveredBlocks(t.cpsm, t.cbp, 1, t.psm == kPsmT4 ? 8 : 16, t.psm == kPsmT4 ? 2 : 16, e.blocks);
             decode(e, texa, clut);
+            if (clutVersioned && clut)
+            {
+                e.clutFrom = clut;
+                e.clutVersion = clut->version();
+                e.clutTexa = texa.key();
+            }
             return e;
         }
         CachedTexture &e = *slot;
@@ -64,7 +70,9 @@ namespace rc::rd
         }
         ++m_stats.validations;
         bool again = stale(e);
-        if (!again && clut && t.indexed())
+        if (!again && clut && t.indexed() && clutVersioned && e.clutFrom == clut && e.clutVersion == clut->version() && e.clutTexa == texa.key())
+            ++m_stats.paletteChecksSkipped; // the buffer has not changed since this palette was made or found equal
+        else if (!again && clut && t.indexed())
         {
             // The reader's CLUT buffer decides, not memory: decode again when its colours differ from the ones used.
             uint32_t pal[256];
@@ -75,6 +83,12 @@ namespace rc::rd
         {
             ++m_stats.redecodes;
             decode(e, texa, clut);
+        }
+        if (clutVersioned && clut)
+        {
+            e.clutFrom = clut;
+            e.clutVersion = clut->version();
+            e.clutTexa = texa.key();
         }
         e.checkedAt = now;
         return e;
@@ -91,6 +105,7 @@ namespace rc::rd
     void TextureCache::decode(CachedTexture &e, const Texa &texa, const Clut *clut)
     {
         const auto t0 = std::chrono::steady_clock::now();
+        e.clutFrom = nullptr; // get() records the CLUT buffer's version after the decode when asked to (clutVersioned)
         const Tex0 &t = e.tex0;
         const size_t texels = static_cast<size_t>(e.key.width) * e.key.height;
         e.rgba.resize(texels * 4u);

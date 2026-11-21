@@ -49,6 +49,18 @@ namespace rc::rd
             }
         }
         bool isVertexReg(uint8_t a) { return a == kGsXyz2 || a == kGsXyzf2 || a == kGsXyz3 || a == kGsXyzf3; }
+        // The Q the reference GS gives a vertex for a written Q (gif_walk.cpp's referenceQ: 0.0 reads as 1.0).
+        inline uint32_t referenceQ(uint32_t bits)
+        {
+            float q;
+            std::memcpy(&q, &bits, 4);
+            return q == 0.0f ? 0x3F800000u : bits;
+        }
+        // (P2 step 9 batch 2) The tags Options::path1Direct recognises: the fields the walker reads (NLOOP, PRE, FLG, NREG;
+        // EOP and, without PRE, the PRIM field change nothing it does) and the first three descriptors.
+        constexpr uint64_t kTagFields = 0x7FFFull | (1ull << 46) | (3ull << 58) | (15ull << 60);
+        constexpr uint64_t kTriangleTag = 3ull | (3ull << 60); // NLOOP 3, PACKED, NREG 3
+        constexpr uint64_t kTriangleRegs = 0x512u;             // ST, RGBAQ, XYZ2
         bool isLatchReg(uint8_t a) { return a == kGsRgbaq || a == kGsSt || a == kGsUv || a == kGsFog; }
         bool usesTexa(const Tex0 &t)
         {
@@ -173,6 +185,7 @@ namespace rc::rd
         {
             // Never seen on PATH1 (RENDERER_3D_DESIGN.md 3.5); applied as PATH3 applies it, and counted.
             ++self->m_stats.path1Transfers;
+            ++self->m_regSerial;
             self->m_shadow.memory().writeRegister(addr, value);
             self->m_regs[addr] = value;
             self->m_prov[addr] = kProvStream;
@@ -202,6 +215,51 @@ namespace rc::rd
             return;
         ++m_stats.path1Packets;
         m_stats.path1Bytes += bytes;
+        if (m_opt.path1Direct && bytes >= 16u && !m_path1Walker.tagOpen())
+        {
+            // (P2 step 9 batch 2, RENDERER_P2_DESIGN.md 4.4) The fast reader's sink. With no tag open the packet starts
+            // with a tag, so what the walker would do with it depends on the packet's bytes and the reader's state only.
+            uint64_t lo, hi;
+            std::memcpy(&lo, data, 8);
+            std::memcpy(&hi, data + 8, 8);
+            if (bytes == 160u && (lo & kTagFields) == kTriangleTag && (hi & 0xFFFu) == kTriangleRegs)
+            {
+                uint32_t nine[36];
+                std::memcpy(nine, data + 16, sizeof(nine));
+                if (path1Triangle(nine))
+                {
+                    ++m_stats.path1Triangles;
+                    return;
+                }
+                ++m_stats.path1TrianglesWalked;
+            }
+            else if (bytes == 16u && (lo & 0x7FFFu) == 0u && !((lo >> 46) & 1u))
+            {
+                // NLOOP 0 without PRE: the walker reads the tag and nothing else (the next packet starts a tag again).
+                ++m_stats.path1Flushes;
+                return;
+            }
+            else if (m_opt.stateMemo && stateOnlyPacket(data, bytes))
+            {
+                const bool bytesOnly = fastFault(Options::kFastFaultStateMemo);
+                if (m_stateMemoValid && bytes == m_stateMemo.size() && static_cast<int64_t>(m_cycle) != m_opt.faultCycle &&
+                    (bytesOnly || (m_regSerial == m_stateMemoRegSerial && m_shadow.memory().writes() == m_stateMemoWrites)) &&
+                    std::memcmp(data, m_stateMemo.data(), bytes) == 0)
+                {
+                    ++m_stats.stateMemoHits;
+                    return;
+                }
+                ++m_stats.path1Walked;
+                m_path1Walker.feed(data, bytes, m_path1Feed);
+                m_stateMemo.assign(data, data + bytes);
+                m_stateMemoRegSerial = m_regSerial;
+                m_stateMemoWrites = m_shadow.memory().writes();
+                m_stateMemoValid = true;
+                return;
+            }
+            else
+                ++m_stats.path1Walked;
+        }
         m_path1Walker.feed(data, bytes, m_path1Feed);
         // Every PATH1 packet is one tag with EOP (RENDERER_3D_DESIGN.md 3.5): one left open is counted, and the next
         // packet continues it as the GS would.
@@ -216,6 +274,7 @@ namespace rc::rd
         if (!guarded)
             return;
         ++m_stats.path1Guarded;
+        ++m_regSerial;
         for (uint32_t a = 0; a < kGsRegFile; ++a)
             if (path1Writes(static_cast<uint8_t>(a)))
                 m_prov[a] = kProvUnknown;
@@ -232,6 +291,7 @@ namespace rc::rd
             return;
         if (!m_shadow.loadKeyframe(kf))
             return;
+        ++m_regSerial;
         std::memset(m_prov, 0, sizeof(m_prov));
         if (const StateChunk *regs = kf.find(kStateGsRegs); m_opt.seed && regs && regs->bytes >= kGsRegFile * 8u)
         {
@@ -273,6 +333,7 @@ namespace rc::rd
 
     void Gif2dReader::startBlank()
     {
+        ++m_regSerial;
         std::memset(m_prov, 0, sizeof(m_prov));
         m_queued = 0;
         m_stateDirty = true;
@@ -309,6 +370,7 @@ namespace rc::rd
                     m_regs[a] = k.regs[a];
                     m_prov[a] = kProvSeeded;
                     m_stateDirty = true;
+                    ++m_regSerial;
                 }
         const GsMemory &mem = m_shadow.memory();
         const uint64_t transfersBefore = mem.stats().transfers, imageBefore = m_shadow.walker().stats().imageBytes;
@@ -399,6 +461,7 @@ namespace rc::rd
 
     void Gif2dReader::reg(uint8_t addr, uint64_t value)
     {
+        ++m_regSerial;
         if (static_cast<int64_t>(m_cycle) == m_opt.faultCycle && addr == m_opt.faultN)
         {
             ++m_cycleRegWrites;
@@ -414,8 +477,32 @@ namespace rc::rd
             // (step 8 batch 2) The GS's CLUT buffer: a TEX0 write loads it from memory as CLD says, and an indexed texture
             // is read through it, not through memory as it is at the draw (PATH3 re-uploads palettes between kicks while
             // PATH1 keeps drawing with the TEX0 it wrote earlier).
-            if (m_clut.write(m_shadow.memory(), Tex0::unpack(value), m_regs[kGsTexclut]))
-                ++m_stats.clutLoads;
+            if (!m_opt.clutMemo)
+            {
+                if (m_clut.write(m_shadow.memory(), Tex0::unpack(value), m_regs[kGsTexclut]))
+                    ++m_stats.clutLoads;
+            }
+            else
+            {
+                // (P2 step 9 batch 2) The CLUT memo: a write is idempotent (Clut::write with CLD 0-5 leaves the buffer and CBP0/1
+                // as the same write left them, if memory and TEXCLUT are unchanged), so the same TEX0 again changes nothing.
+                const uint64_t texclut = m_regs[kGsTexclut], writes = m_shadow.memory().writes();
+                if (m_clutMemoValid && value == m_clutMemoTex0 && texclut == m_clutMemoTexclut &&
+                    (writes == m_clutMemoWrites || fastFault(Options::kFastFaultClutMemo)))
+                    ++m_stats.clutMemoHits;
+                else
+                {
+                    const uint64_t hits = m_clutLoads.hits;
+                    m_clutLoads.faultIgnoreWrites = fastFault(Options::kFastFaultClutMemo);
+                    if (m_clut.writeMemo(m_shadow.memory(), Tex0::unpack(value), texclut, m_clutLoads))
+                        ++m_stats.clutLoads;
+                    m_stats.clutLoadsFromMemo += m_clutLoads.hits - hits;
+                    m_clutMemoValid = true;
+                    m_clutMemoTex0 = value;
+                    m_clutMemoTexclut = texclut;
+                    m_clutMemoWrites = writes;
+                }
+            }
             m_stateDirty = true;
         }
         if (isVertexReg(addr))
@@ -430,6 +517,95 @@ namespace rc::rd
             ++m_stats.sideRegs[addr];
         if (!isLatchReg(addr))
             m_stateDirty = true;
+    }
+
+    bool Gif2dReader::stateOnlyPacket(const uint8_t *data, uint32_t bytes)
+    {
+        // One PACKED tag whose data are register writes that leave the vertex queue, the vertex Q and GS memory alone:
+        // PRIM, TEX0 and CLAMP descriptors, NOP, and A+D to any register below the transfer registers (0x50) except RGBAQ,
+        // ST, UV, XYZF2, XYZ2 (0x01-0x05), XYZF3 and XYZ3. Writing such a packet twice in a row is writing it once.
+        if (bytes < 32u)
+            return false;
+        uint64_t lo, hi;
+        std::memcpy(&lo, data, 8);
+        std::memcpy(&hi, data + 8, 8);
+        const uint32_t nloop = static_cast<uint32_t>(lo & 0x7FFFu);
+        uint32_t nreg = static_cast<uint32_t>(lo >> 60) & 15u;
+        if (nreg == 0u)
+            nreg = 16u;
+        if (((lo >> 58) & 3u) != 0u || nloop == 0u || 16u + static_cast<uint64_t>(nloop) * nreg * 16u != bytes)
+            return false;
+        bool anyAd = false;
+        for (uint32_t i = 0; i < nreg; ++i)
+        {
+            const uint32_t d = static_cast<uint32_t>(hi >> (4u * i)) & 15u;
+            if (d == 0xEu)
+                anyAd = true;
+            else if (d != 0x0u && (d < 0x6u || d > 0x9u) && d != 0xFu)
+                return false;
+        }
+        if (anyAd)
+            for (uint32_t l = 0; l < nloop; ++l)
+                for (uint32_t i = 0; i < nreg; ++i)
+                    if (((hi >> (4u * i)) & 15u) == 0xEu)
+                    {
+                        const uint8_t a = data[16u + (l * nreg + i) * 16u + 8u];
+                        if ((a >= 0x01u && a <= 0x05u) || a == 0x0Cu || a == 0x0Du || a >= 0x50u)
+                            return false;
+                    }
+        return true;
+    }
+
+    bool Gif2dReader::path1Triangle(const uint32_t *w)
+    {
+        // What the walker does with the packet (gif_walk.cpp packed(): per corner ST, then RGBAQ with the ST's Q, then XYZ2,
+        // or XYZ3 with ADC, after vertexQ) and what reg() and vertex() do with those writes, for a triangle list with an
+        // empty queue. Anything else goes back to the walker untouched.
+        const bool ignoreAdc = fastFault(Options::kFastFaultAdc);
+        if (m_queued != 0u || (m_regs[kGsPrim] & 7u) != kPrimTriangle || static_cast<int64_t>(m_cycle) == m_opt.faultCycle ||
+            (!ignoreAdc && (w[35] & 0x8000u)))
+            return false;
+        ++m_regSerial;
+        GsVertex v[3];
+        uint32_t vq = 0x3F800000u;
+        const uint16_t u = static_cast<uint16_t>(m_regs[kGsUv] & 0x3FFFu), uv = static_cast<uint16_t>((m_regs[kGsUv] >> 16) & 0x3FFFu);
+        for (uint32_t c = 0; c < 3; ++c)
+        {
+            const uint32_t *q = w + 12u * c;
+            const uint32_t qBits = q[2];
+            vq = referenceQ(qBits);
+            const uint64_t rgbaq = (q[4] & 0xFFu) | (q[5] & 0xFFu) << 8 | (q[6] & 0xFFu) << 16 | static_cast<uint64_t>(q[7] & 0xFFu) << 24 |
+                                   static_cast<uint64_t>(qBits) << 32;
+            const bool adc = !ignoreAdc && (q[11] & 0x8000u);
+            const uint8_t addr = adc ? kGsXyz3 : kGsXyz2;
+            m_regs[kGsSt] = q[0] | static_cast<uint64_t>(q[1]) << 32;
+            m_regs[kGsRgbaq] = rgbaq;
+            m_regs[addr] = (q[8] & 0xFFFFu) | (q[9] & 0xFFFFu) << 16 | static_cast<uint64_t>(q[10]) << 32;
+            m_prov[kGsSt] = m_prov[kGsRgbaq] = m_prov[addr] = kProvStream;
+            GsVertex &x = v[c];
+            x = GsVertex{};
+            x.x = static_cast<uint16_t>(q[8]);
+            x.y = static_cast<uint16_t>(q[9]);
+            x.z = q[10];
+            x.r = static_cast<uint8_t>(q[4]);
+            x.g = static_cast<uint8_t>(q[5]);
+            x.b = static_cast<uint8_t>(q[6]);
+            x.a = static_cast<uint8_t>(q[7]);
+            if (vq != qBits)
+                ++m_stats.vertexQNotRgbaq;
+            std::memcpy(&x.q, &vq, 4);
+            std::memcpy(&x.s, &q[0], 4);
+            std::memcpy(&x.t, &q[1], 4);
+            x.u = u;
+            x.v = uv;
+            if (adc)
+                ++m_stats.verticesNoKick;
+        }
+        m_stats.regWrites += 9u;
+        m_stats.vertices += 3u;
+        m_vertexQ = vq;
+        primitive(v, 3u);
+        return true;
     }
 
     void Gif2dReader::vertex(uint8_t addr, uint64_t value)
@@ -573,7 +749,7 @@ namespace rc::rd
             if (!missing)
             {
                 const Clut *clut = t.indexed() && m_clut.loads() ? &m_clut : nullptr; // before the first load: memory
-                const CachedTexture &e = m_cache.get(t, m_opt.faultIgnoreTexa ? Texa::unpack(0x80ull << 32) : Texa::unpack(s.texa), clut);
+                const CachedTexture &e = m_cache.get(t, m_opt.faultIgnoreTexa ? Texa::unpack(0x80ull << 32) : Texa::unpack(s.texa), clut, m_opt.clutMemo);
                 if (e.valid)
                 {
                     s.texture = textureId(&e);

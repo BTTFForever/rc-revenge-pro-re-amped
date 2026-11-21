@@ -75,7 +75,8 @@ namespace rc::live
             double ns = 0.0, path1Ns = 0.0, maxCycleNs = 0.0, maxPath1Ns = 0.0;
         };
         // live: start from reset (the game's live reader); false: from the dump's first keyframe (rc_replay).
-        Reader(Mailbox &box, bool live);
+        // fast (P2 step 9 batch 2; RC_VK_READER=fast in the game): FrameReader::Options::fast, the same lists.
+        Reader(Mailbox &box, bool live, bool fast = false);
 
         void open(const rc::rec::FileInfo &info) override;
         void keyframe(const rc::rec::Keyframe &kf) override;

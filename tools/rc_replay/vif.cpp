@@ -256,6 +256,7 @@ namespace rc::replay
             f.gif.cullOffscreen = o.withEmu && o.substitute == "list-cull";
             f.deferPath1 = o.withEmu;
             f.collectPath1 = o.withEmu && (o.substitute == "bytes" || std::getenv("RC_VIF_LIST_TRACE"));
+            f.fast = o.fast;
             return f;
         }
 
@@ -339,7 +340,7 @@ namespace rc::replay
                     fail(fmt("(a) cycle %" PRIu64 " kick %u: micro memory after the kick differs from the machine's", k.cycle, k.index));
                 }
             }
-            else if (k.hasGifHash && exact)
+            else if (k.hasGifHash && exact && !opt.fast) // the fast reader keeps no PATH1 hash (D-P2-3)
             {
                 // (b) without the machine: the bytes as the GS would receive them.
                 ++hashKicks;
@@ -586,7 +587,7 @@ namespace rc::replay
         m->fr->vif().setPoison(!options.noPoison);
         {
             Vif1Reader::Options vo = m->fr->vif().options();
-            vo.library = options.library;
+            vo.library = options.fast ? Vu1Library::Lean : options.library;
             m->fr->vif().setOptions(vo);
         }
         m->divert = m->opt.withEmu && m->opt.substitute != "none";
@@ -825,7 +826,7 @@ namespace rc::replay
         if (s.timedKicks)
             std::printf("vif: time a channel 1 kick (mean / largest)%s: references (%s) %.2f / %.2f ms, VIF walk %.2f / %.2f ms, %s %.2f / %.2f ms, "
                         "all %.2f / %.2f ms\n",
-                        s.opt.withEmu ? " (with the comparisons beside the machine)" : "", vu1LibraryName(s.fr->vif().options().library), v.refNs * ms / s.timedKicks, s.maxRefNs * ms,
+                        s.opt.withEmu ? " (with the comparisons beside the machine)" : s.opt.fast ? " (the fast reader)" : "", vu1LibraryName(s.fr->vif().options().library), v.refNs * ms / s.timedKicks, s.maxRefNs * ms,
                         v.walkNs * ms / s.timedKicks, s.maxWalkNs * ms, s.opt.withEmu ? "comparison, GIF walk and list" : "GIF walk and list",
                         v.sinkNs * ms / s.timedKicks, s.maxSinkNs * ms, (v.refNs + v.walkNs + v.sinkNs) * ms / s.timedKicks, s.maxTotalNs * ms);
         std::printf("(a) keyframes: %" PRIu64 " compared: VIF1 registers %" PRIu64 ", micro memory %" PRIu64 ", data memory %" PRIu64 ", vector registers %" PRIu64
@@ -874,6 +875,8 @@ namespace rc::replay
         }
         else
         {
+            if (s.opt.fast)
+                std::printf("(b) not available: the fast reader (--reader fast) keeps no PATH1 hash; check (e) is rc_replay --consumer lists\n");
             std::printf("(b) PATH1 bytes against the recorded GIF hash: %" PRIu64 "/%" PRIu64 " channel 1 kicks equal%s", s.hashOk, s.hashKicks,
                         s.hashFailKicks.empty() ? "\n" : "; differ:");
             if (!s.hashFailKicks.empty())

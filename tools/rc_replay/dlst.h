@@ -22,6 +22,10 @@
 
 namespace rc::replay
 {
+    // The first difference of two DLST encodings (header, a command's fields, a payload byte), as a line; `names` says
+    // which is which ("off-line / live"). Shared by the dlst and lists consumers.
+    std::string dlstFirstDifference(const uint8_t *a, uint64_t aBytes, const uint8_t *b, uint64_t bBytes, const char *names);
+
     struct DlstOptions
     {
         bool quiet = false;

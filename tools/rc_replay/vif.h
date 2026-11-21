@@ -50,6 +50,7 @@ namespace rc::replay
         std::string outDir;               // where the first differing run is written (default: no file)
         bool noPoison = false;            // --vif-no-poison: the lanes a reference does not reproduce keep its values (measuring them)
         rc::rd::Vu1Library library = rc::rd::Vu1Library::Strict; // --vu1 strict|lean: the build of the references the reader runs
+        bool fast = false; // --reader fast (P2 step 9 batch 2): FrameReader::Options::fast; (b) is not available (no PATH1 hash)
     };
 
     class VifCheck final : public rc::rec::Consumer

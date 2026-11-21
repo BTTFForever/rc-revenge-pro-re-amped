@@ -52,7 +52,10 @@ namespace rc::live
             return false;
         }
         g_host = new Host();
-        g_host->reader = std::make_unique<Reader>(g_host->box, true);
+        // (P2 step 9 batch 2) RC_VK_READER=fast: the fast reader (lean references, triangles straight into the list, the
+        // memos); its lists are the strict reader's (check (e)). Default: the strict reader of P1.
+        const bool fast = on("RC_VK_READER", "fast");
+        g_host->reader = std::make_unique<Reader>(g_host->box, true, fast);
         uint64_t every = 600;
         if (const char *v = std::getenv("RC_VK_NATIVE_REPORT"); v && *v)
             every = std::strtoull(v, nullptr, 10);
@@ -83,8 +86,8 @@ namespace rc::live
             std::sort(g_host->shotAt.begin(), g_host->shotAt.end());
         }
         rc::rec::addLiveConsumer(g_host->reader.get());
-        std::fprintf(stderr, "[vk-native] RC_VK_PICTURE=native: the frame reader runs on the EE thread; the native picture (K2 and K1) is "
-                             "presented (F7 toggles the emulated GS picture)\n");
+        std::fprintf(stderr, "[vk-native] RC_VK_PICTURE=native: the %s frame reader runs on the EE thread; the native picture (K2 and K1) is "
+                             "presented (F7 toggles the emulated GS picture)\n", fast ? "fast" : "strict");
         return true;
     }
 

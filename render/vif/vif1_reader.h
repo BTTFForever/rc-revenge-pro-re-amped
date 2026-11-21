@@ -97,6 +97,10 @@ namespace rc::rd
         struct Options
         {
             Vu1Library library = Vu1Library::Strict;
+            // (P2 step 9 batch 2, the fast reader) An MSCAL to a direct entry (TRdr 0x2050, Env 0x2370, TERdr 0x2198:
+            // the program sends the packet at TOP unchanged and leaves every register as it was) copies that packet to
+            // the sink without running a reference (RENDERER_P2_DESIGN.md 4.2's table).
+            bool directEntries = false;
         };
         // More XGKICKs than any run can send (the largest kick of the 67 dumps sends 63,013): the run is abandoned.
         static constexpr uint32_t kMaxRunPackets = 1u << 20;
@@ -105,6 +109,7 @@ namespace rc::rd
             uint64_t kicks = 0, codes = 0, codesByOp[128] = {}, unpackBytes = 0, unpacks = 0, mpgs = 0, mpgBytes = 0;
             uint64_t mscals = 0, runs[kVu1ProgramCount] = {}, packets = 0, packetBytes = 0, interruptBits = 0;
             uint64_t guards[kVifGuardCount] = {}, programChanges = 0, fbrstResets = 0, seeds = 0;
+            uint64_t directRuns = 0; // runs of a direct entry answered by Options::directEntries
             uint64_t refNs = 0, walkNs = 0, sinkNs = 0; // in TSC ticks (nsPerTick): the references; the walk and decode; the sink's time
         };
 
@@ -146,6 +151,7 @@ namespace rc::rd
         VifRegs m_vif;
         std::vector<uint8_t> m_data, m_micro; // 16 KB each
         alignas(16) float m_vf[32][4] = {};
+        std::vector<uint8_t> m_direct; // Options::directEntries: the packet copied from VU memory
         bool m_poison = true;
         int m_program = -1;
         bool m_programDirty = true;

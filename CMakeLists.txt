@@ -330,6 +330,9 @@ target_link_libraries(rc_replay PRIVATE rc_live rc_frame rc_vif rc_blit rc_gs2d_
 # Gs2dVk on a dump with no emulated machine.
 target_sources(rc_replay PRIVATE tools/rc_replay/frame_vk.cpp)
 set_property(SOURCE tools/rc_replay/frame_vk.cpp APPEND PROPERTY COMPILE_OPTIONS "-O2")
+# (P2 step 9 batch 2, RENDERER_P2_DESIGN.md 9) rc_replay's lists consumer: check (e), the fast reader against the strict.
+target_sources(rc_replay PRIVATE tools/rc_replay/lists.cpp)
+set_property(SOURCE tools/rc_replay/lists.cpp APPEND PROPERTY COMPILE_OPTIONS "-O2")
 add_executable(rc_tex_test EXCLUDE_FROM_ALL tools/rc_replay/tex_test.cpp)
 target_compile_options(rc_tex_test PRIVATE -O2)
 target_link_libraries(rc_tex_test PRIVATE rc_tex rc_record ZLIB::ZLIB)

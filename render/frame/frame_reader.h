@@ -42,6 +42,12 @@ namespace rc::rd
             Gif2dReader::Options gif;
             bool deferPath1 = false;   // kick() leaves channel 1 kicks to kickPath1()
             bool collectPath1 = false; // keep each channel 1 kick's PATH1 bytes (path1Bytes())
+            // (P2 step 9 batch 2, RENDERER_P2_DESIGN.md 4) The fast reader: the lean references (Vif1Reader::Options::library),
+            // the direct entries (directEntries), triangle packets straight into the list and flush packets dropped
+            // (Gif2dReader::Options::path1Direct), the CLUT and state-packet memos; no PATH1 hash (path1Hash() stays 0:
+            // D-P2-3). Its lists are the strict reader's byte for byte (check (e), rc_replay --consumer lists). Off: the
+            // strict reader of P1, unchanged.
+            bool fast = false;
         };
         struct Stats
         {
@@ -97,6 +103,7 @@ namespace rc::rd
             void runEnd(const Vu1Run &run, uint8_t *vuData, float (*vf)[4]) override;
         } m_bridge;
 
+        static Options resolve(Options o); // fast: the GIF reader's options it implies
         Options m_opt;
         Gif2dReader m_gif;
         Vif1Reader m_vif;

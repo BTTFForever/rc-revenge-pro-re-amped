@@ -74,6 +74,29 @@ namespace rc::rd
             // CT32 at FBW 10 from a page-row boundary, placed by its line in the two 640 x 256 buffers FBP 0x0 / 0x50 (a 640 x 512
             // upload at FBP 0x0 fills both); anything else is counted, not drawn.
             bool frameUploads = false;
+            // (P2 step 9 batch 2, the fast reader: RENDERER_P2_DESIGN.md 4.4; FrameReader::Options::fast sets all three.)
+            // path1Direct: feedPath1 recognises a triangle packet by its tag (one PACKED tag, NLOOP 3, NREG 3, REGS ST
+            // RGBAQ XYZ2, 160 bytes) and hands it to path1Triangle instead of the walker, and drops a 16-byte packet whose
+            // tag has NLOOP 0 (the flush), which writes nothing. clutMemo: a TEX0 write equal to the last TEX0 write, with
+            // TEXCLUT as it was and no byte of GS memory changed since, does not reload the CLUT buffer (the load would read
+            // the same bytes into the same entries). stateMemo: a PATH1 packet of register writes only (PRIM, TEX0, CLAMP,
+            // A+D to registers other than RGBAQ, the vertex and the transfer registers) whose bytes equal the last such
+            // packet's, with no register written and no memory changed since, is skipped (writing it again changes nothing).
+            bool path1Direct = false;
+            bool clutMemo = false;
+            bool stateMemo = false;
+            // Planted faults for check (e) (rc_replay --consumer lists --fault adc|clut-memo|state-memo:<cycle>), from
+            // fastFaultCycle on: path1Triangle ignores ADC; the CLUT memo ignores memory writes; the state memo ignores
+            // register writes and memory writes (bytes alone).
+            enum FastFault : uint8_t
+            {
+                kFastFaultNone = 0,
+                kFastFaultAdc,
+                kFastFaultClutMemo,
+                kFastFaultStateMemo,
+            };
+            uint8_t fastFault = kFastFaultNone;
+            int64_t fastFaultCycle = 0;
         };
         struct Stats
         {
@@ -99,6 +122,14 @@ namespace rc::rd
             uint64_t vertexQNotRgbaq = 0; // vertices whose Q (the reference's) is not the RGBAQ register's
             uint64_t path1PrimsLeftOut = 0; // Options::path1Prims false: PATH1 primitives not put in the list
             uint64_t frameUploads = 0, frameUploadBlits = 0, frameUploadsOther = 0; // Options::frameUploads
+            // (P2 step 9 batch 2) Options::path1Direct, clutMemo, stateMemo
+            uint64_t path1Triangles = 0;       // triangle packets put into the list by path1Triangle
+            uint64_t path1TrianglesWalked = 0; // ... recognised but sent through the walker (queue not empty, PRIM not a
+                                               // triangle list, ADC on the third corner, a planted register fault)
+            uint64_t path1Flushes = 0;         // NLOOP 0 packets dropped
+            uint64_t path1Walked = 0;          // other packets, through the walker
+            uint64_t clutMemoHits = 0, stateMemoHits = 0;
+            uint64_t clutLoadsFromMemo = 0; // CLUT loads whose values the load memo held (the rest read memory)
         };
 
         Gif2dReader();
@@ -141,6 +172,11 @@ namespace rc::rd
         void feedPath1(const uint8_t *data, uint32_t bytes);
         // guarded: the VIF1 reader stopped the kick (the registers PATH1 writes become unknown).
         void endPath1Kick(bool guarded);
+        // (P2 step 9 batch 2) One triangle packet's nine data quadwords (36 words: per corner ST, RGBAQ, XYZ2 as PACKED
+        // data) straight into the register file, the vertex queue and the list, as the walker would put them (RENDERER_P2_DESIGN.md
+        // 4.4). False, with nothing changed: the caller must send the packet through the walker (the vertex queue is not
+        // empty, PRIM is not a triangle list, the third corner has ADC, or a planted register fault is on in this cycle).
+        bool path1Triangle(const uint32_t *nine);
         // A side tag's begin or end as a scope command (PATH1's spans: FrameReader places them between the runs).
         void scope(const rc::rec::Span &s);
         // The current cycle (for a caller's planted faults).
@@ -168,6 +204,7 @@ namespace rc::rd
         TexShadow m_shadow;
         TextureCache m_cache;
         Clut m_clut; // (step 8 batch 2) the GS's CLUT buffer, loaded at TEX0 writes
+        ClutLoadMemo m_clutLoads; // (P2 step 9 batch 2) Options::clutMemo: palettes read since memory last changed
         DrawList m_list;
         uint64_t m_regs[0x80] = {};
         uint8_t m_prov[0x80] = {};
@@ -215,6 +252,17 @@ namespace rc::rd
         uint32_t m_kickFirstCmd = 0, m_kickPrims = 0, m_kickDropped = 0, m_kickTransfers = 0;
         const rc::rec::KickView *m_kick = nullptr;
         uint32_t m_nextSpan = 0;
+
+        // (P2 step 9 batch 2) The memos. m_regSerial counts everything that can change the register file or the CLUT
+        // buffer other than through the memoised writes themselves.
+        uint64_t m_regSerial = 0;
+        bool m_clutMemoValid = false;
+        uint64_t m_clutMemoTex0 = 0, m_clutMemoTexclut = 0, m_clutMemoWrites = 0;
+        bool m_stateMemoValid = false;
+        uint64_t m_stateMemoRegSerial = 0, m_stateMemoWrites = 0;
+        std::vector<uint8_t> m_stateMemo;
+        bool fastFault(uint8_t f) const { return m_opt.fastFault == f && static_cast<int64_t>(m_cycle) >= m_opt.fastFaultCycle; }
+        static bool stateOnlyPacket(const uint8_t *data, uint32_t bytes);
 
         Stats m_stats;
     };

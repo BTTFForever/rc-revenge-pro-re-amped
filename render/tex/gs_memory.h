@@ -101,6 +101,9 @@ namespace rc::rd
         uint64_t serial() const { return m_serial; }                        // of the newest transfer (or load)
         uint64_t blockSerial(uint32_t block) const { return m_blockSerial[block & (kGsBlocks - 1u)]; }
         uint64_t pageSerial(uint32_t page) const { return m_pageSerial[page & (kGsPages - 1u)]; }
+        // (P2 step 9 batch 2) Counts every change of memory's contents: each pixel a transfer changes, each clear() and
+        // load(). Equal values at two moments: no byte of memory changed between them (Gif2dReader's CLUT and state memos).
+        uint64_t writes() const { return m_writes; }
 
         // Pixel reads through the layout.
         uint32_t read32(uint32_t bp, uint32_t bw, uint32_t x, uint32_t y) const;
@@ -122,6 +125,7 @@ namespace rc::rd
         std::unique_ptr<uint8_t[]> m_origin;
         uint64_t m_pageSerial[kGsPages] = {};
         uint64_t m_serial = 0;
+        uint64_t m_writes = 0;
         uint64_t m_bitbltbuf = 0, m_trxpos = 0, m_trxreg = 0, m_trxdir = 3;
 
         // The open transfer.

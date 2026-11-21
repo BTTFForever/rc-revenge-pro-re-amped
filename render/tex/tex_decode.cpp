@@ -42,6 +42,7 @@ namespace rc::rd
         if (!is16 && !clut32(t.cpsm))
             return;
         ++m_loads;
+        ++m_version;
         const uint32_t count = four ? 16u : 256u;
         const uint32_t base = (static_cast<uint32_t>(t.csa) & (is16 ? 0x1Fu : 0x0Fu)) << 4;
         // An 8-bit texture's 32-bit CSM1 palette fills the buffer in place from entry CSA * 16 up.
@@ -76,6 +77,121 @@ namespace rc::rd
             if (!is16)
                 m_buf[dst + 256u] = static_cast<uint16_t>(raw >> 16);
         }
+    }
+
+    bool Clut::writeMemo(const GsMemory &mem, const Tex0 &t, uint64_t texclut, ClutLoadMemo &memo)
+    {
+        // write()'s decision, unchanged.
+        if (!t.indexed())
+            return false;
+        switch (t.cld)
+        {
+        case 1: break;
+        case 2: m_cbp[0] = t.cbp; break;
+        case 3: m_cbp[1] = t.cbp; break;
+        case 4:
+            if (m_cbp[0] == t.cbp)
+                return false;
+            m_cbp[0] = t.cbp;
+            break;
+        case 5:
+            if (m_cbp[1] == t.cbp)
+                return false;
+            m_cbp[1] = t.cbp;
+            break;
+        default: return false;
+        }
+        // load()'s, split into what it reads (kept in the memo) and where it puts it.
+        const bool four = t.psm == kPsmT4, is16 = clut16(t.cpsm);
+        if (!is16 && !clut32(t.cpsm))
+            return true;
+        ++m_loads;
+        const uint32_t count = four ? 16u : 256u;
+        const uint32_t base = (static_cast<uint32_t>(t.csa) & (is16 ? 0x1Fu : 0x0Fu)) << 4;
+        const bool inPlace = t.csm == 0u && !is16 && !four;
+        const uint32_t first = inPlace ? base : 0u;
+        if (memo.writes != mem.writes() && !(memo.faultIgnoreWrites && memo.writes != ~0ull))
+        {
+            memo.index.clear();
+            memo.raw.clear();
+            memo.writes = mem.writes();
+        }
+        const uint64_t key = static_cast<uint64_t>(t.cbp) | static_cast<uint64_t>(t.cpsm) << 14 | static_cast<uint64_t>(t.csm) << 18 |
+                             static_cast<uint64_t>(t.csa) << 19 | static_cast<uint64_t>(four) << 24 | (t.csm ? (texclut & 0x3FFFFFull) << 25 : 0ull);
+        const ClutLoadMemo::Values *values;
+        if (auto it = memo.index.find(key); it != memo.index.end())
+        {
+            values = &memo.raw[it->second];
+            ++memo.hits;
+        }
+        else
+        {
+            ++memo.reads;
+            memo.index.emplace(key, static_cast<uint32_t>(memo.raw.size()));
+            memo.raw.emplace_back();
+            ClutLoadMemo::Values &out = memo.raw.back();
+            const uint32_t cbw = static_cast<uint32_t>(texclut & 0x3Fu), cou = static_cast<uint32_t>((texclut >> 6) & 0x3Fu),
+                           cov = static_cast<uint32_t>((texclut >> 12) & 0x3FFu);
+            for (uint32_t e = first; e < count; ++e)
+            {
+                uint32_t x, y, bw = 1;
+                if (t.csm == 0u)
+                {
+                    const uint32_t slot = clutSlot(e);
+                    x = slot & 0x0Fu;
+                    y = slot >> 4;
+                }
+                else
+                {
+                    bw = cbw ? cbw : 1u;
+                    x = (cou << 4) + e;
+                    y = cov;
+                }
+                uint32_t raw;
+                switch (t.cpsm)
+                {
+                case kPsmCt32: raw = mem.read32(t.cbp, bw, x, y); break;
+                case kPsmCt24: raw = mem.read32(t.cbp, bw, x, y) & 0x00FFFFFFu; break;
+                case kPsmCt16: raw = mem.read16(t.cbp, bw, x, y); break;
+                default: raw = mem.read16s(t.cbp, bw, x, y); break;
+                }
+                out.lo[e] = static_cast<uint16_t>(raw);
+                out.hi[e] = static_cast<uint16_t>(raw >> 16);
+            }
+            values = &out;
+        }
+        // Where load() puts entry e: (inPlace ? e : base + e) masked to the buffer's half (8 bits) or whole (16 bits).
+        bool changed = false;
+        const uint32_t mask = is16 ? 0x1FFu : 0x0FFu, d0 = inPlace ? first : base + first, n = count - first;
+        if (d0 + n - 1u <= mask)
+        {
+            // No wrap: one run of entries (two for a 32-bit palette).
+            if (std::memcmp(m_buf + d0, values->lo + first, n * 2u) != 0)
+            {
+                std::memcpy(m_buf + d0, values->lo + first, n * 2u);
+                changed = true;
+            }
+            if (!is16 && std::memcmp(m_buf + 256u + d0, values->hi + first, n * 2u) != 0)
+            {
+                std::memcpy(m_buf + 256u + d0, values->hi + first, n * 2u);
+                changed = true;
+            }
+        }
+        else
+            for (uint32_t e = first; e < count; ++e)
+            {
+                const uint32_t dst = (inPlace ? e : base + e) & mask;
+                changed |= m_buf[dst] != values->lo[e];
+                m_buf[dst] = values->lo[e];
+                if (!is16)
+                {
+                    changed |= m_buf[dst + 256u] != values->hi[e];
+                    m_buf[dst + 256u] = values->hi[e];
+                }
+            }
+        if (changed)
+            ++m_version;
+        return true;
     }
 
     uint32_t Clut::lookup(const Tex0 &t, uint32_t index, const Texa &texa) const

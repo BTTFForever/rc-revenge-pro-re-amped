@@ -16,6 +16,7 @@ namespace rc::rd
     {
         std::memset(m_mem.get(), 0, kGsBytes);
         ++m_serial;
+        ++m_writes;
         std::fill(m_blockSerial.get(), m_blockSerial.get() + kGsBlocks, m_serial);
         std::fill(m_pageSerial, m_pageSerial + kGsPages, m_serial);
         if (m_origin)
@@ -27,6 +28,7 @@ namespace rc::rd
     {
         std::memcpy(m_mem.get(), image, kGsBytes);
         ++m_serial;
+        ++m_writes;
         std::fill(m_blockSerial.get(), m_blockSerial.get() + kGsBlocks, m_serial);
         std::fill(m_pageSerial, m_pageSerial + kGsPages, m_serial);
         if (m_origin)
@@ -142,6 +144,7 @@ namespace rc::rd
     inline void GsMemory::mark(uint32_t block)
     {
         ++m_changed;
+        ++m_writes;
         if (block == m_lastBlock)
             return;
         m_lastBlock = block;

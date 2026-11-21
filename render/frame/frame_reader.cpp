@@ -30,7 +30,28 @@ namespace rc::rd
 
     FrameReader::FrameReader() : FrameReader(Options{}) {}
 
-    FrameReader::FrameReader(const Options &options) : m_opt(options), m_gif(options.gif) { m_bridge.self = this; }
+    FrameReader::Options FrameReader::resolve(Options o)
+    {
+        if (o.fast)
+        {
+            o.gif.path1Direct = true;
+            o.gif.clutMemo = true;
+            o.gif.stateMemo = true;
+        }
+        return o;
+    }
+
+    FrameReader::FrameReader(const Options &options) : m_opt(resolve(options)), m_gif(m_opt.gif)
+    {
+        m_bridge.self = this;
+        if (m_opt.fast)
+        {
+            Vif1Reader::Options v = m_vif.options();
+            v.library = Vu1Library::Lean;
+            v.directEntries = true;
+            m_vif.setOptions(v);
+        }
+    }
 
     void FrameReader::setFault(VifFault f, int64_t cycle, uint32_t n)
     {
@@ -121,7 +142,8 @@ namespace rc::rd
             ++f.m_stats.packetsDropped;
             return;
         }
-        f.m_path1Hash.update(data, bytes);
+        if (!f.m_opt.fast)
+            f.m_path1Hash.update(data, bytes);
         if (f.m_opt.collectPath1)
         {
             f.m_path1Bytes.insert(f.m_path1Bytes.end(), data, data + bytes);

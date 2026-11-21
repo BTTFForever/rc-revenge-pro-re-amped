@@ -55,6 +55,11 @@ namespace rc::rd
         uint32_t paletteBlocksAt = 0;
         uint32_t palette[256] = {};   // the colours it was decoded with (T8/T4)
         bool valid = false;           // false: a format the decoder does not handle
+        // (P2 step 9 batch 2, get(..., clutVersioned)) The CLUT buffer, its version() and TEXA the palette was last made
+        // or found equal with.
+        const Clut *clutFrom = nullptr;
+        uint64_t clutVersion = 0;
+        uint32_t clutTexa = 0;
         // Alpha summary of the last decode (raw alpha; 0x80 = 1.0).
         uint8_t alphaMin = 0, alphaMax = 0;
         uint32_t alphaAbove80 = 0, alphaAt80 = 0, alphaZero = 0;
@@ -66,15 +71,18 @@ namespace rc::rd
         struct Stats
         {
             uint64_t lookups = 0, quickHits = 0, validations = 0, decodes = 0, redecodes = 0, texels = 0, decodeNs = 0;
+            uint64_t paletteChecksSkipped = 0; // clutVersioned: the CLUT buffer unchanged since the entry's palette was made
         };
 
         explicit TextureCache(const GsMemory &mem) : m_mem(mem) {}
 
         // Level 0 of `t`. clut null: the palette as memory holds it now, which is what a CLD 1 write of TEX0 loads (all
         // RC does). Otherwise the palette comes from the reader's CLUT buffer.
-        const CachedTexture &get(const Tex0 &t, const Texa &texa, const Clut *clut = nullptr);
+        // clutVersioned (the fast reader, P2 step 9 batch 2): the palette is not compared again while the CLUT buffer's
+        // version() and TEXA are the ones it was last made or compared with (the same result: the buffer has not changed).
+        const CachedTexture &get(const Tex0 &t, const Texa &texa, const Clut *clut = nullptr, bool clutVersioned = false);
         // Any level: `place` from mipLevel().
-        const CachedTexture &get(const Tex0 &t, const MipLevel &place, const Texa &texa, const Clut *clut = nullptr);
+        const CachedTexture &get(const Tex0 &t, const MipLevel &place, const Texa &texa, const Clut *clut = nullptr, bool clutVersioned = false);
 
         // Validates every entry against memory as it is now; returns how many were decoded again.
         uint32_t refreshAll();

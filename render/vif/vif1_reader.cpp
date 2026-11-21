@@ -167,6 +167,22 @@ namespace rc::rd
         }
     }
 
+    namespace
+    {
+        // The entries that send the packet at TOP unchanged (RENDERER_3D_DESIGN.md 5.3; trdr_shape.cpp, env_shape.cpp,
+        // terdr_shape.cpp: `p.kick(top)` and return).
+        bool isDirectEntry(rc::vu1::Program program, uint32_t pc)
+        {
+            switch (program)
+            {
+            case rc::vu1::kTrdr: return pc == 0x2050u;
+            case rc::vu1::kEnv: return pc == 0x2370u;
+            case rc::vu1::kTerdr: return pc == 0x2198u;
+            default: return false;
+            }
+        }
+    }
+
     bool Vif1Reader::runProgram(const KickView &k, uint32_t pc, uint32_t offset, uint32_t mxcsr, Path1Sink &sink)
     {
         if (m_programDirty)
@@ -205,6 +221,7 @@ namespace rc::rd
             m_vf[(lane / 4u) & 31u][lane & 3u] = 0.0f;
         }
         rc::vu1::Io io{m_data.data(), m_vf, pc, m_vif.top, &onPacket, &user};
+        const bool direct = m_options.directEntries && isDirectEntry(info.program, pc);
         const uint32_t saved = _mm_getcsr();
         if (!(m_fault == VifFault::NoMxcsr && static_cast<int64_t>(k.cycle) == m_faultCycle))
             _mm_setcsr(mxcsr | 0x6000u);
@@ -213,7 +230,16 @@ namespace rc::rd
         {
             // The lean build sets RZ + FTZ + DAZ on top of the MXCSR set here and restores it (so the NoMxcsr fault
             // has no effect on it: no caller can forget the mode).
-            if (m_options.library == Vu1Library::Lean)
+            if (direct)
+            {
+                // What the reference's direct entry does (ShapeProgram::kick at TOP): one packet copied out of VU memory,
+                // no register touched. onPacket applies the same runaway cut.
+                m_direct.clear();
+                rc::vu1::copyGifPacket(m_data.data(), static_cast<int>(m_vif.top & 0x3FFu), m_direct);
+                onPacket(&user, m_direct.data(), static_cast<uint32_t>(m_direct.size()));
+                ++m_stats.directRuns;
+            }
+            else if (m_options.library == Vu1Library::Lean)
                 rc::vu1l::run(info.program, io);
             else
                 rc::vu1::run(info.program, io);
