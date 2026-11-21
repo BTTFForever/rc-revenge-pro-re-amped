@@ -560,6 +560,9 @@ After step 1: fold its answers into this plan's open questions.
    out of exact mode (the reference machine samples none: U6). Batches: 1 the lean references, 2 triangles straight
    into the list, 3 the track's fast path, 4 env, skin, TERdr, 5 TOPS views, 6 the reader's thread, 7 frame rates
    and U3, 8 `SHAPE_BATCH` and units; the new check is (e), list equality with the strict (P1) reader.
+   **User, 2026-11-22: U4 = A, U5 yes, U6 not in exact mode.** Batch 1 (the lean references: `rc_vu1_lean`,
+   `rc_vu1_test`, `rc_replay --vu1 lean`) built 2026-11-22: check (s) 0 differ, the 67 and the fourteen beside the
+   machine pass with it, half the references' time (design section 15).
 10. Pipelines built at start-up, performance pass on the heavy levels (18, 17, 24, 6, 8, 9, 12), a DIVERGENCES list.
 Then `vk` becomes the default renderer; `gs` stays as the reference.
 

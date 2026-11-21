@@ -829,7 +829,8 @@ dump). Measurement only (`tools/rc_replay/vif_survey.{h,cpp}`); the design it se
   hard), plain runs, the bounding-box test, constants changes, texture blocks.
 - The lean build: `shape_lean.cpp` includes the sources of `decomp/vu1` as text under the namespace `rc::vu1lean`
   with the four arithmetic operations replaced (the host's own under RZ + FTZ + DAZ, the reference's operation for
-  the cases that mode cannot give), repeats every run with it and compares packets, VU memory and registers; a
+  the cases that mode cannot give; since step 9 batch 1 they are `decomp/vu1/vu_lean.h`'s, the library
+  `rc_vu1_lean`'s), repeats every run with it and compares packets, VU memory and registers; a
   self-test of the operations on 16 M random results runs first. `fastTrdr` in the same file is the track
   program's common path in SSE intrinsics, compared triangle by triangle in every run without a hard triangle.
 - The last line prints the references', the lean build's and the SSE path's time a cycle (time single runs on an
@@ -863,6 +864,9 @@ cullOffscreen` leaves out triangles of no area or outside the scissor. Seeded fr
   `L` lines per program and lane). `RC_VIF_LIST_TRACE=1` (list modes) compares the register file at every triangle of
   the raw and the encoded stream.
 - `--fault unpack|tops|dbf|mpg|mscal|mxcsr|lane|packet|vumem:<cycle>[:<n>]`: the planted faults of the design's 11.6.
+- `--vu1 strict|lean` (2026-11-22, P2 step 9 batch 1): the build of the references the reader runs
+  (`Vif1Reader::Options::library`); lean is `rc_vu1_lean` (`decomp/vu1/vu_lean.h`, `RENDERER_P2_DESIGN.md` 4.1 and
+  15). `--fault mxcsr` has no effect on lean (it sets its mode itself). `build-*/rc_vu1_test` checks its operations.
 - The `gif2d` consumer now drives a `FrameReader` (PATH1 from the references, nothing excused after a channel 1 kick);
   with `--with-emu` a vif consumer behind the machine runs its channel 1 kicks beside it.
 - Checking the references in the game after a change: `RC_BOOT_LEVEL=17 RC_VU1_REF=1 RC_VU1_SYNTH=decomp/generated/vusrc
@@ -1252,12 +1256,15 @@ performance pass). Also open from this batch: the podium, results and more two-p
 recording of a won race, and a second pad in the replay or a split-screen `RC_BOOT_LEVEL`, would). The re-referencing originals under `frame-dumps/pre-r/`
 (6.5 GB) can go now that step 8's checks are done.
 
-**Renderer, next (2026-11-22): P2 step 9 is designed, `RENDERER_P2_DESIGN.md`; nothing of it is built.** It needs the
-user's answers to U4 to U7 (its top), none of which blocks its batch 1. In short: the frame rate comes from a fast
-exact reader (the references' arithmetic under `MXCSR` RZ + FTZ + DAZ, SSE paths per VU1 program, triangles written
-straight into the draw list) moved to its own thread, with lists equal to P1's byte for byte; the GPU vertex shader
-for `SHAPE_BATCH` is proposed for P3. Start with its section 11, batch 1 (the lean references). The measurements
-are `rc_replay <dump> --consumer shapestat` ("Shape survey" above). The rest of this section is the decompilation's.
+**Renderer, next (2026-11-22): P2 step 9 (`RENDERER_P2_DESIGN.md`; the user chose U4 = A, U5 yes, U6 not in exact
+mode) is being built; batch 1 (the lean references) is done** (its section 15). `decomp/vu1` builds twice:
+`rc_vu1_ref` / the game (strict, `rc::vu1`, objects byte-identical to before) and `rc_vu1_lean` (`rc::vu1l`,
+`vu_lean.h`: the host's operations under MXCSR RZ + FTZ + DAZ, `vu1l::run` sets the mode); `rc_vu1_test` is check
+(s) (0 differ); `rc_replay <dump> --consumer vif --verify --vu1 lean` passes the 67 and the fourteen beside the
+machine; the references take half the time (16.8 against 33.6 ms a cycle on level 18). A third MADD fall-back was
+found and added (an exact cancellation after an inexact product); batch 3 must add it to `fastTrdr`. **Next: batch 2**
+(triangles straight into the list, `--consumer lists`, check (e)). The measurements are `rc_replay <dump> --consumer
+shapestat` ("Shape survey" above). The rest of this section is the decompilation's.
 
 305 of 2,486 functions native on 2026-11-12 (1510 on 2026-11-18, after the FRONT batch at the end of this section, 1710 after TEDIT part 2, 1730 on 2026-11-19 after LEFTOVERS: every function of the game's own source files is native, only the SDK and C libraries remain; 1,653 of them registered in the Europe build, see "Europe version"). Done since 2026-11-10: collision, route nodes, AI (all) and the smaller PLAYER functions, and the renderer from the DMA chain up: RDRSTATE, RDR, RDRPOLY, RDR_SHAPE, RDR_SKIN, RDR_WATER, RDRALPHA, RDR_PARTICLE, SPRITE and most of GFX_P2, with the SDK's VIF packet library and three libvu0 helpers.
 

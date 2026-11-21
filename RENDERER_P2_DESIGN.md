@@ -879,3 +879,72 @@ the oracle's machine.
 - `shapestat`'s fast path covers the track program only; nothing was run on a GPU for this design.
 - Carried from step 8: the scenes not reached; the under-water screenshot of 3D design 20.3; the save-state load
   with the live reader (now also through the queue).
+
+## 15. Batch 1 as built (2026-11-22): the lean references
+
+**What was built.** `decomp/vu1` is compiled twice from the same sources. `vu_shape.h` has the one macro: with
+`RC_VU1_LEAN` 0 (the default; `rc_vu1_ref`, the game, the oracle) the namespace is `rc::vu1` and the four operations
+are as before; with `RC_VU1_LEAN` 1 (`rc_vu1_lean`, a second CMake library over `RC_VU1_REF_SOURCES` with the same
+flags) the namespace is `rc::vu1l`, the strict operations are renamed `faddStrict` ... and `vu_lean.h` supplies
+`fadd`, `fsub`, `fmul`, `fmadd` (the host's own under RZ + FTZ + DAZ, the strict operation under the strict mode for
+the operand classes of 4.1's third column), `ScopedMode` and `kLeanMxcsr`. `rc::vu1l::run` (`vu1_io.cpp`) sets
+`MXCSR | 0xE040` over the caller's and restores it on return or a throw (the reader's runaway guard throws through
+it). `vu1_ref.h` declares the lean entries in `rc::vu1l`, sharing `Io`, `Program`, `programName` and `isEntry` with
+`rc::vu1` (so `rc_vu1_lean` links `rc_vu1_ref` for the last two). `Vif1Reader::Options::library` (`Vu1Library::Strict
+| Lean`, `parseVu1Library`) chooses the run at each MSCAL; `rc_replay --vu1 strict|lean` sets it for the `vif`
+consumer, whose timing line names the library. `rc_vu1_test` (`tools/rc_replay/vu1_test.cpp`) is check (s).
+`shape_lean.cpp` (shapestat) now takes its operations from `vu_lean.h` (included as text under `rc::vu1lean`, so it
+cannot meet `rc_vu1_lean` at link time); its `fastTrdr` is unchanged.
+
+**Changes to the design, and why.**
+
+1. **A third MADD fall-back.** `rc_vu1_test`'s edge triples (every triple of 46 edge values) found 30 MADD results
+   the two known fall-backs did not catch, none of which the 1,072 M random results of 3.6 had met: an exact
+   cancellation `acc = -p` after a product that lost bits. The strict MADD takes the sign, and the flush to zero,
+   from the exact sum with the unrounded product (`finish(single, exact)`), so it gives a signed zero (or +0 with
+   the negative flag) where the host gives +0; and near the smallest normal, a sum the host keeps can be one the
+   exact sum flushes (a test of cancelling triples aimed at it found 1,455 in 25 M once the first was fixed). By
+   argument the exact sum's sign can only differ from the single sum's when that sum is zero, and the flush only
+   when the product's unit in the last place is below 2^-102, so the sum is below 2^-126 + 2^-102: **a sum below
+   2^-101 from a non-zero accumulator goes to the strict MADD** (`vu_lean.h`). Rare on real data: the 67 dumps were
+   equal without it (3.6), and the lean build's time did not move (below). **Batch 3 must carry the same test into
+   `fastTrdr`'s `madd`** (its `tiny` mask covers only the zero product); `shapestat`'s fast path still lacks it.
+2. **The game and the oracle are unchanged in code.** The macro was written so that the strict build's text is
+   token for token what it was: all 84 strict objects of `decomp/vu1` in `build-decomp`, `build-eu`, `build-oracle`
+   and `build-oracle-eu` are byte-identical to the ones before the batch, and both `rc_oracle` executables are
+   byte-identical. The games relinked only because `rc_live` -> `rc_vif` now references `rc_vu1_lean` (the live
+   reader stays strict; nothing selects lean there yet).
+3. **`--fault mxcsr` cannot fail the lean build**, by design: `vu1l::run` sets round toward zero itself, so a
+   caller that forgets the mode is not a fault there. The planted fault keeps its meaning for the strict reader.
+4. Dispatch calls in `vu1_io.cpp` are qualified (`RC_VU1_NAMESPACE::runTrdrShapeIo`): in the lean build `Io` is
+   `rc::vu1`'s, so an unqualified call would find both builds' entries by argument-dependent lookup.
+
+**Checks.**
+
+| check | result |
+|---|---|
+| (s) `rc_vu1_test` (default: edge triples, 10^8 random results, 2.5 x 10^7 cancelling results) | **0 of 125,389,344 differ** (2.5 s); with `--results 1000000000 --seed 12345`: 0 of 1,250,389,344; `vu1l::run` sets `0xffc0` over a caller's `0x3f80` and restores it, a non-entry runs nothing |
+| (a), (b) lean, `rc_replay <dump> --consumer vif --verify --vu1 lean`, the 67 | **67 / 67 PASS**, 4 minutes four at a time. USA 34: 23,433 VIF1 kicks, 22,517,443 runs, 559,646,028 packets, (b) 23,433 / 23,433 kicks equal to the recorded GIF hash; (a) keyframes 69 / 69 (VIF1 registers, micro and data memory, vector registers), `GSRG` 103 / 103, register file 82,312,258 values at 839,921 kicks, 0 differ. Europe 33: 20,767 kicks, 20,558,762 runs, 486,125,618 packets, (b) 20,767 / 20,767; keyframes 62 / 62, `GSRG` 95 / 95, 74,883,564 values at 764,118 kicks, 0 differ. Guards: none. (The same counts as the strict reader's, 3D design 16.2.) |
+| beside the machine, `--with-emu --vu1 lean`, the fourteen (USA and Europe `s5/l5`, `l17`, `l18`, `l20`, `front`, `tedit`, `boot`) | **14 / 14 PASS**: 8,560,917 runs and 238,010,453 packets compared, 0 differ; VU memory and vector registers after every run equal (poisoned lanes excluded); 0 runs with another packet count, 0 cut short; every picture hash and GIF output kick of the substituted machine equal |
+| the strict build | objects byte-identical (above). `RC_BOOT_LEVEL=17 RC_VU1_REF=1 RC_VU1_SYNTH=... PS2X_MTVU=0`, 150 s: 2,323,174 runs, 73,323,714 packets, **0 mismatches** (packets, memory, counts); synth TERdr and Rdr_VUShape 0 |
+| the game relinked | `playtest2` (`RC_SCENE_LOG`, `RC_DEBUG_DUMP`, 75 s): USA scene 3020 at frame 658, 60.0 fps; Europe 3020 at frame 1167, 50 fps. Oracle `--all` (its executables byte-identical, run as the rule asks): USA seed 9131 1,632 ok, 0 FAIL, 98 without a setup (468 s); Europe seed 9132 1,563 ok, 0 FAIL, 90 without a setup (853 s) |
+
+**The references' time a cycle** (one K2 kick a cycle; `rc_replay <dump> --consumer vif --quiet --vu1 strict|lean`,
+single runs one after the other on an otherwise idle machine, Ryzen 7 3750H; USA `s5` dumps but the last):
+
+| scene | strict, mean / largest (ms) | lean, mean / largest (ms) | lean / strict | 3.8's shapestat estimate (lean) |
+|---|---|---|---|---|
+| front end | 16.34 / 32.33 | 8.66 / 12.22 | 0.53 | 8.4 |
+| level 5 | 18.55 / 30.57 | 9.55 / 13.20 | 0.51 | 9.7 |
+| level 17 | 18.60 / 26.52 | 9.42 / 15.63 | 0.51 | 9.8 |
+| level 18 | 33.56 / 49.69 | 16.80 / 23.14 | 0.50 | 17.4 |
+| level 21 | 23.83 / 33.99 | 12.14 / 17.04 | 0.51 | 12.7 |
+| Track Editor | 0.42 / 0.59 | 0.27 / 0.31 | 0.64 | 0.3 |
+| level 18, Europe | 32.35 / 47.02 | 16.08 / 22.18 | 0.50 | 16.5 |
+
+As expected (3.6: 0.51), and the third MADD fall-back costs nothing measurable against shapestat's lean figures.
+The largest kick fell by more than half on the front end (32.3 to 12.2 ms; not looked into). The VIF walk and the GIF walk and list are
+untouched by this batch (lean runs: 1.4-2.9 ms and 6-14 ms a cycle on the race scenes); they are batches 2 and 5.
+
+**Open.** `fastTrdr`'s MADD check (item 1) for batch 3. Nothing in the live reader uses the lean library yet: batch
+2's `FrameReader::Options::fast` is the first to select it.
