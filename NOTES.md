@@ -854,7 +854,7 @@ cullOffscreen` leaves out triangles of no area or outside the scissor. Seeded fr
   at every GIF tag (`GifSink::vertexQ`; the frame record's RGBAQ register keeps its own convention); the draw list
   encoder therefore ends a tag only before a PRIM.
 
-### K2 on Vulkan per kick, barriers by covered pixels (2026-11-20, renderer P1 step 8 batch 2)
+### K2 on Vulkan per kick, barriers by covered pixels (2026-11-20/21, renderer P1 step 8 batch 2)
 The 3D packet (K2, PATH1's triangles from the C++ VU1 references) drawn through `Gs2dVk` and judged per kick against the
 emulated GS, check (d); the exact blend's barriers and the split's groups now go by covered pixels. Design and results:
 `RENDERER_3D_DESIGN.md` sections 10 and 18.
@@ -867,22 +867,51 @@ emulated GS, check (d); the exact blend's barriers and the split's groups now go
   16-bit GS coordinate minus the offset now lies inside, the GPU never clips); only the pipeline, bind groups and scissor
   that changed between draws are recorded; `ListStats` has draws, binds, primitives, the list build's and the cover map's
   CPU time, vertices beyond the viewport, triangles with a vertex Z >= 2^24.
-- **Reader fixes found by check (d):** the reference GS reads Q 0.0 as 1.0 at every RGBAQ and PACKED ST write (PATH1's
-  clipping sends vertices with S, T, Q all 0): `GifWalker` gives vertices that Q (`gif_walk.cpp referenceQ`). The reader also
-  keeps the GS's CLUT buffer (loaded at TEX0 writes as CLD says, step 5's `Clut`) and reads indexed textures through it.
-- **Check (d):** `rc_replay <dump> --consumer gif2d --vk [--vk-blend read] [--vk-boxes] --verify --quiet --no-tables
-  [--validation]` now judges channel 1 kicks too (the emulated memory kept before the machine runs the kick; the frame reader's
+- **Fixes found by check (d):** the reference GS reads Q 0.0 as 1.0 at every RGBAQ and PACKED ST write (PATH1's clipping
+  sends vertices with S, T, Q all 0): `GifWalker` gives vertices that Q (`gif_walk.cpp referenceQ`). The reader keeps the
+  GS's CLUT buffer (loaded at TEX0 writes as CLD says, step 5's `Clut`) and reads indexed textures through it. Float to
+  int as the reference's x86 build (`cvtt`: 0x80000000 out of range) and its bilinear rounding beyond 2^23
+  (`exactLroundInt`), in `gs2d.frag` and `gs_model.cpp` (clipped triangles reach texture coordinates of 1e10).
+- **Fix in the box rule (2026-11-21):** `rectangleHalves` took two triangles on a rectangle's corners that share a side
+  (not the diagonal) for the halves of a quad; they overlap, and PATH1 sends such pairs (3 wrong pixels in 2 of 44,200 kicks
+  with `--vk-boxes`; K1 never has them). The shared corners must be opposite. The pixel rule never used the test.
+- **Check (d):** `rc_replay <dump> --consumer gif2d --vk [--vk-blend read|ff|both] [--vk-boxes] --verify --quiet --no-tables
+  [--validation]` judges channel 1 kicks too (the emulated memory kept before the machine runs the kick; the frame reader's
   K2 commands drawn over it; every pixel equal in R, G, B, A, Z). Report lines `(c) K1 ...` and `(d) K2 ...` (GPU time,
   draws, binds, the cover map's CPU time, barriers and their histogram a kick). `--vk-boxes` adds the read with box groups
   for comparison. MIPMAP (MXL > 0) is counted, no longer a failure: level 0 is drawn as the reference draws it (D-3D-2).
+  A failing pixel's line lists every primitive over it with its vertices; a triangle with a vertex Z >= 2^24 is printed
+  with the pixels it covers and how many get a pixel Z >= 2^24 (the one in the dumps: none).
   New faults: `--vk-fault no-first-barrier|cover-own-batch|no-stamp-other|epoch-no-barrier|gequal-greater|z-plus-one|
-  repeat-clamp|no-q|draw-culled|cull-drawn`.
+  repeat-clamp|no-q|draw-culled|cull-drawn` (`draw-culled` must pass: the cull is the reference's own early exit).
+- **`--vk-nofill`** is a measurement, not a check (the run ends `FAIL`): every draw's scissor is one pixel, so the GPU time
+  printed is the draws, binds and barriers without fragments.
 - **rc_gs2d_test** gains T9 (per-vertex Z under GREATER / GEQUAL, every PATH1 state on an alpha-ramped 256 x 128 texture,
-  REPEAT to +-1,000 texels, big triangles, ADC vertices, a vertex with Q 0) and T10 (water's three passes over a mesh with
-  exactly the predicted barriers, reading and exact triangles interleaved, a pass per target, GsCoverMap's spans against
-  `gsTriCovers`, the box rule on the same scenes) and their faults; `--only T9,T10`.
+  REPEAT to +-1,000 texels, big triangles, ADC vertices, a vertex with Q 0, S/Q to 1e10) and T10 (water's three passes over
+  a mesh with exactly the predicted barriers, reading and exact triangles interleaved, a pass per target, pairs sharing a
+  rectangle's side, GsCoverMap's spans against `gsTriCovers`, the box rule on the same scenes) and their faults;
+  `--only T9,T10`. Synchronisation validation needs `VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true` in the environment with
+  `--validation` (the test prints whether its planted hazard was reported; `rc_replay --validation` takes the same variable).
+- **Result (2026-11-21):** all 67 exact dumps (the re-referenced ones) `PASS` in read mode with the pixel rule, validation
+  and synchronisation validation on, 0 errors: (c) 88,421 K1 kicks, 14,486,896,640 pixels; (d) **44,200 K2 kicks,
+  7,241,728,000 pixels; every pixel equal** in R, G, B, A and Z. Barriers a K2 kick 16.15 on average and 85 at most (box
+  rule 173.4 and 879); K1 at most 97 (119). `s5/l2` and `s5/l14` pass with 177,492 MIPMAP primitives counted.
+  `rc_gs2d_test --validation` T1-T10 `PASS`. Faults: `RENDERER_3D_DESIGN.md` 18.3. Runner: one command per dump as above
+  with `--vk-blend read --vk-boxes --validation`, four at a time from a copy of `rc_replay`, 61 minutes.
+- **GPU time (10.4):** K2 in read mode 2.7-4.0 ms a kick on `s5/l17`, `l18`, `l23`, `front` and 9.05 ms on `s5/l21` (over
+  10.4's 8 ms), fixed function 2.2-7.8, the box rule 4.6-14.8. Nearly all of it is fragments (level 21 covers 2.2 M pixels a
+  kick; without fragments the same lists take 0.3-0.6 ms), not draws or barriers. **These times depend on the GPU's
+  clock:** the off-line replays leave the RTX 2060 in P8 at 300-525 MHz of 2,100, and the same level 21 measures 21.9 ms
+  alone with one setting, 9.05 with three, 6.0 with four replays sharing the GPU. The acceptance is therefore open
+  (`RENDERER_3D_DESIGN.md` 18.5, 18.7). Sample `nvidia-smi --query-gpu=pstate,clocks.gr,utilization.gpu --format=csv`
+  beside any GPU timing.
 - **Don't rebuild `rc_replay` while a batch of replays runs from `build-decomp/rc_replay`:** the link replaces the file and
-  every replay started afterwards fails to exec. Copy the binary for long runs.
+  every replay started afterwards fails to exec. Copy the binary for long runs. `ninja -C build-eu` alone does not build
+  `rc_replay` or `rc_gs2d_test` (they are not in `all`): name them.
+- **The game:** `rc_tex` and `rc_gs2d_vk` are in the game through `rc_live`, so it relinked in both trees; `rc_oracle` links
+  none of it and was not rebuilt. Checked 2026-11-21: `tools/oracle.sh --all` USA seed 2111 1632 ok, Europe seed
+  2112 1563 ok, 0 FAIL; `playtest2` scene 3020 at frame 658 (USA, 60.0 fps) and 1167 (Europe, 50 fps), default and
+  `RC_RENDERER=vk`; `RC_VK_PICTURE=native` with validation 0 errors; `live2d --verify --validation` 8 / 8 dumps `PASS`.
 
 ### Live 2D: RC_VK_PICTURE=native (2026-11-20, renderer P1 step 7 batch 5)
 `RC_RENDERER=vk RC_VK_PICTURE=native tools/play.sh [replay <name>]` (`RC_VERSION=eu` as usual) presents the native picture:

@@ -449,6 +449,22 @@ After step 1: fold its answers into this plan's open questions.
    cut run failed), and steps 5-7's checks pass (tex, blit, gif2d (a), (b), (c) with every pixel equal on 88,421
    kicks, live2d), apart from `gif2d --vk` counting PATH1's MIPMAP guards on levels 2 and 14 (from batch 1, left to
    batch 2). Oracle 1,632 / 1,563 ok, `playtest2` unchanged (658 at 60 fps, 1167 at 50). Batch 2 can start.
+   **Batch 2 built 2026-11-20/21 (`RENDERER_3D_DESIGN.md` 18):** K2 through `Gs2dVk`, judged per kick against the
+   emulated GS (`rc_replay --consumer gif2d --vk`, check (d)), and the exact blend's barriers by covered pixels
+   (`GsCoverMap`). On all 67 re-referenced dumps, validation on: **44,200 K2 kicks, 7.24 G pixels, every pixel equal
+   in R, G, B, A and Z**; step 7's check (c) again equal on 88,421 kicks and 14.49 G pixels under the new rule;
+   barriers a K2 kick 16.15 on average and 85 at most (box rule 173.4 and 879), as the design measured. Check (d)
+   found and the batch corrected: a vertex Q of 0.0 is 1.0 in the reference, the GS's CLUT buffer (loaded at TEX0
+   writes), float-to-int conversion of out-of-range texture coordinates as the reference's x86 build, and an
+   overlap the box rule's rectangle-pair test let through. `rc_gs2d_test` T1-T10 pass (T9: K2's paths, T10: the
+   rule); the planted faults fail except the one that cannot (a culled triangle drawn covers no pixel). The MIPMAP
+   guard is counted, not a failure (level 0 is what the reference draws; levels 2 and 14 equal in every pixel); the
+   one vertex with Z above 2^24 touches no pixel's Z. Oracle 1,632 / 1,563 ok, `playtest2` unchanged. **Open, for
+   a decision: K2's GPU time.** It is fragments, not draws or barriers (about 4 ns a covered pixel through the
+   exact shader; draws 0.4 us each), and level 21 measured 9.05 ms a kick against the design's limit of 8, but the
+   off-line replays leave the GPU in its lowest power state (300-525 MHz of 2,100) and the same kicks measure 6.0
+   to 21.9 ms depending on the GPU's other load, so the limit cannot be judged until the clock is held or K2 is
+   live (18.5, 18.7). Batch 3 (the chained replay) does not wait for it.
    **Order and design (step 7's batch 4 review, 2026-11-20, `RENDERER_2D_DESIGN.md` 17.4).** Step 8 starts before
    step 7's live batch, because K1 inherits registers only PATH1 writes and they come out of the VU1 programs'
    packets. It needs a short design first (Fable, `RENDERER_3D_DESIGN.md`), then batches: (1) the reader and the

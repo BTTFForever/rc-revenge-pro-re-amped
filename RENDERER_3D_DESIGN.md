@@ -65,6 +65,14 @@ feed the live GIF reader from the emulated VU1's packets (the runtime's `gifPack
 references: full speed at once, but the new renderer would then draw from emulated hardware output, on the
 emulator's threads, which is the opposite of where the plan goes and is thrown away at step 9.
 
+**U3 (raised by batch 2, 2026-11-21; not answered). K2's GPU time against 10.4's limit: how it is to be measured.**
+Batch 2 passed every correctness check (section 18) but 10.4's acceptance is open: level 21 measured 9.05 ms a K2
+kick against the limit of 8, the time is fragments through the exact shader (not draws or barriers, as 10.4 had
+assumed), and the measurement itself swings between 6.0 and 21.9 ms for the same kicks with the GPU's clock, which
+the driver holds at 300-1,005 MHz of 2,100 during off-line replays. To choose: (A) time it again with the driver's
+performance mode set for the run (a setting of the desktop, `GPUPowerMizerMode`), (B) leave it to batch 4's live
+timestamps, (C) accept and move the question to P2 with U2. Batch 3 does not depend on it. Details: 18.5, 18.7.
+
 **Decided here (not the user's), for the record:**
 
 1. **The exact blend's cost (19.5): read mode is the live default for K1 and for K2; the barrier rule changes from
@@ -95,7 +103,8 @@ For information, found while measuring:
    two mipmapped textures (177,492 primitives) need no mip chain to match it. Inherited divergence (section 14).
 4. **K2's GPU time will be draws, not barriers:** 544 state runs a kick on average and up to 2,619, a third of them
    (races) or nearly all (front end) a change of texture only. At the 7 us a small draw cost in 19.5 that is about
-   4 ms on average. Batch 2 measures it; reducing it is P2's (section 10.4).
+   4 ms on average. Batch 2 measures it; reducing it is P2's (section 10.4). *Measured (18.5): wrong. A draw costs about
+   0.4 us; K2's GPU time is its fragments, about 4 ns a covered pixel.*
 
 ## 1. Summary
 
@@ -1219,3 +1228,297 @@ The runtime changed, so the game and the oracle were rebuilt in all four trees (
   feed the software GS in exact mode.
 - The originals under `frame-dumps/pre-r/` go when step 8 is closed (6.5 GB).
 - The vif consumer's handling of runs the machine cut short (16.1 item 2) stays in the code and now reports 0.
+
+## 18. Batch 2 as built (2026-11-20/21): K2 on Vulkan, per kick
+
+Section 13 item 2. Built: the pixel rule (`render/gs2d/gs_cover`, `GsCoverMap`) in `Gs2dVk` with the box rule kept as
+an option, K2 drawn by `Gs2dVk` (viewport, bindings, counters, faults), check (d) in `rc_replay`'s `gif2d` consumer,
+`rc_gs2d_test` T9 and T10. Check (d) found three differences between the reader, the shader, the model and the
+reference, all corrected (18.1 items 5-7); the comparison runs found an error in the box rule (item 8). Usage:
+`NOTES.md`, "K2 on Vulkan per kick, barriers by covered pixels". The chained replay and everything live is batch 3 and 4.
+
+```
+render/gs2d/gs_cover.{h,cpp}     GsCoverMap: two 16-bit stamps a pixel (read, split) with epochs; a triangle's coverage as spans a row
+render/gs2d/gs2d_vk.{h,cpp}      Options::grouping (kGroupPixels default, kGroupBoxes), viewport 8192 at -4096, only changed bindings
+                                 recorded, stamping stops after the last reading primitive, ListStats, ten new faults, measureNoFill
+render/gs2d/gs2d.vert, gs2d.frag ndc = framebuffer / 4096; cvtt and exactLroundInt (18.1 item 7)
+render/gs2d/gs_model.cpp         the same two conversions in the model
+render/gs2d/gif2d_reader.{h,cpp} the GS's CLUT buffer, loaded at TEX0 writes (18.1 item 6)
+render/tex/gif_walk.cpp          a vertex's Q 0.0 read as 1.0 (18.1 item 5)
+tools/rc_replay/gif2d.cpp        channel 1 kicks handed to the Vulkan check; MIPMAP counted, not a failure
+tools/rc_replay/gif2d_vk.{h,cpp} check (d); K1 and K2 reported apart; --vk-boxes, --vk-nofill; the Z >= 2^24 report
+tools/rc_replay/gs2d_test.cpp    T9 (i)-(vii), T10 (o)-(v), their faults
+```
+
+`rc_tex` (the GIF walker) is linked into the game through `rc_live`, so the game was relinked in both trees and
+checked (18.6). The oracle links none of it (`rc_oracle` was not rebuilt). The runtime and every decompiled function
+are untouched.
+
+### 18.1 Changes to the design, and why
+
+1. **Check (d) is part of `gif2d --vk`, not a new `frame_vk` tool.** The `gif2d` consumer already drives a
+   `FrameReader` (batch 1) and already seeds, draws and compares K1 kicks; a channel 1 kick is judged by the same code:
+   the emulated GS memory is kept before the machine runs the kick, the vif consumer behind the machine makes the
+   kick's K2 commands, they are drawn over the kept memory and compared with the machine's memory after the kick. One
+   run of a dump gives (a), (b), (c) and (d). `--vk-boxes` adds a second read-mode pass with the box rule.
+2. **The viewport is 8,192 x 8,192 at -4,096** (9.3 said +-2,048). 3.7's "no vertex more than 2,048 pixels outside
+   the picture" measured from the picture's edges; from the window origin PATH1's vertices reach 2,368 pixels, and
+   the first run of check (d) counted them beyond the viewport. With 4,096 every window coordinate a 16-bit GS vertex
+   can have (X / 16 - OFX) lies inside, the GPU never clips, and `ndc = framebuffer / 4096` is still exact. A vertex
+   beyond it fails check (d) (`beyondViewport`); it cannot happen and the count is 0 on all dumps.
+3. **Coverage a row at a time, and stamping stops early.** `GsCoverMap::triangle` gives a triangle's pixels as one
+   span a row (the reference's edge functions with its bias; T10 (o): 13,763 random triangles, 327 M covered pixels,
+   0 different from `gsTriCovers`). The lever 10.2 kept in reserve is built: nothing is stamped after the list's last
+   reading primitive. The split's groups (K1) use the second stamp of the same map.
+4. **Bindings.** Between consecutive draws only the pipeline, the bind groups and the scissor that changed are
+   recorded: 1,294 bind commands a K2 kick for 559 draws (2.3 a draw; up to 5 before). Record and draw arrays grow as
+   needed; the largest list had 17,768 triangles in 2,666 draws.
+5. **A vertex's Q of 0.0 is 1.0** (commit 2f8978b). The first run of check (d) differed where PATH1's clipping sends
+   vertices with S, T and Q all zero: the reference's GS front end reads Q 0.0 as 1.0 at every RGBAQ and PACKED ST
+   write. `GifWalker` (`referenceQ`) now gives the vertex that Q. T9 (vi).
+6. **The CLUT buffer** (same commit). The GS loads its CLUT buffer when TEX0 is written (as CLD says) and draws
+   indexed textures through it; PATH3 re-uploads palettes between kicks while PATH1 goes on drawing with the TEX0 it
+   wrote earlier, so reading the palette from memory at the draw was wrong for K2. The reader keeps step 5's `Clut`
+   model, loads it at TEX0 writes and hands it to the texture cache (memory is used only before the first load).
+7. **Float to int as the reference's x86 build does it** (commit 854540f). Clipped PATH1 triangles reach texture
+   coordinates near 1e10. The reference converts with `cvttss2si`, which gives 0x80000000 for anything outside the
+   int range, where the GPU's `int()` saturates; and its `ExactLround` of a bilinear value beyond 2^23 keeps the low
+   32 bits of `lround`'s result. The shader (`cvtt`, `exactLroundInt`) and `gs_model` do the same. T9 (vii).
+8. **The box rule's rectangle-pair test was wrong** (found 2026-11-21 by the `--vk-boxes` pass). `rectangleHalves`
+   took any two triangles on three corners each of one axis-aligned rectangle with two corners in common for the
+   halves of a quad. Two such triangles that share a *side* are cut along different diagonals and overlap; PATH1
+   sends them (USA level 17 cycle 279, Europe level 24 cycle 132: 3 pixels wrong in 2 of 44,200 kicks with the box
+   rule; K1's pairs are always halves, so step 7's results stand). The shared corners must now be opposite ones. The
+   pixel rule never used the test (10.2). T10 (v) draws such pairs: with the old test the box rule differs on 357
+   pixels and issues 1 barrier where 9 are needed.
+9. **`MIPMAP` is counted, not a failure** (9.1's table, D-3D-2): 18.4.
+10. **One fault of 11.4 cannot fail.** "A culled triangle drawn": the cull leaves out exactly what the reference's own
+    early exit leaves out (no area, or a box outside the scissor); drawn, such a triangle covers no pixel. It is kept
+    as a run that must pass (18.3).
+
+### 18.2 Checks
+
+**`rc_gs2d_test --validation --blend read`** (RTX 2060, driver 620.70.06, synchronisation validation on: the planted
+hazard is reported), pixel rule: `PASS`, T1-T10, 2,241 scenes, 0 validation errors, 191 s (with item 8's change and
+T10 (v); before it 2,239 scenes, `PASS`).
+
+| test | result |
+|---|---|
+| model, T1 (44,236,800 pixels, read) | every pixel equal to the emulated GS |
+| T2-T8 | pass (T8: 17 scenes, K1's layers under the pixel rule) |
+| T9 (i) per-vertex Z under GREATER and GEQUAL, with and without the Z write | 381,528 values, model = emulated = Vulkan |
+| T9 (ii) the 18 PATH1 states on an alpha-ramped 256 x 128 CT32 texture | 184,357 values equal |
+| T9 (iii) REPEAT to +-1,000 texels, bilinear and nearest | 287,996 values equal |
+| T9 (iv) vertices to 2,047 pixels out; (v) ADC vertices; (vi) Q 0; (vii) S/Q to 1e10 | 29,416; 21,724; 37,396; 168,904 values equal |
+| T10 (o) spans against `gsTriCovers` | 327,060,069 covered pixels, 0 differ |
+| T10 (i) water's three passes over a fan and a strip | equal; **1 barrier** (the box rule: 64) |
+| T10 (ii) every fourth triangle moved; (iii) reading and exact interleaved; (iv) a pass per target | equal; 15, 32, 24 barriers, each the number an independent dense-map computation predicts (box rule: 64, 60, 696) |
+| T10 (v) pairs sharing a rectangle's side | equal; 9 barriers under both rules |
+
+**Checks (c) and (d) on all 67 dumps** (`rc_replay <dump> --consumer gif2d --vk --vk-blend read --vk-boxes --verify
+--quiet --no-tables --validation`, synchronisation validation on, four at a time, 61 minutes; the re-referenced dumps
+of batch R, nothing from `pre-r/`):
+
+| | USA (34 dumps) | Europe (33) | both |
+|---|---|---|---|
+| (c) K1 and clear kicks judged | 46,877 | 41,544 | 88,421 |
+| (c) pixels compared; differing in R, G, B, A or Z | 7,680,327,680; **0** | 6,806,568,960; **0** | 14,486,896,640; 0 |
+| (d) K2 kicks judged | 23,433 | 20,767 | **44,200** |
+| (d) pixels compared; differing in R, G, B, A or Z | 3,839,262,720; **0** | 3,402,465,280; **0** | **7,241,728,000; 0** |
+| kicks the machine did not run; kicks without a state | 0; 0 | 0; 0 | |
+| validation errors | 0 | 0 | |
+| vertices beyond the viewport | 0 | 0 | |
+| triangles with a vertex Z at or above 2^24 | 0 | 1 | (18.4) |
+| `MIPMAP` primitives (levels 2 and 14) | 27,399; 59,687 | 31,071; 59,335 | (18.4) |
+| (a) register files, (b) the encoded K1 in front of the machine | 0 differ on every dump | 0 differ | |
+| result with the pixel rule | 34 / 34 | 33 / 33 | |
+
+The box-rule pass of the same runs was equal everywhere but for item 8's three pixels (USA `s5/l17` 2, Europe `s5/l24`
+1); with the corrected test both dumps pass in all planes under both rules.
+
+**Barriers and draws** (all 67 dumps; the pixel rule beside the box rule):
+
+| | pixel rule | box rule | 3.9 predicted |
+|---|---|---|---|
+| K2 barriers, mean a kick; largest | **16.15; 85** | 173.4; 879 | 16.2; 85 |
+| K2 kicks with 0-4 / 5-16 / 17-32 / 33-64 / 65+ barriers | 10,933 / 13,158 / 14,861 / 5,196 / 52 | 1,349 / 735 / 2,439 / 6,783 / 32,894 | 10,938 / 13,153 / 14,861 / 5,196 / 52 |
+| K2 reading primitives; groups; barriers | 10,085,550; 4,441,096; 713,894 | 10,085,550; 7,663,691; 7,663,691 | |
+| K2 draws, mean a kick; largest | 559.0; 2,666 | 631.9; 2,812 | 557; 2,665 (boxes 630; 2,810) |
+| K2 primitives drawn, mean; largest | 5,522; 17,768 | | 5,500; 17,768 |
+| K1 barriers in all; largest in a kick | 457,720; 97 | 534,278; 119 | largest 96 (pixels), 119 (boxes) |
+| K1 draws, largest in a kick | 165 | 167 | 123; 171 |
+
+K1's largest kick has 97 barriers where 3.9 counted 96, and 165 draws where it counted 123: the survey counted
+neither the barrier at a pass's first reading primitive (10.2 step 2) nor the draws the split adds.
+
+### 18.3 Faults
+
+`--vk-fault <name>` in read mode with the pixel rule; a fault is caught when the run ends `FAIL` on pixels.
+
+| fault | USA `s5/l17`: K2 pixels differing (of 113,868,800); kicks failing (of 695) | USA `s5/l12` (water) |
+|---|---|---|
+| no barrier at a pass's first reading primitive (`no-first-barrier`) | fails: 277; 5 | fails: 1; 1 |
+| a reading batch sees only its own batch's stamps (`cover-own-batch`) | fails: 5,528; 399 | fails: 3,547; 328 |
+| no stamps for non-reading primitives (`no-stamp-other`) | fails: 337; 103 | fails: 403; 30 |
+| the read epoch advanced without a barrier (`epoch-no-barrier`) | fails: 523,911; 512 | fails: 153,457; 520 |
+| GEQUAL drawn as GREATER (`gequal-greater`) | fails: 3,949,763; 695 | fails: 3,656,047; 695 |
+| the Z of a triangle's first vertex one more (`z-plus-one`) | fails: 6,470 colour, 34,637,808 depth; 695 | |
+| REPEAT drawn as CLAMP (`repeat-clamp`) | fails: 4,271,248; 695 | |
+| Q left out (`no-q`) | fails: 99,827,441; 695 | |
+| a drawn triangle culled, every 16th (`cull-drawn`) | fails: 21,414,600; 695 | |
+| a culled triangle drawn (`draw-culled`) | passes, as it must (18.1 item 10) | |
+
+K1 is equal in every one of these runs (the faults touch only what K2 uses, or K1's lists need no barrier they
+remove). `no-first-barrier` is caught by few pixels: in a race the first reading primitive of a kick usually lies
+where nothing was drawn before it in the same pass; T10 (iv) is the test built for it. `cover-own-batch` is 10.3's
+second fault read as a planted error (stamps of other batches ignored), not the box rule, which passes with more
+barriers (18.2).
+
+Step 7's faults again, on USA `s5/front` with the pixel rule (K1 293,273,600 pixels in 1,790 kicks, K2 146,636,800 in
+895):
+
+| fault | K1 pixels differing | K2 pixels differing |
+|---|---|---|
+| ATST LEQUAL as LESS (`atst-less`) | fails: 1,298,271 | fails: 7,780 |
+| the failing part of the split dropped (`drop-fail`) | fails: 2,127,471 | 0 (K2 has no split) |
+| ZTST GREATER as GEQUAL (`z-gequal`) | fails: 36,753 | fails: 422,323 |
+| FIX off by one (`fix`) | fails: 6,350,468 | fails: 18,896,418 |
+| a vertex colour's R and G swapped (`colour-swap`) | fails: 955,200 | fails: 113,134,126 |
+| the half pixel left out (`no-half-pixel`) | fails: 440,619 | fails: 14,199,433 |
+| the texel fetch one row down (`texel-row`) | fails: 9,364,035 | fails: 104,287,147 |
+| the barrier left out (`no-barrier`) | fails: 783,666 | fails: 98,462 |
+| a reading batch as one group (`one-group`) | fails: 68,534 | fails: 97,825 |
+| the split per batch (`split-per-batch`) | passes, as in step 7 (`RENDERER_2D_DESIGN.md` 16.3: no pixel of these dumps depends on it; T3 catches it) | 0 |
+| TEXA ignored (`texa`) | passes, as in step 7 (TEXA changes no picture of the dumps; T6 catches it) | 0 |
+| the bias where a < b (`bias-always`) | not applicable in read mode (no bias) | |
+
+In `rc_gs2d_test` every fault of both lists fails its test (T1, T3-T6, T8, T9, T10), except `bias-always` (not
+applicable in read mode) and `draw-culled` (must pass).
+
+### 18.4 The mip guard and the large Z
+
+- **D-3D-2, `MIPMAP` (TEX1 with MXL 3 / 4): accounted for, no change to the plan.** The reference never samples a mip
+  level (information item 3); `Gs2dVk` draws level 0 with the reference's filter. The primitives with the two
+  mipmapped textures are counted (the table above) and are no longer a failure of `gif2d --vk`: on `s5/l2` and
+  `s5/l14` of both versions every pixel of every K2 kick is equal, 177,492 such primitives among them. The four dumps
+  that ended `FAIL` in batch R (17.3) now end `PASS`. Real mip levels stay P2's (plan step 9), as D-3D-2 says.
+- **The vertex with Z at or above 2^24 (9.1): no pixel depends on it.** One triangle, Europe `s5/l22` cycle 283 kick
+  47 (no blend, TEST 0x702f7, Z written): vertex Z 0x33a7cb, 0x118c2c and 0x165acc4. It covers 638 pixels inside the
+  scissor; the largest Z the reference's interpolation gives a covered pixel is 0x27304a, none reaches 2^24, and the
+  kick is equal in every plane. The shader's clamp to 2^24 - 1 (where the reference's Z24 store would keep the low 24
+  bits) is therefore never reached; `gif2d --vk` prints the triangle and these counts whenever one appears, so a dump
+  where a pixel does depend on it will show it.
+
+### 18.5 Section 10.4's report: K2's GPU time
+
+RTX 2060, 2026-11-21, one run at a time on an otherwise idle machine, no validation layer; timestamps around the
+kick's passes; `--vk-blend both --vk-boxes`. Milliseconds a kick, mean / largest.
+
+| USA dump | K2 fixed function (bias on) | **K2 read, pixel rule** | K2 read, box rule | draws a kick (pixel rule), mean / largest | barriers a kick, pixel / box | covered pixels a kick, mean / largest |
+|---|---|---|---|---|---|---|
+| `s5/l17` | 3.38 / 5.29 | **3.86 / 6.45** | 8.24 / 14.55 | 740 / 1,791 | 14.5 / 230.5 | 861 K / 1.33 M |
+| `s5/l18` | 3.45 / 4.27 | **4.00 / 5.64** | 11.06 / 15.17 | 1,202 / 1,912 | 10.6 / 335.6 | 788 K / 0.93 M |
+| `s5/l21` | 7.82 / 14.21 | **9.05 / 15.68** | 14.82 / 21.59 | 823 / 1,643 | 34.0 / 287.2 | 2.18 M / 4.21 M |
+| `s5/l23` | 2.64 / 3.91 | **3.24 / 5.54** | 7.61 / 19.10 | 757 / 2,666 | 19.1 / 220.6 | 655 K / 0.85 M |
+| `s5/front` | 2.21 / 4.69 | **2.69 / 6.02** | 4.64 / 15.10 | 682 / 1,782 | 14.6 / 110.0 | 519 K / 1.14 M |
+
+K1 on the same runs: races 0.11 / 0.22 ms in read mode under either rule (0.08 / 0.12 fixed function); the front end
+1.16 / 3.22 ms with the pixel rule (31.4 barriers a kick, 93 at most), 1.35 / 3.82 with the box rule (38.8; 115), 0.20
+/ 0.44 fixed function.
+
+CPU, where the list is built (read, pixel rule): the list 1.5-2.7 ms a K2 kick on average, of it the cover map 0.13-1.16
+ms; the cover map's largest kick 2.44 ms (`s5/l21`, 2.1 M pixels looked at on average), under 10.2's 3 ms. (On the
+67-dump run, four replays at a time with the validation layer, the largest was 5.5 ms; that machine was loaded.)
+
+**Acceptance: over the limit on one of the five dumps as 10.4 measures it, and not judgeable by that measurement
+(below).** In this run `s5/l21` takes **9.05 ms a K2 kick on average** in read mode with the pixel rule, over 10.4's
+8 ms; the other four take 2.7-4.0 ms. As 10.4 says, nothing was optimised beyond "bind what changed"; the split
+follows. `--vk-nofill` (a measurement: every draw's scissor cut to one pixel, so the draws, binds and barriers are
+issued and almost no fragment is shaded):
+
+| `s5/l21`, ms a K2 kick, mean | fixed function | read, pixel rule | read, box rule |
+|---|---|---|---|
+| as drawn | 7.82 | 9.05 | 14.82 |
+| without fragments (`--vk-nofill`) | 0.32 | 0.59 | 0.83 |
+| the fragments' share | 7.50 | 8.46 | 13.99 |
+
+| the 9.05 ms of `s5/l21` (read, pixel rule) | ms | how measured |
+|---|---|---|
+| draws, binds, vertex work (823 draws, 2,196 binds) | 0.3 | the fixed-function list without fragments |
+| the read path without fragments (34 barrier commands, the readable pass) | 0.3 | read minus fixed function, without fragments |
+| the barriers with fragments in flight | 0.75 | 34.0 a kick at 22.8 us (box minus pixel rule: 5.77 ms for 253.2 barriers) |
+| fill: 2.18 M covered pixels through the exact shader | 7.7 | the rest; 3.5 ns a covered pixel |
+
+The same on `s5/l17` and `s5/l18`: without fragments 0.25 / 0.29 / 0.49 ms and 0.42 / 0.46 / 0.68 ms (fixed function /
+pixel rule / box rule) of 3.38 / 3.86 / 8.24 and 3.45 / 4.00 / 11.06.
+
+**The GPU's clock decides these numbers.** A replay submits one kick's lists every 16-25 ms of wall time, so the GPU
+is mostly idle and the driver keeps it in a low power state: `nvidia-smi` during the runs shows P8 with the graphics
+clock between 300 and 525 MHz of the device's 2,100 MHz. The same level 21, three ways:
+
+| USA `s5/l21`, K2 in read mode with the pixel rule | ms a kick, mean / largest | the GPU meanwhile (sampled every 4-5 s) |
+|---|---|---|
+| alone, read only (one list a kick) | 21.86 / 38.10 | P8 on 48 of 49 samples, clock 300-315 MHz, 15% busy |
+| alone, three settings a kick (the table above) | 9.05 / 15.68 | not sampled |
+| four replays at a time, three settings a kick | 5.97-6.07 / 23.4-25.5 | P8 to P0, 405-1,005 MHz, 13% busy |
+| the 67-dump run (four at a time, validation on, two settings) | 5.55 / 15.71 (Europe 5.27 / 17.03) | not sampled |
+
+So the absolute times are those of a GPU clocked at a seventh to a half of its speed, they vary by a factor of
+four with what else the GPU is given, and **10.4's acceptance cannot be decided by them**: if the time goes with
+the clock as these runs suggest, level 21 at 2,100 MHz is well under 8 ms, but that was not measured, and the live
+game's load (a list every 16.7 ms and a presentation) will set a clock of its own. In the 67-dump run every dump but the two level 21s stays at 3.4 ms a K2 kick or less. What does
+hold is what was measured within one run: the order and rough ratios of the three settings, and the split below
+(the runs without fragments load the GPU least, so their share is if anything overstated). 19.5 of the 2D design
+and 10.4's 20.6 us a barrier were measured the same way and carry the same caveat. The clock was not forced
+(`nvidia-settings` offers `GPUPowerMizerMode`; it is a setting of the user's desktop, left alone).
+
+What this corrects in 10.4 and in information item 4:
+
+- **K2's GPU time is fill, not draws.** At these clocks a draw with its state costs about 0.4 us (10.4 extrapolated 7 us from K1's 161
+  tiny draws); the largest list timed without fragments took 1.1 ms (1,522 draws). A covered pixel costs about 4 ns
+  (3.5-4.2 on the three dumps timed without fragments): the fragment shader computes the reference's arithmetic in doubles and writes `gl_FragDepth`, so no
+  fragment is rejected before it is shaded, and level 21 covers 2.2 M pixels a kick (14 times the picture) where the
+  others cover 0.5-0.9 M.
+- **A barrier costs 20-23 us only because fragments are in flight** (0.9 us without them): l17 20.3, l18 21.7, l21
+  22.8, l23 21.7, front 20.5 us. With the pixel rule they are 0.2-0.8 ms of a K2 kick; the box rule would have cost
+  4.4-7.1 ms more a race kick.
+- **10.4's levers for P2 (a texture array or atlas, fewer state runs) would not help here;** what would is fewer
+  shaded fragments or a cheaper fragment (depth tested before shading where the alpha test allows it, front-to-back
+  order of opaque states, single precision where it is provably exact). None of that is in step 8, and whether P2
+  takes it is not decided here.
+
+### 18.6 The game, the oracle, the replays
+
+`rc_tex` (the GIF walker) and `rc_gs2d_vk` reach the game through `rc_live`, so `rc_revenge_pro` relinked in
+`build-decomp` and `build-eu`; `rc_oracle` links nothing of `render/` and was not rebuilt. All on 2026-11-21 with the
+final code:
+
+- `rc_gs2d_test --validation --blend read` (synchronisation validation on), with item 8's change and T10 (v): `PASS`,
+  2,241 scenes, 0 validation errors, 191 s; 20 faults fail their tests, `bias-always` not applicable, `draw-culled`
+  passes as it must. `build-eu`'s `rc_gs2d_test` T8-T10: pass.
+- The two dumps of item 8 and Europe `s5/l22` again with `--vk-boxes --validation`: `PASS`, every pixel equal under
+  both rules.
+- `live2d --verify --validation` (the live 2D path, now with the pixel rule) on `s6/boot`, `s6/load17` and `b4-key*` of
+  both versions: 8 / 8 `PASS`, 0 validation errors (USA `s6/boot` 42,288,326 pixels compared, Europe 45,130,830, all
+  equal).
+- `tools/oracle.sh --all`: USA seed 2111, **1,632 ok, 0 FAIL** (528 s); Europe seed 2112, **1,563 ok, 0 FAIL** (938 s).
+- `RC_SCENE_LOG=... RC_DEBUG_DUMP=... timeout 70 tools/play.sh replay playtest2`, idle machine: USA race scene 3020
+  at frame 658 with the default renderer and with `RC_RENDERER=vk`, **60.0 fps** in both; Europe at frame 1167 in
+  both, **50.0-50.2 fps** (`tools/fps.py`, the 5 s samples after the load).
+- `RC_RENDERER=vk RC_VK_PICTURE=native RC_VK_VALIDATION=1`, USA `playtest2`, 70 s: scene 3020 at frame 658, 1,840
+  lists drawn, 0 failed, 71,444 barriers, 0 validation errors; 30 fps as in step 7's batch 5 (the reader on the EE
+  thread, U2).
+
+### 18.7 Open
+
+- **10.4's acceptance is not decided** (18.5). Level 21 takes 9.05 ms a K2 kick against the limit of 8 in the run
+  10.4 asks for, 6.0 ms with four replays sharing the GPU and 21.9 ms alone with one setting, all with the GPU held
+  at 300-1,005 MHz of 2,100 by the driver's power management; reported, not optimised. The time is the exact fragment
+  shader on 2.2 M covered pixels a kick, not draws or barriers. Needed, and for the user or P2 to choose: a timing
+  that holds the clock (the driver's performance mode for the measurement, or the live game's own timestamps in
+  batch 4), and then, if level 21 is still over, what may change in the shader without losing equality. With U2 (the
+  references on the CPU, 24-49 ms a kick) this is not what limits step 8's frame rate.
+- The Z24 store of a pixel Z at or above 2^24 is still a clamp in the shader and a mask in the model (18.4): unreached.
+- The fixed-function fallback draws K2 within D-2D-1's bound only; it was timed here (18.5) and compared on five dumps,
+  not on all 67.
+- Batch 3 (the chained replay) can start: nothing in it waits for a decision except 18.5's, which does not block it.
