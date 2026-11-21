@@ -1738,3 +1738,275 @@ rebuild in either tree (its binaries date from batch R). Checked all the same, 2
   (step 7 batch 5). Batch 4 decides whether the live path keeps that or shows the target, as the chain does.
 - The originals under `frame-dumps/pre-r/` (6.5 GB) can go when step 8 is closed.
 - Batch 4 (live) can start.
+
+## 20. Batch 4 as built (2026-11-22): live 3D
+
+Section 13 item 4. `RC_RENDERER=vk RC_VK_PICTURE=native` now draws the whole picture live: the frame reader on the EE
+thread (step 7 batch 5's `render/live` consumer) puts K2's triangles in the cycle's list, and the presenter draws the
+list (uploads, the clear, K2, K1) through `Gs2dVk` with the exact blend and the pixel rule and shows
+`target[DISPFB2.FBP]`. The live reader's lists go into a recording as `DLST` chunks, and `rc_replay --consumer dlst`
+proves them equal to the lists made off-line from the recorded kicks. **Every correctness check passed at the first run;
+nothing in the reader, the references, the shader or `Gs2dVk`'s drawing had to change. The frame-rate check does not
+pass (U2: the references on the EE thread), so `gs` stays the default.** Usage: `NOTES.md`, "Live 3D".
+
+```
+render/live/live2d.{h,cpp}     Reader: K2's primitives in the list (Gif2dReader::Options::path1Prims), FrameBlit no longer
+                               run (20.1 item 1), the cycle's VIF1 kicks published as command ranges, a list sink;
+                               Mailbox: a stripped list keeps TEXTURE and IMAGE_BLIT; Presenter: the target for every
+                               picture, K2's GPU time a kick and a frame (U3), a window of its stats for the periodic line
+render/live/live_host.{h,cpp}  the DLST sink, the presenter's periodic line, RC_VK_SHOT_* also the emulated GS picture
+render/gs2d/gs2d_vk.{h,cpp}    record(list, cl, stamps, ranges): timestamps 2 + 2k and 3 + 2k around each range's draws
+render/frame/frame_reader.*    path1Ranges(): each channel 1 kick's commands in the list
+render/frame/dlst.h            the DLST payload (header, commands, arena) and its encoder
+render/record/                 format.h kChunkDrawList; writer Writer::drawList (a job after the cycle's CYCL and REFI);
+                               capture rc::rec::drawListWanted / recordDrawList (RC_FRAME_RECORD_DRAWLISTS=1); reader
+                               hands a DLST after a delivered cycle to the new Consumer::chunk
+platform/vk_host.cpp           the window title; the GS picture of the present handed to the screenshots
+tools/rc_replay/dlst.{h,cpp}   rc_replay --consumer dlst (the live check)
+tools/rc_replay/live2d.*       every pixel judged (K2 is drawn)
+tools/live_check.sh            a native session in exact mode from boot with DLST, then dlst and vk --verify
+tools/shot_compare.py          native_<c> against gs_<c> screenshots
+```
+
+No shader, no VU1 reference, no runtime file and no oracle source changed; `rc_oracle` had nothing to rebuild in either
+tree. The game relinked (it links `rc_live` and the capture).
+
+### 20.1 Changes to the design, and why
+
+1. **Upload-only pictures are shown from the target, as the chained replay shows them (19.7's question).** The live
+   reader no longer runs `FrameBlit`; the uploads reach the targets as the GIF reader's `IMAGE_BLIT` commands in list
+   order (batch 5's `frameUploads`) and the presenter samples `target[DISPFB2.FBP]` for every picture. It is equal: the
+   chained replay already showed all 1,393 upload-only cycles of the 67 dumps from the target (19.1 item 4); the live
+   classes on USA `s6/boot` (`rc_replay --consumer live2d`, now judging every pixel) give 900 / 900 pictures equal to
+   `REFI` on all 138,240,000 pixels (258 of them upload-only); and the live sessions below include the boot's logos and
+   movie (255 USA, 254 Europe upload-only cycles in the `front` sessions), every one hash-equal. It saves `FrameBlit`'s
+   work on the EE thread and a picture upload a frame on the main thread. `FrameBlit` stays for `rc_replay --consumer
+   blit`.
+2. **The live check needs a dump recorded from boot.** Section 12 asked for "a short exact-mode session". The live
+   reader starts at the machine's reset with the game and numbers its textures in the order it first meets them
+   (`Gif2dReader::textureId`, generations per cache entry), so a reader started at a mid-session keyframe sends
+   other ids and other `TEXTURE` commands and no list could be byte-equal. `rc_replay --consumer dlst` therefore runs
+   the live `rc::live::Reader` itself, from reset, on a dump whose first cycle is cycle 0 (`RC_FRAME_RECORD_AT=boot+n`),
+   with no keyframe but one after a save-state load (as the capture gives the live consumer), and refuses any other
+   dump (exit 2). The sessions are 800-2,800 cycles, 100-290 s each in exact mode with the reader.
+3. **"Through the front end into races on levels 5, 17 and 18":** no pad recording drives the menus into those levels
+   (`playtest2` goes through the menus into one race, and no recording chooses levels 5, 17 or 18). As built: a
+   `front` session (`replay playtest2`: logos, the movie, the title, the menus, the level load and its race) and one
+   session per level booted into it (`RC_BOOT_LEVEL`: the loading screen and the
+   attract race), plus the Track Editor (`RC_SKIP_INTRO=1`, `tools/tedit_walk.py 1 7000`: the menus into the editor and a
+   random edit). Each in both versions.
+4. **`DLST` is written live by the capture** (`RENDERER_FRAME_RECORD.md` 9 had planned a `--save-drawlists` copy): the
+   live consumer's cycle close comes after the recording's in the capture, so `rc::rec::recordDrawList` queues the chunk
+   right behind its cycle's `CYCL` and `REFI` and before the next keyframe; it is written only for a cycle that was
+   recorded and only from the EE thread. Ring dumps carry it too (the ring keeps whole chunks), though only a dump from
+   boot can be checked.
+5. **U3's measurement:** timestamps around each VIF1 kick's draws inside the frame's own command list
+   (`Gs2dVk::record`'s `ranges`: the first draw made from a kick's first command, the first draw after its last;
+   `RHI_TIMESTAMP_KEEP_BARRIERS`, so the image barriers recorded are those of the list without them; at most 126 kicks a
+   frame, none exceeded). K2's time a frame is the sum over its kicks. The game's GPU is clocked as the game loads it,
+   which is what 18.7 asked for (20.5).
+6. **The mailbox keeps uploads when it strips a list** (the presenter 16 lists behind): `TEXTURE` and now `IMAGE_BLIT`,
+   because the targets persist and a later picture can show an upload without repeating it. Never triggered in the
+   runs below (0 lists reduced).
+7. **Screenshots of both pictures at once:** `RC_VK_SHOT_*` writes the emulated GS picture of the same present beside the
+   native one (`gs_<cycle>`), so check 2 compares pictures of one moment; `tools/shot_compare.py` summarises the pairs.
+
+### 20.2 The live check (section 12; check 1)
+
+`tools/live_check.sh` per session: `RC_RENDERER=vk RC_VK_PICTURE=native` in exact mode (`tools/frame_record.sh`) recorded
+from boot with `RC_FRAME_RECORD_DRAWLISTS=1` (every 10th reference picture stored), then `rc_replay <dump> --consumer
+dlst` and `rc_replay <dump> --consumer vk --verify` (RTX 2060 by PRIME offload, read mode). **20 / 20 `PASS`.**
+
+| session (cycles from boot) | version | DLST lists equal byte for byte | commands; VIF1 kicks | chained replay: flips hash-equal; `REFI` equal (pixels); later keyframes equal | cycles with K2 / PATH3 only / uploads only |
+|---|---|---|---|---|---|
+| `front`: `replay playtest2` (1,500 / 1,700) | USA | **1,500 / 1,500** | 1,007,004; 1,240 | 1,500 / 1,500; 150 / 150 (23.0 M, 0 differ); 5 / 5 | 1,240 / 5 / 255 |
+| | Europe | **1,700 / 1,700** | 1,522,179; 1,441 | 1,700 / 1,700; 170 / 170 (27.9 M, 0); 6 / 6 | 1,441 / 5 / 254 |
+| `l5`: `RC_BOOT_LEVEL=5` (800) | USA | **800 / 800** | 1,197,588; 795 | 800 / 800; 80 / 80 (12.3 M, 0); 3 / 3 | 795 / 0 / 5 |
+| | Europe | **800 / 800** | 1,166,756; 795 | 800 / 800; 80 / 80 (13.1 M, 0); 3 / 3 | 795 / 0 / 5 |
+| `l17` (800) | USA | **800 / 800** | 1,331,090; 793 | 800 / 800; 80 / 80 (12.3 M, 0); 3 / 3 | 793 / 0 / 7 |
+| | Europe | **800 / 800** | 1,411,315; 795 | 800 / 800; 80 / 80 (13.1 M, 0); 3 / 3 | 795 / 0 / 5 |
+| `l18` (800) | USA | **800 / 800** | 1,772,613; 795 | 800 / 800; 80 / 80 (12.3 M, 0); 3 / 3 | 795 / 0 / 5 |
+| | Europe | **800 / 800** | 1,911,376; 795 | 800 / 800; 80 / 80 (13.1 M, 0); 3 / 3 | 795 / 0 / 5 |
+| `tedit`: the Track Editor (2,800) | USA | **2,800 / 2,800** | 1,231,906; 2,795 | 2,800 / 2,800; 280 / 280 (43.0 M, 0); 10 / 10 | 2,795 / 1 / 4 |
+| | Europe | **2,800 / 2,800** | 1,400,481; 2,797 | 2,800 / 2,800; 280 / 280 (45.9 M, 0); 10 / 10 | 2,797 / 1 / 2 |
+| **total** | | **13,600 / 13,600 lists** | 13.95 M commands; 13,041 VIF1 kicks | **13,600 / 13,600 flips; 1,360 / 1,360 stored pictures (216.0 M pixels, 0 differ); 49 / 49 keyframes** | |
+
+Later sessions of this batch pass the same: two longer Europe level 5 attract races (`l5long` 1,450 cycles, `l5hunt`
+3,600: 20.3) and the four new-scene sessions of 20.7 (5,800 cycles each): **in all, 16 sessions and 41,850 live lists
+equal byte for byte, 41,850 flips hash-equal in the chained replay.**
+No VIF1 guard, no unsupported state, no unplaced upload, no vertex beyond the viewport in any of them. The `DLST`
+chunks are 0.46-1.2 MB raw a cycle (0.15-0.32 MB stored; the textures a list re-sends dominate), 460 MB to 1,036 MB raw
+a session; a session dump is 221-454 MB. `dlst` takes 26-64 s a dump (the reader is the time), the chained replay 34-120 s.
+A list is equal only when every one of its bytes is (the commands' fields, the payload arena with its zero padding;
+the `GsState` and vertex records carry no padding). Planted (`rc_replay <dump> --consumer dlst --fault list:<cycle>[:<byte>]`,
+one byte of that cycle's off-line encoding flipped; USA `l17`): in the arena (cycle 400) `FAIL` naming command 426 (op 7,
+`SCREEN_PRIMS`), payload byte 72; in the header (cycle 401, byte 20) `FAIL` naming the arena size; in a command (cycle
+402, byte 100) `FAIL` naming command 2's field `a`. Each run: 799 of 800 equal, exit 1.
+
+### 20.3 Screenshots (check 2)
+
+Two kinds, saved in each build's `frame-dumps/live/`:
+
+- **In the live-check sessions** (exact mode: the emulated GS is the software rasteriser, the reference): `native_<c>`
+  and `gs_<c>` of the same present at 2-3 cycles each, levels 5, 17, 18, the front end (title menu, race) and the Track
+  Editor, both versions (`<build>/frame-dumps/live/<session>-shots/`): **24 pairs, 3,809,280 pixels, every pixel equal**
+  in R, G, B (`tools/shot_compare.py`); with the new-scene and the two longer Europe level 5 sessions (20.7, below) 193
+  pairs, all equal.
+- **In normal play** (`tools/play.sh` settings with `PS2X_GS_HW_SCALE=1`, so the emulated picture is the hardware GS
+  renderer's 640 x lines), 2-3 shots a scene, levels 5, 17, 18, 21, the front end and the Track Editor
+  (`<build>/frame-dumps/live/perf/<version>-<scene>-shots/`): 28 pairs, 88.9% (USA) and 89.5% (Europe) of the pixels
+  differ, mean channel difference 17.6 / 21.6, PSNR 17.3 / 14.4 dB. This is not a correctness measure: the two pictures
+  show the same scene (see any pair) but not the same moment, since the emulated picture is the GS thread's latest and
+  in a race it is a game picture or two apart from the native one (a weapon's flash shown in one and not the other gives
+  the largest differences, up to a mean of 168); and the hardware renderer rasterises and filters in its own way (the
+  static Track Editor: 61-94% of pixels differ, by 2-4 levels on average). What decides correctness is the exact-mode
+  pairs above and the chained replay.
+  One normal-play pair looked suspicious: Europe level 5 cycle 1400 of one run, an under-water moment (bubbles over the
+  picture), where the native picture is washed out bright and the hardware renderer's is dark and blocky (mean
+  difference 136). The attract race is not the same from run to run, so that moment could not be recorded in exact
+  mode; instead a 3,600-cycle Europe level 5 session in exact mode (`l5hunt`, `live_check.sh` with a screenshot pair every
+  20 cycles) gave **150 / 150 pairs equal on every pixel**, its 3,600 live lists equal byte for byte and its chained
+  replay `PASS`, and the 1,450-cycle `l5long` session the same (3 pairs, 1,450 lists). The under-water frame itself is
+  not verified (20.9).
+
+### 20.4 Frame rates and the reader's time on the EE thread (check 3; not optimised)
+
+`RC_RENDERER=vk RC_VK_PICTURE=native` with play.sh's settings (`PS2X_GS_HW_SCALE=1` for the screenshots), RTX 2060, an
+otherwise idle machine; game frames a second per 5 s (`RC_DEBUG_DUMP`, `tools/fps.py`, the samples after the load),
+the reader's time from the `[vk-native]` lines (per 300-cycle window for the two parts of `playtest2`, the run's total
+for the others). Targets: USA 60, Europe 50 (both reached by `gs`, 20.6).
+
+| scene | USA fps: median (range) | USA reader a cycle (largest); a VIF1 kick | Europe fps | Europe reader a cycle (largest); a VIF1 kick |
+|---|---|---|---|---|
+| front end (`playtest2`'s menus, cycles 300-900 USA, 300-1,200 Europe) | 41 (40.4-41.8) | 21.3-21.8 ms; 21.0-21.6 | 30-36 (29.4-36.4) | 20.5-24.8 ms; 20.3-24.5 |
+| `playtest2`'s race (from cycle 1,200 / 1,500) | 30.0 (27.4-30.0) | 27.1-29.5 ms; 26.7-29.1 | 25.0 | 32.9 ms; 32.4 |
+| level 5 (`RC_BOOT_LEVEL`, 90 s) | 28.2 (21.8-32.0) | 30.9 ms (53.6); 30.6 | 25.0 (23.2-29.6) | 31.2 ms (64.7); 30.9 |
+| level 17 | 24.0 (21.0-27.8) | 35.1 ms (69.2); 34.9 | 23.4 (17.8-26.8) | 34.8 ms (55.8); 34.4 |
+| level 18 | 16.4 (14.8-19.6) | 54.7 ms (78.9); 54.7 | 16.6 (14.4-18.0) | 51.3 ms (83.5); 51.1 |
+| level 21 | 19.8 (14.0-24.4) | 41.6 ms (102.8); 41.3 | 20.4 (17.0-24.8) | 38.6 ms (63.8); 38.3 |
+| Track Editor (`tedit_walk.py 1`, 150 s) | **60.0** (60.0-60.2) | 7.0 ms (45.4); 6.5 | **50.2** (48.8-50.2) | 8.2 ms (47.4); 7.7 |
+
+**Only the Track Editor holds the target.** Wherever a race or the front end's 3D is drawn the game runs at a third to
+two thirds of full speed (16-41 fps), as decision U2 foresaw: the C++ VU1 references run on the EE thread for every K2
+kick (one kick a cycle), 21-55 ms of it against a 16.7 / 20 ms field. The reader's time now also includes putting K2's
+primitives into the list (the cull and the vertex records the live 2D reader skipped): `playtest2`'s race measured 25.3
+ms a cycle with the 2D only (`RENDERER_2D_DESIGN.md` 20.4) and 27.1-29.5 ms now, so about 2-4 ms of a race cycle. The
+main thread is not the limit: the presenter's GPU work is 0.8-1.7 ms a frame (20.5) and its CPU work (the list's build
+and the cover map, 1.5-2.7 ms off-line, 18.5) runs beside the EE thread.
+
+### 20.5 U3: K2's GPU time, from the live game's own timestamps (check 4)
+
+The same runs (20.4); the presenter's timestamps around each VIF1 kick's draws (20.1 item 5); `nvidia-smi` sampled every
+5 s beside each run. Read mode, the pixel rule.
+
+| scene | USA K2 a VIF1 kick: mean / largest | Europe | the frame's whole list on the GPU, mean, USA / Europe | GPU clock (median of the samples; P-state) |
+|---|---|---|---|---|
+| front end (menus) | 0.34-0.41 / 0.43 ms | 0.35-0.44 / 0.50 ms | 0.9-1.1 ms (both) | 945 MHz USA, 1,905 Europe (P0 mostly) |
+| `playtest2`'s race | 0.75-0.86 / 1.15 ms | 0.80 / 0.91 ms | 1.0-1.1 ms (both) | |
+| level 5 | 0.76 / 2.86 ms | 0.80 / 2.91 ms | 0.79 / 0.84 ms | 1,905-1,920 MHz, P0 |
+| level 17 | 0.75 / 2.76 ms | 0.81 / 2.89 ms | 0.79 / 0.84 ms | 1,905 MHz, P0 |
+| level 18 | 0.80 / 2.84 ms | 0.85 / 3.12 ms | 0.82 / 0.88 ms | 1,755-1,905 MHz, P0 |
+| **level 21** | **1.67 / 4.27 ms** | **1.72 / 4.72 ms** | 1.70 / 1.74 ms | 1,905 MHz, P0 |
+| Track Editor | 0.36 / 1.78 ms | 0.41 / 0.64 ms | 1.6-1.7 ms (K1: the editor's 2D) | 765-780 MHz (P0 a third of the time) |
+
+**Against 10.4's limit (8 ms a K2 kick on average): every scene is under it by a factor of 4.6 or more; level 21, the
+heaviest, takes 1.7 ms a kick on average and 4.7 ms at most.** Live, the game keeps the GPU in P0 at 1.6-1.9 GHz in races
+(the emulated GS's hardware renderer runs beside it), where the off-line replays of 18.5 left it at 300-525 MHz; 18.5's
+9.05 ms for the same level at about a quarter of this clock is consistent with 1.7 ms here (the time is fill, which
+scales with the clock). The Track Editor's GPU stays at a lower clock because little is drawn. The timestamps cost
+nothing measurable (the barriers the list records are those without them).
+
+**But the clock is the game's whole GPU load, not the native renderer's.** With play.sh's settings the emulated GS's
+hardware renderer runs on the same GPU beside the native one, and it is what keeps the driver in P0. Run with the
+emulated GS in software (`PS2X_GS_HW=0 PS2X_GS_GPU=0 PS2X_GS_THREAD=0`), so that the native renderer is the GPU's only
+work, the driver keeps the RTX 2060 in P8 (300-375 MHz on 24 of 25 samples) and K2 takes **11.9 ms a kick on level 21
+(largest 35.9)**, Europe level 5 4.6 ms (largest 10.7): the same lists, a fifth of the clock. At the frame rates of 20.4
+(10-20 fps there) the GPU is busy about a sixth of the time, too little for the driver to clock up. So: **at the
+clock the game runs at today, U3 passes by a wide margin; whether it still does once the native renderer is the only
+GPU work (P2, when the emulated GS is switched off) depends on the driver raising the clock at the full frame rate,
+which was not measured** (the frame rate cannot be had before P2). Nothing in the shader was changed (U3 = B: report
+only). Ways to settle it then: time it at P2's frame rate, or ask the driver for its performance mode during play
+(`GPUPowerMizerMode`, a desktop setting, left alone here).
+
+### 20.6 Recording off, the oracle, `playtest2`, the validation layer (check 5)
+
+- **Recording off:** without `RC_FRAME_RECORD` nothing of the `DLST` path runs (the reader's sink asks
+  `rc::rec::drawListWanted`, false without a recording) and without `RC_VK_PICTURE=native` nothing of `render/live` is
+  made. `RC_SCENE_LOG=... timeout 70 tools/play.sh replay playtest2`, idle machine: **USA race scene 3020 at frame 658,
+  60.0 fps**, with the default renderer and with `RC_RENDERER=vk`; **Europe at frame 1167, 50.0-50.2 fps**, both: as
+  before.
+- **The oracle:** `rc_oracle` links nothing of `render/`, and `ninja -C build-oracle rc_oracle` / `build-oracle-eu` had no
+  work. `tools/oracle.sh --all --seed 6161` (USA): **1,632 ok, 0 FAIL** (470 s, four jobs); `RC_VERSION=eu tools/oracle.sh
+  --all --seed 6162`: **1,563 ok, 0 FAIL** (877 s).
+- **Validation:** `RC_RENDERER=vk RC_VK_PICTURE=native RC_VK_VALIDATION=1 tools/play.sh replay playtest2` (the Khronos
+  layer with synchronisation validation, 75 s through the front end into the race, the K2 timestamps on): USA 1,752
+  lists drawn, Europe 1,883, **0 validation errors** in both. The chained replay with the layer and synchronisation
+  validation (`--validation`, `VK_KHRONOS_VALIDATION_VALIDATE_SYNC=true`) on the USA `l17` session and the Europe memory
+  card cycles: `PASS`, 0 errors.
+- The game relinked in both trees (it links `rc_live` and the capture); `rc_replay`, `rc_gs2d_test` and `rc_record_test`
+  build; `rc_record_test` passes (the reader's new `chunk` call changes nothing for a dump without `DLST`).
+
+### 20.7 New scenes (section 12; check 6)
+
+Recorded in exact mode through `tools/live_check.sh` (so from boot, with the native renderer live and `DLST`; every 30th
+reference picture stored), then the live check (`dlst`, `vk --verify`) on the whole dump and every earlier step's check on
+the new scene's cycles (`--cycles a-b`): `emu --verify` (A2: GIF output, register files, picture hashes, stored pictures,
+GS memory at keyframes), `tex --verify`, `blit --verify`, `gif2d --verify` (a), `vif --verify`, `gif2d --vk --vk-blend
+read --verify` ((b) beside the machine, (c) K1 and (d) K2 per kick, every pixel in R, G, B, A, Z) and the chained replay.
+
+| scene (how reached) | version | cycles (new scene's) | `dlst` | `vk` | emu, tex, blit, gif2d, vif, gif2d --vk |
+|---|---|---|---|---|---|
+| **the Track Editor's race** (`tedit_walk.py 1 9000` with walk 2's script: Random Track, Play Track, Single Race, the race on the built track) | USA | 5,800 (4,300-5,799) | 5,800 / 5,800 equal | `PASS` | all `PASS`: (c) 3,200 K1 kicks, (d) 1,600 K2 kicks, 786 M pixels equal |
+| | Europe | 5,800 (4,300-5,799) | 5,800 / 5,800 equal | `PASS` | all `PASS`: (c) 3,192 K1 kicks, (d) 1,596 K2 kicks, 784 M pixels equal |
+| **the memory card** (walk 3's script: Save Track: the name entry, the card selection with both cards' icons, "Save successful", Load Track) | USA | 5,800 (3,900-5,799) | 5,800 / 5,800 equal | `PASS` | all `PASS`: (c) 3,800 K1 kicks, (d) 1,900 K2 kicks, 934 M pixels equal |
+| | Europe | 5,800 (3,900-5,799) | 5,800 / 5,800 equal | `PASS` | all `PASS`: (c) 3,800 K1 kicks, (d) 1,900 K2 kicks, 934 M pixels equal |
+
+Screenshots of these sessions (4 a session) equal the software GS's picture of the same present on every pixel (16
+pairs). The memory card screens are the heaviest 2D yet: up to 171 barriers in one K1 kick (the 67 dumps had 97 at most,
+18.6) and 172 in one cycle (126 before), all still correct; the Track Editor's race draws K2 with the editor's own track
+renderer (`TEditRenderGameTrack`) and 21 barriers a K2 kick.
+
+**Not reached:**
+
+- **The podium and the results screens.** They need a race finished by the player. No pad recording does it: the only
+  one with input after a level load (`playtest-1262`, epoch 1) drifts from what it was recorded against (replayed at
+  normal speed: 8th place, still on lap 1 at 5:09, field 23,400), the older ones lose their driving at the load (NOTES
+  "Known, not new"), `front_walk.py` and `tedit_walk.py` do not drive, and the Track Editor's race runs on with the
+  player on the grid. A new recording made by hand (`tools/play.sh record`) of a won race would reach both.
+- **More two-player.** The pad replay drives port 0 only (`ps2_host_input.cpp`), so the Track Editor's Multiplayer Race
+  stops at "Player 2, select a vehicle" (reached and seen in a normal run), and `RC_BOOT_LEVEL`'s demo is set up "not
+  split screen" (`overrides/rc_revenge_pro_overrides.cpp`). A normal boot left in the front end for 6 minutes ran four
+  attract demos (GS-survey scenes 0x4020, 0x4090, 0x4100, 0x4160: levels 2, 9, 16, 22), none split. The two-player races
+  already in the 67 dumps (3.1) stay the only ones. Reaching more needs a second pad in the
+  replay (a runtime change) or a split-screen switch for `RC_BOOT_LEVEL` (an override change, which the oracle links);
+  neither was made in this batch.
+
+### 20.8 The default
+
+Section 12 makes `RC_VK_PICTURE=native` the default under `RC_RENDERER=vk` once batch 4 passes every check. Every
+correctness check passes (20.2, 20.3, 20.6, 20.7) and U3 is answered (20.5), but **check 3, the frame rate, does not:
+16-41 fps wherever K2 is drawn against 60 / 50** (20.4). The default therefore stays `gs` (unset `RC_VK_PICTURE` shows the
+emulated GS picture, exactly as before); `RC_VK_PICTURE=native` is the opt-in and F7 toggles in a native session. It
+becomes the default when P2 brings the references off the EE thread (step 9) and the frame rate holds.
+
+### 20.9 Open
+
+- **The frame rate (U2), P2's:** the C++ VU1 references on the EE thread are 21-55 ms a race or front-end cycle; putting
+  K2 in the list added about 2-4 ms of it. Nothing was optimised.
+- **U3 at P2's clock** (20.5): K2 is 1.7 ms a kick on level 21 with the GPU in P0 as the game runs today, but 11.9 ms
+  when the native renderer is the GPU's only work and the driver stays in P8. Time it again when the frame rate allows
+  (P2), or hold the clock; if it is still over 8 ms, what may change in the shader without losing equality is the
+  question 18.7 left (fewer shaded fragments: depth before shading where the alpha test allows, front-to-back opaque).
+- **Scenes not reached** (20.7): the podium and the results screens (need a hand-made recording of a won race), more
+  two-player (needs a second pad in the pad replay or a split-screen switch for `RC_BOOT_LEVEL`).
+- The live check needs a dump from boot (20.1 item 2); a ring dump's `DLST` cannot be checked. If that is wanted (glitch
+  hunting with F10), the reader would have to number textures from the dump's start, i.e. restart its texture ids at
+  each keyframe live, which changes the live lists.
+- The heaviest 2D is now the memory card screens (171 barriers in one K1 kick): correct, and 7.1 ms of GPU time for that
+  kick off-line at the low clock; not timed live.
+- One normal-play screenshot (Europe level 5, an under-water moment with bubbles) shows a much brighter native picture
+  than the hardware renderer's; the moment did not recur in the exact-mode sessions (20.3), so it is not verified
+  either way. A ring dump in exact mode (`RC_FRAME_RECORD_AT=ring:300`, F10 when it happens) would settle it.
+- After a save-state load the live reader reseeds from the loaded machine and every GS register is unknown until the
+  game writes it (20.6 of the 2D design); no live session here loaded a state.
+- The originals under `frame-dumps/pre-r/` (6.5 GB) can go: step 8's checks are done.

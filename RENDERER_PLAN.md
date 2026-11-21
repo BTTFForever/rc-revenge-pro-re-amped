@@ -480,6 +480,25 @@ After step 1: fold its answers into this plan's open questions.
    1,562 ok and 1 FAIL with the new seed 3372 (`WeaponProcess`, one input; the oracle was not rebuilt by this batch
    and links nothing of the renderer: an open item of the decompilation). **Next: batch 4 (live),** which also
    measures K2's GPU time (U3 = B).
+   **Batch 4 built 2026-11-22 (`RENDERER_3D_DESIGN.md` 20): live 3D.** `RC_RENDERER=vk RC_VK_PICTURE=native` draws the
+   whole picture: the live frame reader puts K2 in the cycle's list and the presenter draws uploads, the clear, K2 and K1
+   through `Gs2dVk` and shows `target[DISPFB2.FBP]`, upload-only pictures included (`FrameBlit` no longer runs live: the
+   chained replay's way, equal). The live reader's lists go into a recording as `DLST` chunks
+   (`RC_FRAME_RECORD_DRAWLISTS=1`) and `rc_replay --consumer dlst` checks them byte for byte against the same reader on
+   the recorded kicks (a dump from boot: texture ids count from boot). **The live check passed on 10 sessions (both
+   versions: the front end into `playtest2`'s race, levels 5, 17, 18, the Track Editor): 13,600 / 13,600 live lists equal
+   byte for byte to the off-line ones, and the chained replay of every one of those dumps passes (13,600 flips
+   hash-equal, 1,360 stored pictures and 49 keyframes equal);** native screenshots equal the software GS's picture of the
+   same present on every pixel (24 pairs). **U3 measured by the live timestamps: K2 takes 0.3-0.9 ms a kick on races and
+   menus and 1.7 ms (largest 4.7) on level 21, against 10.4's 8 ms** (the game, with the emulated GS's hardware renderer
+   beside it, keeps the GPU at 1.6-1.9 GHz); with the native renderer as the only GPU work the driver stays at 300-375
+   MHz and level 21 takes 11.9 ms a kick, so the acceptance at P2's frame rate (emulated GS off) is still to be timed. **Frame
+   rates: 16-41 fps in races and the front end (USA; Europe 16-36), 60 / 50 only in the Track Editor:** the references on
+   the EE thread (U2), 21-55 ms a cycle. So `gs` stays the default under `RC_RENDERER=vk` (section 12 makes native the
+   default only once batch 4 passes every check, and the frame rates do not). Oracle 1,632 / 1,563 ok (seeds 6161 /
+   6162), `playtest2` unchanged, validation 0 errors live. New scenes: the Track Editor's race and the memory card screens recorded and passed through every check (both
+   versions); the podium, the results screens and more two-player could not be reached with the recordings and walks. **Step 8 is complete except the
+   frame rate, which is P2's (step 9: the references replaced by shader batches; step 10: the performance pass).**
    **Order and design (step 7's batch 4 review, 2026-11-20, `RENDERER_2D_DESIGN.md` 17.4).** Step 8 starts before
    step 7's live batch, because K1 inherits registers only PATH1 writes and they come out of the VU1 programs'
    packets. It needs a short design first (Fable, `RENDERER_3D_DESIGN.md`), then batches: (1) the reader and the

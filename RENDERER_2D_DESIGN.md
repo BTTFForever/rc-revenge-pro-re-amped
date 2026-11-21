@@ -1796,7 +1796,9 @@ unchanged: `ninja: no work to do` in both oracle trees).
 
 ### 20.6 Open
 
-- K2 (step 8 batches 2-4); the `DLST` live-list check (step 8 batch 4).
+- K2 (step 8 batches 2-4); the `DLST` live-list check (step 8 batch 4). *Done 2026-11-22 (`RENDERER_3D_DESIGN.md` 20): K2 is
+  drawn live, upload-only pictures are shown from the target (`FrameBlit` no longer runs live), the live lists equal the
+  off-line ones byte for byte.*
 - The reader's cost on the EE thread (U2): the game runs at about half speed wherever K2 is drawn.
 - After a save-state load the reader reseeds from the loaded machine, but every GS register is unknown until the game
   writes it again; not exercised by a check.

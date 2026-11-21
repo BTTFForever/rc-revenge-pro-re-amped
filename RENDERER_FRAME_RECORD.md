@@ -726,6 +726,13 @@ stay in GS units (12.4 fixed point, GS Z, raw 0x80 alpha) until the replay conve
 `rc_replay --consumer vk` is then reader + replay through the RHI off-screen with a read-back; `--save-drawlists`
 writes them into a copy of the dump for golden-picture tests of the replay alone.
 
+*As built (renderer P1 step 8 batch 4, `RENDERER_3D_DESIGN.md` 20):* the `DLST` chunk is written live, not by a copy:
+with `RC_FRAME_RECORD_DRAWLISTS=1` the live frame reader's list of each recorded cycle follows that cycle's `CYCL` (and
+`REFI`), zlib-compressed and not indexed; payload `render/frame/dlst.h` (`DlstHeader` "DLS1": command count, cycle, arena
+bytes, the cycle's VIF1 kicks; the 32-byte commands; the arena as the list holds it). `rc_replay --consumer dlst`
+compares it byte for byte with the list the same reader makes from the recorded kicks (a dump recorded from boot).
+`--save-drawlists` was not built.
+
 ## 10. Test plan
 
 ### 10.1 Step 4's acceptance (both versions unless said)

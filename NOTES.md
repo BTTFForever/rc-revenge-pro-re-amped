@@ -283,7 +283,7 @@ Debugging:
 - `PS2X_PAD_SCRIPT` plays scripted input as comma-separated `start[v]:BTN+BTN[:hold]`, where `v` means fields rather than seconds.
 - `PS2X_DEBUG_PANEL=1` shows the debugger.
 - `RC_RENDERER=vk`: SDL3 window and input, Vulkan presentation, raylib audio only (section "RC_RENDERER=vk" below);
-  with `RC_VK_PICTURE=native` the native 2D picture (section "Live 2D" below);
+  with `RC_VK_PICTURE=native` the native picture, 3D and 2D (sections "Live 2D" and "Live 3D" below);
   unset or `gs`, the raylib window as always. `RC_SCENE_LOG=<file>` writes a line at each scene change (game frame,
   input clock, field, seconds, scene) to compare two runs of a recording.
 - `RC_GS_SURVEY=<file>` records every DMA kick and GS register write by path, per frame and scene (`RENDERER_SURVEY.md`); use it with `RC_TRACK_SHADER=0 PS2X_MTVU=0` (tools/play.sh passes both through), read with `tools/gs_survey.py`.
@@ -982,7 +982,8 @@ shader or game source changed.
 step 8's frame reader runs on the EE thread as a live consumer of the frame record's capture (`render/live`, library
 `rc_live`, linked into the game; nothing of it runs without the switch), the cycle's draw list (the flip's clear,
 uploads into the frame buffers, K1) is drawn through `Gs2dVk` with the exact blend and `target[DISPFB2.FBP]` is shown.
-K2 (the 3D) is not drawn yet: black where only K2 draws. Design and results: `RENDERER_2D_DESIGN.md` section 20.
+K2 (the 3D) was not drawn in this batch; since step 8 batch 4 it is ("Live 3D" below). Design and results:
+`RENDERER_2D_DESIGN.md` section 20.
 - **Keys and switches:** F7 toggles the emulated GS picture and back (the window title says which; `[vk-host] F7 key
   down` is logged). `RC_VK_BLEND=ff|read` (default: the read where the device has it), `RC_VK_PRESENT_FILTER=nearest`,
   `RC_VK_SHOT_DIR=<dir> RC_VK_SHOT_AT=<cycle>[,...]` (native screenshots, `.png` and raw `.rgba`, 640 x lines, RGBA as
@@ -1002,6 +1003,54 @@ K2 (the 3D) is not drawn yet: black where only K2 draws. Design and results: `RE
   through `tools/frame_record.sh` (exact mode; keep the shots and F10 early, exact mode with the reader is slow).
 - **Capture:** `rc::rec::addLiveConsumer` installs the capture hooks without a recording; live consumers see every event
   from boot whether a dump is recorded or not.
+
+### Live 3D: the whole native picture, the DLST check (2026-11-22, renderer P1 step 8 batch 4)
+`RC_RENDERER=vk RC_VK_PICTURE=native tools/play.sh [replay <name>]` now presents the whole native picture: the live frame
+reader (above) puts K2's triangles in the cycle's list too, and the presenter draws uploads, the clear, K2 and K1 through
+`Gs2dVk` and shows `target[DISPFB2.FBP]`. `gs` stays the default (frame rates, below); F7 toggles as before. Design and
+results: `RENDERER_3D_DESIGN.md` section 20.
+- **Every picture from the target:** pictures made only of uploads (logos, movies, splashes) are no longer taken from
+  `FrameBlit` (it does not run live any more) but from the target the uploads were drawn into, as the chained replay does
+  (`RENDERER_3D_DESIGN.md` 19.7, 20.1). When the presenter falls 16 lists behind, the oldest list keeps its `TEXTURE` and
+  `IMAGE_BLIT` commands (was: textures only).
+- **Reports:** `RC_VK_NATIVE_REPORT=<n>` (default 600) also prints a presenter line every n frames with lists: GPU time a
+  frame, **K2's GPU time a VIF1 kick and a frame** (timestamps around each VIF1 kick's draws inside the frame's command
+  list: `Gs2dVk::record`'s ranges), barriers and draws a frame. The closing `[vk-native] presenter:` line has the totals.
+- **Screenshots:** `RC_VK_SHOT_DIR=<dir> RC_VK_SHOT_AT=<cycle>[,...]` writes, beside `native_<cycle>.png/.rgba`, the emulated
+  GS picture handed to the same present as `gs_<cycle>.png/.rgba` (its own size: 640 x lines with the software GS or
+  `PS2X_GS_HW_SCALE=1`, 1280 x 480 at play.sh's default scale 2). `tools/shot_compare.py <dir>...` compares each pair (R, G,
+  B; a doubled gs picture is sampled at every second pixel): share of pixels differing, mean and largest difference, PSNR.
+- **The DLST writer:** with `RC_FRAME_RECORD` and `RC_FRAME_RECORD_DRAWLISTS=1` the live reader's list of every recorded
+  cycle goes into the dump as a `DLST` chunk right after the cycle (`render/frame/dlst.h`: a 32-byte header, the commands,
+  the payload arena as the list holds it; zlib; not indexed; about 0.6-1.1 MB raw, 0.15-0.3 MB stored a race cycle). The
+  capture's `rc::rec::drawListWanted` / `recordDrawList` take it from the live consumer's cycle close
+  (`render/live/live_host.cpp` sets the reader's list sink); `rc::rec::Reader` hands such chunks to `Consumer::chunk`.
+- **The live check:** `rc_replay <dump> --consumer dlst [--quiet]` runs the live reader itself (`rc::live::Reader`, started
+  from reset, no keyframe but one after a save-state load) on the recorded kicks and compares each cycle's list with the
+  recorded one byte for byte (the first difference named: header, command fields or payload byte). The live reader
+  numbers its textures from boot, so **the dump must be recorded from boot** (`RC_FRAME_RECORD_AT=boot+<n>`); a dump that
+  starts later is refused (exit 2). `tools/live_check.sh <name> <cycles> [play.sh arguments]` does it all: a native
+  session in exact mode recorded from boot with `DLST` (`LIVE_REF`, default every 10th reference picture;
+  `LIVE_SHOTS=<cycles>` screenshots), the game stopped once the dump and the shots are written, then `dlst` and
+  `vk --verify` on the dump; results in `<build>/frame-dumps/live/`. Examples:
+  `RC_BOOT_LEVEL=17 LIVE_SHOTS=600,700 tools/live_check.sh l17 800`, `LIVE_SHOTS=500,1000,1450 tools/live_check.sh front
+  1500 replay playtest2`, `RC_SKIP_INTRO=1 tools/live_check.sh tedit 2800 replay <tedit_walk.py pad>`.
+- **`rc_replay --consumer live2d`** now judges every pixel (K2 is drawn): `s6/boot` 900 / 900 cycles, all 138,240,000
+  pixels equal, 258 upload-only pictures among them.
+- **Result (2026-11-22):** the live check on 10 sessions (both versions: `front` = `replay playtest2` through the logos,
+  movie and menus into its race, 1,500 / 1,700 cycles; levels 5, 17, 18 booted into, 800 each; the Track Editor, 2,800):
+  **13,600 / 13,600 live lists equal byte for byte** to the off-line reader's, and `vk --verify` `PASS` on every dump
+  (13,600 flips hash-equal, 1,360 stored pictures and 49 keyframes equal). The new scenes (the Track Editor's race and
+  the memory card screens, both versions, 5,800 cycles each) pass the same and every earlier check (`emu`, `tex`,
+  `blit`, `gif2d`, `vif`, `gif2d --vk`, `vk`). Native screenshots equal the software GS's picture of the same present on
+  every pixel in all those exact sessions. Live K2 GPU time (U3): 0.3-0.9 ms a kick in menus and races, level 21 1.7 ms
+  (largest 4.7), the GPU at 1.6-1.9 GHz; under 10.4's 8 ms. But that clock comes from the emulated GS's hardware
+  renderer sharing the GPU: with the emulated GS in software the driver stays at 300-375 MHz and level 21's K2 takes 11.9
+  ms a kick (largest 35.9), over the limit; to be timed again at P2's frame rate. Frame rates natively: USA 16-41 fps where 3D is drawn (front
+  end 41, races 16-30), 60 in the Track Editor; Europe 16-36, 50 in the Track Editor (the reader: 21-55 ms of the EE
+  thread a cycle, U2), so **`gs` stays the default**. Oracle seeds 6161 / 6162: 1,632 / 1,563 ok, 0 FAIL. `playtest2`
+  unchanged (658 at 60 fps, 1167 at 50). Validation layer on a native session: 0 errors. Not reached: the podium and
+  results screens, more two-player (`RENDERER_3D_DESIGN.md` 20.7).
 
 ### Level testing (2026-11-09)
 `RC_BOOT_LEVEL=<n> tools/play.sh` skips the intro and menus and loops the attract-mode demo on level n. `RC_SKIP_INTRO=1` skips only the legal screen, movie and Dolby screen and starts in the front end (for menu tests: `PS2X_PAD_REPLAY=<file>` plays a pad script of `epoch frame buttons axes` lines). `tools/level_sweep.sh <first> <last> <seconds> [VAR=value ...]` prints each level's frame rate.
@@ -1175,6 +1224,16 @@ The Europe disc (SLES-50077, `../disc_eu/`, `SYSTEM.CNF` VMODE = PAL, four langu
 **Open:** the 77 natives of changed functions (and the 24 changed functions without natives) are recompiled in Europe; decompiling the Europe variants is future work, as is a per-version `oracle_known.txt` (currently shared). Capturing dumps while a build runs failed (the demo did not reach frame 600 within 150 s); capture on an idle machine.
 
 ## Where to resume (2026-11-12)
+
+**Renderer (2026-11-22): P1 step 8 batch 4 (live 3D) is built** ("Live 3D" above; `RENDERER_3D_DESIGN.md` 20;
+`RENDERER_PLAN.md` item 8). `RC_RENDERER=vk RC_VK_PICTURE=native` draws the whole picture natively and it is proven equal
+to the reference (the live lists byte for byte, the chained replay of the sessions, screenshots); K2's GPU time live is
+0.3-1.7 ms a kick at the clock the game runs at (the GPU in P0 because the emulated GS's hardware renderer shares it;
+alone, the driver stays in P8 and level 21 takes 11.9 ms a kick: U3 to be timed again at P2's frame rate). Open: the frame rate (16-41 fps wherever 3D is drawn: the C++ VU1 references on the EE
+thread, U2), so `gs` stays the default; that is P2's (step 9 replaces the references by shader batches, step 10 is the
+performance pass). Also open from this batch: the podium, results and more two-player scenes (no recording reaches them; a hand-made
+recording of a won race, and a second pad in the replay or a split-screen `RC_BOOT_LEVEL`, would). The re-referencing originals under `frame-dumps/pre-r/`
+(6.5 GB) can go now that step 8's checks are done. The rest of this section is the decompilation's.
 
 305 of 2,486 functions native on 2026-11-12 (1510 on 2026-11-18, after the FRONT batch at the end of this section, 1710 after TEDIT part 2, 1730 on 2026-11-19 after LEFTOVERS: every function of the game's own source files is native, only the SDK and C libraries remain; 1,653 of them registered in the Europe build, see "Europe version"). Done since 2026-11-10: collision, route nodes, AI (all) and the smaller PLAYER functions, and the renderer from the DMA chain up: RDRSTATE, RDR, RDRPOLY, RDR_SHAPE, RDR_SKIN, RDR_WATER, RDRALPHA, RDR_PARTICLE, SPRITE and most of GFX_P2, with the SDK's VIF packet library and three libvu0 helpers.
 
