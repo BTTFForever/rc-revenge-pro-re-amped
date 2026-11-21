@@ -21,6 +21,12 @@ That is a change to the plan's item 9, and it is the first decision below.
 
 ## Decisions for the user
 
+**Answered by the user, 2026-11-22:** U4 = **A** (the fast exact reader); U5 = **yes** (the shader batches move to
+P3); U6 = **not in exact mode** (stays D-3D-2). The user's first choice was C (plain vertex shaders, fast and
+simple, not bit-exact, since the emulated GS stays as a reference); after the estimate (C about 6-8 batches with
+statistical checks, A 7 batches with today's checks) they chose **A now, then C right after as the first P3 batch**
+(the enhanced mode, not bit-exact by design). Build batches 1-7 follow; batch 8 may wait for P3.
+
 **U4. Where exact mode's vertex work runs. Recommended: A, on the CPU, fast.** Does not block batches 1 to 7 (they
 are the same under A and B, and C needs none of them undone).
 
