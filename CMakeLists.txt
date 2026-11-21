@@ -308,6 +308,10 @@ target_link_libraries(rc_live PRIVATE rc_frame rc_vif rc_blit rc_gs2d_vk rc_gs2d
 target_link_libraries(rc_revenge_pro PRIVATE rc_live)
 target_sources(rc_replay PRIVATE tools/rc_replay/live2d.cpp)
 target_link_libraries(rc_replay PRIVATE rc_live rc_frame rc_vif rc_blit rc_gs2d_vk rc_gs2d rc_tex rc_record)
+# (step 8 batch 3, RENDERER_3D_DESIGN.md 11.5 and 19) rc_replay's vk consumer: the chained replay, the frame reader and
+# Gs2dVk on a dump with no emulated machine.
+target_sources(rc_replay PRIVATE tools/rc_replay/frame_vk.cpp)
+set_property(SOURCE tools/rc_replay/frame_vk.cpp APPEND PROPERTY COMPILE_OPTIONS "-O2")
 add_executable(rc_tex_test EXCLUDE_FROM_ALL tools/rc_replay/tex_test.cpp)
 target_compile_options(rc_tex_test PRIVATE -O2)
 target_link_libraries(rc_tex_test PRIVATE rc_tex rc_record ZLIB::ZLIB)

@@ -1,6 +1,6 @@
 // rc_replay: feeds a frame record dump (.rcfr, RENDERER_FRAME_RECORD.md) to consumers.
 //
-//   rc_replay <dump> [--consumer stats|emu|tex|blit|gif2d|gif2dstat|vifstat|vif|live2d] [--cycles a-b] [--verify] [--quiet]
+//   rc_replay <dump> [--consumer stats|emu|tex|blit|gif2d|gif2dstat|vifstat|vif|live2d|vk] [--cycles a-b] [--verify] [--quiet]
 //             [--png <dir>] [--picture-before <cycle>:<kick> <out.png>] [--path1 <cycle>:<kick> <out.bin>] [--kick-hashes]
 //             [--fault page|kick|hw:<cycle>[:<n>]]
 //             [--with-emu] [--fault transfer|kick|swizzle|decode:<cycle>:<n>] (tex)
@@ -61,6 +61,12 @@
 // bytes (or the K2 draw list encoded back, without or with cullOffscreen) drawn by the emulated GS in place of the
 // machine's PATH1. --fault unpack|tops|dbf|mpg|mscal|mxcsr|lane|packet|vumem:<cycle>[:<n>]; --vif-out <dir> writes the
 // first differing run. The gif2d consumer uses the same frame reader (and with --with-emu the vif consumer beside it).
+//
+// vk (step 8 batch 3, RENDERER_3D_DESIGN.md 11.5 and 19; exact dumps): the chained replay, no emulated machine. Seeded
+// at the first keyframe (and after a save-state load), every kick through the frame reader and every cycle's list
+// through Gs2dVk; --verify: every flipped picture hashes to END.refHash and equals REFI where stored, and both targets
+// and Z equal GSVR at every later keyframe. [--vk-blend read|ff] [--validation] [--png <dir>]
+// [--fault depth|clear|texture|flip:<cycle>[:<cycles>]].
 #include "chain_walk.h"
 #include "emu.h"
 #include "tex.h"
@@ -71,6 +77,7 @@
 #include "vif.h"
 #include "consumer.h"
 #include "live2d.h"
+#include "frame_vk.h"
 #include "reader.h"
 #include "../../render/gfx/tags.h"
 
@@ -486,7 +493,9 @@ namespace
                              "              [--vk] [--vk-blend read|ff|both] [--vk-boxes] [--vk-nofill] [--vk-bias off|on|both] [--vk-fault <name>[,<name>...]] [--vk-png <dir>] [--validation]\n"
                              "       blit: [--no-gpu] [--validation] [--png <dir>] [--fault tile:<cycle>:<n> | dispfb:<cycle> | byte|gpubyte:<cycle>:<pixel>]\n"
                              "       emu --rereference <out.rcfr> (exact dumps): a copy with the references this machine makes\n"
-                             "       live2d (exact dumps; the live 2D renderer, RC_VK_PICTURE=native): [--live-shots <dir>] [--vk-blend read|ff] [--validation] [--png <dir>]\n");
+                             "       live2d (exact dumps; the live 2D renderer, RC_VK_PICTURE=native): [--live-shots <dir>] [--vk-blend read|ff] [--validation] [--png <dir>]\n"
+                             "       vk (exact dumps; the chained replay, no emulated machine): [--vk-blend read|ff] [--validation] [--png <dir>]\n"
+                             "            [--fault depth|clear|texture|flip:<cycle>[:<cycles>]]\n");
     }
 }
 
@@ -759,6 +768,47 @@ namespace
         return 0;
     }
 
+    // (step 8 batch 3) The chained replay: the frame reader and Gs2dVk alone, no machine.
+    int runFrameVk(Reader &reader, const std::string &path, const rc::replay::FrameVkOptions &options, uint64_t first, uint64_t last)
+    {
+        const FileHeader &h = reader.header();
+        std::printf("dump %s\n  %s, %ux%u, recorded with %.16s, build %.40s, %s%s\n", path.c_str(), h.gameVersion ? "Europe" : "USA", h.width,
+                    h.height, h.gsBackend, h.build, (h.flags & kFileExact) ? ((h.flags & kFileRereferenced) ? "exact, re-referenced" : "exact") : "plain", (h.flags & kFileComplete) ? "" : ", not closed");
+        if (!(h.flags & kFileExact))
+        {
+            std::printf("vk: the chained replay needs an exact dump (reference hashes, exact GS memory at the keyframes)\n");
+            return 2;
+        }
+        rc::replay::FrameVkCheck vk(options);
+        std::string why;
+        if (!vk.start(&why))
+        {
+            std::printf("vk: %s\nFAIL\n", why.c_str());
+            return 2;
+        }
+        // The chain starts at a segment's keyframe.
+        uint64_t from = 0;
+        for (const IndexSegment &seg : reader.segments())
+            if (seg.firstCycle <= first)
+                from = seg.firstCycle;
+        const bool ok = reader.run({&vk}, from, last);
+        vk.summary();
+        if (!reader.complete())
+            std::printf("note: the dump was not closed (%s); read up to its last whole chunk\n",
+                        reader.truncated() ? "a partial chunk at the end" : "no index");
+        if (!ok)
+        {
+            std::printf("read error: %s\n", reader.error().c_str());
+            return 2;
+        }
+        if (options.verify)
+        {
+            std::printf("%s\n", vk.failed() ? "FAIL" : "PASS");
+            return vk.failed() ? 1 : 0;
+        }
+        return 0;
+    }
+
     int runBlit(Reader &reader, const std::string &path, const rc::replay::BlitOptions &options, uint64_t first, uint64_t last)
     {
         const FileHeader &h = reader.header();
@@ -800,7 +850,7 @@ int main(int argc, char **argv)
     std::string path, consumer = "stats";
     bool verify = false, quiet = false, withEmu = false, noGpu = false, validation = false, noTables = false, vk = false, vifRoundNearest = false,
          vifNoPoison = false;
-    bool vkBoxes = false, vkNoFill = false;
+    bool vkBoxes = false, vkNoFill = false, faultHasCount = false;
     std::string vkBias = "on", vkBlend = "auto", vkFaults, vkPng, vifSubstitute = "bytes", vifOut, liveShots, rereference;
     uint64_t first = 0, last = ~0ull;
     rc::replay::EmuOptions emuOptions;
@@ -834,6 +884,7 @@ int main(int argc, char **argv)
             const std::string f = argv[++i];
             const size_t c1 = f.find(':');
             emuOptions.faultKind = f.substr(0, c1);
+            faultHasCount = c1 != std::string::npos && f.find(':', c1 + 1) != std::string::npos;
             if (c1 != std::string::npos)
             {
                 int64_t cycle;
@@ -934,9 +985,9 @@ int main(int argc, char **argv)
         return ok ? 0 : 2;
     }
     if (consumer != "stats" && consumer != "emu" && consumer != "tex" && consumer != "blit" && consumer != "gif2d" && consumer != "vif" &&
-        consumer != "live2d")
+        consumer != "live2d" && consumer != "vk")
     {
-        std::fprintf(stderr, "consumer '%s' is not built yet (stats, emu, tex, blit, gif2d, gif2dstat, vifstat, vif, live2d)\n", consumer.c_str());
+        std::fprintf(stderr, "consumer '%s' is not built yet (stats, emu, tex, blit, gif2d, gif2dstat, vifstat, vif, live2d, vk)\n", consumer.c_str());
         return 2;
     }
     Reader reader;
@@ -1060,6 +1111,25 @@ int main(int argc, char **argv)
         if (withEmu)
             return runEmu(reader, path, emuOptions, verify, true, first, last, nullptr, false, nullptr, false, false, &v);
         return runVif(reader, path, v, first, last);
+    }
+    if (consumer == "vk")
+    {
+        rc::replay::FrameVkOptions o;
+        o.verify = verify;
+        o.quiet = quiet;
+        o.validation = validation;
+        o.blend = vkBlend;
+        o.pngDir = emuOptions.pngDir;
+        o.dumpPath = path;
+        o.fault = emuOptions.faultKind;
+        o.faultCycle = emuOptions.faultCycle;
+        o.faultCycles = faultHasCount ? emuOptions.faultN : 1u;
+        if (!o.fault.empty() && o.fault != "depth" && o.fault != "clear" && o.fault != "texture" && o.fault != "flip")
+        {
+            std::fprintf(stderr, "rc_replay vk: --fault depth|clear|texture|flip:<cycle>[:<cycles>]\n");
+            return 2;
+        }
+        return runFrameVk(reader, path, o, first, last);
     }
     if (consumer == "live2d")
     {
