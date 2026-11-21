@@ -957,6 +957,25 @@ shader or game source changed.
   (the original stores 0xdb at address 0x8, the native does not; `v0` 5 against 8; repeats with `RC_VERSION=eu
   tools/oracle.sh --only WeaponProcess --seed 3372 --cases 20`, passes with seed 2112). Not the renderer's (the oracle
   binary is batch R's and links nothing of `render/`): open, in the native or the harness's setup, not looked into.
+- **Solved (2026-11-21): the harness, not a native.** Draw 0 on `level17_cc` was an input whose original faulted. For a
+  whole-RAM function `fuzzCase`'s faulted path reverted RAM to the step's start and then copied the setup's globals
+  (`globalsStart`, taken after the setup) back over it, so `memVarG`, `visFxVarG` and `weaponVarG` described the heap as
+  draw 0's setup had left it while the heap itself was back to before it. Draw 1's setup then built on that: the
+  heap handed 0x10cdb40 to the shockwave's effect and then again to the battery's, so the battery reached
+  `WeaponProcess` with its effect already freed (inside a free block, its old header still saying used, size 0x6c0).
+  Ending, it called `VfxDelete` -> `MemBlockFree` on that stale header, whose "next" was weapon data (type 1,
+  pNext 0xffffffff); the original then stored the block address at 0xffffffff + 8 = 0x7 (an unaligned word store: an
+  address error on a console), the native did not. Found by calling the original from the native one callee at a time
+  (`WeaponRemove` -> `WeaponDestroy` -> `VfxDelete` -> `MemBlockFree`) and walking the heap at entry (consistent, the
+  effect inside the free block 0x10cda40). Not a reachable game state, so `MemBlockFree` is left as it is (its load
+  order differs from the original's only when a header aliases another). Fix in `decomp/rc_decomp.cpp`: a whole-RAM
+  input that faulted or was cut short goes back to RAM as the step began, globals included; other inputs as before.
+  USA had the same harness bug, its seed-3371 draws just did not hit it (its dumps are another four). Checks: the
+  repro passes (160 inputs over 8 dumps, 5 redrawn); `--only WeaponProcess --cases 300` seeds 11-40 pass on both
+  versions (whole-RAM: 40 inputs a dump); `--all` USA seed 5151 1631 ok, 0 FAIL, 1 skipped (`DisplayProgressEntry`
+  setup timed out; alone on the same seed it passes 80 inputs), Europe seed 5152 1563 ok, 0 FAIL. The game is
+  unchanged outside `RC_SHADOW_FUZZ` (`fuzzCase` runs only there and in the oracle); the `playtest2` replays were not
+  run (the RTX 2060 was not responding, nvidia-smi "Unknown Error").
 
 ### Live 2D: RC_VK_PICTURE=native (2026-11-20, renderer P1 step 7 batch 5)
 `RC_RENDERER=vk RC_VK_PICTURE=native tools/play.sh [replay <name>]` (`RC_VERSION=eu` as usual) presents the native picture:

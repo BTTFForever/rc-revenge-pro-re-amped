@@ -360,10 +360,16 @@ FuzzCaseResult fuzzCase(Entry &entry, uint8_t *rdram, const R5900Context &live, 
     const uint64_t originalErrors = g_ps2AddressErrors.load(std::memory_order_relaxed) - addressErrors;
     if (originalCtx.pc != getRegU32(&inputs, 31))
     {
-        // Cut short by a scheduling point: the caller decides whether to try the input again.
-        std::memcpy(rdram + kScratch, scratchStart.get(), kScratchSize);
-        std::memcpy(rdram, lowStart, kLowPage);
-        std::memcpy(rdram + kDataStart, globalsStart.get(), kDataEnd - kDataStart);
+        // Cut short by a scheduling point: the caller decides whether to try the input again. A whole-RAM input goes
+        // back to RAM as the step began (see the faulted case below).
+        if (entry.fuzzWholeRam)
+            revertWrites(rdram, ramBackup, 0u, PS2_RAM_SIZE);
+        else
+        {
+            std::memcpy(rdram + kScratch, scratchStart.get(), kScratchSize);
+            std::memcpy(rdram, lowStart, kLowPage);
+            std::memcpy(rdram + kDataStart, globalsStart.get(), kDataEnd - kDataStart);
+        }
         result.cutShort = true;
         setComparing(wasComparing);
         return result;
@@ -415,12 +421,17 @@ FuzzCaseResult fuzzCase(Entry &entry, uint8_t *rdram, const R5900Context &live, 
     // equal on both sides and do not count.
     if (originalErrors > g_ps2AddressErrors.load(std::memory_order_relaxed) - beforeNative)
     {
+        // A whole-RAM input goes back to RAM as the step began, globals included: putting the setup's globals back over
+        // it (as below for the others) left the heap's and the lists' globals (memVarG, visFxVarG, weaponVarG) as the
+        // setup made them over RAM from before it, and the next input's setup then handed out heap blocks twice.
         if (entry.fuzzWholeRam)
             revertWrites(rdram, ramBackup, 0u, PS2_RAM_SIZE);
         else
+        {
             std::memcpy(rdram, lowStart, kLowPage);
-        std::memcpy(rdram + kScratch, scratchStart.get(), kScratchSize);
-        std::memcpy(rdram + kDataStart, globalsStart.get(), kDataEnd - kDataStart);
+            std::memcpy(rdram + kScratch, scratchStart.get(), kScratchSize);
+            std::memcpy(rdram + kDataStart, globalsStart.get(), kDataEnd - kDataStart);
+        }
         result.faulted = true;
         setComparing(wasComparing);
         return result;
