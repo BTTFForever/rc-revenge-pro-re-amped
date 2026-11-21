@@ -25,6 +25,10 @@ namespace rc::replay
     struct DlstOptions
     {
         bool quiet = false;
+        // Planted fault (--fault list:<cycle>[:<n>]): byte n of that cycle's off-line encoding flipped (n past the
+        // header and the commands, into the arena, when 0); the check must fail there.
+        int64_t faultCycle = -1;
+        uint32_t faultByte = 0;
     };
 
     class DlstCheck final : public rc::rec::Consumer

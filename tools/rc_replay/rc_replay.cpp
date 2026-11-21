@@ -497,7 +497,8 @@ namespace
                              "       live2d (exact dumps; the live 2D renderer, RC_VK_PICTURE=native): [--live-shots <dir>] [--vk-blend read|ff] [--validation] [--png <dir>]\n"
                              "       vk (exact dumps; the chained replay, no emulated machine): [--vk-blend read|ff] [--validation] [--png <dir>]\n"
                              "            [--fault depth|clear|texture|flip:<cycle>[:<cycles>]]\n"
-                             "       dlst (a dump from boot with RC_FRAME_RECORD_DRAWLISTS=1): the live reader's lists against the recorded DLST chunks\n");
+                             "       dlst (a dump from boot with RC_FRAME_RECORD_DRAWLISTS=1): the live reader's lists against the recorded DLST chunks\n"
+                             "            [--fault list:<cycle>[:<byte>]]\n");
     }
 }
 
@@ -1146,6 +1147,16 @@ int main(int argc, char **argv)
                     h.gsBackend, h.build, (h.flags & kFileExact) ? "exact" : "plain");
         rc::replay::DlstOptions o;
         o.quiet = quiet;
+        if (!emuOptions.faultKind.empty())
+        {
+            if (emuOptions.faultKind != "list")
+            {
+                std::fprintf(stderr, "rc_replay dlst: --fault list:<cycle>[:<byte>]\n");
+                return 2;
+            }
+            o.faultCycle = emuOptions.faultCycle;
+            o.faultByte = faultHasCount ? emuOptions.faultN : 0u;
+        }
         rc::replay::DlstCheck check(o);
         const bool ok = reader.run({&check}, 0, ~0ull);
         check.summary();

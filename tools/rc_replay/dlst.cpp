@@ -61,6 +61,14 @@ namespace rc::replay
         m->reader.setListSink([this](uint64_t cycle, const DrawList &list, uint32_t k2)
                               {
                                   encodeDlst(list, cycle, k2, m->offline);
+                                  if (static_cast<int64_t>(cycle) == m->opt.faultCycle && !m->offline.empty())
+                                  {
+                                      const size_t at = m->opt.faultByte ? m->opt.faultByte
+                                                                         : sizeof(DlstHeader) + list.cmds.size() * sizeof(DrawCmd) + list.payload.size() / 2u;
+                                      m->offline[std::min(at, m->offline.size() - 1u)] ^= 0x01u;
+                                      std::printf("dlst: planted fault: byte %zu of cycle %" PRIu64 "'s off-line list flipped\n",
+                                                  std::min(at, m->offline.size() - 1u), cycle);
+                                  }
                                   m->pending = true;
                                   m->pendingCycle = cycle;
                                   m->commands += list.cmds.size();
@@ -119,8 +127,7 @@ namespace rc::replay
             std::snprintf(text, sizeof text,
                           "header: cycle %" PRIu64 " / %" PRIu64 ", commands %u / %u, payload %" PRIu64 " / %" PRIu64 " bytes, VIF1 kicks %u / %u (off-line / live)",
                           a.cycle, b.cycle, a.cmdCount, b.cmdCount, a.payloadBytes, b.payloadBytes, a.k2Kicks, b.k2Kicks);
-            if (a.cmdCount == b.cmdCount && a.payloadBytes == b.payloadBytes)
-                return text;
+            return text;
         }
         const uint32_t n = std::min(a.cmdCount, b.cmdCount);
         const DrawCmd *ca = reinterpret_cast<const DrawCmd *>(offline.data() + sizeof(DlstHeader));
