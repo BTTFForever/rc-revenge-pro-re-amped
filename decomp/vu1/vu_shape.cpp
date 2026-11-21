@@ -3,7 +3,7 @@
 
 #include "vu1_ref.h"
 
-namespace rc::vu1 {
+namespace rc::RC_VU1_NAMESPACE {
 
 void ShapeProgram::mulLane(V &dst, const V &a, const V &b, int lanes)
 {
@@ -587,4 +587,4 @@ void copyGifPacket(const uint8_t *memory, int quad, std::vector<uint8_t> &packet
     }
 }
 
-} // namespace rc::vu1
+} // namespace rc::RC_VU1_NAMESPACE

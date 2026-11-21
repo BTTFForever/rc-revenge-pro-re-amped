@@ -63,6 +63,8 @@
 // bytes (or the K2 draw list encoded back, without or with cullOffscreen) drawn by the emulated GS in place of the
 // machine's PATH1. --fault unpack|tops|dbf|mpg|mscal|mxcsr|lane|packet|vumem:<cycle>[:<n>]; --vif-out <dir> writes the
 // first differing run. The gif2d consumer uses the same frame reader (and with --with-emu the vif consumer beside it).
+// --vu1 strict|lean (step 9 batch 1, RENDERER_P2_DESIGN.md 4.1): which build of the references the reader runs
+// (default strict, the judge; lean: rc_vu1_lean, checks (a) and (b) lean of that design's section 9).
 //
 // vk (step 8 batch 3, RENDERER_3D_DESIGN.md 11.5 and 19; exact dumps): the chained replay, no emulated machine. Seeded
 // at the first keyframe (and after a save-state load), every kick through the frame reader and every cycle's list
@@ -857,7 +859,7 @@ int main(int argc, char **argv)
     bool verify = false, quiet = false, withEmu = false, noGpu = false, validation = false, noTables = false, vk = false, vifRoundNearest = false,
          vifNoPoison = false;
     bool vkBoxes = false, vkNoFill = false, faultHasCount = false;
-    std::string vkBias = "on", vkBlend = "auto", vkFaults, vkPng, vifSubstitute = "bytes", vifOut, liveShots, rereference;
+    std::string vkBias = "on", vkBlend = "auto", vkFaults, vkPng, vifSubstitute = "bytes", vifOut, liveShots, rereference, vu1Library = "strict";
     uint64_t first = 0, last = ~0ull;
     rc::replay::EmuOptions emuOptions;
     auto cycleKick = [](const char *text, int64_t &cycle, uint32_t &kick)
@@ -908,6 +910,8 @@ int main(int argc, char **argv)
             vifOut = argv[++i];
         else if (a == "--vif-no-poison")
             vifNoPoison = true;
+        else if (a == "--vu1" && i + 1 < argc)
+            vu1Library = argv[++i];
         else if (a == "--with-emu")
             withEmu = true;
         else if (a == "--no-gpu")
@@ -1116,6 +1120,11 @@ int main(int argc, char **argv)
         v.substitute = vifSubstitute;
         v.outDir = vifOut;
         v.noPoison = vifNoPoison;
+        if (!rc::rd::parseVu1Library(vu1Library, v.library))
+        {
+            std::fprintf(stderr, "unknown --vu1 '%s' (strict, lean)\n", vu1Library.c_str());
+            return 2;
+        }
         if (vifSubstitute != "none" && vifSubstitute != "bytes" && vifSubstitute != "list" && vifSubstitute != "list-cull")
         {
             std::fprintf(stderr, "unknown --vif-substitute '%s' (none, bytes, list, list-cull)\n", vifSubstitute.c_str());

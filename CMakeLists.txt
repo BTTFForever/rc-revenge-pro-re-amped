@@ -280,6 +280,18 @@ set(RC_VU1_REF_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1/vu_shape.cpp" "${
 add_library(rc_vu1_ref STATIC EXCLUDE_FROM_ALL ${RC_VU1_REF_SOURCES})
 target_compile_options(rc_vu1_ref PRIVATE -O2 -fwrapv -fno-strict-aliasing)
 target_include_directories(rc_vu1_ref PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1")
+# (step 9 batch 1, RENDERER_P2_DESIGN.md 4.1) rc_vu1_lean: the same sources built a second time with RC_VU1_LEAN=1
+# (namespace rc::vu1l, vu_lean.h's arithmetic under RZ + FTZ + DAZ), the same flags; the strict build is untouched.
+# Its run uses the strict build's program names and entries, hence the link to rc_vu1_ref.
+add_library(rc_vu1_lean STATIC EXCLUDE_FROM_ALL ${RC_VU1_REF_SOURCES})
+target_compile_options(rc_vu1_lean PRIVATE -O2 -fwrapv -fno-strict-aliasing)
+target_compile_definitions(rc_vu1_lean PRIVATE RC_VU1_LEAN=1)
+target_include_directories(rc_vu1_lean PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/decomp/vu1")
+target_link_libraries(rc_vu1_lean PUBLIC rc_vu1_ref)
+# rc_vu1_test: check (s), the lean operations against the strict ones (tools/rc_replay/vu1_test.cpp).
+add_executable(rc_vu1_test EXCLUDE_FROM_ALL tools/rc_replay/vu1_test.cpp)
+target_compile_options(rc_vu1_test PRIVATE -O2 -fwrapv -fno-strict-aliasing)
+target_link_libraries(rc_vu1_test PRIVATE rc_vu1_lean)
 target_sources(rc_replay PRIVATE tools/rc_replay/vif_survey.cpp)
 set_property(SOURCE tools/rc_replay/vif_survey.cpp APPEND PROPERTY INCLUDE_DIRECTORIES "${PS2RECOMP_DIR}/ps2xRuntime/src/lib/vu")
 set_property(SOURCE tools/rc_replay/vif_survey.cpp APPEND PROPERTY COMPILE_OPTIONS "-O2")
@@ -289,7 +301,7 @@ target_link_libraries(rc_replay PRIVATE rc_vu1_ref)
 # consumers); not by the game or the oracle. Neither includes a runtime header.
 add_library(rc_vif STATIC EXCLUDE_FROM_ALL render/vif/vif1_reader.cpp render/vif/vu1_programs.cpp)
 target_compile_options(rc_vif PRIVATE -O2)
-target_link_libraries(rc_vif PUBLIC rc_vu1_ref PRIVATE rc_record)
+target_link_libraries(rc_vif PUBLIC rc_vu1_ref rc_vu1_lean PRIVATE rc_record)
 add_library(rc_frame STATIC EXCLUDE_FROM_ALL render/frame/frame_reader.cpp)
 target_compile_options(rc_frame PRIVATE -O2)
 target_link_libraries(rc_frame PUBLIC rc_vif rc_gs2d rc_tex rc_record)

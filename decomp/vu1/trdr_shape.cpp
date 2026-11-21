@@ -12,7 +12,7 @@
 
 #include "vu1_ref.h"
 
-namespace rc::vu1 {
+namespace rc::RC_VU1_NAMESPACE {
 
 namespace {
 
@@ -54,4 +54,4 @@ void runTrdrShapeIo(Io &io)
     std::memcpy(io.vf, p.r, sizeof(p.r));
 }
 
-} // namespace rc::vu1
+} // namespace rc::RC_VU1_NAMESPACE

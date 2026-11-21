@@ -1,8 +1,9 @@
 // rc_replay's shapestat consumer, second half (RENDERER_P2_DESIGN.md section 3): a second build of the C++ VU1
 // references of decomp/vu1 whose arithmetic is the host's own under MXCSR = round toward zero + flush to zero +
 // denormals are zero, with the reference's operation only where that mode cannot give the VU's result. Measurement
-// only: nothing here is the renderer, and no file of decomp/vu1 is changed. The sources are included as text under
-// another namespace (rc::vu1lean), so the file-local layouts and loops are in reach for the classification below.
+// only: nothing here is the renderer. The sources are included as text under another namespace (rc::vu1lean), so the
+// file-local layouts and loops are in reach for the classification below. Since step 9's batch 1 the operations are
+// decomp/vu1/vu_lean.h's (the lean build, library rc_vu1_lean), which began here.
 //
 // What the mode gives without help (shape_survey.cpp's self-test compares every operation with the reference on
 // random bit patterns): a denormal operand is zero (norm's first rule), a tiny result is a zero with the exact result's
@@ -24,70 +25,12 @@
 
 #include "shape_lean.h"
 
+// The lean build's own header (vu_shape.h with RC_VU1_LEAN 1: decomp/vu1/vu_lean.h's operations, which began here),
+// under the name rc::vu1lean so that it does not meet rc_vu1_lean's rc::vu1l at link time.
 #define vu1 vu1lean
-#define norm norm_ref
-#define finish finish_ref
-#define fadd fadd_ref
-#define fsub fsub_ref
-#define fmul fmul_ref
-#define fmadd fmadd_ref
+#define RC_VU1_LEAN 1
+#define RC_VU1_NAMESPACE vu1lean
 #include "vu_shape.h"
-#undef norm
-#undef finish
-#undef fadd
-#undef fsub
-#undef fmul
-#undef fmadd
-
-namespace rc::vu1lean
-{
-    inline bool special(float v) { return (bits(v) & 0x7F800000u) == 0x7F800000u; }
-    inline float norm(float v) { return norm_ref(v); }
-
-    // The reference's operation under the reference's mode: FTZ and DAZ off for its duration.
-    template <typename Op> [[gnu::noinline]] Fmac slow(Op op)
-    {
-        const uint32_t csr = _mm_getcsr();
-        _mm_setcsr(csr & ~0x8040u);
-        const Fmac r = op();
-        _mm_setcsr(csr);
-        return r;
-    }
-
-    inline Fmac fadd(float a, float b)
-    {
-        const float r = a + b;
-        if (__builtin_expect(special(r), 0))
-            return slow([&] { return fadd_ref(a, b); });
-        return {r, std::signbit(r)};
-    }
-    inline Fmac fsub(float a, float b)
-    {
-        const float r = a - b;
-        if (__builtin_expect(special(r), 0))
-            return slow([&] { return fsub_ref(a, b); });
-        return {r, std::signbit(r)};
-    }
-    inline Fmac fmul(float a, float b)
-    {
-        const float r = a * b;
-        if (__builtin_expect(special(r), 0))
-            return slow([&] { return fmul_ref(a, b); });
-        return {r, std::signbit(r)};
-    }
-    inline Fmac fmadd(float acc, float a, float b)
-    {
-        const float p = a * b;
-        // A zero product of two non-zero factors was tiny (the reference keeps it, a denormal, for the sum); a product
-        // of the largest magnitude may have overflowed (the reference then clamps the sum).
-        if (__builtin_expect((p == 0.0f && (bits(a) & 0x7FFFFFFFu) != 0u && (bits(b) & 0x7FFFFFFFu) != 0u) || (bits(p) & 0x7FFFFFFFu) >= 0x7F7FFFFFu, 0))
-            return slow([&] { return fmadd_ref(acc, a, b); });
-        const float r = acc + p;
-        if (__builtin_expect(special(r) || special(acc), 0))
-            return slow([&] { return fmadd_ref(acc, a, b); });
-        return {r, std::signbit(r)};
-    }
-}
 
 #include "vu_shape.cpp"
 #define kLayout kLayoutTrdr
@@ -392,10 +335,10 @@ namespace rc::replay::lean
             const float a = pick(), b = pick(), c = pick();
             v::Fmac r[4], l[4];
             _mm_setcsr(refCsr);
-            r[0] = v::fadd_ref(a, b);
-            r[1] = v::fsub_ref(a, b);
-            r[2] = v::fmul_ref(a, b);
-            r[3] = v::fmadd_ref(c, a, b);
+            r[0] = v::faddStrict(a, b);
+            r[1] = v::fsubStrict(a, b);
+            r[2] = v::fmulStrict(a, b);
+            r[3] = v::fmaddStrict(c, a, b);
             _mm_setcsr(leanCsr);
             l[0] = v::fadd(a, b);
             l[1] = v::fsub(a, b);

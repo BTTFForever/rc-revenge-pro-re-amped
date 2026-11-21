@@ -66,3 +66,29 @@ void installTrackDraw();
 void installChecks();
 
 } // namespace rc::vu1
+
+// The lean build of the same programs (library rc_vu1_lean, RENDERER_P2_DESIGN.md 4.1; vu_shape.h, vu_lean.h): the
+// same packets, VU memory and registers as rc::vu1's, in about half the time. run sets MXCSR's round toward zero,
+// flush to zero and denormals are zero on top of the caller's and restores the caller's after; the run*Io entries
+// leave the mode to their caller (the lean mode, or the reference's results are not the VU's).
+namespace rc::vu1l {
+using vu1::Io;
+using vu1::Program;
+using vu1::kTrdr;
+using vu1::kEnv;
+using vu1::kWater;
+using vu1::kSkin;
+using vu1::kTerdr;
+using vu1::kRdr;
+using vu1::kProgramCount;
+using vu1::programName;
+using vu1::isEntry;
+bool run(Program, Io &);
+void runTrdrShapeIo(Io &);
+void runEnvShapeIo(Io &);
+void runWaterShapeIo(Io &);
+void runSkinShapeIo(Io &);
+void runTerdrShapeIo(Io &);
+void runRdrShapeIo(Io &);
+void copyGifPacket(const uint8_t *memory, int quad, std::vector<uint8_t> &packet);
+} // namespace rc::vu1l

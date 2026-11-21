@@ -4,7 +4,8 @@
 // the host's chain walker (render/record/chain_walk) and its VIF codes decoded into the reader's own VIF1 registers,
 // VU data memory and micro memory; at each MSCAL the C++ reference of the loaded program (decomp/vu1, the Io entry) is
 // run on that memory and the 32 vector registers, under the kick's MXCSR with rounding toward zero as the runtime runs
-// the VU1, and its XGKICK packets go to a Path1Sink. The state persists across kicks and cycles; a replay seeds it
+// the VU1 (the lean build, Options::library, adds flush to zero and denormals are zero itself), and its XGKICK packets
+// go to a Path1Sink. The state persists across kicks and cycles; a replay seeds it
 // from a keyframe's VIF1, VU1M and VU1R, the live reader starts from reset with the game.
 //
 // Eight VIF codes are implemented (NOP, STCYCL, OFFSET, BASE, MPG, MSCAL, FLUSHA and UNPACK V4-32 with CL = WL, mode
@@ -79,9 +80,24 @@ namespace rc::rd
     bool parseVifFault(const std::string &name, VifFault &out);
     const char *vifFaultName(VifFault f);
 
+    // Which build of the references runs at an MSCAL (RENDERER_P2_DESIGN.md 4.1): strict (rc::vu1, every result
+    // checked in double precision: the judge) or lean (rc::vu1l, the host's operations under RZ + FTZ + DAZ: the same
+    // packets, VU memory and registers in about half the time).
+    enum class Vu1Library : uint8_t
+    {
+        Strict,
+        Lean,
+    };
+    bool parseVu1Library(const std::string &name, Vu1Library &out);
+    const char *vu1LibraryName(Vu1Library l);
+
     class Vif1Reader
     {
     public:
+        struct Options
+        {
+            Vu1Library library = Vu1Library::Strict;
+        };
         // More XGKICKs than any run can send (the largest kick of the 67 dumps sends 63,013): the run is abandoned.
         static constexpr uint32_t kMaxRunPackets = 1u << 20;
         struct Stats
@@ -93,6 +109,9 @@ namespace rc::rd
         };
 
         Vif1Reader();
+        explicit Vif1Reader(const Options &options);
+        void setOptions(const Options &options) { m_options = options; }
+        const Options &options() const { return m_options; }
 
         void reset();                                  // the machine's reset state
         bool seed(const rc::rec::Keyframe &kf);        // VIF1, VU1M, VU1R; false if one is missing
@@ -123,6 +142,7 @@ namespace rc::rd
         bool guard(uint32_t g, const rc::rec::KickView &k, uint32_t offset, uint32_t code, const char *what);
         bool runProgram(const rc::rec::KickView &k, uint32_t pc, uint32_t offset, uint32_t mxcsr, Path1Sink &sink);
 
+        Options m_options;
         VifRegs m_vif;
         std::vector<uint8_t> m_data, m_micro; // 16 KB each
         alignas(16) float m_vf[32][4] = {};

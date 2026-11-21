@@ -4,7 +4,35 @@
 //
 // Arithmetic follows the VU: operands are normalised, results flush to zero or clamp, and the caller has the host FPU
 // rounding toward zero. Each step follows the original order because float rounding depends on it.
+//
+// Two builds of these sources (RENDERER_P2_DESIGN.md 4.1). RC_VU1_LEAN chooses one, and with it the namespace and
+// the four arithmetic operations (ADD, SUB, MUL, MADD):
+// - strict (RC_VU1_LEAN undefined or 0; library rc_vu1_ref and the game, namespace rc::vu1): every result checked
+//   in double precision, as above;
+// - lean (RC_VU1_LEAN 1; library rc_vu1_lean, namespace rc::vu1l): the host's own operation under MXCSR = round toward
+//   zero + flush to zero + denormals are zero, and the strict operation for the few operand classes that mode cannot
+//   treat as the VU does (vu_lean.h). rc::vu1l::run sets that mode itself. Nothing else differs.
+// RC_VU1_NAMESPACE may be defined before this header to put a build under another name (tools/rc_replay's
+// shape_lean.cpp includes the sources as text).
 #pragma once
+
+#ifndef RC_VU1_LEAN
+#define RC_VU1_LEAN 0
+#endif
+#ifndef RC_VU1_NAMESPACE
+#if RC_VU1_LEAN
+#define RC_VU1_NAMESPACE vu1l
+#else
+#define RC_VU1_NAMESPACE vu1
+#endif
+#endif
+// The strict operations' names: their own in the strict build, fadd -> faddStrict in the lean one (vu_lean.h's
+// fall-backs call them).
+#if RC_VU1_LEAN
+#define RC_VU1_STRICT_OP(name) name##Strict
+#else
+#define RC_VU1_STRICT_OP(name) name
+#endif
 
 #include <cmath>
 #include <cstdint>
@@ -14,7 +42,7 @@
 
 #include <emmintrin.h>
 
-namespace rc::vu1 {
+namespace rc::RC_VU1_NAMESPACE {
 
 using KickList = std::vector<std::vector<uint8_t>>;
 // One XGKICK: the GIF packet as the program sends it (the references' Io entry, vu1_ref.h).
@@ -61,7 +89,7 @@ struct Fmac
 
 // `single` is the result in single precision, which is the value the VU produces. The exact result
 // only decides whether it overflowed or underflowed.
-inline Fmac finish(float single, double exact)
+inline Fmac RC_VU1_STRICT_OP(finish)(float single, double exact)
 {
     const double magnitude = std::fabs(exact);
     const bool negative = std::signbit(exact);
@@ -72,31 +100,37 @@ inline Fmac finish(float single, double exact)
     return {single, negative};
 }
 
-inline Fmac fadd(float a, float b)
+inline Fmac RC_VU1_STRICT_OP(fadd)(float a, float b)
 {
     const float s = norm(a), t = norm(b);
-    return finish(s + t, static_cast<double>(s) + static_cast<double>(t));
+    return RC_VU1_STRICT_OP(finish)(s + t, static_cast<double>(s) + static_cast<double>(t));
 }
 
-inline Fmac fsub(float a, float b)
+inline Fmac RC_VU1_STRICT_OP(fsub)(float a, float b)
 {
     const float s = norm(a), t = norm(b);
-    return finish(s - t, static_cast<double>(s) - static_cast<double>(t));
+    return RC_VU1_STRICT_OP(finish)(s - t, static_cast<double>(s) - static_cast<double>(t));
 }
 
-inline Fmac fmul(float a, float b)
+inline Fmac RC_VU1_STRICT_OP(fmul)(float a, float b)
 {
     const float s = norm(a), t = norm(b);
-    return finish(s * t, static_cast<double>(s) * static_cast<double>(t));
+    return RC_VU1_STRICT_OP(finish)(s * t, static_cast<double>(s) * static_cast<double>(t));
 }
 
 // The product is rounded to single precision before the sum, as the hardware does.
-inline Fmac fmadd(float acc, float a, float b)
+inline Fmac RC_VU1_STRICT_OP(fmadd)(float acc, float a, float b)
 {
     const float accumulator = norm(acc), s = norm(a), t = norm(b);
     const float product = s * t;
-    return finish(accumulator + product, static_cast<double>(accumulator) + static_cast<double>(s) * static_cast<double>(t));
+    return RC_VU1_STRICT_OP(finish)(accumulator + product, static_cast<double>(accumulator) + static_cast<double>(s) * static_cast<double>(t));
 }
+
+#if RC_VU1_LEAN
+} // namespace rc::RC_VU1_NAMESPACE
+#include "vu_lean.h"
+namespace rc::RC_VU1_NAMESPACE {
+#endif
 
 inline float vuDivide(float numeratorRaw, float denominatorRaw)
 {
@@ -255,4 +289,4 @@ void runTextureBlocks(ShapeProgram &p, int reader, PerTriangle perTriangle)
     }
 }
 
-} // namespace rc::vu1
+} // namespace rc::RC_VU1_NAMESPACE

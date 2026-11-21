@@ -584,6 +584,11 @@ namespace rc::replay
         if (options.fault != VifFault::None)
             m->fr->setFault(options.fault, options.faultCycle, options.faultN);
         m->fr->vif().setPoison(!options.noPoison);
+        {
+            Vif1Reader::Options vo = m->fr->vif().options();
+            vo.library = options.library;
+            m->fr->vif().setOptions(vo);
+        }
         m->divert = m->opt.withEmu && m->opt.substitute != "none";
     }
 
@@ -818,9 +823,9 @@ namespace rc::replay
                     need.empty() ? " none" : need.c_str(), g.neededBeforeFirstClear);
         const double ms = s.fr->vif().nsPerTick() / 1e6;
         if (s.timedKicks)
-            std::printf("vif: time a channel 1 kick (mean / largest)%s: references %.2f / %.2f ms, VIF walk %.2f / %.2f ms, %s %.2f / %.2f ms, "
+            std::printf("vif: time a channel 1 kick (mean / largest)%s: references (%s) %.2f / %.2f ms, VIF walk %.2f / %.2f ms, %s %.2f / %.2f ms, "
                         "all %.2f / %.2f ms\n",
-                        s.opt.withEmu ? " (with the comparisons beside the machine)" : "", v.refNs * ms / s.timedKicks, s.maxRefNs * ms,
+                        s.opt.withEmu ? " (with the comparisons beside the machine)" : "", vu1LibraryName(s.fr->vif().options().library), v.refNs * ms / s.timedKicks, s.maxRefNs * ms,
                         v.walkNs * ms / s.timedKicks, s.maxWalkNs * ms, s.opt.withEmu ? "comparison, GIF walk and list" : "GIF walk and list",
                         v.sinkNs * ms / s.timedKicks, s.maxSinkNs * ms, (v.refNs + v.walkNs + v.sinkNs) * ms / s.timedKicks, s.maxTotalNs * ms);
         std::printf("(a) keyframes: %" PRIu64 " compared: VIF1 registers %" PRIu64 ", micro memory %" PRIu64 ", data memory %" PRIu64 ", vector registers %" PRIu64

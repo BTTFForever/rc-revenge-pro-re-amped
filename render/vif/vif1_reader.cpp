@@ -49,7 +49,21 @@ namespace rc::rd
         return names[static_cast<uint32_t>(f)];
     }
 
+    bool parseVu1Library(const std::string &name, Vu1Library &out)
+    {
+        if (name == "strict")
+            out = Vu1Library::Strict;
+        else if (name == "lean")
+            out = Vu1Library::Lean;
+        else
+            return false;
+        return true;
+    }
+
+    const char *vu1LibraryName(Vu1Library l) { return l == Vu1Library::Lean ? "lean" : "strict"; }
+
     Vif1Reader::Vif1Reader() : m_data(0x4000u, 0), m_micro(0x4000u, 0) { reset(); }
+    Vif1Reader::Vif1Reader(const Options &options) : m_options(options), m_data(0x4000u, 0), m_micro(0x4000u, 0) { reset(); }
 
     void Vif1Reader::reset()
     {
@@ -197,7 +211,12 @@ namespace rc::rd
         bool runaway = false;
         try
         {
-            rc::vu1::run(info.program, io);
+            // The lean build sets RZ + FTZ + DAZ on top of the MXCSR set here and restores it (so the NoMxcsr fault
+            // has no effect on it: no caller can forget the mode).
+            if (m_options.library == Vu1Library::Lean)
+                rc::vu1l::run(info.program, io);
+            else
+                rc::vu1::run(info.program, io);
         }
         catch (const Runaway &)
         {
