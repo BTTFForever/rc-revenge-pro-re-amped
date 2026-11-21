@@ -2162,6 +2162,47 @@ namespace
             if (!run("(iv) a pass per target: an opaque mesh, then reading it", g, patterned, 24))
                 return;
         }
+        // (v) pairs of reading triangles on three corners each of one axis-aligned rectangle that share a side of it, not
+        // the diagonal: cut along different diagonals, they overlap (PATH1 sends such pairs: USA level 17, cycle 279).
+        // The box rule's rectangle-pair exception must not take them for halves; real halves follow for comparison.
+        {
+            Gif g;
+            uploadK2Texture(g, 31);
+            Env e;
+            env(g, e);
+            background(g);
+            k2StateWrites(g, kK2States[10]); // 0x01 reading
+            for (int k = 0; k < 12; ++k)
+            {
+                const double x0 = 40.0 + k * 47.0, y0 = 30.0 + (k % 3) * 9.0, x1 = x0 + 17.0625 + k, y1 = y0 + 29.0 + 3.0 * k;
+                V c[4]; // corners: 0 (x0,y0) 1 (x1,y0) 2 (x0,y1) 3 (x1,y1)
+                for (int i = 0; i < 4; ++i)
+                {
+                    c[i].x = (i & 1) ? x1 : x0;
+                    c[i].y = (i & 2) ? y1 : y0;
+                    c[i].q = 1.0f;
+                    c[i].s = static_cast<float>(c[i].x / 37.0);
+                    c[i].t = static_cast<float>(c[i].y / 23.0);
+                    c[i].z = 0x400000 + static_cast<uint32_t>(k) * 0x100;
+                    c[i].r = static_cast<uint8_t>(0x40 + 9 * k);
+                    c[i].g = static_cast<uint8_t>(0x70 - 4 * k + 20 * i);
+                    c[i].b = 0x58;
+                    c[i].a = static_cast<uint8_t>(0x28 + (k * 11 + i * 17) % 0x50);
+                }
+                if (k % 3 == 2)
+                {
+                    tri(g, 0x5B, c[0], c[1], c[2]); // halves: the shared corners 1 and 2 are the diagonal
+                    tri(g, 0x5B, c[1], c[3], c[2]);
+                }
+                else
+                {
+                    tri(g, 0x5B, c[3], c[2], c[0]); // the shared corners 0 and 2 are the left side: the triangles overlap
+                    tri(g, 0x5B, c[1], c[0], c[2]);
+                }
+            }
+            if (!run("(v) pairs on a rectangle's corners sharing a side (they overlap)", g, patterned, 9))
+                return;
+        }
         if (m.vk)
             m.vk->setOptions(before);
     }

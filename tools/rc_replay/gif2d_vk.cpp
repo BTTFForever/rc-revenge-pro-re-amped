@@ -227,6 +227,7 @@ namespace rc::replay
 
         void runSetting(int setting, const std::vector<uint32_t> (&ref)[2], const std::vector<uint32_t> &refZ);
         std::string primsAt(int x, int y, uint32_t target) const;
+        std::string zAbove24At() const;
     };
 
     Gif2dVkCheck::Gif2dVkCheck(const Gif2dVkOptions &options) : m(std::make_unique<Impl>()) { m->opt = options; }
@@ -453,9 +454,59 @@ namespace rc::replay
                 out += fmt("\n      primitive %u (%s, %s%s; colour %02x %02x %02x %02x, z %06x)", n, stateKey(*cur).c_str(),
                            plan.blend == kBlendOff ? "blend off" : plan.exactBlend ? "exact blend" : "inexact blend", c.op == kOpClear ? ", the clear" : "",
                            q.r, q.g, q.b, q.a, q.z);
+                if (kind == kKindTriangles) // the vertices, in GS units (1/16 pixel, before the offset)
+                    out += fmt("; xy %u,%u %u,%u %u,%u", v[i * per].x, v[i * per].y, v[i * per + 1].x, v[i * per + 1].y, v[i * per + 2].x, v[i * per + 2].y);
             }
         }
         return out.empty() ? std::string(" none") : out;
+    }
+
+    // The kick's triangles with a vertex Z at or above 2^24 (RENDERER_3D_DESIGN.md 9.1): the pixels each covers inside
+    // the scissor and how many of them get an interpolated Z at or above 2^24 by the model (the reference's arithmetic).
+    // Only there could the shader's clamp and the reference's Z24 store differ.
+    std::string Gif2dVkCheck::Impl::zAbove24At() const
+    {
+        std::string out;
+        const GsState *cur = nullptr;
+        uint32_t n = 0;
+        for (const DrawCmd &c : p.sub.cmds)
+        {
+            if (c.op == kOpState)
+            {
+                cur = &p.sub.state(c);
+                continue;
+            }
+            if (c.op != kOpScreenPrims || !cur)
+                continue;
+            if (c.a != kKindTriangles)
+            {
+                n += c.b;
+                continue;
+            }
+            const GsVertex *v = p.sub.vertices(c);
+            const uint32_t ofx = static_cast<uint32_t>(cur->xyoffset & 0xFFFFu), ofy = static_cast<uint32_t>((cur->xyoffset >> 32) & 0xFFFFu);
+            for (uint32_t i = 0; i < c.b; ++i, ++n)
+            {
+                const GsVertex *tv = v + i * 3u;
+                if (tv[0].z < (1u << 24) && tv[1].z < (1u << 24) && tv[2].z < (1u << 24))
+                    continue;
+                GsTri t;
+                if (!gsTriSetup(tv, ofx, ofy, t))
+                    continue;
+                uint64_t covered = 0, above = 0;
+                uint32_t zMax = 0;
+                covered = forEachCovered(*cur, kKindTriangles, tv, [&](int px, int py) {
+                    GsTriPixel q;
+                    gsTriPixel(t, tv, *cur, px, py, q);
+                    above += q.z >= (1u << 24);
+                    zMax = std::max(zMax, q.z);
+                });
+                out += fmt(" (primitive %u, %s: vertex Z %x %x %x; %" PRIu64 " pixels covered inside the scissor, %" PRIu64
+                           " with a pixel Z >= 2^24, largest pixel Z %x)",
+                           n, stateKey(*cur).c_str(), tv[0].z, tv[1].z, tv[2].z, covered, above, zMax);
+            }
+        }
+        return out;
     }
 
     void Gif2dVkCheck::Impl::runSetting(int setting, const std::vector<uint32_t> (&ref)[2], const std::vector<uint32_t> &refZ)
@@ -467,6 +518,7 @@ namespace rc::replay
         o.grouping = setting == kReadBoxes ? Gs2dVk::kGroupBoxes : Gs2dVk::kGroupPixels;
         o.sourceBias = setting == 1;
         o.faults = opt.faults;
+        o.measureNoFill = opt.noFill;
         vk.setOptions(o);
         for (uint32_t t = 0; t < 2; ++t)
             if (p.targets & (1u << t))
@@ -503,7 +555,7 @@ namespace rc::replay
         T.coverMaxMs = std::max(T.coverMaxMs, ls.coverMs);
         T.beyondViewport += ls.beyondViewport;
         if (ls.zAbove24 && T.zAbove24Where.empty())
-            T.zAbove24Where = fmt("cycle %" PRIu64 " kick %u", p.cycle, p.index);
+            T.zAbove24Where = fmt("cycle %" PRIu64 " kick %u", p.cycle, p.index) + zAbove24At();
         T.zAbove24 += ls.zAbove24;
         ++T.barrierHist[ls.barriers == 0 ? 0 : ls.barriers <= 4 ? 1 : ls.barriers <= 16 ? 2 : ls.barriers <= 32 ? 3 : ls.barriers <= 64 ? 4 : 5];
         T.maxBarriers = std::max(T.maxBarriers, ls.barriers);
@@ -631,9 +683,9 @@ namespace rc::replay
                     if (T.failures.size() < 12 && !kickFailed)
                     {
                         const int x = static_cast<int>(i % kW), y = static_cast<int>(i / kW);
-                        T.failures.push_back(fmt("cycle %" PRIu64 " kick %u target %u pixel %d,%d: %s Vulkan %08x, emulated %08x, before %08x (channel %d off by %d, L %u, bound %d..%d); primitives over it:%s",
-                                                 p.cycle, p.index, t, x, y, settingName(setting), g[i], r[i], p.before[t][i], worstC, worstD, l, lo, hi,
-                                                 primsAt(x, y, t).c_str()));
+                        T.failures.push_back(fmt("cycle %" PRIu64 " kick %u target %u pixel %d,%d: %s Vulkan %08x, emulated %08x, before %08x (channel %d off by %d, L %u, bound %d..%d); primitives over it:",
+                                                 p.cycle, p.index, t, x, y, settingName(setting), g[i], r[i], p.before[t][i], worstC, worstD, l, lo, hi) +
+                                             primsAt(x, y, t)); // appended: fmt's buffer would cut the list
                     }
                     if (!kickFailed)
                     {

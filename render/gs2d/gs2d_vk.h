@@ -136,6 +136,9 @@ namespace rc::rd
             bool sourceBias = true;
             Grouping grouping = kGroupPixels;
             uint32_t faults = 0;
+            // A measurement, not a way to draw (RENDERER_3D_DESIGN.md 18.5): every draw's scissor is cut to one pixel, so
+            // the GPU time left is the draws, binds and barriers; the difference to a normal run is the fragments' time.
+            bool measureNoFill = false;
         };
         struct Stats
         {

@@ -44,6 +44,7 @@ namespace rc::replay
         std::string blend = "auto"; // read, ff, both, or auto: read where the device has local read, else ff
         uint32_t biasMask = 2u;     // fixed function: bit 0 with the source bias off, bit 1 on
         bool boxes = false;         // (step 8 batch 2) also the read with batch 4b's box groups (--vk-boxes), for the cost comparison
+        bool noFill = false;        // (step 8 batch 2) --vk-nofill: a measurement (Gs2dVk::Options::measureNoFill); every comparison fails
         uint32_t faults = 0;     // Gs2dVk::Fault bits (planted, 9.3)
         bool faultTexa = false;  // the TEXA fault is the reader's (handled by gif2d)
         std::string pngDir;      // the first failing kick's planes (before, Vulkan, reference, difference)

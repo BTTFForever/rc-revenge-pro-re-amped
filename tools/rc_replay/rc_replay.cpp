@@ -50,7 +50,8 @@
 // RENDERER_3D_DESIGN.md 11.4) (d): every channel 1 kick (K2, from the C++ VU1 references) is judged the same way, every
 // pixel equal; the barriers go by covered pixels; --vk-boxes adds the read with batch 4b's box groups for comparison;
 // the faults of 10.3 and 11.4 (no-first-barrier, cover-own-batch, no-stamp-other, epoch-no-barrier, gequal-greater,
-// z-plus-one, repeat-clamp, no-q, draw-culled, cull-drawn).
+// z-plus-one, repeat-clamp, no-q, draw-culled, cull-drawn). --vk-nofill is a measurement, not a check: every draw's
+// scissor cut to one pixel, so the GPU time reported is the draws, binds and barriers without the fragments (18.5).
 //
 // vif (vif.cpp; renderer plan P1 step 8 batch 1, RENDERER_3D_DESIGN.md 11.1-11.3): the frame reader (render/frame: the
 // VIF1 reader with the C++ VU1 references feeding the GIF reader as PATH1). With --verify: (a) VIF1 registers, VU1
@@ -482,7 +483,7 @@ namespace
                              "       gif2d: [--with-emu] [--no-tables] [--fault reg|prim|field:<cycle>:<n>]\n"
                              "       vif: [--with-emu [--vif-substitute bytes|list|list-cull|none]] [--vif-out <dir>]\n"
                              "            [--fault unpack|tops|dbf|mpg|mscal|mxcsr|lane|packet|vumem:<cycle>[:<n>]]\n"
-                             "              [--vk] [--vk-blend read|ff|both] [--vk-boxes] [--vk-bias off|on|both] [--vk-fault <name>[,<name>...]] [--vk-png <dir>] [--validation]\n"
+                             "              [--vk] [--vk-blend read|ff|both] [--vk-boxes] [--vk-nofill] [--vk-bias off|on|both] [--vk-fault <name>[,<name>...]] [--vk-png <dir>] [--validation]\n"
                              "       blit: [--no-gpu] [--validation] [--png <dir>] [--fault tile:<cycle>:<n> | dispfb:<cycle> | byte|gpubyte:<cycle>:<pixel>]\n"
                              "       emu --rereference <out.rcfr> (exact dumps): a copy with the references this machine makes\n"
                              "       live2d (exact dumps; the live 2D renderer, RC_VK_PICTURE=native): [--live-shots <dir>] [--vk-blend read|ff] [--validation] [--png <dir>]\n");
@@ -799,7 +800,7 @@ int main(int argc, char **argv)
     std::string path, consumer = "stats";
     bool verify = false, quiet = false, withEmu = false, noGpu = false, validation = false, noTables = false, vk = false, vifRoundNearest = false,
          vifNoPoison = false;
-    bool vkBoxes = false;
+    bool vkBoxes = false, vkNoFill = false;
     std::string vkBias = "on", vkBlend = "auto", vkFaults, vkPng, vifSubstitute = "bytes", vifOut, liveShots, rereference;
     uint64_t first = 0, last = ~0ull;
     rc::replay::EmuOptions emuOptions;
@@ -866,6 +867,8 @@ int main(int argc, char **argv)
             vkPng = argv[++i];
         else if (a == "--vk-boxes")
             vkBoxes = true;
+        else if (a == "--vk-nofill")
+            vkNoFill = true;
         else if (a == "--live-shots" && i + 1 < argc)
             liveShots = argv[++i];
         else if (a == "--no-tables")
@@ -991,6 +994,7 @@ int main(int argc, char **argv)
             g.vkOptions.pngDir = vkPng;
             g.vkOptions.biasMask = vkBias == "off" ? 1u : vkBias == "on" ? 2u : 3u;
             g.vkOptions.boxes = vkBoxes;
+            g.vkOptions.noFill = vkNoFill;
             if (vkBlend != "auto" && vkBlend != "read" && vkBlend != "ff" && vkBlend != "both")
             {
                 std::fprintf(stderr, "unknown --vk-blend '%s' (read, ff, both)\n", vkBlend.c_str());

@@ -74,7 +74,9 @@ namespace rc::rd
         };
 
         // The two triangles are halves of one axis-aligned rectangle split along its diagonal (they share only the
-        // diagonal, which the fill rule gives to one of them).
+        // diagonal, which the fill rule gives to one of them). The two shared corners must be opposite ones: two
+        // triangles on three corners each that share a side of the rectangle are cut along different diagonals and
+        // overlap (step 8 batch 2: PATH1 sends such pairs, USA level 17 cycle 279; K1's pairs are always halves).
         bool rectangleHalves(const GsVertex *a, const GsVertex *b)
         {
             uint16_t xs[2], ys[2];
@@ -103,15 +105,21 @@ namespace rc::rd
             if (nx != 2 || ny != 2)
                 return false;
             uint32_t shared = 0;
+            const GsVertex *sh[3] = {nullptr, nullptr, nullptr};
             for (int i = 0; i < 3; ++i)
             {
                 for (int j = i + 1; j < 3; ++j)
                     if ((a[i].x == a[j].x && a[i].y == a[j].y) || (b[i].x == b[j].x && b[i].y == b[j].y))
                         return false;
                 for (int j = 0; j < 3; ++j)
-                    shared += a[i].x == b[j].x && a[i].y == b[j].y;
+                    if (a[i].x == b[j].x && a[i].y == b[j].y)
+                    {
+                        if (shared < 3u)
+                            sh[shared] = a + i;
+                        ++shared;
+                    }
             }
-            return shared == 2u;
+            return shared == 2u && sh[0]->x != sh[1]->x && sh[0]->y != sh[1]->y;
         }
     }
 
@@ -1392,7 +1400,10 @@ namespace rc::rd
             if (!haveScissor || d.scissor.x != boundScissor.x || d.scissor.y != boundScissor.y || d.scissor.w != boundScissor.w ||
                 d.scissor.h != boundScissor.h)
             {
-                rhi_cmd_set_scissor(cl, &d.scissor);
+                // Options::measureNoFill: one pixel of the scissor, so the list's GPU time is its draws, binds and
+                // barriers without the fragments (RENDERER_3D_DESIGN.md 18.5); the picture is wrong.
+                const RhiRect one{d.scissor.x, d.scissor.y, 1u, 1u};
+                rhi_cmd_set_scissor(cl, m_opt.measureNoFill ? &one : &d.scissor);
                 boundScissor = d.scissor;
                 haveScissor = true;
                 ++m_last.binds;
