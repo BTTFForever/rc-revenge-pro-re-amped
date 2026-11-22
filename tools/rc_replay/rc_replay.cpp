@@ -501,7 +501,7 @@ namespace
                              "       blit: [--no-gpu] [--validation] [--png <dir>] [--fault tile:<cycle>:<n> | dispfb:<cycle> | byte|gpubyte:<cycle>:<pixel>]\n"
                              "       emu --rereference <out.rcfr> (exact dumps): a copy with the references this machine makes\n"
                              "       live2d (exact dumps; the live 2D renderer, RC_VK_PICTURE=native): [--live-shots <dir>] [--vk-blend read|ff] [--validation] [--png <dir>]\n"
-                             "              [--reader strict|fast] [--reader-thread] (P2 step 9 batch 6: the reader behind the live KickQueue on its own thread)\n"
+                             "              [--reader strict|fast] [--reader-thread] [--no-gpu] (P2 step 9 batch 6: the reader behind the live KickQueue on its own thread)\n"
                              "       vk (exact dumps; the chained replay, no emulated machine): [--vk-blend read|ff] [--validation] [--png <dir>]\n"
                              "            [--fault depth|clear|texture|flip:<cycle>[:<cycles>]]\n"
                              "       dlst (a dump from boot with RC_FRAME_RECORD_DRAWLISTS=1): the live reader's lists against the recorded DLST chunks\n"
@@ -1292,6 +1292,10 @@ int main(int argc, char **argv)
         }
         l.fast = readerKind == "fast";
         l.thread = readerThread;
+        l.noGpu = noGpu;
+        l.plantRace = emuOptions.faultKind == "race";
+        if (l.plantRace)
+            emuOptions.faultKind.clear();
         l.pngDir = emuOptions.pngDir;
         emuOptions.pngDir.clear();
         return runEmu(reader, path, emuOptions, verify, true, first, last, nullptr, false, nullptr, false, false, nullptr, &l);

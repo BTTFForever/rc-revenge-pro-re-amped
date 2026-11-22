@@ -73,6 +73,8 @@ namespace rc::live
             g_host->reader->setThreadName("the reader thread");
             KickQueue::Options qo;
             qo.reportEvery = every;
+            if (const char *v = std::getenv("RC_VK_READER_TEST_DELAY_MS"); v && *v)
+                qo.testDelayMs = static_cast<uint32_t>(std::strtoul(v, nullptr, 10));
             g_host->queue = std::make_unique<KickQueue>(*g_host->reader, qo);
         }
         // (step 8 batch 4) RC_FRAME_RECORD_DRAWLISTS=1: each recorded cycle's list into the dump (DLST), for the live check.

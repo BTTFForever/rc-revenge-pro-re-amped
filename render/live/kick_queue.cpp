@@ -193,6 +193,9 @@ namespace rc::live
         e.index = b.kickCount++;
         b.events.push_back(e);
         ++m_cyc.kicks;
+        if (m_opt.testUnlockedKick)
+            submit(); // the planted fault: no lock (the thread sanitizer must report it)
+        else
         {
             std::lock_guard<std::mutex> lock(m_mutex);
             submit();
@@ -396,6 +399,8 @@ namespace rc::live
                 break;
             }
             case Event::CycleEnd:
+                if (m_opt.testDelayMs)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(m_opt.testDelayMs));
                 m_down.cycleEnd(e.info, nullptr);
                 break;
             }

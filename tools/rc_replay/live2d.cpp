@@ -62,6 +62,7 @@ namespace rc::replay
             std::vector<uint8_t> k2;
         };
         std::map<uint64_t, Closed> closed;
+        uint64_t listsTaken = 0;
         rc::live::Presenter presenter;
         bool rhiUp = false, up = false, seeded = false;
         std::string adapter;
@@ -98,6 +99,7 @@ namespace rc::replay
             rc::live::KickQueue::Options q;
             q.live = false;
             m->reader->setThreadName("the reader thread");
+            q.testUnlockedKick = options.plantRace;
             m->queue = std::make_unique<rc::live::KickQueue>(*m->reader, q);
             m->front = m->queue.get();
         }
@@ -116,6 +118,13 @@ namespace rc::replay
 
     bool Live2dCheck::start(std::string *why)
     {
+        if (m->opt.noGpu)
+        {
+            // (batch 6) The thread sanitizer's run: NVIDIA's driver starts threads TSan cannot follow (it crashes in their
+            // first malloc), so the lists are taken from the mailbox and counted, not drawn.
+            std::printf("live2d: no GPU (--no-gpu): the lists are taken from the mailbox, not drawn or judged\n");
+            return true;
+        }
         RhiDeviceDesc desc{};
         desc.sdlWindow = nullptr;
         desc.vsync = false;
@@ -299,6 +308,7 @@ namespace rc::replay
                                     const std::vector<uint8_t> &k2state)
     {
         Impl *m = this;
+        m->listsTaken += lists.size();
         if (!m->up || lists.empty())
             return;
         // The presenter's frame, as the vk host makes it (then waited for and read back).
@@ -471,6 +481,7 @@ namespace rc::replay
                     "; validation errors %u%s\n",
                     rs.cycles, rs.cycles ? rs.ns / rs.cycles / 1e6 : 0.0, rs.maxCycleNs / 1e6, rs.path1Kicks, rs.path1Kicks ? rs.path1Ns / rs.path1Kicks / 1e6 : 0.0,
                     rs.guarded, ps.lists, gpu, gpuMax, ps.barriers, m->drawFailures, m->readFailures, m->validationErrors, layer ? "" : " (layer off)");
+        std::printf("live2d: %" PRIu64 " lists taken from the mailbox\n", m->listsTaken);
         std::printf("live2d: %" PRIu64 " cycles judged against the reference picture (%" PRIu64 " without one); %" PRIu64 " pixels, %" PRIu64
                     " of them K2's (drawn, judged), %" PRIu64 " compared: %" PRIu64 " equal; of them %" PRIu64 " not the clear colour: %" PRIu64
                     " equal; %" PRIu64 " VIF1 kicks, %" PRIu64 " clear / upload kicks; failing cycles %" PRIu64 "\n",

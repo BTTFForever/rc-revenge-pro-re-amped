@@ -40,6 +40,12 @@ namespace rc::replay
         // which tells them from draws, belongs to the other thread), so the K2 pixel counts are larger; pass and fail are
         // unchanged: every pixel against the reference.
         bool thread = false;
+        // (batch 6) --no-gpu: no presenter (the thread sanitizer's run; NVIDIA's driver cannot run under it): the lists are
+        // taken from the mailbox and counted only.
+        bool noGpu = false;
+        // (batch 6) --fault race: KickQueue::Options::testUnlockedKick, a kick handed over without the queue's lock (the
+        // thread sanitizer must report it: the harness's planted fault).
+        bool plantRace = false;
     };
 
     class Live2dCheck final : public rc::rec::Consumer

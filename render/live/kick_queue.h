@@ -42,6 +42,9 @@ namespace rc::live
             uint32_t maxClosed = 2;   // 8.3: closed cycles the reader may be behind before the EE thread waits
             uint64_t reportEvery = 0; // a line on stderr every n cycles (0: none)
             bool live = true;         // the report's wording: "the EE thread" (live) or "the feeding thread" (rc_replay)
+            uint32_t testDelayMs = 0; // a test: the reader thread sleeps this long at every cycle close (RC_VK_READER_TEST_DELAY_MS),
+                                      // so it falls behind: 8.3's wait and DLST chunks after later cycles happen live
+            bool testUnlockedKick = false; // a planted fault (rc_replay live2d --fault race): kicks are queued without the lock
         };
         struct Stats
         {
