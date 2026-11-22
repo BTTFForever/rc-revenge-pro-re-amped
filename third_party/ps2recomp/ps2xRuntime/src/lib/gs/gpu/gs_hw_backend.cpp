@@ -2293,32 +2293,6 @@ struct GSHwBackend::Impl
             g.DepthFunc(ztst == 0 ? kNever : ztst == 1 ? kAlways : ztst == 2 ? kLEqual : kLess);
         else
             g.DepthFunc(ztst == 0 ? kNever : ztst == 1 ? kAlways : ztst == 2 ? kGEqual : kGreater);
-        // exp/quick-dirty (PS2X_GS_HW_CULLZ0, on unless 0): a batch whose every vertex has Z 0 under ZTST GREATER (or
-        // any batch under NEVER) cannot pass the depth test anywhere, so it is not drawn. The front end's VU1 shapes kick
-        // such triangles by the hundred a frame (all-zero colour, Z and STQ, corners clamped to the scissor: half the
-        // screen each), and at 3x their fragments were most of the GPU's work.
-        {
-            static const bool cullZ0 = [] { const char *v = std::getenv("PS2X_GS_HW_CULLZ0"); return !(v && *v == '0'); }();
-            if (cullZ0 && !noDepth && !zAlias && !zInv && ((c.test >> 16) & 1u) != 0u)
-            {
-                bool dead = ztst == 0u;
-                if (!dead && ztst == 3u)
-                {
-                    dead = true;
-                    for (const HwVertex &v : verts)
-                        if (v.z > 0.0f)
-                        {
-                            dead = false;
-                            break;
-                        }
-                }
-                if (dead)
-                {
-                    ++stats.culledZ0;
-                    return;
-                }
-            }
-        }
         std::vector<HwVertex> flippedZ;
         if (zInv)
         {
