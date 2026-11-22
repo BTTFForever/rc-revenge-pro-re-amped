@@ -34,6 +34,9 @@ namespace rc::rd
         // (P2 step 9 batch 3) True: the tap does not need the fast paths' triangle packets as packets (they go into the
         // list as nine quadwords without passing packet()). False (the default): every packet is made and passed.
         virtual bool fastTriangles() const { return false; }
+        // (P2 step 9 batch 5) True (the default): runBegin and runEnd read VU data memory, so the VIF1 reader keeps no TOPS
+        // views in the kick. False: they read the registers only.
+        virtual bool readsVuMemory() const { return true; }
         virtual ~Path1Tap() = default;
     };
 
@@ -57,6 +60,9 @@ namespace rc::rd
             rc::shape::FastFault fastFault = rc::shape::FastFault::None; // planted (check (e)), from fastFaultCycle on
             uint8_t fastFaultPrograms = 0xFF;                           // ... in these programs' paths (bit per rc::vu1::Program)
             int64_t fastFaultCycle = 0;
+            // (P2 step 9 batch 5, RENDERER_P2_DESIGN.md 4.5) With fast and fastPaths: TOPS views (Vif1Reader::Options::views)
+            // and no hash of the VIF1 stream in the chain walk. Off: batch 4's fast reader (to time the views).
+            bool views = true;
         };
         struct Stats
         {
@@ -111,6 +117,7 @@ namespace rc::rd
             void packet(const uint8_t *data, uint32_t bytes) override;
             bool triangle(const uint32_t *nine) override;
             void runEnd(const Vu1Run &run, uint8_t *vuData, float (*vf)[4]) override;
+            bool readsVuMemory() const override;
         } m_bridge;
 
         static Options resolve(Options o); // fast: the GIF reader's options it implies

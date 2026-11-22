@@ -50,6 +50,10 @@ namespace rc::shape
         LastStep,  // (batch 4) an env-mapped run's (or a skin run's) last triangle not handed to the reference's step:
                    // VF26-VF28 (VF25.w, VF26, VF29 for skin) not left as the program leaves them
         LitRegs,   // (batch 4) TERdr: the light registers VF24-VF30 not reloaded after a run whose last lit triangle was fast
+        ViewHard,  // (batch 5) a run reading its input through a TOPS view does not materialise the view before a hard
+                   // triangle's step (the step reads VU memory as the earlier kicks and runs left it)
+        ViewRef,   // (batch 5, applied by the VIF1 reader) the pending views are not materialised before a run of a reference
+                   // (water, a declined run) or a direct entry
         Count
     };
     // `name`, or `name@program` (program trdr, env, skin, terdr) to plant it in that path only.
@@ -70,12 +74,13 @@ namespace rc::shape
         uint64_t rebuilt = 0;       // quick triangles sent as a packet (the sink declined, or the slot's tag is not the triangle tag)
         uint64_t blocks = 0;        // texture blocks
         uint64_t envRuns = 0;       // Env: runs with the environment map on (constant 10.z)
+        uint64_t staged = 0;        // (batch 5) triangles handed to the step whose ten quadwords were copied in from a view
 
         void add(const FastCounts &o)
         {
             runs += o.runs, declined += o.declined, declinedParse += o.declinedParse, in += o.in, culled += o.culled, allBehind += o.allBehind;
             edge += o.edge, quick += o.quick, hard += o.hard, odd += o.odd, lastSteps += o.lastSteps, direct += o.direct, rebuilt += o.rebuilt;
-            blocks += o.blocks, envRuns += o.envRuns;
+            blocks += o.blocks, envRuns += o.envRuns, staged += o.staged;
         }
     };
 
@@ -91,6 +96,37 @@ namespace rc::shape
                 t.add(c);
             return t;
         }
+    };
+
+    // (Batch 5, RENDERER_P2_DESIGN.md 4.5) Where a run reads its input. A TOPS view: quadwords [first, first + count) of
+    // VU memory are, logically, the bytes at `data` (an UNPACK's data in the RAM view, not yet copied into VU memory).
+    // The path reads its input there while it stays inside the view; before anything reads VU memory in the input's
+    // place (a hard triangle's step, a register block's kick) or when the count walk leaves the view, it calls
+    // `materialise` (the reader copies every pending view into VU memory) and reads VU memory from then on. No view
+    // (data null): the input is VU memory, as before.
+    enum class Materialise : uint8_t
+    {
+        Walk,     // the run's count walk left the view (its input is more than one UNPACK)
+        Hard,     // before a skin run (its last triangle is always the step's; the track family copies a hard triangle's
+                  // ten quadwords in instead and keeps the view)
+        Block,    // before a register block's kick (the packet is copied out of VU memory)
+        Count
+    };
+    // One view as a run sees it: VU memory quadwords [first, first + count) at data.
+    struct FastSegment
+    {
+        uint32_t first, count;
+        const uint8_t *data;
+    };
+    struct FastInput
+    {
+        // The views that hold the run's input, one after another in VU memory from the input's first quadword (an input
+        // longer than one UNPACK's 256 quadwords comes as two; the polygon and alpha buffers as an UNPACK a triangle):
+        // none (VU memory is the input), or `count` segments.
+        const FastSegment *segments = nullptr;
+        uint32_t count = 0;
+        void (*materialise)(void *ctx, Materialise why) = nullptr;
+        void *ctx = nullptr;
     };
 
     struct FastOptions
@@ -110,7 +146,12 @@ namespace rc::shape
     // with nothing done: the run is declined (no path, or its input does not parse within the buffer, 4.3), and the
     // caller runs the reference.
     bool runFast(uint32_t program, uint32_t pc, uint8_t *vuData, float (*vf)[4], uint32_t top, FastSink &sink, FastStats &stats,
-                 const FastOptions &options);
+                 const FastOptions &options, const FastInput &input = FastInput{});
+    // (Batch 5) The quadword a run of `program` reads its input from: TOP, or the skin program's fixed input (512).
+    // What else a fast run reads of VU memory: the track family the constants and packets below 0x100 (the layouts'
+    // work areas, constants and header packets all lie there); the skin program its bones by addresses from its input,
+    // anywhere (so the reader materialises every other view before a skin run).
+    uint32_t fastInputStart(uint32_t program, uint32_t top);
 
     // The register lanes (bit per lane x, y, z, w) a fast run of `program` does not leave as the program does, beyond
     // those every reference leaves unreproduced (rc::rd::Vu1ProgramInfo::notReproduced, poisoned after every run anyway).
@@ -132,8 +173,9 @@ namespace rc::shape
     constexpr uint32_t kSkinInput = 512u, kMaxSkinInput = 512u;
 
     // The paths (fast_trdr.cpp, fast_env.cpp, fast_terdr.cpp, fast_skin.cpp); runFast dispatches.
-    bool runTrdr(uint8_t *vuData, float (*vf)[4], uint32_t top, FastSink &sink, FastStats &stats, const FastOptions &options);
-    bool runEnv(uint8_t *vuData, float (*vf)[4], uint32_t pc, uint32_t top, FastSink &sink, FastStats &stats, const FastOptions &options);
-    bool runTerdr(uint8_t *vuData, float (*vf)[4], uint32_t top, FastSink &sink, FastStats &stats, const FastOptions &options);
-    bool runSkin(uint8_t *vuData, float (*vf)[4], FastSink &sink, FastStats &stats, const FastOptions &options);
+    bool runTrdr(uint8_t *vuData, float (*vf)[4], uint32_t top, FastSink &sink, FastStats &stats, const FastOptions &options, const FastInput &input);
+    bool runEnv(uint8_t *vuData, float (*vf)[4], uint32_t pc, uint32_t top, FastSink &sink, FastStats &stats, const FastOptions &options,
+                const FastInput &input);
+    bool runTerdr(uint8_t *vuData, float (*vf)[4], uint32_t top, FastSink &sink, FastStats &stats, const FastOptions &options, const FastInput &input);
+    bool runSkin(uint8_t *vuData, float (*vf)[4], FastSink &sink, FastStats &stats, const FastOptions &options, const FastInput &input);
 }

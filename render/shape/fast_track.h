@@ -29,46 +29,53 @@ namespace rc::shape::detail
         Terdr
     };
 
-    template <Family K> bool runFamily(uint8_t *mem, float (*vf)[4], uint32_t pc, uint32_t top, FastSink &sink, FastStats &stats, const FastOptions &opt)
+    template <Family K>
+    bool runFamily(uint8_t *mem, float (*vf)[4], uint32_t pc, uint32_t top, FastSink &sink, FastStats &stats, const FastOptions &opt, const FastInput &in)
     {
         constexpr uint32_t prog = K == Family::Trdr ? v::kTrdr : K == Family::Env ? v::kEnv : v::kTerdr;
         FastCounts &st = stats.by[prog];
         // 4.3: the count walk must stay within the input buffer, or the run is the reference's. It also finds the run's
-        // last triangle (Env: an env-mapped run hands it to the step).
+        // last triangle (Env: an env-mapped run hands it to the step). (Batch 5) Through a view it must also stay inside
+        // the view: if it leaves it, the views are materialised and the walk is made again on VU memory.
         const int start = static_cast<int>(top & 0x3FFu);
         const int maxIn = static_cast<int>(kMaxRunInput);
         int lastTri = -1;
+        enum Walked
+        {
+            kWalked,
+            kDecline,
+            kOutside
+        };
+        Src src = in.count ? Src::of(in) : Src::memory(mem);
+        const auto walk = [&](const Src &s) -> Walked
         {
             int r = start;
-            int c = count(mem, r);
+            if (!s.holds(r))
+                return kOutside;
+            int c = count(s, r);
             if constexpr (K == Family::Env)
             {
                 // The program's loop: a texture block (whatever its count), its triangles, then register blocks.
                 if (c <= 0)
-                {
-                    ++st.declinedParse;
-                    return false;
-                }
+                    return kDecline;
                 for (;;)
                 {
                     r += 4;
                     lastTri = r + 10 * (c - 1);
                     r += 10 * c;
                     if (r - start >= maxIn)
-                    {
-                        ++st.declinedParse;
-                        return false;
-                    }
-                    c = count(mem, r);
+                        return kDecline;
+                    if (!s.holds(r))
+                        return kOutside;
+                    c = count(s, r);
                     while (c < 0)
                     {
                         r += 1 - c;
                         if (r - start >= maxIn)
-                        {
-                            ++st.declinedParse;
-                            return false;
-                        }
-                        c = count(mem, r);
+                            return kDecline;
+                        if (!s.holds(r))
+                            return kOutside;
+                        c = count(s, r);
                     }
                     if (c == 0)
                         break;
@@ -83,11 +90,10 @@ namespace rc::shape::detail
                     {
                         r += 1 - c;
                         if (r - start >= maxIn)
-                        {
-                            ++st.declinedParse;
-                            return false;
-                        }
-                        c = count(mem, r);
+                            return kDecline;
+                        if (!s.holds(r))
+                            return kOutside;
+                        c = count(s, r);
                         if (c == 0)
                             break;
                     }
@@ -95,15 +101,27 @@ namespace rc::shape::detail
                         break;
                     r += 4 + 10 * c;
                     if (r - start >= maxIn)
-                    {
-                        ++st.declinedParse;
-                        return false;
-                    }
-                    c = count(mem, r);
+                        return kDecline;
+                    if (!s.holds(r))
+                        return kOutside;
+                    c = count(s, r);
                 }
             }
             if (static_cast<uint32_t>(r - start + 1) > stats.maxExtent)
                 stats.maxExtent = static_cast<uint32_t>(r - start + 1);
+            return kWalked;
+        };
+        Walked walked = walk(src);
+        if (walked == kOutside)
+        {
+            in.materialise(in.ctx, Materialise::Walk);
+            src = Src::memory(mem);
+            walked = walk(src);
+        }
+        if (walked == kDecline)
+        {
+            ++st.declinedParse;
+            return false;
         }
         ++st.runs;
 
@@ -148,6 +166,15 @@ namespace rc::shape::detail
         const bool fBias = faultOn(opt, FastFault::Bias, prog), fFused = faultOn(opt, FastFault::Fused, prog),
                    fHardQuick = faultOn(opt, FastFault::HardQuick, prog), fLast = faultOn(opt, FastFault::LastStep, prog),
                    fLit = faultOn(opt, FastFault::LitRegs, prog);
+        const bool fViewHard = faultOn(opt, FastFault::ViewHard, prog);
+        // (Batch 5) Before anything reads the input from VU memory: the views copied in, and the input read there from then on.
+        const auto materialise = [&](Materialise why)
+        {
+            if (!src.view())
+                return;
+            in.materialise(in.ctx, why);
+            src = Src::memory(mem);
+        };
 
         // Env under the map: the rows and settings of VU memory 7-10 (constant for the run), and per block the colour.
         const __m128 row0 = ld(mem, 7), row1 = ld(mem, 8), row2 = ld(mem, 9);
@@ -167,7 +194,7 @@ namespace rc::shape::detail
 
         // The env-mapped corners (environmentCorners): the textures from the normal packed in the colours' fractions and
         // the direction from VF21 to the corner; reciprocalLength as the reference's (scalar).
-        const auto envCorners = [&](Chk &k, const __m128 V[3], int reader, __m128 T[3])
+        const auto envCorners = [&](Chk &k, const __m128 V[3], const uint8_t *tri, __m128 T[3])
         {
             const __m128 half = _mm_set1_ps(0.5f), two = _mm_set1_ps(2.0f), zOne = _mm_set_ps(0.0f, 1.0f, 0.0f, 0.0f);
             float scale[3];
@@ -175,7 +202,7 @@ namespace rc::shape::detail
             for (int c = 0; c < 3; ++c)
             {
                 // Only x, y, z reach a texture: the w lanes reach VF26-VF28.w, which the run's last step leaves right.
-                const __m128 packed = ld(mem, reader + 7 + c);
+                const __m128 packed = ldq(tri, 7 + c);
                 const __m128 whole = _mm_cvtepi32_ps(ftoi(packed));
                 __m128 nn = chk(k, _mm_sub_ps(packed, whole), kXYZ);
                 nn = chk(k, _mm_sub_ps(nn, half), kXYZ);
@@ -216,16 +243,18 @@ namespace rc::shape::detail
         {
             ++st.in;
             Chk k;
-            const __m128 N = ld(mem, reader), T0 = ld(mem, reader + 4);
+            alignas(16) uint8_t gathered[160];
+            const uint8_t *tri = src.span(reader, 10, gathered); // the triangle's ten quadwords
+            const __m128 N = ldq(tri, 0), T0 = ldq(tri, 4);
             // setupTriangle: the facing test's products, the corners through the matrix, the depth bias
-            const __m128 rel = chk(k, _mm_sub_ps(ld(mem, reader + 1), r21), kXYZ);
+            const __m128 rel = chk(k, _mm_sub_ps(ldq(tri, 1), r21), kXYZ);
             const __m128 d = chk(k, _mm_mul_ps(rel, N), kXYZ);
             const bool setupBias = K != Family::Terdr && !fBias;
             const __m128 bias = _mm_and_ps(_mm_castsi128_ps(kZ), _mm_shuffle_ps(T0, T0, 0xFF));
             __m128 V[3];
             for (int c = 0; c < 3; ++c)
             {
-                const __m128 acc = transform4(k, M, ld(mem, reader + 1 + c), kAll, fFused);
+                const __m128 acc = transform4(k, M, ldq(tri, 1 + c), kAll, fFused);
                 V[c] = setupBias ? sel(chk(k, _mm_add_ps(acc, bias), kZ), acc, kZ) : acc; // the bias on z only
             }
             alignas(16) float df[4];
@@ -262,13 +291,13 @@ namespace rc::shape::detail
 
             // The colours and textures as drawTriangle finds them.
             __m128i colour[3];
-            __m128 T[3] = {T0, ld(mem, reader + 5), ld(mem, reader + 6)};
+            __m128 T[3] = {T0, ldq(tri, 5), ldq(tri, 6)};
             if constexpr (K == Family::Terdr)
             {
                 // lightCorners
                 for (int c = 0; c < 3; ++c)
                 {
-                    const __m128 n = ld(mem, reader + 7 + c);
+                    const __m128 n = ldq(tri, 7 + c);
                     __m128 acc = chk(k, _mm_mul_ps(L[0], splat(n, 0)), kAll);
                     acc = madd(k, acc, L[1], splat(n, 1), kAll);
                     const __m128 value = madd(k, acc, L[2], splat(n, 2), kAll);
@@ -283,14 +312,14 @@ namespace rc::shape::detail
             else if (envMap)
             {
                 colour[0] = colour[1] = colour[2] = blockColour;
-                envCorners(k, V, reader, T);
+                envCorners(k, V, tri, T);
             }
             else
             {
                 // applyTint (Env: of the integers of the colour registers' floats)
                 for (int c = 0; c < 3; ++c)
                 {
-                    const __m128 raw = ld(mem, reader + 7 + c);
+                    const __m128 raw = ldq(tri, 7 + c);
                     __m128i ints = _mm_castps_si128(raw);
                     if constexpr (K == Family::Env)
                     {
@@ -320,6 +349,15 @@ namespace rc::shape::detail
 
         const auto step = [&](int reader)
         {
+            // (Batch 5) The step reads the triangle's ten quadwords from VU memory (setupTriangle: reader to reader + 9,
+            // into registers) and nothing else of the input: those are copied in from the view, which stays pending (its
+            // bytes there are the same).
+            if (src.view() && !fViewHard)
+            {
+                for (int i = 0; i < 10; ++i)
+                    std::memcpy(mem + ((reader + i) & 0x3FF) * 16, src.at(reader + i), 16);
+                ++st.staged;
+            }
             if constexpr (K == Family::Trdr)
                 v::trdrStep(p, reader);
             else if constexpr (K == Family::Env)
@@ -335,11 +373,11 @@ namespace rc::shape::detail
         if constexpr (K == Family::Env)
         {
             // The program's loop (env_shape.cpp body).
-            int n = count(mem, reader);
+            int n = count(src, reader);
             for (;;)
             {
                 // Four quadwords of texture state go out through a packet at the start of VU memory.
-                p.r[31] = p.load(reader);
+                p.r[31] = ldv(src, reader);
                 if (envMap)
                 {
                     p.r[31].f[0] = settings.f[0];
@@ -359,7 +397,7 @@ namespace rc::shape::detail
                 }
                 p.store(3, p.r[31]);
                 for (int i = 1; i < 4; ++i)
-                    p.store(3 + i, p.load(reader + i));
+                    p.store(3 + i, ldv(src, reader + i));
                 reader += 4;
                 p.kick(0);
                 p.vi11 = 26;
@@ -380,12 +418,13 @@ namespace rc::shape::detail
                     }
                 }
                 // A negative count is a block of GS registers: kick it and step over it.
-                n = count(mem, reader);
+                n = count(src, reader);
                 while (n < 0)
                 {
+                    materialise(Materialise::Block);
                     p.kick(reader + 1);
                     reader += 1 - n;
-                    n = count(mem, reader);
+                    n = count(src, reader);
                 }
                 if (n == 0)
                     break;
@@ -394,15 +433,16 @@ namespace rc::shape::detail
         else
         {
             // runTextureBlocks
-            int n = count(mem, reader);
+            int n = count(src, reader);
             for (;;)
             {
                 bool end = false;
                 while (n < 0)
                 {
+                    materialise(Materialise::Block);
                     p.kick(reader + 1);
                     reader += 1 - n;
-                    n = count(mem, reader);
+                    n = count(src, reader);
                     if (n == 0)
                     {
                         end = true;
@@ -412,7 +452,7 @@ namespace rc::shape::detail
                 if (end || n == 0)
                     break;
                 for (int i = 0; i < 4; ++i)
-                    p.store(3 + i, p.load(reader + i));
+                    p.store(3 + i, ldv(src, reader + i));
                 reader += 4;
                 p.kick(0);
                 p.vi11 = layout.firstVertex;
@@ -423,7 +463,7 @@ namespace rc::shape::detail
                         ++st.hard;
                         step(reader);
                     }
-                n = count(mem, reader);
+                n = count(src, reader);
             }
         }
         if constexpr (K == Family::Terdr)

@@ -84,6 +84,7 @@ namespace rc::replay
             std::vector<Lanes> *runs = nullptr;
             bool packet(const uint8_t *, uint32_t) override { return true; }
             bool fastTriangles() const override { return true; }
+            bool readsVuMemory() const override { return false; }
             void runEnd(const Vu1Run &, uint8_t *, float (*vf)[4]) override
             {
                 Lanes l;
@@ -98,6 +99,7 @@ namespace rc::replay
             size_t ri = 0;
             bool packet(const uint8_t *, uint32_t) override { return true; }
             bool fastTriangles() const override { return true; }
+            bool readsVuMemory() const override { return false; }
             void runEnd(const Vu1Run &run, uint8_t *, float (*vf)[4]) override
             {
                 ++m->runs;
@@ -345,6 +347,8 @@ namespace rc::replay
                         p == rc::vu1::kEnv ? (" (" + std::to_string(c.envRuns) + " env-mapped)").c_str() : "", c.declined, c.declinedParse, c.in, c.culled,
                         c.allBehind, c.edge, c.quick, c.hard, c.odd, c.lastSteps, c.blocks);
         }
+        if (vf.views)
+            std::printf("lists: %s\n", Vif1Reader::viewsLine(vf).c_str());
         const double tS = s.strict.vif().nsPerTick() / 1e6, tF = s.fast.vif().nsPerTick() / 1e6;
         const Vif1Reader::Stats &vs = s.strict.vif().stats();
         if (s.path1Kicks)

@@ -10,8 +10,9 @@
 
 namespace rc::shape
 {
-    bool runEnv(uint8_t *mem, float (*vf)[4], uint32_t pc, uint32_t top, FastSink &sink, FastStats &stats, const FastOptions &options)
+    bool runEnv(uint8_t *mem, float (*vf)[4], uint32_t pc, uint32_t top, FastSink &sink, FastStats &stats, const FastOptions &options,
+                const FastInput &input)
     {
-        return detail::runFamily<detail::Family::Env>(mem, vf, pc, top, sink, stats, options);
+        return detail::runFamily<detail::Family::Env>(mem, vf, pc, top, sink, stats, options, input);
     }
 }

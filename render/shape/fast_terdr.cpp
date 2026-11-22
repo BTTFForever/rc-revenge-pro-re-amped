@@ -9,8 +9,8 @@
 
 namespace rc::shape
 {
-    bool runTerdr(uint8_t *mem, float (*vf)[4], uint32_t top, FastSink &sink, FastStats &stats, const FastOptions &options)
+    bool runTerdr(uint8_t *mem, float (*vf)[4], uint32_t top, FastSink &sink, FastStats &stats, const FastOptions &options, const FastInput &input)
     {
-        return detail::runFamily<detail::Family::Terdr>(mem, vf, 0u, top, sink, stats, options);
+        return detail::runFamily<detail::Family::Terdr>(mem, vf, 0u, top, sink, stats, options, input);
     }
 }

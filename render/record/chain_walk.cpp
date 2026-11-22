@@ -15,6 +15,7 @@ namespace rc::rec
             WalkVisitor *visitor;
             WalkResult result;
             Hash64 hash;
+            bool hashing = true;
             uint32_t offset = 0; // stream offset
 
             void checkPages(uint32_t phys, uint32_t bytes, bool scratch)
@@ -50,7 +51,8 @@ namespace rc::rec
                     const uint8_t *data = base(scratch) + src;
                     if (visitor)
                         visitor->range({offset, src, chunk, scratch, false, data});
-                    hash.update(data, chunk);
+                    if (hashing)
+                        hash.update(data, chunk);
                     offset += chunk;
                     bytes -= chunk;
                     src += chunk;
@@ -96,9 +98,9 @@ namespace rc::rec
         return false; // KSEG2/3: TLB-mapped
     }
 
-    WalkResult walkChain(const KickView &kick, const RamView &ram, WalkVisitor *visitor)
+    WalkResult walkChain(const KickView &kick, const RamView &ram, WalkVisitor *visitor, bool hash)
     {
-        Walker w{ram, visitor, {}, {}, 0u};
+        Walker w{ram, visitor, {}, {}, hash, 0u};
         const uint32_t chcr = kick.chcr;
         const uint32_t mode = (chcr >> 2) & 0x3u;
         if (mode != 1u)
@@ -199,7 +201,8 @@ namespace rc::rec
                 }
                 if (transferTagData)
                 {
-                    w.hash.update(tp + 8, 8u);
+                    if (w.hashing)
+                        w.hash.update(tp + 8, 8u);
                     w.offset += 8u;
                 }
                 if (tagQwc > 0u)
@@ -212,8 +215,8 @@ namespace rc::rec
             w.result.dmaTags = tags;
             w.result.tagCap = tags >= kMaxChainTags;
         }
-        w.result.streamBytes = w.hash.length();
-        w.result.streamHash = w.hash.finish();
+        w.result.streamBytes = w.hashing ? w.hash.length() : w.offset;
+        w.result.streamHash = w.hashing ? w.hash.finish() : 0u;
         return w.result;
     }
 }

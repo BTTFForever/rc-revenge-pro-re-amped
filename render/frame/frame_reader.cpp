@@ -53,6 +53,9 @@ namespace rc::rd
             v.fastFault = m_opt.fastFault;
             v.fastFaultPrograms = m_opt.fastFaultPrograms;
             v.fastFaultCycle = m_opt.fastFaultCycle;
+            v.views = m_opt.fastPaths && m_opt.views;
+            v.streamHash = false; // (batch 5) never read by the reader
+            v.programMemo = true;
             m_vif.setOptions(v);
         }
     }
@@ -171,6 +174,8 @@ namespace rc::rd
         if (self->m_tap)
             self->m_tap->runEnd(run, vuData, vf);
     }
+
+    bool FrameReader::Bridge::readsVuMemory() const { return self->m_tap && self->m_tap->readsVuMemory(); }
 
     bool FrameReader::kickPath1(const KickView &k, const RamView &ram, uint32_t mxcsr)
     {

@@ -14,8 +14,12 @@ namespace rc::shape
 {
     using namespace detail;
 
-    bool runSkin(uint8_t *mem, float (*vf)[4], FastSink &sink, FastStats &stats, const FastOptions &opt)
+    bool runSkin(uint8_t *mem, float (*vf)[4], FastSink &sink, FastStats &stats, const FastOptions &opt, const FastInput &input)
     {
+        // (Batch 5) No view: every skin run's last triangle is the reference's step, which reads the input from VU memory,
+        // and the bones are read by addresses from anywhere in it, so the reader materialises the views before a skin run.
+        if (input.count)
+            input.materialise(input.ctx, Materialise::Hard);
         FastCounts &st = stats.by[v::kSkin];
         // 4.3: the walk from quadword 512 (the program's fixed input) must stay in VU memory; a block with a count that is
         // not positive would make the program's do-while run 65,536 times less that: the reference's.

@@ -45,5 +45,6 @@ namespace rc::rec
     // false for TLB-mapped KSEG2/3, which RC never uses for DMA).
     bool translateDmaAddress(uint32_t address, uint32_t &offset, bool &scratch);
 
-    WalkResult walkChain(const KickView &kick, const RamView &ram, WalkVisitor *visitor = nullptr);
+    // `hash` false: streamHash is left 0 (streamBytes is still the stream's length) and no payload byte is read here.
+    WalkResult walkChain(const KickView &kick, const RamView &ram, WalkVisitor *visitor = nullptr, bool hash = true);
 }

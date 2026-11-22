@@ -5,6 +5,7 @@
 #include <x86intrin.h>
 #include <xmmintrin.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cinttypes>
 #include <cstdio>
@@ -74,6 +75,99 @@ namespace rc::rd
         m_vf[0][3] = 1.0f;
         m_program = -1;
         m_programDirty = true;
+        m_views.clear();
+    }
+
+    void Vif1Reader::materialise(uint32_t why)
+    {
+        ++m_viewSerial;
+        for (const View &v : m_views)
+        {
+            std::memcpy(m_data.data() + v.first * 16u, v.data, v.count * 16u);
+            ++m_stats.viewsMaterialised[why];
+            m_stats.viewQuadsMaterialised += v.count;
+        }
+        m_views.clear();
+    }
+
+    void Vif1Reader::onMaterialise(void *self, rc::shape::Materialise why)
+    {
+        static_cast<Vif1Reader *>(self)->materialise(static_cast<uint32_t>(why));
+    }
+
+    void Vif1Reader::materialiseOverlap(uint32_t first, uint32_t count)
+    {
+        // A copy into [first, first + count) (wrapping at 1024 quadwords): a view it covers wholly is dropped, one it
+        // covers in part is copied in first (the copy then overwrites the overlap, in stream order).
+        const uint32_t end = first + count;
+        for (size_t i = 0; i < m_views.size();)
+        {
+            const View v = m_views[i];
+            const uint32_t vEnd = v.first + v.count;
+            const bool wraps = end > 0x400u;
+            const bool overlaps = wraps ? (vEnd > first || v.first < end - 0x400u) : (v.first < end && vEnd > first);
+            if (!overlaps)
+            {
+                ++i;
+                continue;
+            }
+            if (!wraps && first <= v.first && vEnd <= end)
+                ++m_stats.viewsDropped;
+            else
+            {
+                std::memcpy(m_data.data() + v.first * 16u, v.data, v.count * 16u);
+                ++m_stats.viewsMaterialised[kViewWrite];
+                m_stats.viewQuadsMaterialised += v.count;
+            }
+            m_views.erase(m_views.begin() + static_cast<std::ptrdiff_t>(i));
+        }
+    }
+
+    void Vif1Reader::addView(uint32_t first, uint32_t count, const uint8_t *data)
+    {
+        // A later UNPACK over a pending view: the part it covers is never read again. Wholly: drop it; a prefix or a
+        // suffix: trim it; its middle (never seen): copy it in, then the new view stands over it.
+        const uint32_t end = first + count;
+        for (size_t i = 0; i < m_views.size();)
+        {
+            View &v = m_views[i];
+            const uint32_t vEnd = v.first + v.count;
+            if (v.first >= end || vEnd <= first)
+            {
+                ++i;
+                continue;
+            }
+            if (first <= v.first && vEnd <= end)
+            {
+                ++m_stats.viewsDropped;
+                m_views.erase(m_views.begin() + static_cast<std::ptrdiff_t>(i));
+                continue;
+            }
+            if (first <= v.first)
+            {
+                v.data += (end - v.first) * 16u;
+                v.count = vEnd - end;
+                v.first = end;
+                ++m_stats.viewsTrimmed;
+            }
+            else if (vEnd <= end)
+            {
+                v.count = first - v.first;
+                ++m_stats.viewsTrimmed;
+            }
+            else
+            {
+                std::memcpy(m_data.data() + v.first * 16u, v.data, v.count * 16u);
+                ++m_stats.viewsMaterialised[kViewWrite];
+                m_stats.viewQuadsMaterialised += v.count;
+                m_views.erase(m_views.begin() + static_cast<std::ptrdiff_t>(i));
+                continue;
+            }
+            ++i;
+        }
+        m_views.push_back({first, count, data});
+        ++m_stats.views;
+        m_stats.viewQuads += count;
     }
 
     bool Vif1Reader::seed(const Keyframe &kf)
@@ -101,6 +195,7 @@ namespace rc::rd
         std::memcpy(&v, regs->data, sizeof(v));
         std::memcpy(m_vf, v.vf, sizeof(m_vf));
         m_programDirty = true;
+        m_views.clear();
         ++m_stats.seeds;
         return true;
     }
@@ -211,7 +306,29 @@ namespace rc::rd
     {
         if (m_programDirty)
         {
-            m_program = matchVu1Program(m_micro.data(), &m_wholeHash);
+            bool known = false;
+            if (m_options.programMemo)
+                for (size_t i = 0; i < m_known.size(); ++i)
+                    if (std::memcmp(m_known[i].micro.data(), m_micro.data(), 0x4000u) == 0)
+                    {
+                        m_program = m_known[i].program;
+                        m_wholeHash = m_known[i].hash;
+                        std::rotate(m_known.begin(), m_known.begin() + static_cast<std::ptrdiff_t>(i), m_known.begin() + static_cast<std::ptrdiff_t>(i) + 1);
+                        ++m_stats.programMemoHits;
+                        known = true;
+                        break;
+                    }
+            if (!known)
+            {
+                m_program = matchVu1Program(m_micro.data(), &m_wholeHash);
+                if (m_options.programMemo)
+                {
+                    if (m_known.size() < 8u)
+                        m_known.push_back({});
+                    std::rotate(m_known.begin(), m_known.end() - 1, m_known.end());
+                    m_known.front() = {m_micro, m_program, m_wholeHash};
+                }
+            }
             m_programDirty = false;
             ++m_stats.programChanges;
         }
@@ -245,7 +362,64 @@ namespace rc::rd
             m_vf[(lane / 4u) & 31u][lane & 3u] = 0.0f;
         }
         rc::vu1::Io io{m_data.data(), m_vf, pc, m_vif.top, &onPacket, &user};
+        const uint64_t serial = m_viewSerial;
         const bool direct = m_options.directEntries && isDirectEntry(info.program, pc);
+        const bool tryFast = !direct && m_options.fastPaths && m_options.library == Vu1Library::Lean && rc::shape::hasFastPath(info.program, pc);
+        // (Batch 5) The views: a fast run of the track family reads its input through the one that holds its first
+        // quadword; anything else finds VU memory whole.
+        rc::shape::FastInput input;
+        if (!m_views.empty())
+        {
+            if (tryFast && info.program != rc::vu1::kSkin)
+            {
+                const uint32_t at = rc::shape::fastInputStart(info.program, m_vif.top);
+                // The view that holds the input's first quadword, and those that follow it in VU memory without a gap (the
+                // next one is nearly always the next one made).
+                uint32_t segs = 0, total = 0;
+                for (size_t i = 0; i < m_views.size(); ++i)
+                    if (at - m_views[i].first < m_views[i].count)
+                    {
+                        const View &v = m_views[i];
+                        m_segs[segs++] = {at, v.first + v.count - at, v.data + (at - v.first) * 16u};
+                        total = v.first + v.count - at;
+                        size_t hint = i + 1;
+                        while (total < rc::shape::kMaxRunInput && segs < kMaxSegments)
+                        {
+                            const uint32_t next = at + total;
+                            const View *found = nullptr;
+                            if (hint < m_views.size() && m_views[hint].first == next)
+                                found = &m_views[hint++];
+                            else
+                                for (size_t j = 0; j < m_views.size(); ++j)
+                                    if (m_views[j].first == next)
+                                    {
+                                        found = &m_views[j];
+                                        hint = j + 1;
+                                        break;
+                                    }
+                            if (!found)
+                                break;
+                            m_segs[segs++] = {found->first, found->count, found->data};
+                            total += found->count;
+                        }
+                        break;
+                    }
+                if (segs)
+                {
+                    input.segments = m_segs;
+                    input.count = segs;
+                    input.materialise = &onMaterialise;
+                    input.ctx = this;
+                    ++m_stats.viewRuns;
+                    if (segs > 2)
+                        ++m_stats.viewRunsTable;
+                }
+                else
+                    materialise(kViewWalk);
+            }
+            else if (!(m_options.fastFault == rc::shape::FastFault::ViewRef && static_cast<int64_t>(k.cycle) >= m_options.fastFaultCycle))
+                materialise(tryFast ? kViewHard : kViewRef);
+        }
         const uint32_t saved = _mm_getcsr();
         if (!(m_fault == VifFault::NoMxcsr && static_cast<int64_t>(k.cycle) == m_faultCycle))
             _mm_setcsr(mxcsr | 0x6000u);
@@ -263,7 +437,7 @@ namespace rc::rd
                 onPacket(&user, m_direct.data(), static_cast<uint32_t>(m_direct.size()));
                 ++m_stats.directRuns;
             }
-            else if (m_options.fastPaths && m_options.library == Vu1Library::Lean && rc::shape::hasFastPath(info.program, pc) &&
+            else if (tryFast &&
                      [&]
                      {
                          FastAdapter adapter(&user);
@@ -273,11 +447,14 @@ namespace rc::rd
                              fo.fault = m_options.fastFault;
                              fo.faultPrograms = m_options.fastFaultPrograms;
                          }
-                         return rc::shape::runFast(info.program, pc, m_data.data(), m_vf, m_vif.top, adapter, m_stats.fast, fo);
+                         return rc::shape::runFast(info.program, pc, m_data.data(), m_vf, m_vif.top, adapter, m_stats.fast, fo, input);
                      }())
                 fast = true;
             else if (m_options.library == Vu1Library::Lean)
             {
+                // A declined fast run (its input does not parse within the buffer) is the reference's: VU memory whole.
+                if (!m_views.empty())
+                    materialise(kViewRef);
                 if (m_options.fastPaths && info.program < rc::shape::kFastProgramSlots)
                     ++m_stats.fast.by[info.program].declined;
                 rc::vu1l::run(info.program, io);
@@ -290,6 +467,8 @@ namespace rc::rd
             runaway = true;
         }
         _mm_setcsr(saved);
+        if (fast && input.count && m_viewSerial == serial)
+            ++m_stats.viewRunsWhole;
         if (runaway)
         {
             char what[96];
@@ -316,6 +495,27 @@ namespace rc::rd
         return true;
     }
 
+    std::string Vif1Reader::viewsLine(const Stats &s)
+    {
+        static const char *const why[kViewReasons] = {"walk", "hard", "block", "ref", "write", "end"};
+        uint64_t copied = 0;
+        std::string by;
+        for (uint32_t i = 0; i < kViewReasons; ++i)
+        {
+            copied += s.viewsMaterialised[i];
+            char t[48];
+            std::snprintf(t, sizeof t, "%s%s %" PRIu64, i ? ", " : "", why[i], s.viewsMaterialised[i]);
+            by += t;
+        }
+        char line[512];
+        std::snprintf(line, sizeof line,
+                      "TOPS views: %" PRIu64 " UNPACKs as views (%" PRIu64 " quadwords), %" PRIu64 " TOPS-relative copied; %" PRIu64 " dropped unread, %" PRIu64
+                      " trimmed; %" PRIu64 " copied in (%s; %" PRIu64 " quadwords, %.1f%% of the views'); fast runs reading views %" PRIu64 " (more than two %" PRIu64 "), to the end %" PRIu64 "; triangles to the step copied from a view %" PRIu64,
+                      s.views, s.viewQuads, s.viewsCopiedInstead, s.viewsDropped, s.viewsTrimmed, copied, by.c_str(), s.viewQuadsMaterialised,
+                      s.viewQuads ? 100.0 * static_cast<double>(s.viewQuadsMaterialised) / static_cast<double>(s.viewQuads) : 0.0, s.viewRuns, s.viewRunsTable, s.viewRunsWhole, s.fast.total().staged);
+        return line;
+    }
+
     double Vif1Reader::nsPerTick() const
     {
         return m_calTicks1 > m_calTicks0 ? static_cast<double>(m_calNs1 - m_calNs0) / static_cast<double>(m_calTicks1 - m_calTicks0) : 0.0;
@@ -339,6 +539,7 @@ namespace rc::rd
             m_faultMpg = m_faultMscal = 0;
         }
         const bool faultCycle = static_cast<int64_t>(k.cycle) == m_faultCycle;
+        m_viewsOn = m_options.views && m_options.fastPaths && m_options.library == Vu1Library::Lean && !sink.readsVuMemory();
         if (m_fault == VifFault::VuMemory && faultCycle)
             std::fill(m_data.begin(), m_data.end(), 0);
 
@@ -358,8 +559,9 @@ namespace rc::rd
             uint8_t partial[4] = {};
             uint32_t partialFill = 0;
             uint32_t left = 0;     // data bytes still to come
-            enum Dest : uint8_t { None, Data, Micro, Mask, Row, Col } dest = None;
+            enum Dest : uint8_t { None, Data, Micro, Mask, Row, Col, View } dest = None;
             uint32_t destAt = 0;   // byte offset in the destination (VU memory wraps at 16 KB)
+            uint32_t viewFirst = 0, viewCount = 0; // dest View: the UNPACK's quadwords
             uint32_t offset = 0;   // stream offset of the next byte
 
             void bytes(const uint8_t *p, uint32_t n)
@@ -369,6 +571,22 @@ namespace rc::rd
                 {
                     if (left)
                     {
+                        if (dest == View)
+                        {
+                            // All of its data in this range: a view. Otherwise copied as before.
+                            if (n - at >= left)
+                            {
+                                self->addView(viewFirst, viewCount, p + at);
+                                at += left;
+                                offset += left;
+                                left = 0;
+                                continue;
+                            }
+                            ++self->m_stats.viewsCopiedInstead;
+                            self->materialiseOverlap(viewFirst, viewCount);
+                            dest = Data;
+                            destAt = viewFirst * 16u;
+                        }
                         const uint32_t take = std::min(left, n - at);
                         sinkData(p + at, take);
                         at += take;
@@ -515,9 +733,23 @@ namespace rc::rd
                     uint32_t addr = (imm & 0x3FFu) + ((imm & 0x8000u) ? v.tops : 0u);
                     if (r.m_fault == VifFault::UnpackDest && fc)
                         ++addr;
-                    dest = Data;
-                    destAt = (addr & 0x3FFu) * 16u;
+                    addr &= 0x3FFu;
                     left = n * 16u;
+                    if (r.m_viewsOn && (imm & 0x8000u) && addr >= 0x100u && addr + n <= 0x400u)
+                    {
+                        dest = View;
+                        viewFirst = addr;
+                        viewCount = n;
+                    }
+                    else
+                    {
+                        if (r.m_viewsOn && (imm & 0x8000u))
+                            ++r.m_stats.viewsCopiedInstead;
+                        if (!r.m_views.empty())
+                            r.materialiseOverlap(addr, n);
+                        dest = Data;
+                        destAt = addr * 16u;
+                    }
                     ++r.m_stats.unpacks;
                     r.m_stats.unpackBytes += left;
                     return;
@@ -558,7 +790,7 @@ namespace rc::rd
         walk.mxcsr = mxcsr;
         walk.sink = &sink;
         walk.tte = k.tte;
-        const WalkResult wr = walkChain(k, ram, &walk);
+        const WalkResult wr = walkChain(k, ram, &walk, m_options.streamHash);
         if (!walk.stopped && (wr.absentPageReads || wr.untranslatable))
             walk.stop(kVifGuardPage, "the walk read a page the RAM view does not hold");
         if (!walk.stopped && (walk.left || walk.partialFill))
@@ -566,6 +798,8 @@ namespace rc::rd
             walk.codeAt = walk.offset;
             walk.stop(kVifGuardTruncated, walk.left ? "a code's data cut by the end of the stream" : "bytes left after the last code");
         }
+        if (!m_views.empty())
+            materialise(kViewEnd); // the RAM view is only the kick's
         const uint64_t total = nowNs() - start;
         m_stats.walkNs += total - (m_stats.refNs - refBefore) - (m_stats.sinkNs - sinkBefore);
         m_calNs1 = clockNs();

@@ -114,6 +114,80 @@ namespace rc::shape::detail
         std::memcpy(&c, mem + (quad & 0x3FF) * 16 + lane * 4, 2);
         return c;
     }
+    // (Batch 5) Where a run reads its input quadwords: VU memory (wrapping at 1024 quadwords, as the programs' loads), or
+    // a TOPS view (FastInput: quadword q at data + (q - first) * 16; the count walk keeps every read inside it).
+    struct Src
+    {
+        const uint8_t *mem = nullptr;           // VU memory, or
+        const FastSegment *seg = nullptr;       // the views (FastInput)
+        uint32_t segs = 0;
+        int first = 0;                          // the views' first quadword
+        uint32_t extent = 0x400u;               // quadwords from `first` the views hold
+        mutable uint32_t cur = 0;               // the segment last read (the reads go forward)
+        static Src memory(const uint8_t *m)
+        {
+            Src s;
+            s.mem = m;
+            return s;
+        }
+        static Src of(const FastInput &in)
+        {
+            Src s;
+            s.seg = in.segments;
+            s.segs = in.count;
+            s.first = static_cast<int>(in.segments[0].first);
+            s.extent = in.segments[in.count - 1].first + in.segments[in.count - 1].count - in.segments[0].first;
+            return s;
+        }
+        bool view() const { return mem == nullptr; }
+        // Quadword `quad` lies in the views (always, for VU memory).
+        bool holds(int quad) const { return mem || static_cast<uint32_t>(quad - first) < extent; }
+        const uint8_t *at(int quad) const
+        {
+            if (mem)
+                return mem + (quad & 0x3FF) * 16;
+            const uint32_t q = static_cast<uint32_t>(quad);
+            while (q >= seg[cur].first + seg[cur].count)
+                ++cur;
+            while (q < seg[cur].first)
+                --cur;
+            return seg[cur].data + (q - seg[cur].first) * 16u;
+        }
+        // `n` quadwords from `quad` as one run of bytes: in place when they lie in one segment (or VU memory without a
+        // wrap), else gathered into `tmp`.
+        const uint8_t *span(int quad, int n, uint8_t *tmp) const
+        {
+            if (mem)
+            {
+                if ((quad & 0x3FF) + n <= 0x400)
+                    return mem + (quad & 0x3FF) * 16;
+            }
+            else
+            {
+                const uint8_t *p = at(quad);
+                if (static_cast<uint32_t>(quad + n) <= seg[cur].first + seg[cur].count)
+                    return p;
+            }
+            for (int i = 0; i < n; ++i)
+                std::memcpy(tmp + i * 16, at(quad + i), 16);
+            return tmp;
+        }
+    };
+    inline __m128 ld(const Src &s, int quad) { return _mm_loadu_ps(reinterpret_cast<const float *>(s.at(quad))); }
+    inline __m128 ldq(const uint8_t *p, int i) { return _mm_loadu_ps(reinterpret_cast<const float *>(p + i * 16)); }
+    inline int16_t count(const Src &s, int quad)
+    {
+        int16_t c;
+        std::memcpy(&c, s.at(quad) + 8, 2);
+        return c;
+    }
+    inline v::V ldv(const Src &s, int quad)
+    {
+        v::V out;
+        std::memcpy(out.f, s.at(quad), 16);
+        return out;
+    }
+
     // A matrix (four rows) times a vector, as the programs' MULx / MADDy / MADDz / MADDw chain (setupTriangle's corner
     // transform, the skin's transformBy): row 0 times x, then the others added in order. `fusedZ`: the planted fault.
     inline __m128 transform4(Chk &k, const __m128 m[4], __m128 x, __m128i mask, bool fusedZ = false)

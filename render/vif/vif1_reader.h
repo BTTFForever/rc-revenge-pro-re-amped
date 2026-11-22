@@ -49,6 +49,9 @@ namespace rc::rd
         virtual bool triangle(const uint32_t * /*nine*/) { return false; }
         // The state after the run. A checker beside the emulated machine may replace it (a run the machine cut short).
         virtual void runEnd(const Vu1Run &, uint8_t * /*vuData*/, float (*/*vf*/)[4]) {}
+        // (P2 step 9 batch 5) True (the default): runBegin and runEnd read VU data memory, so the reader keeps it whole
+        // (no TOPS views in the kick). False: they read the registers only.
+        virtual bool readsVuMemory() const { return true; }
         virtual ~Path1Sink() = default;
     };
 
@@ -113,6 +116,31 @@ namespace rc::rd
             rc::shape::FastFault fastFault = rc::shape::FastFault::None; // planted, from fastFaultCycle on
             uint8_t fastFaultPrograms = 0xFF;                           // ... in these programs' paths (bit per rc::vu1::Program)
             int64_t fastFaultCycle = 0;
+            // (P2 step 9 batch 5, RENDERER_P2_DESIGN.md 4.5) With fastPaths: a TOPS-relative UNPACK into the input buffers
+            // (quadwords 0x100-0x3ff, not wrapping) whose data lie in one range of the stream is noted as a view (where its
+            // data are in the RAM view) instead of copied into VU memory; a fast run reads its input there. The views are
+            // copied in (materialised) before anything else reads that VU memory: a hard triangle's step, a register
+            // block's kick, a run of a reference or a direct entry, a skin run, a write that overlaps them, the end of the
+            // kick, and in a kick whose sink reads VU memory (Path1Sink::readsVuMemory) there are none.
+            bool views = false;
+            // The chain walk's hash of the stream (WalkResult::streamHash), which the reader never reads; the fast reader
+            // leaves it out (batch 5: it was the largest part of the VIF walk).
+            bool streamHash = true;
+            // (Batch 5) Micro memory images already identified are kept (eight, most recent first) and an upload that makes
+            // one of them again is identified by comparing the bytes instead of hashing the 16 KB (matchVu1Program: a
+            // quarter of the VIF walk on level 18, a program is uploaded fifteen times a kick).
+            bool programMemo = false;
+        };
+        // Why pending views were copied into VU memory (the first three are rc::shape::Materialise's).
+        enum ViewReason : uint8_t
+        {
+            kViewWalk,    // a fast run's count walk left its view, or its input does not start in one
+            kViewHard,    // a skin run (its last triangle is the reference's step)
+            kViewBlock,   // a register block's kick in a fast run
+            kViewRef,     // a run of a reference (water, a declined run) or a direct entry
+            kViewWrite,   // an UNPACK that overlaps a pending view in part (a whole overlap drops the view)
+            kViewEnd,     // the end of the kick (the RAM view is only the kick's)
+            kViewReasons
         };
         // More XGKICKs than any run can send (the largest kick of the 67 dumps sends 63,013): the run is abandoned.
         static constexpr uint32_t kMaxRunPackets = 1u << 20;
@@ -120,11 +148,17 @@ namespace rc::rd
         {
             uint64_t kicks = 0, codes = 0, codesByOp[128] = {}, unpackBytes = 0, unpacks = 0, mpgs = 0, mpgBytes = 0;
             uint64_t mscals = 0, runs[kVu1ProgramCount] = {}, packets = 0, packetBytes = 0, interruptBits = 0;
-            uint64_t guards[kVifGuardCount] = {}, programChanges = 0, fbrstResets = 0, seeds = 0;
+            uint64_t guards[kVifGuardCount] = {}, programChanges = 0, programMemoHits = 0, fbrstResets = 0, seeds = 0;
             uint64_t directRuns = 0; // runs of a direct entry answered by Options::directEntries
             rc::shape::FastStats fast; // Options::fastPaths
             uint64_t refNs = 0, walkNs = 0, sinkNs = 0; // in TSC ticks (nsPerTick): the references; the walk and decode; the sink's time
             uint64_t refNsByProgram[kVu1ProgramCount] = {}; // refNs by the program run (the table's index), fast paths included
+            // Options::views: UNPACKs taken as views and their quadwords; TOPS-relative UNPACKs copied (outside the input
+            // buffers, or data in two ranges); views dropped unread because a later write covered them wholly, trimmed
+            // because it covered them in part; views copied in, by reason, and their quadwords; fast runs that read their
+            // input through a view, and of them the runs that did so to the end.
+            uint64_t views = 0, viewQuads = 0, viewsCopiedInstead = 0, viewsDropped = 0, viewsTrimmed = 0;
+            uint64_t viewsMaterialised[kViewReasons] = {}, viewQuadsMaterialised = 0, viewRuns = 0, viewRunsTable = 0, viewRunsWhole = 0;
         };
 
         Vif1Reader();
@@ -153,11 +187,22 @@ namespace rc::rd
         const std::string &lastGuardText() const { return m_guardText; }
 
         void setFault(VifFault f, int64_t cycle, uint32_t n) { m_fault = f; m_faultCycle = cycle; m_faultN = n; }
+        // (Batch 5) One line on the TOPS views of Stats (rc_replay's vif and lists reports).
+        static std::string viewsLine(const Stats &s);
         // Off: the lanes a reference does not reproduce keep the reference's values (to measure them; vu1_programs.h).
         void setPoison(bool on) { m_poison = on; }
 
     private:
         struct Decoder;
+        struct View
+        {
+            uint32_t first, count; // quadwords of VU memory
+            const uint8_t *data;   // their bytes in the RAM view
+        };
+        void materialise(uint32_t why);                                         // every pending view
+        void materialiseOverlap(uint32_t first, uint32_t count);                // before a copy into [first, first + count)
+        void addView(uint32_t first, uint32_t count, const uint8_t *data);
+        static void onMaterialise(void *self, rc::shape::Materialise why);
         bool guard(uint32_t g, const rc::rec::KickView &k, uint32_t offset, uint32_t code, const char *what);
         bool runProgram(const rc::rec::KickView &k, uint32_t pc, uint32_t offset, uint32_t mxcsr, Path1Sink &sink);
 
@@ -166,6 +211,18 @@ namespace rc::rd
         std::vector<uint8_t> m_data, m_micro; // 16 KB each
         alignas(16) float m_vf[32][4] = {};
         std::vector<uint8_t> m_direct; // Options::directEntries: the packet copied from VU memory
+        std::vector<View> m_views;     // pending, disjoint (Options::views)
+        struct KnownImage
+        {
+            std::vector<uint8_t> micro;
+            int program;
+            uint64_t hash;
+        };
+        std::vector<KnownImage> m_known; // Options::programMemo, most recent first
+        bool m_viewsOn = false;        // in the kick in progress
+        uint64_t m_viewSerial = 0;     // materialise() calls
+        static constexpr uint32_t kMaxSegments = 0x180u;
+        rc::shape::FastSegment m_segs[kMaxSegments] = {}; // a run's input (rc::shape::FastInput::segments)
         bool m_poison = true;
         int m_program = -1;
         bool m_programDirty = true;

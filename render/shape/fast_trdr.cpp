@@ -54,7 +54,7 @@ namespace rc::shape
 
     const char *fastFaultName(FastFault f)
     {
-        static const char *const names[] = {"none", "bias", "fused", "round-x", "edge-two", "hard-quick", "last-step", "lit-regs"};
+        static const char *const names[] = {"none", "bias", "fused", "round-x", "edge-two", "hard-quick", "last-step", "lit-regs", "view-hard", "view-ref"};
         static_assert(sizeof(names) / sizeof(names[0]) == static_cast<size_t>(FastFault::Count));
         return static_cast<uint32_t>(f) < static_cast<uint32_t>(FastFault::Count) ? names[static_cast<uint32_t>(f)] : "?";
     }
@@ -71,24 +71,27 @@ namespace rc::shape
         }
     }
 
-    bool runFast(uint32_t program, uint32_t pc, uint8_t *mem, float (*vf)[4], uint32_t top, FastSink &sink, FastStats &stats, const FastOptions &options)
+    bool runFast(uint32_t program, uint32_t pc, uint8_t *mem, float (*vf)[4], uint32_t top, FastSink &sink, FastStats &stats, const FastOptions &options,
+                 const FastInput &input)
     {
         if (!hasFastPath(program, pc))
             return false;
         switch (program)
         {
-        case v::kTrdr: return runTrdr(mem, vf, top, sink, stats, options);
-        case v::kEnv: return runEnv(mem, vf, pc, top, sink, stats, options);
-        case v::kSkin: return runSkin(mem, vf, sink, stats, options);
-        case v::kTerdr: return runTerdr(mem, vf, top, sink, stats, options);
+        case v::kTrdr: return runTrdr(mem, vf, top, sink, stats, options, input);
+        case v::kEnv: return runEnv(mem, vf, pc, top, sink, stats, options, input);
+        case v::kSkin: return runSkin(mem, vf, sink, stats, options, input);
+        case v::kTerdr: return runTerdr(mem, vf, top, sink, stats, options, input);
         default: return false;
         }
     }
 
+    uint32_t fastInputStart(uint32_t program, uint32_t top) { return program == v::kSkin ? kSkinInput : (top & 0x3FFu); }
+
     const uint8_t *fastNotReproduced(uint32_t program) { return program == v::kSkin ? kSkinFastNotReproduced : kTrdrFastNotReproduced; }
 
-    bool runTrdr(uint8_t *mem, float (*vf)[4], uint32_t top, FastSink &sink, FastStats &stats, const FastOptions &options)
+    bool runTrdr(uint8_t *mem, float (*vf)[4], uint32_t top, FastSink &sink, FastStats &stats, const FastOptions &options, const FastInput &input)
     {
-        return detail::runFamily<detail::Family::Trdr>(mem, vf, 0u, top, sink, stats, options);
+        return detail::runFamily<detail::Family::Trdr>(mem, vf, 0u, top, sink, stats, options, input);
     }
 }

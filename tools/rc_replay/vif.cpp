@@ -258,6 +258,7 @@ namespace rc::replay
             f.collectPath1 = o.withEmu && (o.substitute == "bytes" || std::getenv("RC_VIF_LIST_TRACE"));
             f.fast = o.fast;
             f.fastPaths = o.fastPaths;
+            f.views = o.views;
             return f;
         }
 
@@ -837,6 +838,8 @@ namespace rc::replay
                 if (v.refNsByProgram[p])
                     by += fmt("%s%s %.3f", by.empty() ? "" : ", ", vu1Program(p).name, v.refNsByProgram[p] * ms / s.timedKicks);
             std::printf("vif: references by program (mean a channel 1 kick, ms; fast paths included): %s\n", by.empty() ? "none" : by.c_str());
+            if (v.views)
+                std::printf("vif: %s\n", Vif1Reader::viewsLine(v).c_str());
         }
         std::printf("(a) keyframes: %" PRIu64 " compared: VIF1 registers %" PRIu64 ", micro memory %" PRIu64 ", data memory %" PRIu64 ", vector registers %" PRIu64
                     " equal (%" PRIu64 " lanes excluded: not reproduced, poisoned); GS register file %" PRIu64 "/%" PRIu64 " equal to GSRG\n",

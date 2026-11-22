@@ -505,8 +505,8 @@ namespace
                              "            [--fault depth|clear|texture|flip:<cycle>[:<cycles>]]\n"
                              "       dlst (a dump from boot with RC_FRAME_RECORD_DRAWLISTS=1): the live reader's lists against the recorded DLST chunks\n"
                              "            [--fault list:<cycle>[:<byte>]]\n"
-                             "       lists (check (e)): the fast reader against the strict reader [--from-reset] [--fault adc|clut-memo|state-memo|bias|fused|round-x|edge-two|hard-quick|last-step|lit-regs[@trdr|env|skin|terdr][:<cycle>]]\n"
-                             "       vif, lists, vk: [--vu1 strict|lean] (vif) [--reader strict|fast|fast-nopaths] (vif: the reader timed; vk: strict|fast, the reader drawn)\n");
+                             "       lists (check (e)): the fast reader against the strict reader [--from-reset] [--fault adc|clut-memo|state-memo|bias|fused|round-x|edge-two|hard-quick|last-step|lit-regs|view-hard|view-ref[@trdr|env|skin|terdr][:<cycle>]]\n"
+                             "       vif, lists, vk: [--vu1 strict|lean] (vif) [--reader strict|fast|fast-nopaths|fast-noviews] (vif: the reader timed; vk: strict|fast, the reader drawn)\n");
     }
 }
 
@@ -1132,13 +1132,14 @@ int main(int argc, char **argv)
             std::fprintf(stderr, "unknown --vu1 '%s' (strict, lean)\n", vu1Library.c_str());
             return 2;
         }
-        if (readerKind != "strict" && readerKind != "fast" && readerKind != "fast-nopaths")
+        if (readerKind != "strict" && readerKind != "fast" && readerKind != "fast-nopaths" && readerKind != "fast-noviews")
         {
-            std::fprintf(stderr, "unknown --reader '%s' (strict, fast, fast-nopaths)\n", readerKind.c_str());
+            std::fprintf(stderr, "unknown --reader '%s' (strict, fast, fast-nopaths, fast-noviews)\n", readerKind.c_str());
             return 2;
         }
         v.fast = readerKind != "strict";
-        v.fastPaths = readerKind == "fast";
+        v.fastPaths = readerKind == "fast" || readerKind == "fast-noviews";
+        v.views = readerKind == "fast";
         if (v.fast && withEmu)
         {
             std::fprintf(stderr, "rc_replay vif: --reader fast is off-line only (its check is --consumer lists)\n");
@@ -1205,7 +1206,7 @@ int main(int argc, char **argv)
         {
             if (!rc::replay::parseListsFault(emuOptions.faultKind))
             {
-                std::fprintf(stderr, "rc_replay lists: --fault adc|clut-memo|state-memo|bias|fused|round-x|edge-two|hard-quick|last-step|lit-regs[@trdr|env|skin|terdr][:<cycle>]\n");
+                std::fprintf(stderr, "rc_replay lists: --fault adc|clut-memo|state-memo|bias|fused|round-x|edge-two|hard-quick|last-step|lit-regs|view-hard|view-ref[@trdr|env|skin|terdr][:<cycle>]\n");
                 return 2;
             }
             o.fault = emuOptions.faultKind;
