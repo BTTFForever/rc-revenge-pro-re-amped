@@ -44,6 +44,7 @@ pictures.
 | `PS2X_HOST_VSYNC=1` | the window loop waits for the monitor's vertical blank instead of a 60 Hz timer (uncapped unless `PS2X_HOST_FPS`) |
 | `PS2X_HOST_FPS=<n>` | the window loop's rate (default 60; 0 uncapped). `RC_INTERP` needs 120 or more, or `PS2X_HOST_VSYNC=1` on a fast monitor |
 | `PS2X_WINDOW_SIZE=<w>x<h>` | the window's first size |
+| `PS2X_GS_HW_SUBBLEND=0` | turns off the fixed-function subtractive blend (round 5); on by default |
 | `PS2X_GS_HW_MERGE=1` | the hardware renderer keeps a batch open across GIF packets and TEXFLUSH (fewer draws; see round 4) |
 | `GOW_GS_HW_STATS=2` | as `=1`, plus the most used draw states every 5 s |
 | `PS2X_GS_FORCE_LINEAR=1` | bilinear filtering of every textured triangle (the game asks for nearest on some); `2` also sprites |
@@ -194,6 +195,27 @@ recreating the targets: possible, not done), or finding the costly draw with `GO
   the jungle world's scenery effects in `visfx3.cpp`/`visfx5.cpp` (`Vfx2Renderer_MonkeySmoke`: grey sprites, texture
   21; `Vfx2Renderer_BigVolcano`: texture 5, code 4), all drawn through `VfxPS2SpriteRotated3D`, one small rotated quad
   per particle.
+
+### Round 5 (2026-11-22): the track-select smoke fixed
+
+- **Cause:** the jungle world's dark smoke is drawn with the subtractive blend (Cd - Cs)*FIX (ALPHA 0xa1,
+  `RdrPolyTexture` style 4). The hardware renderer had no fixed-function mapping for it, so it used its shader blend,
+  which reads the destination with one texture barrier per batch: overlapping particles of one batch read undefined,
+  GPU-tiled results, the blocky smoke. Main's build has it too (at 1x and 2x).
+- **Fix:** `PS2X_GS_HW_SUBBLEND` (on unless 0) maps it to GL's reverse subtract (exact, clamped at 0 with COLCLAMP=1).
+  Compared against the software GS (`PS2X_GS_HW=0 PS2X_GS_GPU=0 RC_TRACK_SHADER=0`): the same dark, smooth clouds
+  (`build-exp-eu/runs/smoke_compare.png`; the user agreed by eye).
+- **The Z-0 cull was wrong and is gone:** the "all-zero, half-screen" triangles were the track shader's placeholder
+  triangles (the real triangles come from the batch), so culling them removed the whole world (black screen).
+- **Measured** (Europe, jungle track select, widescreen, scale 3, windowed; 10 s of `nvidia-smi`; draws per 5 s at
+  50 pictures/s): before 94% GPU, ~1,190 draws (1,044 batches) per picture, 300 shader blends/s; with SUBBLEND 92%,
+  the same draws, 100 shader blends/s; with `PS2X_GS_HW_MERGE=1` as well 90%, the same draws: the GIF-packet and
+  TEXFLUSH flushes were not what splits the batches (most are track-shader batches, one per texture block). 50
+  pictures/s held in all three. `PS2X_GS_FORCE_LINEAR=2` looks the same.
+- **True fullscreen** checked: the window covers the whole 1920x1080 monitor, panel included.
+- The user's recording `decomp/recordings/smoke_jungle.pad` does not replay: its first epoch has no presses, so the
+  replay stays on the language screen (it ends in the attract demo); the runs used a scripted walk
+  (`RC_SKIP_INTRO=1`, presses at fixed input frames).
 
 ## 2. Interpolated frame rate (`RC_INTERP`, `RC_FPS`)
 
