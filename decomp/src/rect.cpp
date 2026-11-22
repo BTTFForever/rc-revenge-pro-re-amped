@@ -2,6 +2,7 @@
 // as two triangles each, with one colour (RectRender) or one per corner (RectRenderGouraud). The first packet sets
 // the primitive type and the blending, then each corner is a colour and a position under one GIF tag.
 
+#include "rc_exp.h" // exp/quick-dirty
 #include "ee_math.h"
 
 namespace rc {
@@ -60,6 +61,7 @@ void corner(uint64_t colourLow, uint64_t colourHigh, int32_t x, int32_t y, ee_fl
 
 void RectRender(ptr32<_sRect> pRect, f32 otz)
 {
+    const rc::exp::HudAnchorScope uiScope(rc::gfx::AnchorCentre, rc::exp::HudAnchorScope::Ui); // exp/quick-dirty: RC_UI_PILLARBOX
     _sRect &rect = *pRect;
     const uint32_t flags = rect.flags;
     uint64_t blend = 0;
@@ -110,6 +112,7 @@ void RectRender(ptr32<_sRect> pRect, f32 otz)
 
 void RectRenderGouraud(ptr32<_sGRect> pGRect, f32 otz)
 {
+    const rc::exp::HudAnchorScope uiScope(rc::gfx::AnchorCentre, rc::exp::HudAnchorScope::Ui); // exp/quick-dirty: RC_UI_PILLARBOX
     _sGRect &rect = *pGRect;
     const uint32_t flags = rect.flags;
     bool testAlpha = false, add = false; // Ghidra's bVar8 (flag 2) and bVar9 (flag 4, without flag 2)

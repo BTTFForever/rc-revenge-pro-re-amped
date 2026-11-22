@@ -43,6 +43,10 @@ if [ -n "${EXP_TAG:-}" ]; then
     measure=(PS2X_FRAME_HASH=1 PS2X_FRAME_TIMES="$base.frames.csv" RC_DEBUG_DUMP="$base.dump" RC_DEBUG_DUMP_MS="${RC_DEBUG_DUMP_MS:-1000}")
     log="$base.log"
 fi
+# Experiment defaults (each can be overridden, 0 turns it off): the UI pillarbox (only with RC_WIDESCREEN=1),
+# borderless fullscreen, the frame-dip log in the session log, and the NVIDIA driver's shader disk cache kept.
+export RC_UI_PILLARBOX="${RC_UI_PILLARBOX:-1}" PS2X_FULLSCREEN="${PS2X_FULLSCREEN:-1}" RC_EXP_DIPS="${RC_EXP_DIPS:-1}"
+export __GL_SHADER_DISK_CACHE="${__GL_SHADER_DISK_CACHE:-1}" __GL_SHADER_DISK_CACHE_SKIP_CLEANUP=1
 cd "$root"
 exec env PS2X_DEBUG_PANEL=0 PS2X_GS_GPU="${PS2X_GS_GPU:-1}" PS2X_GS_HW="${PS2X_GS_HW:-1}" PS2X_GS_HW_SCALE="${PS2X_GS_HW_SCALE:-2}" PS2X_GS_THREAD="${PS2X_GS_THREAD:-1}" PS2X_MTVU="${PS2X_MTVU:-1}" PS2X_VU1_TIMING="${PS2X_VU1_TIMING:-0}" \
     PS2X_EE_HOST_PACING=1 PS2X_GS_SHADER_PRELOAD="${PS2X_GS_SHADER_PRELOAD:-0}" PS2X_GS_SHADER_CACHE=1 PS2X_GS_SHADER_CACHE_DIR="$RC_GAME_BUILD/shader-cache" \

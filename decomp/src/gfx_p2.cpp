@@ -34,11 +34,14 @@ void GfxP2_SwapBuffers()
     sceGsDBuff &dbuff = G(gGfxP2_DBuff);
 
     G(swapTime0) = hw_read32(kT0Count);
+    rc::exp::swapMark(0); // exp/quick-dirty: RC_EXP_DIPS
     guest_call(kSceGsSyncPath, 0, 0);
     guest_call(kGfxP2_RenderDmaSendActual);
     guest_call(kSceGsSyncPath, 0, 0);
+    rc::exp::swapMark(1);
 
     const int32_t field = guest_call<int32_t>(kSceGsSyncV, 0);
+    rc::exp::swapMark(2);
     const uint32_t draw = guest_addr((rdr.frameNumber & 1u) != 0u ? &dbuff.draw1 : &dbuff.draw0);
     guest_call(kSceGsSetHalfOffset, draw, 0x800, 0x800, static_cast<int16_t>(field ^ 1));
 

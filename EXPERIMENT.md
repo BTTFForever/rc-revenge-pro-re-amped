@@ -38,6 +38,9 @@ pictures.
 | `RC_INTERP_FORCE=1` | keep drawing in-between pictures when a tick misses its vertical blank (normally they stop, see below) |
 | `RC_INTERP_OBJECTS=0` | blend the camera only |
 | `RC_EXP_LOG=1` | a line of interpolation counters each second in the log (`[exp] ticks=... inbetween=... missed=... skipped=...`) |
+| `RC_UI_PILLARBOX=1` | with `RC_WIDESCREEN`: 2D sprites, text and rectangles (front end, pause menu, loading, results) drawn at the right aspect about the screen's centre; a sprite or rectangle at least 600 of 640 pixels wide (backgrounds, fades) keeps filling the screen. Not in the track editor. On by default in `exp_play.sh` |
+| `PS2X_FULLSCREEN=1` | start as a borderless window over the whole monitor at its own resolution (F11 toggles); the picture keeps its aspect. On by default in `exp_play.sh` |
+| `RC_EXP_DIPS=1` | a `[exp-dip]` log line for each frame longer than 1.5 fields, split into game work, GS wait and vertical-blank wait. On by default in `exp_play.sh` |
 | `PS2X_HOST_VSYNC=1` | the window loop waits for the monitor's vertical blank instead of a 60 Hz timer (uncapped unless `PS2X_HOST_FPS`) |
 | `PS2X_HOST_FPS=<n>` | the window loop's rate (default 60; 0 uncapped). `RC_INTERP` needs 120 or more, or `PS2X_HOST_VSYNC=1` on a fast monitor |
 | `PS2X_WINDOW_SIZE=<w>x<h>` | the window's first size |
@@ -90,6 +93,29 @@ Known or expected artefacts (to check in the test runs):
 - Objects or track sections popping in at the screen edges would mean a culling path not covered above. How the
   world itself is culled was not traced (the VU1 track program and the level's own visibility data were not read for
   it): watch the edges on every track.
+
+### Round 2 (after the first play test, 2026-11-22)
+
+The user's test (`RC_WIDESCREEN=1 RC_HUD_ANCHOR=1 PS2X_GS_HW_SCALE=3`): widescreen and the race HUD good; frame-rate
+dips; the front end stretched; wanted borderless fullscreen.
+
+- **Dips: not shader compiles in our code.** With `PS2X_GS_HW=1` the GS back end is `GSHwBackend` (the God of War
+  renderer, `gs/gpu/gs_hw_backend.cpp`), which compiles one uber-shader and a few helper programs once, when it
+  starts, and uses no other back end. `PS2X_GS_SHADER_CACHE`, `PS2X_GS_SHADER_PRELOAD` and the `shader-cache` folder
+  belong to the GPU compute back end (`PS2X_GS_GPU` without `PS2X_GS_HW`), which this configuration never creates
+  (which is why `build-exp/shader-cache` was never written; copying main's would change nothing). What is left: the
+  NVIDIA driver recompiling the uber-shader for new state (kept across runs by its own disk cache:
+  `exp_play.sh` now keeps it from being cleaned), texture decodes and new render targets on first use (the GS
+  thread), or plain GS/VU1 load at 3x. `RC_EXP_DIPS=1` (on in `exp_play.sh`) logs each dip split into game work, GS
+  wait and vertical-blank wait; with `GOW_GS_HW_STATS=1` the back end prints texture decodes and draws every 5 s.
+  Test: the same demo twice in a row, compare the `[exp-dip]` counts (driver compiles would mostly vanish the second
+  time), and at `PS2X_GS_HW_SCALE=2` against 3 (GS load).
+- **Front end:** `RC_UI_PILLARBOX` (above): a centre-anchored scope in `SpriteRenderFast`, `renderSprite`,
+  `SpriteRenderNew`, `SpriteRenderFont` (`sprite.cpp`), `RectRender` and `RectRenderGouraud` (`rect.cpp`), the only
+  writers of 2D UI to the packet besides the HUD's own quads. Only the outermost scope applies, so the HUD corners
+  (which print through `SpriteRenderFont`) are scaled once. Splash screens and videos are uploaded straight into the
+  frame buffer and stay full width (stretched); the front end's 3D scenes are Hor+.
+- **Borderless fullscreen:** `PS2X_FULLSCREEN=1` (above), raylib's `ToggleBorderlessWindowed` after the window opens.
 
 ## 2. Interpolated frame rate (`RC_INTERP`, `RC_FPS`)
 
@@ -179,7 +205,8 @@ runs), `PS2X_GS_SHADER_PRELOAD=0` (shaders compile when first needed: stutters),
 - `decomp/rc_exp.h`, `decomp/rc_exp.cpp` (new): the switches, HUD anchoring, the interpolation.
 - `decomp/src/rdr.cpp` (`Rdr_SetupCamera`), `shape.cpp` (the second camera set-up), `visfx6.cpp`
   (`VfxSetupCameraMatrix`), `display.cpp` (`View3dInitViewconeReject`): Hor+.
-- `decomp/src/hud.cpp`: one `HudAnchorScope` beside each HUD side tag.
+- `decomp/src/hud.cpp`: one `HudAnchorScope` beside each HUD side tag; `sprite.cpp`, `rect.cpp`: the UI scopes.
+- `decomp/src/gfx_p2.cpp` (`GfxP2_SwapBuffers`): the dip marks (`swapMark`).
 - `decomp/src/main.cpp` (`MainGameProcess`): the in-between pictures at the seam.
 - `decomp/src/gfx_p2.cpp` (`GfxP2_SwapBuffers`): `notifyFlip()` with `RC_INTERP`.
 - `third_party/ps2recomp/ps2xRuntime/include/runtime/ps2_display_options.h`, `src/lib/ps2_runtime.cpp`: initial window

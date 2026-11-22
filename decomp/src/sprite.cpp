@@ -2,6 +2,7 @@
 // packet buffer. A sprite is two triangles, six vertices of GIF "packed" data (texture coordinates, Q, colour,
 // position); every third vertex kicks a triangle.
 
+#include "rc_exp.h" // exp/quick-dirty
 #include "ee_math.h"
 
 #include <utility>
@@ -98,6 +99,7 @@ void SpriteRenderSprite(ptr32<_sSprite>, ptr32<_sSpriteParams>, uint32) {}
 // A whole sprite at (x, y), white, unscaled.
 void SpriteRenderFast(ptr32<_sSprite> pSprite, int16 x, int16 y, f32 otz)
 {
+    const rc::exp::HudAnchorScope uiScope(rc::gfx::AnchorCentre, rc::exp::HudAnchorScope::Ui); // exp/quick-dirty: RC_UI_PILLARBOX
     const uint8 width = pSprite->width, height = pSprite->height;
     GfxP2_TexExt(pSprite->pTextureHandle, 0, 0);
     const int32_t left = x + 0x6c0;
@@ -210,6 +212,7 @@ enum class SpriteSize { Normal, Half, Scaled };
 // depth constant.
 void renderSprite(ptr32<_sSprite> pSprite, ptr32<_sSpriteParams> pSpriteParams, f32 otz, SpriteSize size, bool filter, uint32_t depthScale)
 {
+    const rc::exp::HudAnchorScope uiScope(rc::gfx::AnchorCentre, rc::exp::HudAnchorScope::Ui); // exp/quick-dirty: RC_UI_PILLARBOX
     const _sSpriteParams &params = *pSpriteParams;
     const uint32 flags = params.flags;
     const uint8 spriteWidth = pSprite->width, spriteHeight = pSprite->height;
@@ -268,6 +271,7 @@ void SpriteRenderScaled(ptr32<_sSprite> pSprite, ptr32<_sSpriteParams> pSpritePa
 // the mirror flags (here 0x10 swaps vertically and 0x20 horizontally). Each vertex has its own depth constant.
 void SpriteRenderNew(ptr32<_sSprite> pSprite, ptr32<_sSpriteParams> pSpriteParams, uint32 otz)
 {
+    const rc::exp::HudAnchorScope uiScope(rc::gfx::AnchorCentre, rc::exp::HudAnchorScope::Ui); // exp/quick-dirty: RC_UI_PILLARBOX
     const _sSpriteParams &params = *pSpriteParams;
     const uint32 flags = params.flags;
     const uint8 spriteWidth = pSprite->width, spriteHeight = pSprite->height;
@@ -324,6 +328,7 @@ void SpriteRenderNew(ptr32<_sSprite> pSprite, ptr32<_sSpriteParams> pSpriteParam
 // A font character: half height, at the farthest depth, coloured, through the effects texture setter.
 void SpriteRenderFont(ptr32<_sSprite> pSprite, ptr32<_sSpriteParams> pSpriteParams, f32)
 {
+    const rc::exp::HudAnchorScope uiScope(rc::gfx::AnchorCentre, rc::exp::HudAnchorScope::Ui); // exp/quick-dirty: RC_UI_PILLARBOX
     const _sSpriteParams &params = *pSpriteParams;
     const uint8_t s0 = static_cast<uint8_t>(pSprite->xOffset + static_cast<uint8_t>(params.xOffset));
     const uint8_t w = static_cast<uint8_t>(params.width), h = static_cast<uint8_t>(params.height);

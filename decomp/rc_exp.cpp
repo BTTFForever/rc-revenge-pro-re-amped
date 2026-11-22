@@ -63,6 +63,8 @@ Config load()
         c.objects = flag("RC_INTERP_OBJECTS", true);
     }
     c.log = flag("RC_EXP_LOG");
+    c.uiPillarbox = c.widescreen && flag("RC_UI_PILLARBOX");
+    c.dips = flag("RC_EXP_DIPS");
     return c;
 }
 
@@ -79,10 +81,10 @@ const bool g_presentation = []
     }
     if (g_config.interp)
         ps2_host_display::setPresentOnFlip(true);
-    if (g_config.widescreen || g_config.interp)
-        std::fprintf(stderr, "[exp] widescreen=%d aspect=%.3f hscale=%.4f hud=%d interp=%d perTick=%d pace=%d objects=%d\n",
-                     g_config.widescreen, g_config.aspect, g_config.hscale, g_config.hudAnchor, g_config.interp,
-                     g_config.perTick, g_config.pace, g_config.objects);
+    if (g_config.widescreen || g_config.interp || g_config.dips)
+        std::fprintf(stderr, "[exp] widescreen=%d aspect=%.3f hscale=%.4f hud=%d ui=%d interp=%d perTick=%d pace=%d objects=%d\n",
+                     g_config.widescreen, g_config.aspect, g_config.hscale, g_config.hudAnchor, g_config.uiPillarbox,
+                     g_config.interp, g_config.perTick, g_config.pace, g_config.objects);
     return true;
 }();
 
@@ -125,8 +127,18 @@ struct Walker
 
     uint64_t *qw(int32_t i) const { return static_cast<uint64_t *>(guest_host(buffer + static_cast<uint32_t>(i) * 16u)); }
 
+    bool measure = false;
+    mutable int32_t minX = 0x10000, maxX = -1;
+
     void fix(uint64_t &low) const
     {
+        if (measure)
+        {
+            const int32_t x = static_cast<int32_t>(low & 0xffffu);
+            minX = std::min(minX, x);
+            maxX = std::max(maxX, x);
+            return;
+        }
         const int32_t x = static_cast<int32_t>(low & 0xffffu);
         int32_t nx = static_cast<int32_t>(static_cast<float>(anchor) + static_cast<float>(x - static_cast<int32_t>(anchor)) * scale + 0.5f);
         nx = std::clamp(nx, 0, 0xffff);
@@ -167,15 +179,32 @@ struct Walker
 
 } // namespace
 
-HudAnchorScope::HudAnchorScope(uint32_t anchor)
+namespace {
+int g_scopeDepth = 0; // active or blocking anchor scopes open
+}
+
+HudAnchorScope::HudAnchorScope(uint32_t anchor, Kind kind) : m_kind(kind)
 {
-    if (!g_config.hudAnchor || at<uint8_t>(sym::mainVarG + 0x368u) != 0) // not in split screen
+    if (!g_config.widescreen || g_scopeDepth > 0)
+        return;
+    if (anchor == kKeep)
+    {
+        m_counted = true;
+        ++g_scopeDepth;
+        return;
+    }
+    if (!(kind == Hud ? g_config.hudAnchor : g_config.uiPillarbox))
+        return;
+    if (at<uint8_t>(sym::mainVarG + 0x368u) != 0) // not in split screen
+        return;
+    if (kind == Ui && at<uint32_t>(sym::mainVarG + 8u) == 2u) // nor in the track editor (its cursor follows the 3D view)
         return;
     m_anchorX = anchorX(anchor);
     if (m_anchorX == 0)
         return;
     const sGfxP2 &gfx = G(gGfxP2);
-    m_on = true;
+    m_on = m_counted = true;
+    ++g_scopeDepth;
     m_buffer = gfx.pDmaBuff.address;
     m_tag = gfx.gifTagIdx;
     m_start = gfx.buffIdx;
@@ -183,17 +212,69 @@ HudAnchorScope::HudAnchorScope(uint32_t anchor)
 
 HudAnchorScope::~HudAnchorScope()
 {
+    if (m_counted)
+        --g_scopeDepth;
     if (!m_on)
         return;
     const sGfxP2 &gfx = G(gGfxP2);
     if (gfx.pDmaBuff.address != m_buffer || gfx.buffIdx < m_start)
         return; // the packet was sent inside the scope
     Walker w{m_buffer, m_anchorX, gfx.buffIdx, g_config.hscale};
-    int32_t pos = m_start;
-    if (m_tag != -1 && m_tag < m_start)
-        pos = w.tag(m_tag, m_start);
-    for (int guard = 0; pos < w.end && guard < 100000; ++guard)
-        pos = w.tag(pos, pos + 1);
+    const auto walk = [&]
+    {
+        int32_t pos = m_start;
+        if (m_tag != -1 && m_tag < m_start)
+            pos = w.tag(m_tag, m_start);
+        for (int guard = 0; pos < w.end && guard < 100000; ++guard)
+            pos = w.tag(pos, pos + 1);
+    };
+    if (m_kind == Ui)
+    {
+        w.measure = true;
+        walk();
+        w.measure = false;
+        if (w.maxX >= 0 && w.maxX - w.minX >= (600 << 4)) // a full-width background or fade: keep it filling
+            return;
+    }
+    walk();
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Frame-time dips
+
+namespace {
+using Clock = std::chrono::steady_clock;
+Clock::time_point g_swap[3], g_lastStart, g_lastEnd;
+uint64_t g_swaps = 0, g_dips = 0;
+}
+
+void swapMark(int stage)
+{
+    if (!g_config.dips)
+        return;
+    const auto now = Clock::now();
+    g_swap[stage] = now;
+    if (stage != 2)
+        return;
+    ++g_swaps;
+    const auto ms = [](Clock::duration d) { return std::chrono::duration<double, std::milli>(d).count(); };
+    const double field = RC_VERSION_EU ? 20.0 : 1001.0 / 60.0;
+    if (g_lastStart != Clock::time_point{})
+    {
+        const double interval = ms(g_swap[0] - g_lastStart);
+        if (interval > 1.5 * field)
+        {
+            ++g_dips;
+            // game: from the last flip to this swap (the game's own work, EE side); gs: waiting for the GS/VU1 to
+            // finish the frame; vblank: waiting for the vertical blank.
+            std::fprintf(stderr, "[exp-dip] swap %llu (dip %llu) interval %.1f ms: game %.1f, gs wait %.1f, vblank wait %.1f, field %llu\n",
+                         static_cast<unsigned long long>(g_swaps), static_cast<unsigned long long>(g_dips), interval,
+                         ms(g_swap[0] - g_lastEnd), ms(g_swap[1] - g_swap[0]), ms(g_swap[2] - g_swap[1]),
+                         static_cast<unsigned long long>(g_runtime->eeScheduler().currentVSyncTick()));
+        }
+    }
+    g_lastStart = g_swap[0];
+    g_lastEnd = now;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

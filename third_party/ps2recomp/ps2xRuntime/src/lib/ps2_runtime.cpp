@@ -27,6 +27,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <string_view>
 #include <iostream>
 #include <stdexcept>
 #include <fstream>
@@ -982,6 +983,11 @@ bool PS2Runtime::initialize(const char *title)
                        ps2_host_display::initialHeight > 0 ? ps2_host_display::initialHeight : HOST_WINDOW_HEIGHT, title);
             if (ps2_host_display::startMaximized && !ps2_host_display::headless)
                 MaximizeWindow();
+            // exp/quick-dirty: PS2X_FULLSCREEN=1 (or borderless) starts as a borderless window over the whole monitor at
+            // its own resolution (F11 toggles back); the picture keeps its aspect, letter- or pillarboxed.
+            if (const char *v = std::getenv("PS2X_FULLSCREEN"); v && (*v == '1' || std::string_view(v) == "borderless") &&
+                !ps2_host_display::headless)
+                ToggleBorderlessWindowed();
             SetExitKey(KEY_NULL);
         }
         if (ps2_host_display::headless)
