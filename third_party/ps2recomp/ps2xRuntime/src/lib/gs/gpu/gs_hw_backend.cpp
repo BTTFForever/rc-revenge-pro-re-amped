@@ -1399,6 +1399,89 @@ struct GSHwBackend::Impl
         return std::memcmp(&a, &b, sizeof(GSDrawState)) == 0;
     }
 
+    // PS2X_GS_HW_BREAKS=1 (diagnostic): why each GL draw's batch ended, counted per reason (for a state change, the
+    // first GSDrawState field that differs), printed every 300 presents as a share of the draws.
+    static bool breakDiagEnabled()
+    {
+        static const bool on = [] { const char *v = std::getenv("PS2X_GS_HW_BREAKS"); return v && *v == '1'; }();
+        return on;
+    }
+    const char *breakWhy = nullptr;
+    std::map<std::string, uint64_t> breakCounts;
+    uint64_t breakDraws = 0;
+    void noteBreak(const char *why) { if (breakDiagEnabled()) breakWhy = why; }
+    void countBreak()
+    {
+        if (!breakDiagEnabled())
+            return;
+        ++breakCounts[breakWhy ? breakWhy : "other"];
+        ++breakDraws;
+    }
+    static const char *stateDiff(const GSDrawState &a, const GSDrawState &b)
+    {
+#define RC_FIELD(member, name) \
+    if (std::memcmp(&a.member, &b.member, sizeof(a.member)) != 0) return name;
+        RC_FIELD(context.frame, "state: FRAME")
+        RC_FIELD(context.scissor, "state: SCISSOR")
+        if (std::memcmp(&a.context.tex0, &b.context.tex0, sizeof(a.context.tex0)) != 0)
+        {
+            if (!a.prim.tme && !b.prim.tme)
+                return "state: TEX0 (texturing off)";
+            if (a.context.tex0.tbp0 == b.context.tex0.tbp0 && a.context.tex0.psm == b.context.tex0.psm)
+                return "state: TEX0 (same texture: CLUT/TFX/TCC fields)";
+            return "state: TEX0 (another texture)";
+        }
+        RC_FIELD(context.xyoffset, "state: XYOFFSET")
+        RC_FIELD(context.zbuf, "state: ZBUF")
+        RC_FIELD(context.tex1, "state: TEX1")
+        RC_FIELD(context.miptbp1, "state: MIPTBP")
+        RC_FIELD(context.miptbp2, "state: MIPTBP")
+        RC_FIELD(context.clamp, "state: CLAMP")
+        if (a.context.alpha != b.context.alpha)
+        {
+            if (!a.prim.abe && !b.prim.abe)
+                return "state: ALPHA (blending off)";
+            const uint64_t x = a.context.alpha ^ b.context.alpha;
+            if ((x & 0xFFull) == 0u && ((a.context.alpha >> 4) & 3u) != 2u)
+                return "state: ALPHA (FIX unused)";
+            return "state: ALPHA (blend)";
+        }
+        RC_FIELD(context.test, "state: TEST")
+        RC_FIELD(context.fba, "state: FBA")
+        RC_FIELD(prim, "state: PRIM")
+        RC_FIELD(texa, "state: TEXA")
+        RC_FIELD(texclut, "state: TEXCLUT")
+        RC_FIELD(pabe, "state: PABE")
+        RC_FIELD(colclamp, "state: COLCLAMP")
+        RC_FIELD(dthe, "state: DTHE/DIMX/SCANMSK")
+        RC_FIELD(dimx, "state: DTHE/DIMX/SCANMSK")
+        RC_FIELD(scanmsk, "state: DTHE/DIMX/SCANMSK")
+        RC_FIELD(fogR, "state: FOGCOL")
+        RC_FIELD(fogG, "state: FOGCOL")
+        RC_FIELD(fogB, "state: FOGCOL")
+        RC_FIELD(textureWidth, "state: texture size")
+        RC_FIELD(textureHeight, "state: texture size")
+        RC_FIELD(linearFilter, "state: filter")
+#undef RC_FIELD
+        return "state: padding bytes";
+    }
+    void reportBreaks()
+    {
+        if (!breakDiagEnabled() || presentCount % 300 != 0 || breakDraws == 0)
+            return;
+        std::vector<std::pair<uint64_t, std::string>> rows;
+        for (const auto &kv : breakCounts)
+            rows.emplace_back(kv.second, kv.first);
+        std::sort(rows.rbegin(), rows.rend());
+        std::string line;
+        for (const auto &r : rows)
+            line += " | " + r.second + " " + std::to_string(r.first * 1000 / breakDraws / 10.0).substr(0, 4) + "%";
+        std::fprintf(stderr, "[gs-hw-breaks] %llu draws in 300 presents (%.0f a present)%s\n", (unsigned long long)breakDraws,
+                     breakDraws / 300.0, line.c_str());
+        breakCounts.clear();
+        breakDraws = 0;
+    }
+
     void addVertex(const GSDrawState &s, const GSVertex &v, float u, float tv, float zmax)
     {
         const GSContext &c = s.context;
@@ -1579,7 +1662,10 @@ struct GSHwBackend::Impl
             }
         // queue: one GL pass per state run
         if (havePending)
+        {
+            noteBreak("shuffle");
             flushPending();
+        }
         if (haveShuffle && (!sameState(shuffleState, s) || shuffleDst != dst || shuffleSrc != src || shuffleSrcZ != srcDepth))
             flushShuffle();
         if (!haveShuffle)
@@ -1675,7 +1761,9 @@ struct GSHwBackend::Impl
 
     void submit(const GSPrimitiveBatch &b)
     {
+        noteBreak("primitive after a track batch");
         flushTrack();
+        breakWhy = nullptr;
         const GSDrawState &s = b.state;
         const GSPrimType type = s.prim.type;
         const bool tri = type == GS_PRIM_TRIANGLE || type == GS_PRIM_TRISTRIP || type == GS_PRIM_TRIFAN;
@@ -1706,7 +1794,10 @@ struct GSHwBackend::Impl
                 return;
             }
         if (havePending && !sameState(pendingState, s))
+        {
+            noteBreak(breakDiagEnabled() ? stateDiff(pendingState, s) : nullptr);
             flushPending();
+        }
         if (!havePending)
         {
             pendingState = s;
@@ -1839,9 +1930,12 @@ struct GSHwBackend::Impl
         {
             havePending = false;
             pending.clear();
+            breakWhy = nullptr;
             return;
         }
         havePending = false;
+        countBreak();
+        breakWhy = nullptr;
         if (!ensure())
         {
             pending.clear();
@@ -2227,6 +2321,9 @@ struct GSHwBackend::Impl
                 std::free(batch);
                 return;
             }
+            noteBreak(trackPending == nullptr ? "track batch after primitives"
+                      : !sameState(trackPendingState, b.state) ? (breakDiagEnabled() ? stateDiff(trackPendingState, b.state) : nullptr)
+                                                               : "track batch not joinable");
             flushPending(); // Also draws the previous batch.
             trackRingOffset = ring.allocate(gl(), quadBytes, 256u);
             std::memcpy(ring.base + trackRingOffset, batch->quads, quadBytes);
@@ -2248,6 +2345,9 @@ struct GSHwBackend::Impl
             std::free(batch);
             return;
         }
+        noteBreak(trackPending == nullptr ? "track batch after primitives"
+                  : !sameState(trackPendingState, b.state) ? (breakDiagEnabled() ? stateDiff(trackPendingState, b.state) : nullptr)
+                                                           : "track batch not joinable");
         flushPending(); // Also draws the previous batch.
         trackPending = batch;
         trackPendingState = b.state;
@@ -2259,6 +2359,7 @@ struct GSHwBackend::Impl
             return;
         GSTrackBatch *batch = trackPending;
         trackPending = nullptr;
+        countBreak();
         if (ensure())
         {
             const GSContext &c = trackPendingState.context;
@@ -2969,6 +3070,7 @@ void GSHwBackend::LoadClut(const GSTex0Reg &tex0, const GSTexClutReg &texclut)
     d.lastClutKey = clutKey;
     d.lastClutPlace = clutPlace;
     d.lastClutUploads = d.uploadEpoch;
+    d.noteBreak("CLUT load");
     d.flushPending();
     if (d.initialized)
         d.store.LoadClut(tex0, texclut, [&d](const GSTex0Reg &t, uint32_t width, const uint16_t *xy, uint32_t count, uint32_t *words)
@@ -2984,6 +3086,7 @@ void GSHwBackend::LoadClut(const GSTex0Reg &tex0, const GSTexClutReg &texclut)
 void GSHwBackend::BeginTransfer(const GSTransferCommand &command)
 {
     Impl &d = *m_impl;
+    d.noteBreak("transfer");
     d.flushPending();
     d.store.BeginTransfer(command);
     d.noteTransfer(command);
@@ -3037,16 +3140,19 @@ void GSHwBackend::UploadImage(const uint8_t *data, uint32_t sizeBytes)
 
 void GSHwBackend::Flush()
 {
+    m_impl->noteBreak("flush");
     m_impl->flushPending();
 }
 
 void GSHwBackend::TextureFlush()
 {
+    m_impl->noteBreak("TEXFLUSH");
     m_impl->flushPending(); // textures are re-read from the store when an upload overlaps them, not on TEXFLUSH
 }
 
 void GSHwBackend::Sync(GSSyncReason)
 {
+    m_impl->noteBreak("sync");
     m_impl->flushPending();
 }
 
@@ -3055,6 +3161,7 @@ bool GSHwBackend::ClearFramebuffer(const GSContext &context, uint32_t rgba)
     Impl &d = *m_impl;
     if (!d.ensure() || context.frame.fbw == 0u)
         return false;
+    d.noteBreak("clear");
     d.flushPending();
     const Api &g = d.gl();
     RenderTarget &rt = d.target(context.frame.fbp, context.frame.fbw);
@@ -3103,9 +3210,11 @@ PresentationFrame GSHwBackend::Present(const GSPresentationRequest &request)
     PresentationFrame frame;
     if (!d.ensure())
         return frame;
+    d.noteBreak("present");
     d.flushPending();
     d.limitFramesInFlight();
     ++d.presentCount;
+    d.reportBreaks();
     d.dumpAfterSkip = false;
     d.frameBatch = 0;
     d.reportStats();
