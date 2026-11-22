@@ -577,7 +577,10 @@ After step 1: fold its answers into this plan's open questions.
    gone from the walk, the GIF side's statistics and cull made lean; (e) passes the 67 and the 20 live dumps, its four
    faults fail; the VIF walk 0.27-0.32 of batch 4's, the reader 0.80-0.91 (level 18 12.3 ms off-line, 13.3 live on the
    EE thread), the views alone neutral on this machine; level 18 about 1.3 ms over the 12 ms budget, the rest under it
-   (design section 19).
+   (design section 19). Batch 6 (the reader's thread: `rc::live::KickQueue`, `rc::rec::RamImage`, 8.3's wait, `DLST`
+   from another thread, `RC_VK_READER_THREAD`) built 2026-11-22: the live check passes 20 / 20 both ways (27,200 lists),
+   TSan clean; live the front end and the Track Editor hold 60 / 50 fps, the race levels 37-46 fps with almost no waits
+   and no better with the reader on the EE thread, so batch 7 looks for what else holds them (design section 20).
 10. Pipelines built at start-up, performance pass on the heavy levels (18, 17, 24, 6, 8, 9, 12), a DIVERGENCES list.
 Then `vk` becomes the default renderer; `gs` stays as the reference.
 

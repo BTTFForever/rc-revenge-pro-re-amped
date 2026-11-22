@@ -1432,3 +1432,158 @@ one or two triangles, no guard band), or water's first pass; batch 7 decides wit
   reader's is not.
 - The `vif --with-emu` checker turns views off for its kicks (it reads VU memory around each run), so views are never
   compared beside the emulated machine; (e) is their proof.
+
+## 20. Batch 6 as built (2026-11-22): the reader's thread
+
+**What was built.**
+
+- **`rc::rec::RamImage`** (`render/record/ram_image.{h,cpp}`, in `rc_record`): the 32 MB of RDRAM and the scratchpad a
+  consumer of the page shadow rebuilds, with the pages present and their generations; `reset`, `forget` (a new
+  segment), `apply(firstPage, count, data)`, `view()`. `rc::rec::Reader` now keeps one instead of its own arrays (the
+  same code, moved).
+- **`rc::live::KickQueue`** (`render/live/kick_queue.{h,cpp}`, in `rc_live`), a live consumer in the capture's list
+  (8.1). On the EE thread it appends each event to a batch: hardware stores, CRT changes and cycle begins as they are;
+  a keyframe (after a save-state load) copied with its chunks; a kick as its `KickView`, its spans with their tags and
+  payloads, its labels, the GS register file when the capture gives one, and **the pages its stream touches that are
+  new or changed** (one `walkChain` over live RAM with a visitor that touches each range, tags included, into a
+  `PageTracker` of its own, then `collect`; the pages copied into the batch). A batch is handed over (one lock) at
+  every kick and at every cycle close. The reader thread applies a kick's pages to its `RamImage`, sets its MXCSR to
+  the kick's (8.2), and calls `rc::live::Reader` with the image's `RamView`; everything else is passed on as it came.
+  Batches are recycled (their vectors keep their capacity).
+- **8.3's wait.** At a cycle close, when more than two closed cycles are waiting for the reader thread (submitted
+  and not yet handled), the EE thread waits on a condition variable until one is taken. Waits, their time and the
+  most closed cycles waiting are counted and reported (a line every `RC_VK_NATIVE_REPORT` cycles and at the end).
+- **`drain()` and `stop()`.** `Consumer::drain()` (new, default empty): the capture calls it on its live consumers
+  before a recording's writer closes (`finish`) and before a ring is written, so the lists of every recorded cycle
+  are in the dump. `stop()` (the host's closing report) drains, ends the thread and drops later events, so the
+  reader's figures are final when they are printed.
+- **The `DLST` writer from another thread** (8.4). The capture keeps the recording's cycles whose lists are wanted
+  (`m_dlFirst`..`m_dlLast`, the cycles closed so far) under a mutex of their own; `drawListWanted` and
+  `recordDrawList` take it, from any thread, and `finish` closes the range after draining and before the writer
+  closes. `Writer::drawList` was already safe (its job queue has a lock), so a chunk lands wherever the writer takes
+  it, between whole cycles or keyframes. The dump reader delivers a `DLST` chunk once any cycle of the run has been
+  delivered (it used to require the chunk to follow a delivered cycle directly), and the `dlst` consumer keeps its own
+  lists by cycle until their chunks arrive and matches by the chunk's cycle number (a list still waiting 16 cycles
+  later is missing; chunks that followed a later cycle are counted).
+- **`RC_VK_READER_THREAD`**: unset or anything but `0`, the reader runs behind the queue on its own thread (under
+  `RC_VK_PICTURE=native` only; nothing else changes); `0` adds the reader itself to the capture's live list, as in P1,
+  so the code path is batch 5's. **`RC_VK_READER_VIEWS=0`** turns the fast reader's TOPS views off (to time them
+  live), **`RC_VK_READER_TEST_DELAY_MS=<n>`** makes the reader thread sleep n ms at every cycle close (a test: the
+  queue fills, the EE thread waits, `DLST` chunks follow later cycles).
+- **`rc_replay <dump> --consumer live2d --reader-thread`** (the harness of section 9's thread-sanitizer check): the live
+  reader behind a `KickQueue` on its own thread, fed the dump's events by rc_replay's thread (in front of the emulated
+  machine, as before), each published list presented and judged against its own cycle's reference picture when it
+  arrives; `--reader fast` (the fast reader; it was always strict here), `--no-gpu` (no presenter: the lists are taken
+  from the mailbox and counted), `--fault race` (the queue's planted fault: kicks handed over without the lock).
+  `build-tsan/` is a separate build directory configured with `-fsanitize=thread -g` (C and C++ and the link) for it.
+- **The screenshot pair** (`live_host`): with the reader on its own thread a list can reach a present that carries no
+  emulated GS picture, and `live_check.sh` then waited for a pair that never came (three of the first sessions hung
+  until stopped by hand). The pair is now taken at the next present that has the GS picture (at most 60 presents
+  later; then the native picture alone).
+
+**Changes to the design, and why.**
+
+1. **The batch is handed over per kick, not per cycle.** 8.3 says the queue holds whole cycles; it does in the sense
+   that matters (the wait counts closed cycles), but the reader starts on a cycle's kicks while the EE thread is
+   still in that cycle, so a list is published shortly after its cycle closes rather than a whole cycle later.
+2. **`RC_VK_READER_THREAD=0` does without the queue** instead of running it on the EE thread: the reader is added to
+   the capture's live list itself, so "off" is batch 5's code path exactly (the way to tell a threading fault from a
+   reader fault, 8.4).
+3. **A `drain()` on the consumer interface** (8.4 asked that "closing a recording drains the queue first"; the
+   capture had no way to ask a consumer to finish its work).
+4. **The `DLST` chunks are matched by cycle number in the reader of dumps too**: `rc::rec::Reader` dropped a `DLST`
+   that did not directly follow a delivered cycle, which a late chunk after a keyframe would not.
+5. **TSan runs without the GPU.** NVIDIA's driver starts threads of its own that the sanitizer cannot follow (the
+   first `malloc` in one of them crashes inside `libtsan`, before rc_replay has drawn anything), and the Vega is not
+   used for graphics here; so the sanitizer's harness is `live2d --reader-thread --no-gpu`: the dump's events fed by
+   rc_replay's thread in front of the emulated machine, the reader behind the queue on its own thread, the lists
+   taken from the mailbox by the feeding thread. The presenter is the main thread's alone, as live, and was not
+   under the sanitizer.
+6. **A planted fault for the sanitizer** (the design named none): kicks handed over without the queue's lock. Two
+   simpler plants (a counter of the reader's read without a lock, a word written after a hand-over) were tried
+   first and were, correctly, not reported: every hand-over and every batch's end pass through the queue's mutex,
+   which orders them whenever the reader is idle, and in the harness it is idle most of the time.
+
+**Checks.** (Logs in `build-decomp/batch6-logs/`.)
+
+| check | result |
+|---|---|
+| live, both ways: `RC_VK_READER=fast tools/live_check.sh` (exact mode from boot with `DLST`, then `rc_replay dlst`, which runs the strict reader off-line, and `vk --verify`), the reader on its thread (`b6t_*`) and on the EE thread (`RC_VK_READER_THREAD=0`, `b6e_*`), USA and Europe: the front end (`replay playtest2`, 1,500 / 1,700 cycles), levels 5, 17, 18 (800 each), the Track Editor (`tedit_walk.py 1`, 2,800) | **20 / 20 PASS**: **27,200 / 27,200 live lists equal to the strict reader's byte for byte** (27.6 M commands; thread on 13,600, off 13,600), 0 missing, 0 stray, 0 guarded kicks; the chained replays 27,200 / 27,200 flips hash-equal, 2,720 / 2,720 stored pictures equal (432 M pixels, 0 differ), keyframes equal. In exact mode the game runs at a fraction of real time, so the reader thread kept up and every chunk followed its own cycle |
+| the reader falling behind, live: `RC_VK_READER_TEST_DELAY_MS=250` (the reader thread sleeps 250 ms a cycle), USA level 17, 300 cycles, `live_check` | **PASS**: 300 / 300 lists equal, **299 of the 300 `DLST` chunks after a later cycle** (matched by cycle), the last ones written by the drain before the dump closed (300 of 300 cycles have one); **299 waits** at a cycle close (44.0 s in all, largest 223 ms), never more than 3 closed cycles waiting; `vk --verify` PASS |
+| thread sanitizer: `build-tsan/` (`-fsanitize=thread -g`), `rc_replay <dump> --consumer live2d --verify --reader fast --reader-thread --no-gpu`, USA `s5/tedit` and `s5/l17` (700 cycles each; the emulated machine in front, the reader behind the queue) | **0 reports** on both; 700 / 700 cycles queued, read and published each; on `l17` the reader thread ran 145 ms a cycle under the sanitizer with up to 2 closed cycles waiting, so feeding and reading overlapped throughout; the machine's own verification PASS (`l17`: 26,630 kicks, picture hashes 700 / 700). **The planted fault (`--fault race`: kicks queued without the lock) gives 79 reports** on `s5/tedit` (the deque between the threads) |
+| recording off: `tools/play.sh replay playtest2` (default renderer, `RC_SCENE_LOG`, `RC_DEBUG_DUMP`, 75 s) | USA scene 3020 at frame **658**, 60.0 fps after the load (one 55.4 sample across the race's load, as before). **Europe at frame 1168**, not 1167, 50.0-50.4 (one 46.2 across the load), three runs alike; **batch 5's sources rebuilt and run the same way give 1168 as well** (frame 5 reached at clock 0:255 instead of 0:256: the intro's timing on the day, not this batch; nothing of this batch runs without `RC_VK_PICTURE=native` or `RC_FRAME_RECORD`) |
+| the game relinked (`rc_live`, `rc_record`) | the oracle executables did not relink (byte-identical, md5 unchanged), run as the rule asks: USA seed 9661 **1,632 ok, 0 FAIL**, 98 without a setup (509 s); Europe seed 9662 **1,563 ok, 0 FAIL**, 90 without a setup (921 s) |
+| the strict build | the 92 strict objects of `decomp/vu1` in `build-decomp`, `build-eu`, `build-oracle`, `build-oracle-eu` byte-identical to before the batch |
+| validation layer live: `RC_VK_VALIDATION=1 RC_RENDERER=vk RC_VK_PICTURE=native RC_VK_READER=fast RC_BOOT_LEVEL=18`, 100 s, the reader on its thread | **0 validation errors** (4,701 cycles queued and read) |
+| off-line, the harness with and without the thread (`live2d --reader fast` on `s5/l17` with the GPU, idle machine) | PASS both; 0 cycles of 700 judged against a stored picture in this dump (it keeps hashes only), every list drawn |
+
+**The reader's thread live: the EE thread's share, the reader's time, waits, frame rates.** `RC_RENDERER=vk
+RC_VK_PICTURE=native RC_VK_READER=fast` with play.sh's settings, RTX 2060, otherwise idle machine; front end
+`replay playtest2` 180 s, levels `RC_BOOT_LEVEL` 90 s, Track Editor `replay tedit_walk.py 1` 150 s; fps from
+`RC_DEBUG_DUMP` (`tools/fps.py`), median of the 5 s samples after the first 15 s, with their range; ms a cycle from the
+closing `[vk-native]` lines; the EE thread's share is the queue's own time in the capture's hooks (the walk, the page
+compare, the copies), with the MB of pages compared and copied a cycle.
+
+| scene | fps, thread on | EE thread's share (MB compared / copied) | reader thread a cycle (largest) | waits (time) | views off: fps; reader | thread off: fps; reader on the EE thread (largest) |
+|---|---|---|---|---|---|---|
+| USA front end | **60.0** (55.2-60.2) | 1.35 (5.7 / 0.25) | 8.30 (30.7) | 0 | 60.0; 8.47 | 60.0; 7.10 (18.3) |
+| USA level 5 | **42.4** (28.6-57.0) | 1.15 (4.6 / 0.42) | 13.19 (40.3) | 0 | 43.6; 12.26 | 46.0; 11.14 (33.1) |
+| USA level 17 | **37.0** (26.4-54.2) | 1.21 (5.1 / 0.40) | 13.87 (33.9) | 0 | 42.4; 13.73 | 44.2; 12.23 (33.9) |
+| USA level 18 | **45.4** (40.0-58.8); again 46.4 | 2.05 (9.4 / 0.43); 2.02 | 16.70 (40.3); 16.47 | 16 (46 ms); 0 | 44.0, 45.2; 17.73, 17.61 | 40.0; 15.31 (35.6) |
+| USA Track Editor | **60.2** (58.6-60.6) | 0.24 (1.1 / 0.07) | 2.33 (27.0) | 0 | 60.2; 2.46 | 60.2; 2.07 (17.3) |
+| Europe front end | **50.0** (46.2-50.2) | 1.35 (5.8 / 0.27) | 9.32 (30.4) | 0 | 50.0; 10.07 * | 50.0; 7.36 (27.7) |
+| Europe level 5 | **45.8** (32.8-50.2) | 1.02 (4.3 / 0.33) | 11.62 (31.5) | 0 | 41.6; 13.72 * | 43.8; 10.91 (29.8) |
+| Europe level 17 | **42.4** (29.4-50.0) | 1.23 (5.2 / 0.40) | 13.47 (39.1) | 0 | 38.2; 16.62 * | 42.6; 12.00 (38.1) |
+| Europe level 18 | **44.2** (35.4-49.8) | 2.12 (9.5 / 0.48) | 16.89 (51.7) | 8 (33 ms) | 47.0; 17.22 | 41.8; 15.20 (26.3) |
+| Europe Track Editor | **50.2** (49.0-50.6) | 0.30 (1.3 / 0.08) | 2.94 (23.5) | 0 | 50.2; 2.89 | 50.2; 2.47 (16.9) |
+
+\* another agent's compiler (nice 15, two to three processes) ran during these runs (`fps/cpu_*.txt`); they are not
+comparable. A first set of thread-on runs (`fps/*_on_*`, before two pauses for the user) measured the reader thread at
+25 ms a cycle on level 18 and 19 ms on Europe's levels 5 and 17 with the EE thread's share 2.7-2.9 ms; repeated on a
+quiet machine (`on2`, `on3`, the table) they are 16.5-16.9 and 11.6-13.5 ms, so the first set was CPU-affected too
+(nothing was being sampled then) and is left out.
+
+What the table says:
+
+1. **The front end and the Track Editor hold 60 / 50 fps**, with the thread and without (P1: 41 / 30-36 on the front
+   end, 3D design 20.4). The race levels do not, and **the thread is not what they wait for**: 0 waits on levels 5 and
+   17, 8 to 16 short ones on level 18 (33-46 ms in 90 s), and the frame rate with the reader on the EE thread is the
+   same within the samples' spread (levels 5 and 17: 42-46 against 37-46) or lower only on level 18 (40-42 against
+   44-46). The game's cycle on a race level is 22-27 ms with or without 13-17 ms of reader on its thread: the rest of
+   the machine (the EE thread's own work, the VU1 and GS threads of the emulated machine, which still rasterises every
+   picture under `vk`, and the presenter) shares four cores with it. That is batch 7's question (8.4's last item:
+   whether the emulated GS keeps rasterising under `vk`; U3/U7).
+2. **The EE thread's share is 1.0-1.35 ms a cycle, 2.0-2.1 ms on level 18** (section 10's target: 2 ms; estimate 1.5):
+   the page compare of 4.3-9.5 MB a cycle (the fixed lists, every frame) is most of it; 0.25-0.48 MB of changed pages
+   are copied. 8.1's levers (write-protecting prepared units' pages, the loader's geometry notice) are named, not built.
+3. **The reader runs 1.1-1.3 times slower on its own thread than on the EE thread** (level 18: 16.5-16.9 against
+   15.2-15.3 ms; level 17 13.5-13.9 against 12.0-12.2; the front end 8.3-9.3 against 7.1-7.4). Not looked into further;
+   candidates are the image's pages being cold where the EE thread's live pages were just read by the emulated VU1,
+   and sharing cores with the emulated machine's threads. Off-line in the harness (no other load but the emulated
+   machine, whose thread is busy while the reader thread idles between kicks) the same reader ran 2.3 times slower
+   on its thread (20.0 against 8.9 ms on `s5/l17`), which points at the core's clock under `schedutil` for a thread
+   that sleeps between kicks as well. Section 10's 12 ms is met live only on the front end and the Track Editor
+   (levels 5 and 17: 11.6-13.9; level 18: 16.5-16.9).
+4. **The views are neutral on the reader thread too** (the question batch 5 left): level 18 16.5-16.9 ms with them and
+   17.2-17.7 without, USA levels 5 and 17 within 1 ms either way. They stay on.
+
+**Open.**
+
+- **The race levels run at 37-46 fps (USA) and 42-46 (Europe) with the reader on its thread and next to no waits**;
+  what holds them is not the reader (item 1 above). Batch 7 times them with the emulated GS's rasteriser off under `vk`
+  (`PS2X_GS_HW=0 PS2X_GS_GPU=0` is U3's configuration (ii); a switch that stops it rasterising at all is step 10's,
+  8.4) and per thread (`top -H`; the reader thread is named `rc-reader`).
+- The reader is 1.1-1.3 times slower on its own thread live (item 3) and over section 10's 12 ms on levels 5, 17
+  (slightly) and 18; not investigated (cold image pages, the core's clock, sharing cores). The levers of section 10
+  (the track's near-plane hard triangles, water's first pass) still apply; the queue absorbs a longer cycle as
+  designed (two cycles), so this costs frame rate only through 8.3's waits, which are rare.
+- The EE thread's share on level 18 is 2.0-2.1 ms, at section 10's 2 ms; the levers (8.1) are not built.
+- The sanitizer ran without the GPU (NVIDIA's driver cannot run under it), so the presenter's half of the mailbox was
+  exercised by the feeding thread taking lists, not by the presenter itself; the presenter's code is unchanged from
+  P1 and on the main thread only.
+- The save-state load with the reader thread (a keyframe through the queue) is built but no session loads a state
+  (carried from step 8).
+- In the exact-mode live checks the game runs slowly, so no `DLST` chunk followed a later cycle there; the delay test
+  is what exercises it.
+- Europe's `playtest2` now reaches scene 3020 at frame 1168 with this batch's and with batch 5's binaries alike (the
+  check's record says 1167).

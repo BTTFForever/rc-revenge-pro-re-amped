@@ -1300,9 +1300,21 @@ comparing bytes; then `primitive()`'s statistics loops, a lean cull (`gsTriBound
 `kick-cut` fail; the strict reader's (a), (b) 67 / 67; live fast on level 18: 800 / 800 lists equal, 13.3 ms a cycle on
 the EE thread (batch 4: 16.8). Off-line the reader is 0.80-0.91 of batch 4's (level 18 12.3 ms, VIF walk 2.9 to 0.8),
 but the views themselves are neutral here (what paid was the hash): `rc_replay vif --reader fast-noviews` times without
-them. Level 18 is still about 1.3 ms over section 10's 12 ms live; every other timed scene fits. **Next: batch 6** (the
-reader's thread), then batch 7 (frame rates) decides whether level 18 needs a lever (the track's near-plane hard
-triangles, water's first pass). The measurements are `rc_replay <dump> --consumer shapestat` ("Shape survey"
+them. Level 18 is still about 1.3 ms over section 10's 12 ms live; every other timed scene fits. **Batch 6 (the reader's
+thread) is done too** (design section 20): `rc::live::KickQueue` (`render/live/kick_queue.*`) queues each event on the
+EE thread (a kick with the pages its stream touches that are new or changed, from its own `PageTracker`) for a reader
+thread (`rc-reader`) that keeps an `rc::rec::RamImage` (`render/record/ram_image.*`, also the dump reader's) and drives
+the live reader; the EE thread waits at a cycle close when more than two closed cycles are waiting (8.3).
+`RC_VK_READER_THREAD=0` keeps the reader on the EE thread, `RC_VK_READER_VIEWS=0` turns the TOPS views off,
+`RC_VK_READER_TEST_DELAY_MS` slows the reader (a test). `DLST` from any thread (the capture drains its live consumers
+before closing a dump; chunks are matched by cycle). Live check 20 / 20 both ways (27,200 lists equal to the strict
+reader's), the delay test (299 waits, 299 late chunks, all equal), TSan on `rc_replay live2d --reader-thread --no-gpu`
+(`build-tsan/`; NVIDIA's driver cannot run under it) 0 reports, its planted fault 79. Live: the front end and the
+Track Editor 60 / 50 fps; the race levels 37-46 fps with 0-16 waits and the same within noise with the reader on the
+EE thread, so the reader is no longer what limits them; the EE thread's share 1.0-1.35 ms (level 18 2.0-2.1), the
+reader thread 8.3-16.9 ms a cycle (1.1-1.3 times its EE-thread time). **Next: batch 7** (frame rates and U3): what
+holds the race levels (the emulated GS still rasterises under `vk`; per-thread CPU), then whether level 18 needs a
+reader lever (the track's near-plane hard triangles, water's first pass). The measurements are `rc_replay <dump> --consumer shapestat` ("Shape survey"
 above). The rest of this section is the decompilation's.
 
 305 of 2,486 functions native on 2026-11-12 (1510 on 2026-11-18, after the FRONT batch at the end of this section, 1710 after TEDIT part 2, 1730 on 2026-11-19 after LEFTOVERS: every function of the game's own source files is native, only the SDK and C libraries remain; 1,653 of them registered in the Europe build, see "Europe version"). Done since 2026-11-10: collision, route nodes, AI (all) and the smaller PLAYER functions, and the renderer from the DMA chain up: RDRSTATE, RDR, RDRPOLY, RDR_SHAPE, RDR_SKIN, RDR_WATER, RDRALPHA, RDR_PARTICLE, SPRITE and most of GFX_P2, with the SDK's VIF packet library and three libvu0 helpers.
