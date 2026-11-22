@@ -1851,6 +1851,12 @@ struct GSHwBackend::Impl
         pending.clear();
     }
 
+    static bool subtractiveFixedFunction()
+    {
+        static const bool on = [] { const char *v = std::getenv("PS2X_GS_HW_SUBBLEND"); return !(v && *v == '0'); }();
+        return on;
+    }
+
     void blendState(const GSDrawState &s, bool &enabled, GLenum &sf, GLenum &df, float &fixScale, float &constant, GLenum &equation, bool &soft)
     {
         enabled = false;
@@ -1889,6 +1895,11 @@ struct GSHwBackend::Impl
         else if (a == 2 && b == 0 && d == 1) { sf = cs; df = kOne; equation = kFuncReverseSubtract; } // Cd - Cs*C
         else if (a == 1 && b == 2 && d == 0 && c != 1) { sf = kOne; df = cs; }    // Cd*C + Cs
         else if (a == 1 && b == 0 && d == 0 && c != 1) { sf = cd; df = cs; }      // Cs*(1-C) + Cd*C
+        // (Cd - Cs)*C, the jungle world's subtractive smoke (RdrPolyTexture style 4, ALPHA 0xa1; from exp/quick-dirty
+        // 928bf9a). It went through the shader blend, which reads the destination with one barrier per batch: overlapping
+        // particles of one batch read undefined (tiled) results, the black blocky smoke. Fixed function does it exactly,
+        // clamped at 0 (COLCLAMP=1). PS2X_GS_HW_SUBBLEND=0: the shader blend as before.
+        else if (a == 1 && b == 0 && d == 2 && c != 1 && subtractiveFixedFunction()) { sf = cs; df = cs; equation = kFuncReverseSubtract; }
         else { soft = true; sf = cs; df = cd; }
         if (soft)
             ++stats.unsupportedBlend;
