@@ -1,6 +1,7 @@
 // Decompiled from LINE.c: debug lines (the route nodes, collision and camera views use them), drawn straight to the
 // GS through GFX_P2's packet buffer as line primitives.
 
+#include "rc_exp.h" // exp/quick-dirty
 #include "ee_math.h"
 
 namespace rc {
@@ -67,6 +68,7 @@ uint64_t lineDepth(ee_float z, uint32_t scaleAddress)
 // tag, as in the original (buffIdx moves 3 for a 5-quadword block, then the tag goes 2 further on).
 void LineRender2D(ptr32<_sLine2D> pLine, f32 otz)
 {
+    const rc::exp::HudAnchorScope uiScope(rc::gfx::AnchorCentre, rc::exp::HudAnchorScope::Ui); // exp/quick-dirty: RC_UI_PILLARBOX
     sGfxP2 &gfx = G(gGfxP2);
     const bool blended = (pLine->flags & 1) != 0;
     lineState(blended);

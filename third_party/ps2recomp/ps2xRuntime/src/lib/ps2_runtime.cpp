@@ -3,6 +3,7 @@
 #include "ps2_runtime.h"
 #include "runtime/ps2_save_state.h"
 #include "runtime/ps2_display_options.h"
+#include "runtime/ps2_exp_stats.h"
 #include "runtime/ps2_perf_overlay.h"
 #include "ps2_log.h"
 #include "ps2_stubs.h"
@@ -45,6 +46,13 @@
 namespace ps2_stubs
 {
     void resetSifState();
+}
+
+namespace ps2x::expstats
+{
+    std::atomic<uint64_t> g_ns[kSites]{};
+    std::atomic<uint64_t> g_count[kSites]{};
+    thread_local bool t_gameThread = false;
 }
 
 namespace ps2_host_display
@@ -2820,6 +2828,8 @@ void PS2Runtime::run()
     std::thread gameThread([&]()
                            {
         ThreadNaming::SetCurrentThreadName("GameThread");
+        if (const char *dips = std::getenv("RC_EXP_DIPS"); dips && *dips == '1') // exp/quick-dirty: back-pressure timing
+            ps2x::expstats::t_gameThread = true;
         ThreadPriority::RaiseCurrentThread(ThreadPriority::Level::Highest);
         try
         {

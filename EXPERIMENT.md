@@ -38,7 +38,7 @@ pictures.
 | `RC_INTERP_FORCE=1` | keep drawing in-between pictures when a tick misses its vertical blank (normally they stop, see below) |
 | `RC_INTERP_OBJECTS=0` | blend the camera only |
 | `RC_EXP_LOG=1` | a line of interpolation counters each second in the log (`[exp] ticks=... inbetween=... missed=... skipped=...`) |
-| `RC_UI_PILLARBOX=1` | with `RC_WIDESCREEN`: 2D sprites, text and rectangles (front end, pause menu, loading, results) drawn at the right aspect about the screen's centre; a sprite or rectangle at least 600 of 640 pixels wide (backgrounds, fades) keeps filling the screen. Not in the track editor. On by default in `exp_play.sh` |
+| `RC_UI_PILLARBOX=1` | with `RC_WIDESCREEN`: 2D sprites, text and rectangles (front end, pause menu, loading, results) drawn at the right aspect about the screen's centre; a sprite or rectangle at least 600 of 640 pixels wide (backgrounds, fades) keeps filling the screen. On by default in `exp_play.sh` |
 | `PS2X_FULLSCREEN=1` | start as a borderless window over the whole monitor at its own resolution (F11 toggles); the picture keeps its aspect. On by default in `exp_play.sh` |
 | `RC_EXP_DIPS=1` | a `[exp-dip]` log line for each frame longer than 1.5 fields, split into game work, GS wait and vertical-blank wait. On by default in `exp_play.sh` |
 | `PS2X_HOST_VSYNC=1` | the window loop waits for the monitor's vertical blank instead of a 60 Hz timer (uncapped unless `PS2X_HOST_FPS`) |
@@ -116,6 +116,39 @@ dips; the front end stretched; wanted borderless fullscreen.
   (which print through `SpriteRenderFont`) are scaled once. Splash screens and videos are uploaded straight into the
   frame buffer and stay full width (stretched); the front end's 3D scenes are Hor+.
 - **Borderless fullscreen:** `PS2X_FULLSCREEN=1` (above), raylib's `ToggleBorderlessWindowed` after the window opens.
+
+### Round 3 (2026-11-22)
+
+User test 2 (USA, everything on, fullscreen; `build-exp/runs/user2.*`): 37 pictures/s mean, 1,051 dips; the main menu
+before car selection and the level select slow, car selection faster; on main's Europe build (3x, 4:3) the same menus
+had no great slowdown. The menu border stayed stretched; the Track Editor's menus stretched.
+
+- **USA against Europe front end: the budget, as far as the earlier numbers go.** Main's measurements at 2x: USA front
+  end 54-59 fps with the GS thread 93% busy, Europe a steady 50 with it 78% busy. Per picture that is
+  0.93 / ~57 = ~16.3 ms of GS work in the USA and 0.78 / 50 = ~15.6 ms in Europe: about the same scene. 15.6 ms fits
+  Europe's 20 ms field and 16.3 ms does not fit the USA's 16.7 ms, so the USA front end misses blanks and Europe does
+  not. At 3x the GS work grows (main found the GPU at 100% in the front end at 2x), which makes it worse. The Europe
+  executable's front-end changes (`decomp/generated/eu/changed_functions.txt`: FrontEndInit, FrontEndProcess,
+  CameraDestination, AMenu* constants for the taller screen, DisplayRCRevengeBanner) show no sign of less drawing,
+  but that was not measured: test 1 below compares the two directly.
+- **The dip split was hiding back-pressure.** `user2`'s dips are almost all "game" with a GS wait of ~0. The swap's
+  own GS wait is near zero because the game thread has already been held up during the frame: when the VU1 worker's
+  or the GS thread's queue is full it blocks in the DMA kick, and every read of a VIF or GS register drains the VU1
+  worker and the GIF stage (`asyncvif::sync`). Those waits are now timed on the game thread
+  (`include/runtime/ps2_exp_stats.h`; `ps2_async_vif.cpp`, `gs_threaded_backend.cpp`) and shown in each `[exp-dip]`
+  line (`vifq`, `vifsync`, `gsq`, `gsdrain`). An `[exp-frame]` line each second gives the per-frame averages for
+  all frames.
+- **Border:** the menu borders are drawn by `HudMenuBorder` (`hud.cpp`, the HUD's own quads, not the sprite
+  renderer), so they were never scoped. `HudMenuBorder`, `HudSprite`, `HudSpriteMirror`, `HudSpriteHI`,
+  `HudRotSpriteHI`, `HudWrongWayX`, `HudLost` and `LineRender2D` now have UI scopes too (in a race, inside a HUD
+  corner, the corner's scope applies alone). The full-screen exemption now needs edge to edge (624 of 640 pixels)
+  and at least 200 lines high, so wide panels and borders are pillarboxed with their text.
+- **Track Editor:** the pillarbox is on there too (its 2D is all screen space: menus, the 2D map, help; the cursor is
+  3D).
+
+Next if the front end is GS-bound: a lower internal scale for the front end only (the God of War back end reads
+`PS2X_GS_HW_SCALE` once and sizes each render target with it, so changing it at a scene change means dropping and
+recreating the targets: possible, not done), or finding the costly draw with `GOW_GS_HW_STATS=1` and a GPU capture.
 
 ## 2. Interpolated frame rate (`RC_INTERP`, `RC_FPS`)
 

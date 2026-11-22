@@ -1,3 +1,4 @@
+#include "runtime/ps2_exp_stats.h"
 #include "runtime/ps2_async_vif.h"
 #include "runtime/ps2_memory.h"
 #include "runtime/ee_scheduler.h"
@@ -355,6 +356,7 @@ namespace ps2x::asyncvif
             job.fbrst = s_fbrstProvider ? s_fbrstProvider() : 0u;
         }
         {
+            const ps2x::expstats::Wait expWait(ps2x::expstats::VifQueue); // exp/quick-dirty
             std::unique_lock<std::mutex> lock(worker->mutex);
             worker->idleCv.wait(lock, [&]
                                 { return worker->jobs.size() < kMaxQueuedJobs; });
@@ -394,6 +396,7 @@ namespace ps2x::asyncvif
             Worker *worker = s_worker;
             if (!worker || worker->memory != &memory)
                 return;
+            const ps2x::expstats::Wait expWait(ps2x::expstats::VifSync); // exp/quick-dirty
             std::unique_lock<std::mutex> lock(worker->mutex);
             worker->idleCv.wait(lock, [&]
                                 { return worker->jobs.empty() && !worker->busy; });
@@ -499,6 +502,7 @@ namespace ps2x::asyncvif
         Worker *worker = s_worker;
         if (!worker || worker->memory != &memory)
             return;
+        const ps2x::expstats::Wait expWait(ps2x::expstats::VifSync); // exp/quick-dirty
         {
             std::unique_lock<std::mutex> lock(worker->mutex);
             worker->idleCv.wait(lock, [&]

@@ -257,6 +257,7 @@ void HudTopLeft(ptr32<_sObject>, int8, int8)
 // A sprite at (fX, fY): width doubled, height to 127, at the far depth.
 void HudSprite(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb)
 {
+    const rc::exp::HudAnchorScope uiScope(rc::gfx::AnchorCentre, rc::exp::HudAnchorScope::Ui); // exp/quick-dirty: RC_UI_PILLARBOX
     RC_DIVERT_IF_CHANGED(HudSprite, pSpr, fX, fY, rgb);
     const uint32_t width = (static_cast<uint32_t>(pSpr->width) << 1) & 0xffu, height = pSpr->height & 0x7fu;
     const ee_float x = fX + ee_float(1728.0f), y = fY + ee_float(1928.0f);
@@ -269,6 +270,7 @@ void HudSprite(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb)
 // As HudSprite, extending to the left (the mirrored map).
 void HudSpriteMirror(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb)
 {
+    const rc::exp::HudAnchorScope uiScope(rc::gfx::AnchorCentre, rc::exp::HudAnchorScope::Ui); // exp/quick-dirty: RC_UI_PILLARBOX
     RC_DIVERT_IF_CHANGED(HudSpriteMirror, pSpr, fX, fY, rgb);
     const uint32_t width = (static_cast<uint32_t>(pSpr->width) << 1) & 0xffu, height = pSpr->height & 0x7fu;
     const ee_float x = fX + ee_float(1728.0f), y = fY + ee_float(1928.0f);
@@ -281,6 +283,7 @@ void HudSpriteMirror(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb)
 // A sprite at full width and half height, at a depth.
 void HudSpriteHI(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb, ee_float otz)
 {
+    const rc::exp::HudAnchorScope uiScope(rc::gfx::AnchorCentre, rc::exp::HudAnchorScope::Ui); // exp/quick-dirty: RC_UI_PILLARBOX
     RC_DIVERT_IF_CHANGED(HudSpriteHI, pSpr, fX, fY, rgb, otz);
     const uint32_t height = pSpr->height, width = pSpr->width;
     const ee_float x = fX + ee_float(1728.0f);
@@ -296,6 +299,7 @@ void HudSpriteHI(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb, ee_
 // The corner vectors' z and w lanes are never set (stale stack): the rotation matrix's zeros multiply them.
 void HudRotSpriteHI(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb, ee_float otz, ee_float ang)
 {
+    const rc::exp::HudAnchorScope uiScope(rc::gfx::AnchorCentre, rc::exp::HudAnchorScope::Ui); // exp/quick-dirty: RC_UI_PILLARBOX
     RC_DIVERT_IF_CHANGED(HudRotSpriteHI, pSpr, fX, fY, rgb, otz, ang);
     GuestFrame frame(0x160);
     const uint32_t sp = frame.local<uint8_t>(0).address;
@@ -338,6 +342,7 @@ void HudRotSpriteHI(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb, 
 // The wrong-way cross: a diamond of the level's cross texture about (iX, iY), half-height iD.
 void HudWrongWayX(int32 iX, int32 iY, int32 iD)
 {
+    const rc::exp::HudAnchorScope uiScope(rc::gfx::AnchorCentre, rc::exp::HudAnchorScope::Ui); // exp/quick-dirty: RC_UI_PILLARBOX
     RC_DIVERT_IF_CHANGED(HudWrongWayX, iX, iY, iD);
     const int32_t x = iX + 0x6c0, y = iY + 0x788;
     GfxP2_TexFX(ptr32<_sGfxTexture>(at<uint32_t>(hudRes() + 0xd0u)), 0);
@@ -349,6 +354,7 @@ void HudWrongWayX(int32 iX, int32 iY, int32 iD)
 // The "lost" sign: the level's lost texture over (iX, iY) +- (2 iD, iD).
 void HudLost(int32 iX, int32 iY, int32 iD)
 {
+    const rc::exp::HudAnchorScope uiScope(rc::gfx::AnchorCentre, rc::exp::HudAnchorScope::Ui); // exp/quick-dirty: RC_UI_PILLARBOX
     RC_DIVERT_IF_CHANGED(HudLost, iX, iY, iD);
     const int32_t x = iX + 0x6c0, y = iY + 0x788;
     GfxP2_TexFX(ptr32<_sGfxTexture>(at<uint32_t>(hudRes() + 0xd8u)), 0x20);
@@ -361,6 +367,7 @@ void HudLost(int32 iX, int32 iY, int32 iD)
 // position and the frame count.
 void HudMenuBorder(ptr32<_sSprite> pSpr, int32 iCX, int32 iCY, int32 arg3)
 {
+    const rc::exp::HudAnchorScope uiScope(rc::gfx::AnchorCentre, rc::exp::HudAnchorScope::Ui); // exp/quick-dirty: RC_UI_PILLARBOX
     RC_DIVERT_IF_CHANGED(HudMenuBorder, pSpr, iCX, iCY, arg3);
     GuestFrame frame(0xd0);
     const uint32_t sp = frame.local<uint8_t>(0).address;

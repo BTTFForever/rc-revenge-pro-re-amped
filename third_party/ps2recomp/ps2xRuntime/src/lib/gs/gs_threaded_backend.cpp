@@ -1,3 +1,4 @@
+#include "runtime/ps2_exp_stats.h"
 #include "runtime/gs/gs_threaded_backend.h"
 #include "runtime/gs/gs_cpu_backend.h"
 #include "runtime/gs/gs_gpu_backend.h"
@@ -153,6 +154,7 @@ void GSThreadedBackend::PublishLocked()
         return;
     std::vector<uint8_t> next;
     {
+        const ps2x::expstats::Wait expWait(ps2x::expstats::GsQueue); // exp/quick-dirty
         std::unique_lock<std::mutex> lock(m_queueMutex);
         m_doneCv.wait(lock, [&]
                       { return m_stop || m_pending.size() < m_queueChunkLimit; });
@@ -181,6 +183,7 @@ void GSThreadedBackend::Drain() const
         std::lock_guard<std::mutex> queueLock(m_queueMutex);
         target = m_published;
     }
+    const ps2x::expstats::Wait expWait(ps2x::expstats::GsDrain); // exp/quick-dirty
     std::unique_lock<std::mutex> lock(m_queueMutex);
     m_doneCv.wait(lock, [&]
                   { return m_completed >= target || m_stop; });

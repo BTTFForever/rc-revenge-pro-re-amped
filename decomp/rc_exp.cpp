@@ -3,6 +3,7 @@
 #include "rc_exp.h"
 
 #include "runtime/ps2_display_options.h"
+#include "runtime/ps2_exp_stats.h"
 
 #include <algorithm>
 #include <chrono>
@@ -128,15 +129,18 @@ struct Walker
     uint64_t *qw(int32_t i) const { return static_cast<uint64_t *>(guest_host(buffer + static_cast<uint32_t>(i) * 16u)); }
 
     bool measure = false;
-    mutable int32_t minX = 0x10000, maxX = -1;
+    mutable int32_t minX = 0x10000, maxX = -1, minY = 0x10000, maxY = -1;
 
     void fix(uint64_t &low) const
     {
         if (measure)
         {
             const int32_t x = static_cast<int32_t>(low & 0xffffu);
+            const int32_t y = static_cast<int32_t>((low >> 32) & 0xffffu);
             minX = std::min(minX, x);
             maxX = std::max(maxX, x);
+            minY = std::min(minY, y);
+            maxY = std::max(maxY, y);
             return;
         }
         const int32_t x = static_cast<int32_t>(low & 0xffffu);
@@ -197,8 +201,6 @@ HudAnchorScope::HudAnchorScope(uint32_t anchor, Kind kind) : m_kind(kind)
         return;
     if (at<uint8_t>(sym::mainVarG + 0x368u) != 0) // not in split screen
         return;
-    if (kind == Ui && at<uint32_t>(sym::mainVarG + 8u) == 2u) // nor in the track editor (its cursor follows the 3D view)
-        return;
     m_anchorX = anchorX(anchor);
     if (m_anchorX == 0)
         return;
@@ -233,7 +235,9 @@ HudAnchorScope::~HudAnchorScope()
         w.measure = true;
         walk();
         w.measure = false;
-        if (w.maxX >= 0 && w.maxX - w.minX >= (600 << 4)) // a full-width background or fade: keep it filling
+        // A full-screen background or fade (edge to edge, most of the height): keep it filling. A wide menu border
+        // or panel is pillarboxed with its text.
+        if (w.maxX >= 0 && w.maxX - w.minX >= (624 << 4) && w.maxY - w.minY >= (200 << 4))
             return;
     }
     walk();
@@ -244,8 +248,11 @@ HudAnchorScope::~HudAnchorScope()
 
 namespace {
 using Clock = std::chrono::steady_clock;
-Clock::time_point g_swap[3], g_lastStart, g_lastEnd;
+Clock::time_point g_swap[3], g_lastStart, g_lastEnd, g_secondStart;
 uint64_t g_swaps = 0, g_dips = 0;
+uint64_t g_waitAtEnd[ps2x::expstats::kSites]{};
+// Per-second sums for the summary line.
+double g_secFrames = 0, g_secInterval = 0, g_secGame = 0, g_secGs = 0, g_secVblank = 0, g_secWait[ps2x::expstats::kSites]{};
 }
 
 void swapMark(int stage)
@@ -259,19 +266,48 @@ void swapMark(int stage)
     ++g_swaps;
     const auto ms = [](Clock::duration d) { return std::chrono::duration<double, std::milli>(d).count(); };
     const double field = RC_VERSION_EU ? 20.0 : 1001.0 / 60.0;
+    double wait[ps2x::expstats::kSites];
+    for (int i = 0; i < ps2x::expstats::kSites; ++i)
+    {
+        const uint64_t v = ps2x::expstats::g_ns[i].load(std::memory_order_relaxed);
+        wait[i] = static_cast<double>(v - g_waitAtEnd[i]) / 1e6;
+        g_waitAtEnd[i] = v;
+    }
     if (g_lastStart != Clock::time_point{})
     {
         const double interval = ms(g_swap[0] - g_lastStart);
-        if (interval > 1.5 * field)
+        const double game = ms(g_swap[0] - g_lastEnd), gs = ms(g_swap[1] - g_swap[0]), vblank = ms(g_swap[2] - g_swap[1]);
+        g_secFrames += 1;
+        g_secInterval += interval;
+        g_secGame += game;
+        g_secGs += gs;
+        g_secVblank += vblank;
+        for (int i = 0; i < ps2x::expstats::kSites; ++i)
+            g_secWait[i] += wait[i];
+        if (interval > 1.5 * field && interval < 1000.0)
         {
             ++g_dips;
-            // game: from the last flip to this swap (the game's own work, EE side); gs: waiting for the GS/VU1 to
-            // finish the frame; vblank: waiting for the vertical blank.
-            std::fprintf(stderr, "[exp-dip] swap %llu (dip %llu) interval %.1f ms: game %.1f, gs wait %.1f, vblank wait %.1f, field %llu\n",
-                         static_cast<unsigned long long>(g_swaps), static_cast<unsigned long long>(g_dips), interval,
-                         ms(g_swap[0] - g_lastEnd), ms(g_swap[1] - g_swap[0]), ms(g_swap[2] - g_swap[1]),
+            // game: from the last flip to this swap (EE side, including its waits on the worker threads: vif queue full,
+            // vif sync (register reads drain VU1 and GIF), gs queue full, gs drain); gs: the swap's own wait for the GS
+            // path; vblank: the wait for the vertical blank. The waits cover the whole time since the last flip.
+            std::fprintf(stderr, "[exp-dip] swap %llu (dip %llu) interval %.1f ms: game %.1f (waits: vifq %.1f vifsync %.1f gsq %.1f gsdrain %.1f), gs wait %.1f, vblank wait %.1f, field %llu\n",
+                         static_cast<unsigned long long>(g_swaps), static_cast<unsigned long long>(g_dips), interval, game,
+                         wait[0], wait[1], wait[2], wait[3], gs, vblank,
                          static_cast<unsigned long long>(g_runtime->eeScheduler().currentVSyncTick()));
         }
+    }
+    if (g_secondStart == Clock::time_point{})
+        g_secondStart = now;
+    if (now - g_secondStart >= std::chrono::seconds(1) && g_secFrames > 0)
+    {
+        const double n = g_secFrames;
+        std::fprintf(stderr, "[exp-frame] %.0f frames, per frame ms: interval %.1f game %.1f (vifq %.1f vifsync %.1f gsq %.1f gsdrain %.1f) gs %.1f vblank %.1f\n",
+                     n, g_secInterval / n, g_secGame / n, g_secWait[0] / n, g_secWait[1] / n, g_secWait[2] / n, g_secWait[3] / n,
+                     g_secGs / n, g_secVblank / n);
+        g_secFrames = g_secInterval = g_secGame = g_secGs = g_secVblank = 0;
+        for (double &w : g_secWait)
+            w = 0;
+        g_secondStart = now;
     }
     g_lastStart = g_swap[0];
     g_lastEnd = now;
