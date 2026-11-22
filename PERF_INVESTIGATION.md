@@ -258,6 +258,46 @@ injection here), Europe, two-player.
 **Next**: route (b) below. On route (a) the GS thread is now 0.75 of a core at 60 fps with the GPU at ~38%; the next
 gains are the palette atlas (CLUT breaks), a shared-texture present, and an uncapped frame rate to see the headroom.
 
+## As built (2026-11-23): the AKLM Studios stutter (skinned trees, one triangle per texture block)
+
+**The symptom.** On AKLM Studios' first track (level 4: world AKLM Studios = index 3, track 0, `WorldTrackToLevel`
+= track*6 + 1 + world) the frame rate fell to 13-16 fps for 5-8 s at the same two spots every lap, all of it in
+submit, with the GS thread at 96-99%. The attract demo on `RC_BOOT_LEVEL=4` passes the same spots (24-30, 55-61,
+86-92 s from boot, then every 93 s).
+
+**The cause.** `PS2X_GS_HW_BREAKS=1` there: 2,600 batches a present, 82% ended by a CLUT load and 17% by "track
+batch not joinable". A draw dump showed one-triangle track batches, each with its own T4/T8 texture and palette, and
+the batches were skin (track mode 3, `Rdr_VUSkinProg`). Dropping the skin batches for one run showed what they are:
+the swaying cartoon trees and plants beside the track. Their models come as one triangle per texture block, so each
+triangle was a CLUT load, a flush, a full draw (~9,500 a frame), and in `track_draw.cpp` a malloc and a 16 KB copy of
+all of VU memory per block (about 150 MB a frame through the VU thread and the GL ring).
+
+**The fix** (`gs_hw_backend.cpp`, `track_draw.cpp`, `trdr_shape.vert`, `gs_track_batch.h`):
+- Multi-texture track batches. Consecutive track blocks (mode 0, and skin blocks of one VU1 run) whose GS state
+  differs only in the paletted texture (TEX0, CLUT, TW/TH, wrap) join one draw. Each block's index texture and
+  palette are resolved as it arrives and kept as a slot of `GL_ARB_bindless_texture` handles. Each triangle carries
+  its slot, and for skin its first quadword, in a table the vertex shader reads. A CLUT load no longer flushes such a
+  batch, unless the CLUT comes from a render target. The draw order is unchanged. Textures with handles are deleted
+  4 presents later and are never re-specified.
+- A skin run's first batch carries VU memory and the rest carry none (the loop changes only quadword 4, which the
+  shader does not read). The backend keeps the run's copy.
+- `PS2X_GS_HW_TRACK_MULTITEX=0` restores one texture per batch, as does the absence of the bindless entry points.
+  `[gs-hw] track batches:` in session.log says which is in use.
+
+| run (3x, `RC_VU1_REF=0`) | fps in the slow windows (worst second) | GS thread | VU thread | process | draws |
+|---|---|---|---|---|---|
+| level 4, before (e48d38e) | 24.2 (13) | 0.92 | 0.46 | 1.76 | up to 716k per 5 s, ~9,500 a frame |
+| level 4, after | 60.0 (59) | 0.49 | 0.28 | 1.20 | up to 176k per 5 s, ~590 a frame |
+| level 4 elsewhere, before / after | 60 / 60 | 0.38 / 0.34 | 0.18 / 0.17 | | |
+| level 18, `MULTITEX=0` / after (5 s samples, 15-70 s) | 59.8 median (58.4) / 59.8 (58.6) | 0.71 / 0.63 | | 1.82 / 1.71 | 794k / 654k per 5 s |
+
+All windows are the six of a 200 s run (two laps). The pictures at the spots (fields 1500-1700) and on level 18 look
+the same as before.
+Front end (`replay playtest2`, 3x): 60.0 fps median, worst 5 s 59.2; menus, cup confirmation and race HUD look right.
+The jungle track select (scratchpad walk `jungle.pad`, field 1600) matches the subtractive-blend reference: smooth
+smoke, and the dancing natives (skinned, so on the new path) are drawn correctly. Not tested: Europe, two-player, the
+Track Editor.
+
 ## The two renderer routes
 
 **(a) Keep the emulated GS's GL renderer and speed it up PCSX2-style.**
