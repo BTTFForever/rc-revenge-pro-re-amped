@@ -10,6 +10,7 @@
 //   RC_EXP_LOG=1           a line per second of interpolation counters on stderr (session.log)
 //   RC_UI_PILLARBOX=1      with RC_WIDESCREEN: 2D sprites, text and rectangles (menus, pause, loading) drawn at the
 //                          right aspect about the screen's centre; full-width ones (backgrounds, fades) left filling
+//   RC_FE_TEXFIX=1         the front end's own early GfxTex_Update replaced by its frame-count step (front.cpp)
 //   RC_EXP_DIPS=1          a log line for every frame that took longer than 1.5 fields: where the time went
 #pragma once
 
@@ -31,6 +32,7 @@ struct Config
     bool log = false;
     bool uiPillarbox = false;
     bool dips = false;
+    bool feTexFix = false; // RC_FE_TEXFIX=1: the front end's early animated-texture upload left out (front.cpp)
 };
 
 const Config &config();

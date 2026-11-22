@@ -9,6 +9,7 @@
 // has been chosen (activeLanguage -1: the language menu comes first), and ScreenAdjust's box is 16 lines taller (PAL).
 // FrontEndInit, FrontEndProcess and CameraDestination differ only in register use and store order: one body.
 
+#include "rc_exp.h" // exp/quick-dirty
 #include "front.h"
 #include "front_fuzz.h"
 
@@ -238,7 +239,15 @@ void FrontEndProcess()
         m.time = time;
         guest_call<void>(sym::TaskProcess, time);
         guest_call<void>(sym::AnimUpdateAnims);
-        guest_call<void>(sym::GfxTex_Update);
+        // exp/quick-dirty (RC_FE_TEXFIX): this early GfxTex_Update re-uploads the animated textures, and each upload
+        // first waits (sceGsSyncPath) for the previous frame's VU1 chain, kicked at its Rdr_EndFrame, to finish: on the
+        // runtime that serialises the game thread with the whole VU1/GS pipeline (~7-9 ms a frame at the main menu).
+        // Rdr_EndFrame uploads them again before this frame's chain is kicked, so these uploads are never seen: keep only
+        // the frame count step (the same in both versions).
+        if (rc::exp::config().feTexFix)
+            G(framecount) = G(framecount) + 1;
+        else
+            guest_call<void>(sym::GfxTex_Update);
         if (const ptr32<sAMenuHeader> pMenu = menuSystem().pActiveMenu; pMenu && (pMenu->evenMoreFlags & 2u) != 0)
         {
             CheckCheatKeys(ptr32<sCheatKeyData>(sym::cheatData1G), time);

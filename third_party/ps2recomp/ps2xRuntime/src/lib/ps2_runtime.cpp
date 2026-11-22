@@ -27,6 +27,10 @@
 #include "ps2x/iop/iop_subsystem.h"
 
 #include <cstdio>
+#include <dlfcn.h>
+#include <execinfo.h>
+#include <map>
+#include <mutex>
 #include <cstdlib>
 #include <string_view>
 #include <iostream>
@@ -53,6 +57,63 @@ namespace ps2x::expstats
     std::atomic<uint64_t> g_ns[kSites]{};
     std::atomic<uint64_t> g_count[kSites]{};
     thread_local bool t_gameThread = false;
+
+    namespace
+    {
+        struct SlowStack
+        {
+            uint64_t count = 0, ns = 0;
+            int site = 0;
+            std::vector<uintptr_t> frames;
+        };
+        std::mutex g_slowMutex;
+        std::map<std::string, SlowStack> g_slow;
+    }
+
+    void recordSlow(Site site, uint64_t ns)
+    {
+        void *frames[14];
+        const int n = backtrace(frames, 14);
+        Dl_info info{};
+        uintptr_t base = 0;
+        if (dladdr(reinterpret_cast<void *>(&recordSlow), &info))
+            base = reinterpret_cast<uintptr_t>(info.dli_fbase);
+        std::string key = std::to_string(static_cast<int>(site));
+        std::vector<uintptr_t> offsets;
+        for (int i = 2; i < n; ++i) // skip recordSlow and ~Wait
+        {
+            const uintptr_t off = reinterpret_cast<uintptr_t>(frames[i]) - base;
+            offsets.push_back(off);
+            key += ':' + std::to_string(off);
+        }
+        std::lock_guard<std::mutex> lock(g_slowMutex);
+        SlowStack &entry = g_slow[key];
+        entry.count += 1;
+        entry.ns += ns;
+        entry.site = static_cast<int>(site);
+        entry.frames = std::move(offsets);
+    }
+
+    void dumpSlowStacks(int top)
+    {
+        std::vector<SlowStack> all;
+        {
+            std::lock_guard<std::mutex> lock(g_slowMutex);
+            for (auto &item : g_slow)
+                all.push_back(item.second);
+            g_slow.clear();
+        }
+        std::sort(all.begin(), all.end(), [](const SlowStack &a, const SlowStack &b) { return a.ns > b.ns; });
+        static const char *const names[] = {"vifq", "vifsync", "gsq", "gsdrain"};
+        for (int i = 0; i < top && i < static_cast<int>(all.size()); ++i)
+        {
+            std::fprintf(stderr, "[exp-slow] %s %llu waits %.1f ms:", names[all[i].site], static_cast<unsigned long long>(all[i].count),
+                         static_cast<double>(all[i].ns) / 1e6);
+            for (uintptr_t f : all[i].frames)
+                std::fprintf(stderr, " 0x%llx", static_cast<unsigned long long>(f - 1));
+            std::fprintf(stderr, "\n");
+        }
+    }
 }
 
 namespace ps2_host_display

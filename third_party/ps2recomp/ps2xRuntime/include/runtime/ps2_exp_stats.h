@@ -18,6 +18,10 @@ namespace ps2x::expstats
     extern std::atomic<uint64_t> g_ns[kSites];
     extern std::atomic<uint64_t> g_count[kSites];
     extern thread_local bool t_gameThread;
+    // Waits of more than 0.5 ms on the game thread: their call stacks (as offsets into the executable) are counted;
+    // dumpSlowStacks prints the heaviest (addr2line -f -C -e <binary> <offsets> names them) and starts over.
+    void recordSlow(Site site, uint64_t ns);
+    void dumpSlowStacks(int top);
 
     struct Wait
     {
@@ -37,6 +41,8 @@ namespace ps2x::expstats
             g_ns[site].fetch_add(static_cast<uint64_t>(ns), std::memory_order_relaxed);
             if (ns > 20000)
                 g_count[site].fetch_add(1u, std::memory_order_relaxed);
+            if (ns > 500000)
+                recordSlow(site, static_cast<uint64_t>(ns));
         }
     };
 }

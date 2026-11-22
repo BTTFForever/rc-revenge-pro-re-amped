@@ -630,6 +630,7 @@ struct GSHwBackend::Impl
     {
         uint64_t shuffles = 0;
         uint64_t draws = 0, batches = 0, skippedPsm = 0, unsupportedBlend = 0, texDecodes = 0, texHits = 0, skippedPrim = 0;
+        uint64_t barriers = 0, softBlends = 0, pabeDraws = 0, dateDraws = 0; // exp/quick-dirty
         std::chrono::steady_clock::time_point last = std::chrono::steady_clock::now();
     } stats;
     bool statsEnabled = std::getenv("GOW_GS_HW_STATS") != nullptr;
@@ -1596,7 +1597,7 @@ struct GSHwBackend::Impl
         g.Uniform4i(locShTexa, shuffleState.texa.ta0 >> 7, shuffleState.texa.ta1 >> 7, shuffleState.texa.aem ? 1 : 0, 0);
         g.Uniform2f(locShInvSize, 1.0f / dst.pxW, 1.0f / dst.pxH);
         if (&src == &dst)
-            g.TextureBarrier();
+            { ++stats.barriers; g.TextureBarrier(); }
         g.BindVertexArray(shuffleVao);
         g.BindBuffer(kArrayBuffer, shuffleVbo);
         for (uint32_t i = 0; i < 4; ++i)
@@ -2357,6 +2358,9 @@ struct GSHwBackend::Impl
             softBlend = true;
         if (softBlend || zAliasWrite) // the shader produces the final colour (a Z write replaces the colour word)
             blend = false;
+        stats.softBlends += softBlend ? 1u : 0u; // exp/quick-dirty
+        stats.pabeDraws += pabe ? 1u : 0u;
+        stats.dateDraws += ((c.test >> 14) & 1u) != 0u ? 1u : 0u;
         if (blend)
         {
             g.Enable(kBlend);
@@ -2391,7 +2395,7 @@ struct GSHwBackend::Impl
                 g.BindTexture(kTexture2D, rt.color);
                 setUniform1i(g, locDest, 4);
                 g.ActiveTexture(kTexture0);
-                g.TextureBarrier();
+                { ++stats.barriers; g.TextureBarrier(); }
             }
         }
         setUniform2f(g, locInvSize, 1.0f / rt.pxW, 1.0f / rt.pxH);
@@ -2412,7 +2416,7 @@ struct GSHwBackend::Impl
                         !overwrittenByDepth(*candidate))
                         src = candidate;
             if (src == &rt)
-                g.TextureBarrier();
+                { ++stats.barriers; g.TextureBarrier(); }
             Texture dummy;
             RenderTarget *zsrc = nullptr;
             const bool zFormat = c.tex0.psm == 0x30 || c.tex0.psm == 0x31 || c.tex0.psm == 0x32 || c.tex0.psm == 0x3A;
@@ -2432,7 +2436,7 @@ struct GSHwBackend::Impl
                 depthOwner = rsrc != nullptr;
             }
             if (rsrc == &rt)
-                g.TextureBarrier();
+                { ++stats.barriers; g.TextureBarrier(); }
             const bool indexed = !(src || rsrc || zsrc) && isIndexed(c.tex0.psm) && vram != nullptr;
             Texture &tex = (src || rsrc || zsrc) ? dummy : indexed ? indexTextureFor(s) : textureFor(s);
             setUniform1i(g, locIndexed, indexed ? 1 : 0);
@@ -2644,7 +2648,7 @@ struct GSHwBackend::Impl
             for (size_t gi = 0; gi < triGroups.size(); ++gi)
             {
                 if (gi != 0)
-                    g.TextureBarrier();
+                    { ++stats.barriers; g.TextureBarrier(); }
                 issueDraw(ringFirst + static_cast<GLint>(first * 3u), static_cast<GLsizei>((triGroups[gi] - first) * 3u));
                 first = triGroups[gi];
             }
@@ -2791,6 +2795,9 @@ struct GSHwBackend::Impl
         if (now - stats.last < std::chrono::seconds(5))
             return;
         stats.last = now;
+        std::fprintf(stderr, "[gs-hw-exp] barriers=%llu softBlends=%llu pabe=%llu date=%llu\n", (unsigned long long)stats.barriers,
+                     (unsigned long long)stats.softBlends, (unsigned long long)stats.pabeDraws, (unsigned long long)stats.dateDraws);
+        stats.barriers = stats.softBlends = stats.pabeDraws = stats.dateDraws = 0;
         std::fprintf(stderr, "[gs-hw] shuffles=%llu draws=%llu batches=%llu texDecodes=%llu texHits=%llu skippedPsm=%llu skippedPrim=%llu unsupportedBlend=%llu textures=%zu\n",
                      (unsigned long long)stats.shuffles, (unsigned long long)stats.draws, (unsigned long long)stats.batches, (unsigned long long)stats.texDecodes,
                      (unsigned long long)stats.texHits, (unsigned long long)stats.skippedPsm, (unsigned long long)stats.skippedPrim,

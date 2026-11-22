@@ -66,6 +66,7 @@ Config load()
     c.log = flag("RC_EXP_LOG");
     c.uiPillarbox = c.widescreen && flag("RC_UI_PILLARBOX");
     c.dips = flag("RC_EXP_DIPS");
+    c.feTexFix = flag("RC_FE_TEXFIX");
     return c;
 }
 
@@ -304,6 +305,9 @@ void swapMark(int stage)
         std::fprintf(stderr, "[exp-frame] %.0f frames, per frame ms: interval %.1f game %.1f (vifq %.1f vifsync %.1f gsq %.1f gsdrain %.1f) gs %.1f vblank %.1f\n",
                      n, g_secInterval / n, g_secGame / n, g_secWait[0] / n, g_secWait[1] / n, g_secWait[2] / n, g_secWait[3] / n,
                      g_secGs / n, g_secVblank / n);
+        static int seconds = 0;
+        if (++seconds % 5 == 0)
+            ps2x::expstats::dumpSlowStacks(6);
         g_secFrames = g_secInterval = g_secGame = g_secGs = g_secVblank = 0;
         for (double &w : g_secWait)
             w = 0;

@@ -146,6 +146,27 @@ had no great slowdown. The menu border stayed stretched; the Track Editor's menu
 - **Track Editor:** the pillarbox is on there too (its 2D is all screen space: menus, the 2D map, help; the cursor is
   3D).
 
+**Measured 2026-11-22 (RTX 2060, attract-free main menu after `RC_SKIP_INTRO=1`, no input, 4:3 unless said, scale 3):**
+
+| run | pictures/s | per picture (ms): EE work / waiting on VU1+GIF / swap's GS wait / vblank wait | GS draws (batches) per picture |
+|---|---|---|---|
+| USA native | 54 (of 60) | 2 / 8.5 / 0.2 / 8 | ~1,390 (1,170) |
+| Europe native | 45 at first, then 50 (of 50) | 1.5 / 9 / 1.3 / 11 | ~1,550 (1,370) |
+| USA, front-end natives (179 functions) left recompiled (`RC_DECOMP_SKIP`) | 53-55 | same | same |
+| USA, scale 2 / scale 1 | 58 / 60 | wait 7.5 / 3.6 | same |
+| USA, widescreen | 49-51 | wait 13 | ~1,520 |
+
+Threads at the USA main menu, scale 3: GS thread 97% of a core, VU1 thread 27%, game thread 18%, GIF thread 7%;
+`nvidia-smi` 100% (96% even at scale 1). Barriers 6 per picture and shader blends 6 per picture: not the cost;
+texture decodes ~16 per picture. So: the same scene in both versions, not our native code; the limit is the GS
+thread issuing ~1,200 GL batches a picture plus the GPU, and Europe simply has 20 ms. `RC_DECOMP=0` (everything
+recompiled) did not start (no picture in 28 s), so the all-recompiled build was not compared.
+
+The game-thread wait was first in the front end's own early `GfxTex_Update` (each animated-texture upload waits on
+`sceGsSyncPath` for the previous frame's chain): `RC_FE_TEXFIX=1` replaces it with its frame-count step (the uploads
+are redone by `Rdr_EndFrame` before the next chain, so they were never seen). The wait then moves to the swap: no
+gain in pictures per second, as expected once the GS thread is the limit. Off by default.
+
 Next if the front end is GS-bound: a lower internal scale for the front end only (the God of War back end reads
 `PS2X_GS_HW_SCALE` once and sizes each render target with it, so changing it at a scene change means dropping and
 recreating the targets: possible, not done), or finding the costly draw with `GOW_GS_HW_STATS=1` and a GPU capture.
