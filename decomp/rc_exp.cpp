@@ -478,8 +478,13 @@ void paceWait(int k)
     const double field = RC_VERSION_EU ? 1.0 / 50.0 : 1001.0 / 60000.0;
     const auto target = g_vblank + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
                                        std::chrono::duration<double>(field * k / g_config.perTick));
-    if (std::chrono::steady_clock::now() < target)
-        std::this_thread::sleep_until(target);
+    // Short sleeps with a scheduling point between them, so interrupts and other EE threads due meanwhile still run.
+    while (std::chrono::steady_clock::now() < target)
+    {
+        guest_checkpoint();
+        const auto left = target - std::chrono::steady_clock::now();
+        std::this_thread::sleep_for(std::min<std::chrono::steady_clock::duration>(left, std::chrono::microseconds(500)));
+    }
 }
 
 void endFrameNoVSync()

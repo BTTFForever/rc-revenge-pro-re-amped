@@ -155,8 +155,8 @@ game would slow down by half, so they stop for 2 s, then 4, 8 ... (up to ~64 s) 
   do not count.
 - The 3D chain lags the 2D packet by one flip (the game kicks a frame's 3D after its flip), as on main, so now by
   half a tick.
-- The in-between flips are paced by a host sleep on the game thread (up to half a field): interrupts due in that time
-  are taken late.
+- The in-between flips are paced by sleeping on the game thread (up to half a field) in 0.5 ms steps with a
+  scheduling point (`guest_checkpoint`) between them, so interrupts and other EE threads still run, a little late.
 - The window loop latches what is displayed when it runs: without vsync on the window it tears, and at 120 Hz on a
   60 Hz display every other picture is never seen.
 
