@@ -87,6 +87,11 @@ load(a.TexSubImage2D, "glTexSubImage2D", missing);
     load(a.ReadPixels, "glReadPixels", graphicsMissing);
     load(a.TextureBarrier, "glTextureBarrier", graphicsMissing);
     load(a.PixelStorei, "glPixelStorei", graphicsMissing);
+    std::string samplerMissing;
+    load(a.GenSamplers, "glGenSamplers", samplerMissing);
+    load(a.DeleteSamplers, "glDeleteSamplers", samplerMissing);
+    load(a.BindSampler, "glBindSampler", samplerMissing);
+    load(a.SamplerParameteri, "glSamplerParameteri", samplerMissing);
     std::string parallelMissing;
     load(a.MaxShaderCompilerThreads, "glMaxShaderCompilerThreadsARB", parallelMissing);
     if (!a.MaxShaderCompilerThreads)

@@ -515,6 +515,15 @@ struct GSHwBackend::Impl
     GLint locSwBlend = -1, locColClamp = -1, locAbcd = -1, locFix = -1, locZAlias = -1, locZAliasWrite = -1, locZAliasMax = -1;
 
     GLuint tableTex = 0, paletteTex = 0;
+    // Sampler objects for the draw texture (PERF_INVESTIGATION.md cause 1): one per filter x wrap S x wrap T, bound to
+    // kDrawTexUnit only when the combination changes, so no draw changes a texture's own parameters (NVIDIA re-validates
+    // the texture for in-flight draws, ~5 us of GPU time each). The reinterpret / CLUT source on unit 1 is always
+    // point-sampled: a fixed sampler. PS2X_GS_HW_TEXPARAM=1 (or no sampler entry points) keeps glTexParameteri on unit 0.
+    static constexpr GLuint kDrawTexUnit = 6u;
+    GLuint drawSamplers[8] = {};      // bit 0 linear, bit 1 wrap S clamp, bit 2 wrap T clamp
+    GLuint pointSampler = 0;
+    int boundDrawSampler = -1;
+    bool useSamplers = false;
     GLuint presentProgram = 0, presentVao = 0, presentFbo = 0, presentTex = 0;
     GLint locPresentSrc = -1, locPresentOffset = -1, locPresentEdge = -1;
     uint32_t presentW = 0, presentH = 0;
@@ -804,6 +813,27 @@ struct GSHwBackend::Impl
         g.TexImage2D(kTexture2D, 0, static_cast<GLint>(kRgba8), 256, 1, 0, kRgba, kUnsignedByte, nullptr);
         g.TexParameteri(kTexture2D, kTextureMinFilter, kNearest);
         g.TexParameteri(kTexture2D, kTextureMagFilter, kNearest);
+        const char *texParamSetting = std::getenv("PS2X_GS_HW_TEXPARAM");
+        useSamplers = g.GenSamplers && g.BindSampler && g.SamplerParameteri && !(texParamSetting && *texParamSetting == '1');
+        if (useSamplers)
+        {
+            g.GenSamplers(8, drawSamplers);
+            for (int i = 0; i < 8; ++i)
+            {
+                const GLint filter = (i & 1) ? kLinear : kNearest;
+                g.SamplerParameteri(drawSamplers[i], kTextureMinFilter, filter);
+                g.SamplerParameteri(drawSamplers[i], kTextureMagFilter, filter);
+                g.SamplerParameteri(drawSamplers[i], kTextureWrapS, (i & 2) ? kClampToEdge : kRepeat);
+                g.SamplerParameteri(drawSamplers[i], kTextureWrapT, (i & 4) ? kClampToEdge : kRepeat);
+            }
+            g.GenSamplers(1, &pointSampler);
+            g.SamplerParameteri(pointSampler, kTextureMinFilter, kNearest);
+            g.SamplerParameteri(pointSampler, kTextureMagFilter, kNearest);
+            g.SamplerParameteri(pointSampler, kTextureWrapS, kClampToEdge);
+            g.SamplerParameteri(pointSampler, kTextureWrapT, kClampToEdge);
+            g.BindSampler(1u, pointSampler);
+        }
+        std::fprintf(stderr, "[gs-hw] draw textures: %s\n", useSamplers ? "sampler objects" : "glTexParameteri per draw");
     }
 
     // ---- render targets -------------------------------------------------------------------------------------------
@@ -1235,8 +1265,11 @@ struct GSHwBackend::Impl
         }
         g.ActiveTexture(kTexture0 + 1);
         g.BindTexture(kTexture2D, depthOwner ? rt.depth : rt.color);
-        g.TexParameteri(kTexture2D, kTextureMinFilter, kNearest);
-        g.TexParameteri(kTexture2D, kTextureMagFilter, kNearest);
+        if (!useSamplers)
+        {
+            g.TexParameteri(kTexture2D, kTextureMinFilter, kNearest);
+            g.TexParameteri(kTexture2D, kTextureMagFilter, kNearest);
+        }
         g.ActiveTexture(kTexture0 + 2);
         g.BindTexture(kTexture2D, tableTex);
         g.ActiveTexture(kTexture0);
@@ -1320,8 +1353,11 @@ struct GSHwBackend::Impl
         g.UseProgram(clutProgram);
         g.ActiveTexture(kTexture0 + 1);
         g.BindTexture(kTexture2D, rt->color);
-        g.TexParameteri(kTexture2D, kTextureMinFilter, kNearest);
-        g.TexParameteri(kTexture2D, kTextureMagFilter, kNearest);
+        if (!useSamplers)
+        {
+            g.TexParameteri(kTexture2D, kTextureMinFilter, kNearest);
+            g.TexParameteri(kTexture2D, kTextureMagFilter, kNearest);
+        }
         g.ActiveTexture(kTexture0 + 2);
         g.BindTexture(kTexture2D, tableTex);
         g.ActiveTexture(kTexture0 + 3);
@@ -2444,8 +2480,26 @@ struct GSHwBackend::Impl
                 setUniform1i(g, locIdxPalette, 5);
                 setUniform4i(g, locWrap, (c.clamp & 3u) == 0u ? 0 : 1, ((c.clamp >> 2) & 3u) == 0u ? 0 : 1, 0, 0);
             }
-            g.ActiveTexture(kTexture0);
-            g.BindTexture(kTexture2D, zsrc ? zsrc->depth : src ? src->color : rsrc ? rsrc->color : tex.id);
+            const GLuint drawTexture = zsrc ? zsrc->depth : src ? src->color : rsrc ? rsrc->color : tex.id;
+            if (useSamplers)
+            {
+                // indexed textures are read with texelFetch (the sampler does not matter); depth is always point sampled
+                const bool linear = s.linearFilter && !indexed && !zsrc;
+                const int key = (linear ? 1 : 0) | ((c.clamp & 3u) != 0u ? 2 : 0) | (((c.clamp >> 2) & 3u) != 0u ? 4 : 0);
+                if (key != boundDrawSampler)
+                {
+                    g.BindSampler(kDrawTexUnit, drawSamplers[key]);
+                    boundDrawSampler = key;
+                }
+                g.ActiveTexture(kTexture0 + kDrawTexUnit);
+                g.BindTexture(kTexture2D, drawTexture);
+                g.ActiveTexture(kTexture0);
+            }
+            else
+            {
+                g.ActiveTexture(kTexture0);
+                g.BindTexture(kTexture2D, drawTexture);
+            }
             setUniform1i(g, locZTex, !zsrc ? 0 : c.tex0.psm == 0x32 || c.tex0.psm == 0x3A ? 16 : c.tex0.psm == 0x31 ? 24 : 32);
             setUniform1f(g, locZMax, zsrc ? zMaxFor(static_cast<uint8_t>(c.tex0.psm)) : 1.0f);
             setUniform1i(g, locRtTex24, !(src || rsrc) ? 0 : c.tex0.psm == GS_PSM_CT24 ? 1 : family16(c.tex0.psm) ? 2 : 0);
@@ -2455,25 +2509,31 @@ struct GSHwBackend::Impl
             setUniform1f(g, locTa0, static_cast<float>(s.texa.ta0));
             setUniform1f(g, locTa1, static_cast<float>(s.texa.ta1));
             setUniform1i(g, locAem, s.texa.aem ? 1 : 0);
-            const GLint filter = s.linearFilter ? kLinear : kNearest;
-            g.TexParameteri(kTexture2D, kTextureMinFilter, filter);
-            g.TexParameteri(kTexture2D, kTextureMagFilter, filter);
-            const uint64_t clamp = c.clamp;
-            const GLint wu = (clamp & 3u) == 0u ? kRepeat : kClampToEdge, wv = ((clamp >> 2) & 3u) == 0u ? kRepeat : kClampToEdge;
-            g.TexParameteri(kTexture2D, kTextureWrapS, wu);
-            g.TexParameteri(kTexture2D, kTextureWrapT, wv);
-            if (indexed)
+            if (!useSamplers)
             {
-                g.TexParameteri(kTexture2D, kTextureMinFilter, kNearest);
-                g.TexParameteri(kTexture2D, kTextureMagFilter, kNearest);
+                const GLint filter = s.linearFilter ? kLinear : kNearest;
+                g.TexParameteri(kTexture2D, kTextureMinFilter, filter);
+                g.TexParameteri(kTexture2D, kTextureMagFilter, filter);
+                const uint64_t clamp = c.clamp;
+                const GLint wu = (clamp & 3u) == 0u ? kRepeat : kClampToEdge, wv = ((clamp >> 2) & 3u) == 0u ? kRepeat : kClampToEdge;
+                g.TexParameteri(kTexture2D, kTextureWrapS, wu);
+                g.TexParameteri(kTexture2D, kTextureWrapT, wv);
+                if (indexed)
+                {
+                    g.TexParameteri(kTexture2D, kTextureMinFilter, kNearest);
+                    g.TexParameteri(kTexture2D, kTextureMagFilter, kNearest);
+                }
             }
-            setUniform1i(g, locTex, 0);
+            setUniform1i(g, locTex, useSamplers ? static_cast<GLint>(kDrawTexUnit) : 0);
             setUniform2f(g, locTexDim, static_cast<float>(std::max<uint16_t>(s.textureWidth, 1)), static_cast<float>(std::max<uint16_t>(s.textureHeight, 1)));
             if (zsrc)
             {
                 setUniform2f(g, locTexSize, static_cast<float>(zsrc->pxW), static_cast<float>(zsrc->pxH));
-                g.TexParameteri(kTexture2D, kTextureMinFilter, kNearest);
-                g.TexParameteri(kTexture2D, kTextureMagFilter, kNearest);
+                if (!useSamplers)
+                {
+                    g.TexParameteri(kTexture2D, kTextureMinFilter, kNearest);
+                    g.TexParameteri(kTexture2D, kTextureMagFilter, kNearest);
+                }
             }
             else if (src)
                 setUniform2f(g, locTexSize, static_cast<float>(src->pxW), static_cast<float>(src->pxH));

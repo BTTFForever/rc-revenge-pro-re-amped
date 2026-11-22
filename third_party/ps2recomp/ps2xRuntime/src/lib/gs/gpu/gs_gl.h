@@ -163,6 +163,11 @@ namespace GSGL
         void (*ReadPixels)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, void *) = nullptr;
         void (*TextureBarrier)() = nullptr;
         void (*PixelStorei)(GLenum, GLint) = nullptr;
+        // Sampler objects (optional): the hardware renderer's draw texture state without per-draw glTexParameteri.
+        void (*GenSamplers)(GLsizei, GLuint *) = nullptr;
+        void (*DeleteSamplers)(GLsizei, const GLuint *) = nullptr;
+        void (*BindSampler)(GLuint, GLuint) = nullptr;
+        void (*SamplerParameteri)(GLuint, GLenum, GLint) = nullptr;
         bool graphics = false;
     };
 
