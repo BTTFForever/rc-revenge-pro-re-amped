@@ -374,15 +374,21 @@ namespace rc::replay::lean
             k.special = _mm_or_si128(k.special, _mm_and_si128(_mm_cmpeq_epi32(_mm_and_si128(_mm_castps_si128(r), kExp), kExp), mask));
             return r;
         }
-        // acc + a * b, the product rounded first; a zero product of two non-zero factors is the case left to the reference.
-        inline __m128 madd(Chk &k, __m128 acc, __m128 a, __m128 b)
+        // acc + a * b on the lanes of `mask`, the product rounded first; left to the reference: a zero product of two
+        // non-zero factors, a product of the largest magnitude (it may have overflowed: the reference clamps the sum),
+        // and (step 9 batch 3: batch 1's third fall-back, vu_lean.h) a sum below 2^-101 from a non-zero accumulator.
+        inline __m128 madd(Chk &k, __m128 acc, __m128 a, __m128 b, __m128i mask = _mm_set1_epi32(-1))
         {
             const __m128 zero = _mm_setzero_ps();
+            const __m128i mag = _mm_set1_epi32(0x7FFFFFFF);
             const __m128 p = _mm_mul_ps(a, b);
-            k.tiny = _mm_or_ps(k.tiny, _mm_and_ps(_mm_cmpeq_ps(p, zero), _mm_and_ps(_mm_cmpneq_ps(a, zero), _mm_cmpneq_ps(b, zero))));
-            // ... or a product of the largest magnitude (it may have overflowed: the reference clamps the sum)
-            k.special = _mm_or_si128(k.special, _mm_cmpeq_epi32(_mm_and_si128(_mm_castps_si128(p), _mm_set1_epi32(0x7FFFFFFF)), _mm_set1_epi32(0x7F7FFFFF)));
-            return chk(k, _mm_add_ps(acc, p), _mm_set1_epi32(-1));
+            k.tiny = _mm_or_ps(k.tiny, _mm_and_ps(_mm_castsi128_ps(mask), _mm_and_ps(_mm_cmpeq_ps(p, zero), _mm_and_ps(_mm_cmpneq_ps(a, zero), _mm_cmpneq_ps(b, zero)))));
+            k.special = _mm_or_si128(k.special, _mm_and_si128(mask, _mm_cmpeq_epi32(_mm_and_si128(_mm_castps_si128(p), mag), _mm_set1_epi32(0x7F7FFFFF))));
+            const __m128 r = _mm_add_ps(acc, p);
+            const __m128i tinySum = _mm_andnot_si128(_mm_cmpeq_epi32(_mm_and_si128(_mm_castps_si128(acc), mag), _mm_setzero_si128()),
+                                                     _mm_cmplt_epi32(_mm_and_si128(_mm_castps_si128(r), mag), _mm_set1_epi32(0x0D000000)));
+            k.special = _mm_or_si128(k.special, _mm_and_si128(mask, tinySum));
+            return chk(k, r, mask);
         }
         inline float sc(Chk &k, float r)
         {
@@ -417,7 +423,7 @@ namespace rc::replay::lean
         };
         const __m128 m1 = ld(18), m2 = ld(19), m3 = ld(20), m4 = ld(21), r9 = ld(16), r10 = ld(17), r21 = ld(15), r23 = ld(12), tint = ld(11);
         const __m128i kXYZ = lanes(7), kXY = lanes(3), kXYW = lanes(11), kAll = lanes(15);
-        const __m128 one = _mm_set1_ps(1.0f), tintW = _mm_shuffle_ps(tint, tint, 0xFF), tintOne = _mm_mul_ps(tint, one);
+        const __m128 one = _mm_set1_ps(1.0f), tintW = _mm_shuffle_ps(tint, tint, 0xFF);
         const float nearNeg = 0.0f - lane(r23, 2);
         const uint32_t wBits = v::bits(lane(r9, 3));
         const __m128i limit = _mm_set1_epi32((wBits & 0x7F800000u) != 0u ? static_cast<int32_t>(wBits & 0x7FFFFFFFu) : 0x007FFFFF);
@@ -529,7 +535,7 @@ namespace rc::replay::lean
                     const __m128 raw = ld(reader + 7 + c);
                     const __m128 f = _mm_cvtepi32_ps(_mm_castps_si128(raw));
                     const __m128 acc = chk(k, _mm_mul_ps(f, tintW), kXYZ);
-                    const __m128 r = chk(k, _mm_add_ps(acc, tintOne), kXYZ);
+                    const __m128 r = madd(k, acc, tint, one, kXYZ); // applyTint's fmadd(acc, tint, 1.0)
                     colour[c] = _mm_castps_si128(sel(_mm_castsi128_ps(ftoi(r)), raw, kXYZ));
                 }
                 if (k.scalar || _mm_movemask_epi8(k.special) != 0 || _mm_movemask_ps(k.tiny) != 0)

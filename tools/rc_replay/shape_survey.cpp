@@ -94,7 +94,7 @@ namespace rc::replay
                      guardFanTriangles = 0, plainRuns = 0, plainIn = 0, plainQuick = 0, boxRuns = 0, boxIn = 0, boxQuick = 0, boxWrong = 0, boxTested = 0;
             uint64_t guardEarly = 0, hardRuns = 0, hardRunsIn = 0, hard = 0, fastBlocks = 0;
             uint64_t fastTicks = 0, fastIn = 0, fastQuick = 0, fastHard = 0, fastOdd = 0, fastCleanRuns = 0, fastCompared = 0, fastDiffer = 0, fastCountDiffer = 0,
-                     fastClassDiffer = 0;
+                     fastClassDiffer = 0, fastOddRuns = 0;
             uint64_t leanTicks = 0, packets = 0, packetBytes = 0, packetDiffer = 0, countDiffer = 0, memoryDiffer = 0, registerDiffer = 0, runsDiffer = 0;
         } prog[kPrograms];
         uint64_t constantChanges = 0, constantRuns = 0;
@@ -313,7 +313,12 @@ namespace rc::replay
                 fastValid = fastCount.hard == 0;
                 if (fastValid)
                     ++s.fastCleanRuns;
-                if (fastCount.in != c.in || fastCount.culled != c.culled || fastCount.quick + fastCount.hard != c.in - c.culled - c.allBehind - c.guardEarly ||
+                // A triangle with a value the mode cannot take is counted hard before the facing test (the reference's step
+                // decides it): such a run's classification is not compared (step 9 batch 3: the third MADD fall-back meets
+                // exact cancellations to zero, which the classifier may cull).
+                if (fastCount.odd)
+                    ++s.fastOddRuns;
+                else if (fastCount.in != c.in || fastCount.culled != c.culled || fastCount.quick + fastCount.hard != c.in - c.culled - c.allBehind - c.guardEarly ||
                     fastCount.allBehind != c.allBehind || fastCount.guardEarly != c.guardEarly)
                     ++s.fastClassDiffer;
             }
@@ -669,6 +674,7 @@ namespace rc::replay
                 pl("fast: runs without a hard triangle", q.fastCleanRuns);
                 pl("fast: triangles compared with the reference's packets, differing", q.fastCompared, q.fastDiffer);
                 pl("fast: runs with another triangle count / another classification", q.fastCountDiffer, q.fastClassDiffer);
+                pl("fast: runs with a value the host mode cannot treat (classification not compared)", q.fastOddRuns);
                 pl("fast: texture blocks", q.fastBlocks);
                 pl("fast: nanoseconds", static_cast<uint64_t>(static_cast<double>(q.fastTicks) * ns));
             }

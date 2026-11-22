@@ -556,6 +556,18 @@ namespace rc::rd
         return true;
     }
 
+    bool Gif2dReader::feedPath1Triangle(const uint32_t *nine)
+    {
+        // feedPath1's first branch for a 160-byte packet with the triangle tag: the same conditions, the same counters.
+        if (!m_started || !m_opt.path1Direct || m_path1Walker.tagOpen() || !path1Triangle(nine))
+            return false;
+        ++m_stats.path1Packets;
+        m_stats.path1Bytes += 160u;
+        ++m_stats.path1Triangles;
+        ++m_stats.path1FastTriangles;
+        return true;
+    }
+
     bool Gif2dReader::path1Triangle(const uint32_t *w)
     {
         // What the walker does with the packet (gif_walk.cpp packed(): per corner ST, then RGBAQ with the ST's Q, then XYZ2,

@@ -124,6 +124,7 @@ namespace rc::rd
             uint64_t frameUploads = 0, frameUploadBlits = 0, frameUploadsOther = 0; // Options::frameUploads
             // (P2 step 9 batch 2) Options::path1Direct, clutMemo, stateMemo
             uint64_t path1Triangles = 0;       // triangle packets put into the list by path1Triangle
+            uint64_t path1FastTriangles = 0;   // ... of them handed over by a fast path without a packet (feedPath1Triangle)
             uint64_t path1TrianglesWalked = 0; // ... recognised but sent through the walker (queue not empty, PRIM not a
                                                // triangle list, ADC on the third corner, a planted register fault)
             uint64_t path1Flushes = 0;         // NLOOP 0 packets dropped
@@ -177,6 +178,10 @@ namespace rc::rd
         // 4.4). False, with nothing changed: the caller must send the packet through the walker (the vertex queue is not
         // empty, PRIM is not a triangle list, the third corner has ADC, or a planted register fault is on in this cycle).
         bool path1Triangle(const uint32_t *nine);
+        // (P2 step 9 batch 3) A fast path's triangle (render/shape): the nine data quadwords of a packet whose tag the
+        // path found to be the triangle tag with EOP (160 bytes), taken as feedPath1 would take that packet with
+        // path1Direct. False, with nothing changed: the caller sends the 160-byte packet through feedPath1.
+        bool feedPath1Triangle(const uint32_t *nine);
         // A side tag's begin or end as a scope command (PATH1's spans: FrameReader places them between the runs).
         void scope(const rc::rec::Span &s);
         // The current cycle (for a caller's planted faults).

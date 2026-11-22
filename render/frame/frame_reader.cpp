@@ -49,6 +49,9 @@ namespace rc::rd
             Vif1Reader::Options v = m_vif.options();
             v.library = Vu1Library::Lean;
             v.directEntries = true;
+            v.fastPaths = m_opt.fastPaths;
+            v.fastFault = m_opt.fastFault;
+            v.fastFaultCycle = m_opt.fastFaultCycle;
             m_vif.setOptions(v);
         }
     }
@@ -150,6 +153,16 @@ namespace rc::rd
             f.m_path1Packets.push_back(bytes);
         }
         f.m_gif.feedPath1(data, bytes);
+    }
+
+    bool FrameReader::Bridge::triangle(const uint32_t *nine)
+    {
+        // Only where packet() would have done nothing but feed the GIF reader: no collection, no hash (the fast reader
+        // has none), no tap that wants the packet. The planted packet fault drops state packets only.
+        FrameReader &f = *self;
+        if (!f.m_opt.fast || f.m_opt.collectPath1 || (f.m_tap && !f.m_tap->fastTriangles()))
+            return false;
+        return f.m_gif.feedPath1Triangle(nine);
     }
 
     void FrameReader::Bridge::runEnd(const Vu1Run &run, uint8_t *vuData, float (*vf)[4])

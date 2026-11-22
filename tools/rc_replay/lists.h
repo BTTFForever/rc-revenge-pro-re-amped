@@ -12,7 +12,8 @@
 // tools/live_check.sh) both start from reset with the live reader's options, as the dlst consumer runs it.
 //
 // Planted faults (--fault <name>[:<cycle>], from that cycle on, in the fast reader only): adc (path1Triangle ignores ADC),
-// clut-memo (the CLUT memo ignores memory writes), state-memo (the state-packet memo compares bytes alone). Each must fail.
+// clut-memo (the CLUT memo ignores memory writes), state-memo (the state-packet memo compares bytes alone); (batch 3) the
+// track's fast path: bias, fused, round-x, edge-two, hard-quick (render/shape/fast_run.h FastFault). Each must fail.
 
 #include "consumer.h"
 

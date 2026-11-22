@@ -44,7 +44,13 @@ namespace rc::replay
             f.gif.path1Prims = true;
             f.gif.frameUploads = true;
             f.fast = fast;
-            if (fast && !o.fault.empty())
+            rc::shape::FastFault path = rc::shape::FastFault::None;
+            if (fast && !o.fault.empty() && rc::shape::parseFastFault(o.fault.c_str(), path))
+            {
+                f.fastFault = path;
+                f.fastFaultCycle = o.faultCycle;
+            }
+            else if (fast && !o.fault.empty())
             {
                 f.gif.fastFault = faultCode(o.fault);
                 f.gif.fastFaultCycle = o.faultCycle;
@@ -55,7 +61,11 @@ namespace rc::replay
         double msOf(std::chrono::steady_clock::duration d) { return std::chrono::duration<double, std::milli>(d).count(); }
     }
 
-    bool parseListsFault(const std::string &name) { return faultCode(name) != Gif2dReader::Options::kFastFaultNone; }
+    bool parseListsFault(const std::string &name)
+    {
+        rc::shape::FastFault f;
+        return faultCode(name) != Gif2dReader::Options::kFastFaultNone || rc::shape::parseFastFault(name.c_str(), f);
+    }
 
     struct ListsCheck::Impl
     {
@@ -71,6 +81,7 @@ namespace rc::replay
         {
             std::vector<Lanes> *runs = nullptr;
             bool packet(const uint8_t *, uint32_t) override { return true; }
+            bool fastTriangles() const override { return true; }
             void runEnd(const Vu1Run &, uint8_t *, float (*vf)[4]) override
             {
                 Lanes l;
@@ -84,6 +95,7 @@ namespace rc::replay
             const KickView *k = nullptr;
             size_t ri = 0;
             bool packet(const uint8_t *, uint32_t) override { return true; }
+            bool fastTriangles() const override { return true; }
             void runEnd(const Vu1Run &run, uint8_t *, float (*vf)[4]) override
             {
                 ++m->runs;
@@ -306,6 +318,21 @@ namespace rc::replay
                     " (strict %" PRIu64 "), %" PRIu64 " of them from the load memo, %" PRIu64 " TEX0 writes answered by the memo; palette checks skipped %" PRIu64 "\n",
                     gf.path1Packets, gf.path1Triangles, gf.path1TrianglesWalked, gf.path1Flushes, gf.stateMemoHits, gf.path1Walked, vf.directRuns, gf.clutLoads,
                     gs.clutLoads, gf.clutLoadsFromMemo, gf.clutMemoHits, s.fast.gif().cache().stats().paletteChecksSkipped);
+        const rc::shape::FastStats &fs = vf.fast;
+        uint64_t declined = 0;
+        std::string byProgram;
+        for (uint32_t p = 0; p < 6; ++p)
+            if (fs.declined[p])
+            {
+                declined += fs.declined[p];
+                byProgram += std::string(byProgram.empty() ? "" : ", ") + rc::vu1::programName(static_cast<rc::vu1::Program>(p)) + " " + std::to_string(fs.declined[p]);
+            }
+        std::printf("lists: fast paths: %" PRIu64 " runs (TRdr entry 0; largest input %u quadwords), %" PRIu64 " declined (%s; of them %" PRIu64
+                    " TRdr runs whose input does not parse within the buffer); %" PRIu64 " triangles read: %" PRIu64 " culled, %" PRIu64 " all behind, %" PRIu64
+                    " beyond one edge, %" PRIu64 " quick (%" PRIu64 " straight into the list, %" PRIu64 " as packets), %" PRIu64 " hard (%" PRIu64
+                    " of them for a value the mode cannot take); %" PRIu64 " texture blocks; triangles into the list without a packet %" PRIu64 "\n",
+                    fs.runs, fs.maxExtent, declined, byProgram.empty() ? "none" : byProgram.c_str(), fs.declinedParse, fs.in, fs.culled, fs.allBehind, fs.edge,
+                    fs.quick, fs.direct, fs.rebuilt, fs.hard, fs.odd, fs.blocks, gf.path1FastTriangles);
         const double tS = s.strict.vif().nsPerTick() / 1e6, tF = s.fast.vif().nsPerTick() / 1e6;
         const Vif1Reader::Stats &vs = s.strict.vif().stats();
         if (s.path1Kicks)

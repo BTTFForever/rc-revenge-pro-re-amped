@@ -299,9 +299,14 @@ target_link_libraries(rc_replay PRIVATE rc_vu1_ref)
 # (step 8 batch 1, RENDERER_3D_DESIGN.md 2) rc_vif: the VIF1 chain reader and the VU1 program table, on the references;
 # rc_frame: the frame reader (VIF1 reader + the GIF reader of step 7). Linked by rc_replay (the vif and gif2d
 # consumers); not by the game or the oracle. Neither includes a runtime header.
+# (P2 step 9 batch 3, RENDERER_P2_DESIGN.md 4.2) rc_shape: the fast paths (render/shape), on the lean references; the
+# references' flags. No runtime header, no GIF reader (a path's output goes to a FastSink).
+add_library(rc_shape STATIC EXCLUDE_FROM_ALL render/shape/fast_trdr.cpp)
+target_compile_options(rc_shape PRIVATE -O2 -fwrapv -fno-strict-aliasing)
+target_link_libraries(rc_shape PUBLIC rc_vu1_lean)
 add_library(rc_vif STATIC EXCLUDE_FROM_ALL render/vif/vif1_reader.cpp render/vif/vu1_programs.cpp)
 target_compile_options(rc_vif PRIVATE -O2)
-target_link_libraries(rc_vif PUBLIC rc_vu1_ref rc_vu1_lean PRIVATE rc_record)
+target_link_libraries(rc_vif PUBLIC rc_vu1_ref rc_vu1_lean rc_shape PRIVATE rc_record)
 add_library(rc_frame STATIC EXCLUDE_FROM_ALL render/frame/frame_reader.cpp)
 target_compile_options(rc_frame PRIVATE -O2)
 target_link_libraries(rc_frame PUBLIC rc_vif rc_gs2d rc_tex rc_record)

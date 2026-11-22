@@ -51,6 +51,7 @@ namespace rc::replay
         bool noPoison = false;            // --vif-no-poison: the lanes a reference does not reproduce keep its values (measuring them)
         rc::rd::Vu1Library library = rc::rd::Vu1Library::Strict; // --vu1 strict|lean: the build of the references the reader runs
         bool fast = false; // --reader fast (P2 step 9 batch 2): FrameReader::Options::fast; (b) is not available (no PATH1 hash)
+        bool fastPaths = true; // --reader fast-nopaths (batch 3): the fast reader without the fast paths (batch 2's), to time them
     };
 
     class VifCheck final : public rc::rec::Consumer

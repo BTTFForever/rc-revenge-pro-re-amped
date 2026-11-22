@@ -289,4 +289,11 @@ void runTextureBlocks(ShapeProgram &p, int reader, PerTriangle perTriangle)
     }
 }
 
+#if RC_VU1_LEAN
+// (P2 step 9 batch 3) TRdr_VUShapeProg's layout and its per-triangle step (trdr_shape.cpp: setupTriangle, applyTint,
+// drawTriangle on the triangle at `reader`), for the fast path's hard triangles. The lean build only.
+const ShapeLayout &trdrLayout();
+void trdrStep(ShapeProgram &p, int reader);
+#endif
+
 } // namespace rc::RC_VU1_NAMESPACE

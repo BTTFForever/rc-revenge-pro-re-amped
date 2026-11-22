@@ -41,6 +41,21 @@ void body(ShapeProgram &p, uint32_t startPc, uint32_t top)
 
 } // namespace
 
+#if RC_VU1_LEAN
+// (P2 step 9 batch 3, RENDERER_P2_DESIGN.md 4.2) The program's per-triangle step and layout, for the track's fast path
+// (render/shape/fast_trdr.cpp), which runs the step on a hard triangle with a ShapeProgram of its own. The lean build
+// only: the strict build's text, and so the game's objects, are as before.
+const ShapeLayout &trdrLayout() { return kLayout; }
+
+void trdrStep(ShapeProgram &p, int reader)
+{
+    if (!p.setupTriangle(reader))
+        return;
+    p.applyTint();
+    p.drawTriangle();
+}
+#endif
+
 void runTrdrShape(uint8_t *memory, const float registers[32][4], uint32_t startPc, uint32_t top, KickList &kicks)
 {
     ShapeProgram p(memory, registers, kLayout, kicks);

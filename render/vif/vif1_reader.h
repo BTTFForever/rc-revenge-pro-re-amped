@@ -14,6 +14,7 @@
 // No runtime header is included: guest RAM is read through RamView only.
 
 #include "../record/consumer.h"
+#include "../shape/fast_run.h"
 #include "vu1_programs.h"
 
 #include <cstdint>
@@ -43,6 +44,9 @@ namespace rc::rd
     {
         virtual void runBegin(const Vu1Run &) {}
         virtual void packet(const uint8_t *data, uint32_t bytes) = 0; // one XGKICK
+        // (P2 step 9 batch 3) A fast path's triangle packet (160 bytes, its tag the triangle tag with EOP) as its nine
+        // data quadwords. False: not taken; the packet comes through packet() instead.
+        virtual bool triangle(const uint32_t * /*nine*/) { return false; }
         // The state after the run. A checker beside the emulated machine may replace it (a run the machine cut short).
         virtual void runEnd(const Vu1Run &, uint8_t * /*vuData*/, float (*/*vf*/)[4]) {}
         virtual ~Path1Sink() = default;
@@ -101,6 +105,12 @@ namespace rc::rd
             // the program sends the packet at TOP unchanged and leaves every register as it was) copies that packet to
             // the sink without running a reference (RENDERER_P2_DESIGN.md 4.2's table).
             bool directEntries = false;
+            // (P2 step 9 batch 3, RENDERER_P2_DESIGN.md 4.2) With the lean library: an MSCAL to a program with a fast path
+            // (render/shape: TRdr entry 0) runs the path instead of the reference, unless the path declines the run
+            // (4.3); every other run is the lean reference's, counted as declined.
+            bool fastPaths = false;
+            rc::shape::FastFault fastFault = rc::shape::FastFault::None; // planted, from fastFaultCycle on
+            int64_t fastFaultCycle = 0;
         };
         // More XGKICKs than any run can send (the largest kick of the 67 dumps sends 63,013): the run is abandoned.
         static constexpr uint32_t kMaxRunPackets = 1u << 20;
@@ -110,6 +120,7 @@ namespace rc::rd
             uint64_t mscals = 0, runs[kVu1ProgramCount] = {}, packets = 0, packetBytes = 0, interruptBits = 0;
             uint64_t guards[kVifGuardCount] = {}, programChanges = 0, fbrstResets = 0, seeds = 0;
             uint64_t directRuns = 0; // runs of a direct entry answered by Options::directEntries
+            rc::shape::FastStats fast; // Options::fastPaths
             uint64_t refNs = 0, walkNs = 0, sinkNs = 0; // in TSC ticks (nsPerTick): the references; the walk and decode; the sink's time
         };
 

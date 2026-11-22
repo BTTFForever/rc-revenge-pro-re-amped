@@ -257,6 +257,7 @@ namespace rc::replay
             f.deferPath1 = o.withEmu;
             f.collectPath1 = o.withEmu && (o.substitute == "bytes" || std::getenv("RC_VIF_LIST_TRACE"));
             f.fast = o.fast;
+            f.fastPaths = o.fastPaths;
             return f;
         }
 

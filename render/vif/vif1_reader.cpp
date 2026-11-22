@@ -169,6 +169,30 @@ namespace rc::rd
 
     namespace
     {
+        // A fast path's sink: the reference's packet callback for what the path sends as packets, the sink's triangle
+        // entry (timed as the sink, counted as a packet) for what it hands over as nine quadwords.
+        struct FastAdapter final : rc::shape::FastSink
+        {
+            IoUser *u;
+            explicit FastAdapter(IoUser *user) : u(user) {}
+            void packet(const uint8_t *data, uint32_t bytes) override { onPacket(u, data, bytes); }
+            bool triangle(const uint32_t *nine) override
+            {
+                if (u->packets >= Vif1Reader::kMaxRunPackets)
+                    throw Runaway{};
+                const uint64_t t0 = nowNs();
+                const bool taken = u->sink->triangle(nine);
+                u->sinkNs += nowNs() - t0;
+                if (taken)
+                {
+                    ++u->packets;
+                    ++u->stats->packets;
+                    u->stats->packetBytes += 160u;
+                }
+                return taken;
+            }
+        };
+
         // The entries that send the packet at TOP unchanged (RENDERER_3D_DESIGN.md 5.3; trdr_shape.cpp, env_shape.cpp,
         // terdr_shape.cpp: `p.kick(top)` and return).
         bool isDirectEntry(rc::vu1::Program program, uint32_t pc)
@@ -225,7 +249,7 @@ namespace rc::rd
         const uint32_t saved = _mm_getcsr();
         if (!(m_fault == VifFault::NoMxcsr && static_cast<int64_t>(k.cycle) == m_faultCycle))
             _mm_setcsr(mxcsr | 0x6000u);
-        bool runaway = false;
+        bool runaway = false, fast = false;
         try
         {
             // The lean build sets RZ + FTZ + DAZ on top of the MXCSR set here and restores it (so the NoMxcsr fault
@@ -239,8 +263,22 @@ namespace rc::rd
                 onPacket(&user, m_direct.data(), static_cast<uint32_t>(m_direct.size()));
                 ++m_stats.directRuns;
             }
+            else if (m_options.fastPaths && m_options.library == Vu1Library::Lean && info.program == rc::vu1::kTrdr && pc == 0u &&
+                     [&]
+                     {
+                         FastAdapter adapter(&user);
+                         rc::shape::FastOptions fo;
+                         if (static_cast<int64_t>(k.cycle) >= m_options.fastFaultCycle)
+                             fo.fault = m_options.fastFault;
+                         return rc::shape::runTrdr(m_data.data(), m_vf, m_vif.top, adapter, m_stats.fast, fo);
+                     }())
+                fast = true;
             else if (m_options.library == Vu1Library::Lean)
+            {
+                if (m_options.fastPaths && info.program < 8)
+                    ++m_stats.fast.declined[info.program];
                 rc::vu1l::run(info.program, io);
+            }
             else
                 rc::vu1::run(info.program, io);
         }
@@ -257,7 +295,7 @@ namespace rc::rd
         }
         if (m_poison)
             for (uint32_t reg = 0; reg < 32; ++reg)
-                if (const uint8_t lanes = info.notReproduced[reg])
+                if (const uint8_t lanes = info.notReproduced[reg] | (fast ? rc::shape::kTrdrFastNotReproduced[reg] : 0u))
                     for (uint32_t lane = 0; lane < 4; ++lane)
                         if (lanes & (1u << lane))
                         {

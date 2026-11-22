@@ -505,8 +505,8 @@ namespace
                              "            [--fault depth|clear|texture|flip:<cycle>[:<cycles>]]\n"
                              "       dlst (a dump from boot with RC_FRAME_RECORD_DRAWLISTS=1): the live reader's lists against the recorded DLST chunks\n"
                              "            [--fault list:<cycle>[:<byte>]]\n"
-                             "       lists (check (e)): the fast reader against the strict reader [--from-reset] [--fault adc|clut-memo|state-memo[:<cycle>]]\n"
-                             "       vif, lists: [--vu1 strict|lean] (vif) [--reader strict|fast] (vif: the reader timed)\n");
+                             "       lists (check (e)): the fast reader against the strict reader [--from-reset] [--fault adc|clut-memo|state-memo|bias|fused|round-x|edge-two|hard-quick[:<cycle>]]\n"
+                             "       vif, lists: [--vu1 strict|lean] (vif) [--reader strict|fast|fast-nopaths] (vif: the reader timed)\n");
     }
 }
 
@@ -1132,12 +1132,13 @@ int main(int argc, char **argv)
             std::fprintf(stderr, "unknown --vu1 '%s' (strict, lean)\n", vu1Library.c_str());
             return 2;
         }
-        if (readerKind != "strict" && readerKind != "fast")
+        if (readerKind != "strict" && readerKind != "fast" && readerKind != "fast-nopaths")
         {
-            std::fprintf(stderr, "unknown --reader '%s' (strict, fast)\n", readerKind.c_str());
+            std::fprintf(stderr, "unknown --reader '%s' (strict, fast, fast-nopaths)\n", readerKind.c_str());
             return 2;
         }
-        v.fast = readerKind == "fast";
+        v.fast = readerKind != "strict";
+        v.fastPaths = readerKind == "fast";
         if (v.fast && withEmu)
         {
             std::fprintf(stderr, "rc_replay vif: --reader fast is off-line only (its check is --consumer lists)\n");
@@ -1198,7 +1199,7 @@ int main(int argc, char **argv)
         {
             if (!rc::replay::parseListsFault(emuOptions.faultKind))
             {
-                std::fprintf(stderr, "rc_replay lists: --fault adc|clut-memo|state-memo[:<cycle>]\n");
+                std::fprintf(stderr, "rc_replay lists: --fault adc|clut-memo|state-memo|bias|fused|round-x|edge-two|hard-quick[:<cycle>]\n");
                 return 2;
             }
             o.fault = emuOptions.faultKind;

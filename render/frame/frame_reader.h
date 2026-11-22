@@ -31,6 +31,9 @@ namespace rc::rd
         // One XGKICK packet of the reader's; false: not passed on to the GIF reader (nor collected).
         virtual bool packet(const uint8_t *data, uint32_t bytes) = 0;
         virtual void runEnd(const Vu1Run &, uint8_t * /*vuData*/, float (*/*vf*/)[4]) {}
+        // (P2 step 9 batch 3) True: the tap does not need the fast paths' triangle packets as packets (they go into the
+        // list as nine quadwords without passing packet()). False (the default): every packet is made and passed.
+        virtual bool fastTriangles() const { return false; }
         virtual ~Path1Tap() = default;
     };
 
@@ -48,6 +51,11 @@ namespace rc::rd
             // D-P2-3). Its lists are the strict reader's byte for byte (check (e), rc_replay --consumer lists). Off: the
             // strict reader of P1, unchanged.
             bool fast = false;
+            // (P2 step 9 batch 3, RENDERER_P2_DESIGN.md 4.2) With fast: the fast paths (render/shape; Vif1Reader::Options::
+            // fastPaths), their quick triangles straight into the list. Off: batch 2's fast reader (to time the paths).
+            bool fastPaths = true;
+            rc::shape::FastFault fastFault = rc::shape::FastFault::None; // planted (check (e)), from fastFaultCycle on
+            int64_t fastFaultCycle = 0;
         };
         struct Stats
         {
@@ -100,6 +108,7 @@ namespace rc::rd
             FrameReader *self = nullptr;
             void runBegin(const Vu1Run &run) override;
             void packet(const uint8_t *data, uint32_t bytes) override;
+            bool triangle(const uint32_t *nine) override;
             void runEnd(const Vu1Run &run, uint8_t *vuData, float (*vf)[4]) override;
         } m_bridge;
 
