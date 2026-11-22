@@ -1587,3 +1587,81 @@ What the table says:
   is what exercises it.
 - Europe's `playtest2` now reaches scene 3020 at frame 1168 with this batch's and with batch 5's binaries alike (the
   check's record says 1167).
+
+## 21. Batch 7 as built (2026-11-22, cut short): frame rates, per-thread CPU, U3
+
+**The goal changed during this batch** (user, 2026-11-22: an enhanced recomp: frame rate, resolution, efficiency,
+features; the exact state is tag `decomp-exact-2026-11-22`). The exact-mode screenshot pairs, the 67-dump chained
+replay, the oracle and `playtest2` checks and the default-picture decision (sections 10, 12) were dropped, not run.
+
+**Built.** `tools/perf_scene.sh <scene> <dir> <tag>` (one run: `RC_RENDERER=vk RC_VK_PICTURE=native RC_VK_READER=fast`, the
+reader on its thread, play.sh's settings and PRIME; `PERF_RENDERER=gs` for the default renderer; `PERF_SECS`; scenes front,
+l5, l17, l18, l21, tedit, tedrace), `tools/perf_sample.py` (every thread's CPU ticks, the machine's, RSS and swap, every
+5 s), `tools/perf_table.py <dir>` (the table below: the window after the load, the `[vk-native]` lines in it, nvidia-smi,
+cores a thread, "other" = everything else on the machine). **`RC_GS_NO_RASTER=1`** (measurement only, default off,
+step-10 groundwork): `GSCpuBackend::Submit` returns before rasterising, so with `PS2X_GS_HW=0 PS2X_GS_GPU=0` the emulated
+GS keeps consuming the stream (state, uploads, CLUTs, transfers) but draws nothing. The runtime's own
+`PS2X_GS_DISCARD_DRAWS` (upstream) does the same in the threaded backend for either backend.
+**`tools/tedit_walk.py 1 0 loop,race`**: `loop` builds a closed flat ring by hand (start grid, a straight, then three
+times a 1 x 1 right turn and two straights, the last right turn: "Track is complete", accepted), `race` opens Play Track,
+Single Race, the default car. It never turns back beside itself (the placement rule); USA and Europe reach the race
+(about 4,300 / 4,460 pad frames). The player is not driven, so results and podium are still not reached.
+
+**The table** (`build-decomp/batch7-logs/fps/`, `perf_table.py` output, 80-100 s a level, window after the first 15 s;
+cores = share of one core; "i" = vk native/fast as play.sh runs, the emulated GS on its hardware renderer at scale 2;
+"gs" = the default renderer; "off" = vk native/fast with the emulated GS in software and `RC_GS_NO_RASTER=1`):
+
+| run | fps median (worst 5 s) | waits | reader ms | EE share ms | K2 ms a kick (largest) | list GPU ms a frame | GPU clock (P, util) | cores EE / VU1 / GIF / GS / reader / main | RSS / swap MB |
+|---|---|---|---|---|---|---|---|---|---|
+| USA i front | 60.0 (55.0) | 0 | 8.47 | 1.40 | 0.43 (0.69) | 0.66 | 1905 (P0, 47%) | 0.34 / 0.31 / 0.14 / 0.51 / 0.50 / 0.18 | |
+| USA i l5 | 44.6 (32.4) | 0 | 12.34 | 1.13 | 0.95 (2.43) | 1.34 | 1890 (P0, 97%) | 0.22 / 0.54 / 0.16 / **0.94** / 0.54 / 0.21 | |
+| USA i l17 | 44.6 (28.0) | 0 | 13.74 | 1.23 | 0.89 (2.45) | 1.16 | 1890 (P0, 99%) | 0.23 / 0.58 / 0.18 / **0.96** / 0.58 / 0.21 | |
+| USA i l18 | 44.6 (39.6) | 0 | 16.66 | 2.02 | 1.04 (2.48) | 1.43 | 1890 (P0, 97%) | 0.33 / 0.56 / 0.16 / **0.97** / 0.76 / 0.29 | |
+| USA i l21 | 40.4 (29.0) | 0 | 15.42 | 1.57 | 1.79 (5.16) | 2.49 | 1890 (P0, 98%) | 0.27 / 0.59 / 0.18 / **0.95** / 0.63 / 0.28 | |
+| USA i Track Editor | 60.2 (58.6) | 0 | 1.54 | 0.14 | 0.33 (0.47) | 1.63 | 825 (P5, 39%) | 0.10 / 0.14 / 0.03 / 0.19 / 0.09 / 0.17 | |
+| USA i Track Editor race (loop) | 60.0 (60.0) | 0 | 3.17 | 0.21 | 0.52 (1.13) | 0.86 | 1110 (P0, 35%) | 0.14 / 0.25 / 0.03 / 0.25 / 0.19 / 0.12 | |
+| Europe i front | 50.0 (45.8) | 0 | 9.59 | 1.32 | 0.44 (1.77) | 0.83 | 1920 (P0, 65%) | 0.28 / 0.26 / 0.10 / 0.53 / 0.46 / 0.18 | 967 / 0 |
+| Europe i l5 | 44.4 (29.2) | 0 | 11.72 | 1.02 | 0.87 (2.42) | 1.04 | 1890 (P0, 86%) | 0.21 / 0.51 / 0.16 / 0.80 / 0.50 / 0.19 | 875 / 0 |
+| Europe i l17 | 44.0 (30.8) | 0 | 12.61 | 1.15 | 0.89 (2.54) | 1.03 | 1890 (P0, 91%) | 0.23 / 0.56 / 0.19 / 0.85 / 0.54 / 0.20 | 863 / 0 |
+| Europe i l18 | 44.6 (36.8) | 10 (26 ms) | 16.41 | 2.11 | 0.97 (2.40) | 1.18 | 1890 (P0, 93%) | 0.33 / 0.54 / 0.17 / 0.90 / 0.71 / 0.29 | 943 / 0 |
+| Europe i l21 | 39.2 (29.4) | 0 | 15.38 | 1.57 | 1.66 (5.12) | 2.04 | 1890 (P0, 95%) | 0.26 / 0.57 / 0.20 / 0.92 / 0.60 / 0.28 | 952 / 0 |
+| Europe i Track Editor | 50.2 (49.2) | 0 | 1.76 | 0.16 | 0.39 (0.65) | 1.75 | 720 (P5, 38%) | 0.10 / 0.11 / 0.02 / 0.18 / 0.09 / 0.15 | 837 / 0 |
+| Europe i Track Editor race (loop) | 50.0 (50.0) | 0 | 3.07 | 0.17 | 0.64 (2.54) | 1.05 | 885 (P0, 34%) | 0.13 / 0.21 / 0.02 / 0.19 / 0.15 / 0.10 | 871 / 0 |
+| USA gs front | 60.0 (55.8) | | | | | | 1920 (P0, 55%) | 0.27 / 0.31 / 0.14 / 0.53 / - / 0.10 | 704 / 0 |
+| USA gs l5 | 43.8 (32.4) | | | | | | 1890 (P0, 95%) | 0.17 / 0.47 / 0.16 / **0.87** / - / 0.07 | 697 / 0 |
+| USA gs l17 | 48.8 (32.2) | | | | | | 1890 (P0, 90%) | 0.18 / 0.49 / 0.16 / **0.87** / - / 0.08 | 684 / 0 |
+| USA gs l18 | 47.4 (40.2) | | | | | | 1890 (P0, 96%) | 0.23 / 0.48 / 0.15 / **0.92** / - / 0.08 | 730 / 0 |
+| USA gs l21 | 41.6 (28.8) | | | | | | 1890 (P0, 97%) | 0.20 / 0.52 / 0.17 / **0.92** / - / 0.07 | 694 / 0 |
+| USA gs Track Editor | 60.2 (58.6) | | | | | | 720 (P5, 35%) | 0.09 / 0.14 / 0.02 / 0.18 / - / 0.11 | 667 / 0 |
+| USA off front | 26.2 (23.2) | 0 | 12.08 | 1.55 | 2.01 (2.78) | 3.16 | 375 (P8, 20%) | 0.23 / 0.83 / 0.08 / 0.41 / 0.37 / 0.27 | **12,397 / 10,233** |
+| USA off l5 / l17 / l18 / l21 | 13.8 / 14.4 / 12.2 / 11.6 | 0 | 17.2-23.6 | 1.4-2.8 | 10.8 / 11.2 / 10.5 / 16.2 (up to 31.8) | 10.8-16.6 | 300 (P8, 17-22%) | ~0.12 / **0.91** / 0.06 / 0.25 / 0.25 / 0.30 | **~12,500 / ~13,000** |
+| USA off Track Editor | 60.0 (26.2) | 0 | 1.69 | 0.15 | 0.75 (2.13) | 3.56 | 375 (P8, 33%) | 0.11 / 0.30 / 0.02 / 0.28 / 0.09 / 0.19 | 12,262 / 8,074 |
+| Europe off front / l5 / l17 | 14.6 / 15.2 / 15.8 | 0 | 8.8-17.7 | 0.9-1.6 | 1.92 / 10.5 / 12.1 | 5.5-12.8 | 300-375 (P8) | ~0.13 / 0.80-0.90 / 0.06 / 0.21-0.30 / 0.24 / 0.27 | ~12,000-12,600 / 10,000-13,300 |
+
+Not run (cut by the goal change): Europe `gs` (all scenes), Europe off on levels 18, 21 and the Track Editor, U3's
+configuration (ii) without the switch, the tedrace scene under `gs` and off.
+
+**What holds the race levels: the emulated GS.** In "i" and in "gs" alike the emulated GS's thread (`GSThread`, the
+hardware renderer at scale 2) runs at 0.87-0.97 of a core on every race level and the RTX 2060 is 86-99% busy at
+1,890 MHz, while the native list itself takes 1.0-2.5 ms of GPU a frame and K2 0.9-1.8 ms a kick. The EE thread uses
+0.2-0.33 of a core, the reader thread 0.5-0.76 (12-17 ms a cycle), with no waits. The default renderer `gs` runs the
+races at the same 42-49 fps (and holds 60 on the front end and the editor), so the native renderer costs nothing in
+frame rate; the race levels are held by the reference picture that `vk` still makes beside it. The front end, the
+Track Editor and the Track Editor's race (the loop) hold 60 / 50.
+
+**The off configuration is not a valid measurement here.** With the emulated GS on the CPU backend (`PS2X_GS_HW=0
+PS2X_GS_GPU=0`, with or without `RC_GS_NO_RASTER`, and also with `PS2X_GS_DISCARD_DRAWS=1` on the hardware backend, and
+with `PS2X_GS_THREAD=0`, `PS2X_MTVU=0` or `RC_VU1_REF=0`) the process grows to 9-12 GB of RSS in its first 15-20 s and the
+machine swaps (kswapd about a core: "other" 1.0-1.3), so these runs say nothing about the frame rate. Probed and ruled
+out: mmap / brk after the first seconds (gdb catchpoints), the GS queue (bounded), VU1 references, the VU1 thread.
+With `MALLOC_ARENA_MAX=1` it is all in the main heap (9.4 GB at 12 s), i.e. ordinary allocations; not found. Only the
+GPU figures carry over: **with the native renderer the GPU's only work, the driver stays at P8 / 300 MHz and K2 takes
+10.5-16 ms a kick (largest 32) and the list 11-17 ms a frame** on the race levels (U3: over the 8 ms a kick; 20.5's
+11.9 ms on level 21 again).
+
+**Levers, in order (numbers above):** (1) stop the emulated GS rasterising under `vk` (it holds a core and the GPU;
+`gs` runs no faster than `vk`): first find the memory growth of the CPU-backend path, or skip the hardware backend's
+draws without it (`PS2X_GS_DISCARD_DRAWS` showed the same growth); (2) then U7: with the GPU otherwise idle the driver
+stays at 300 MHz and K2 rises to 10-16 ms a kick; ask for the performance mode or keep the GPU busy, or 6.5 (conservative
+depth) if the clock alone does not do it; (3) the reader thread (12-17 ms a cycle on races) and the EE share (2.0-2.1
+ms on level 18): water fast path, 8.3's skip; not what holds the frame rate today.

@@ -580,7 +580,7 @@ After step 1: fold its answers into this plan's open questions.
    (design section 19). Batch 6 (the reader's thread: `rc::live::KickQueue`, `rc::rec::RamImage`, 8.3's wait, `DLST`
    from another thread, `RC_VK_READER_THREAD`) built 2026-11-22: the live check passes 20 / 20 both ways (27,200 lists),
    TSan clean; live the front end and the Track Editor hold 60 / 50 fps, the race levels 37-46 fps with almost no waits
-   and no better with the reader on the EE thread, so batch 7 looks for what else holds them (design section 20).
+   and no better with the reader on the EE thread, so batch 7 looks for what else holds them (design section 20). Batch 7 (cut short by the goal change, design section 21): the races are held by the emulated GS's hardware renderer (a core, the GPU 86-99% busy; `gs` is no faster than `vk`); the Track Editor's race reached by a hand-built ring (`tedit_walk.py loop,race`) holds 60 / 50; GS-off unmeasured (the CPU-backend path grows to 12 GB and swaps).
 10. Pipelines built at start-up, performance pass on the heavy levels (18, 17, 24, 6, 8, 9, 12), a DIVERGENCES list.
 Then `vk` becomes the default renderer; `gs` stays as the reference.
 
