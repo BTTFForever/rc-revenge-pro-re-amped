@@ -1,5 +1,6 @@
 #include "runtime/gs/gs_gpu_backend.h"
 #include "runtime/gs/gs_shared_present.h"
+#include "runtime/gs/gs_track_batch.h"
 #include "runtime/gs/gs_swizzle.h"
 #include "runtime/gs/ps2_gs_memory.h"
 #include "../gs_cpu_backend_internal.h"
@@ -2474,6 +2475,8 @@ void GSGpuBackend::Reset()
 
 void GSGpuBackend::Submit(const GSPrimitiveBatch &batch)
 {
+    if (gsFreeTrackBatch(batch)) // the compute GS does not draw the track shader's batches
+        return;
     Impl &d = *m_impl;
     if (batch.vertexCount == 0u || !d.ensure())
         return;

@@ -3,6 +3,7 @@
 #include "runtime/gs/gs_gpu_backend.h"
 #include "runtime/gs/gs_hw_backend.h"
 #include "runtime/gs/gs_shared_present.h"
+#include "runtime/gs/gs_track_batch.h"
 #include "ThreadPriority.h"
 #include "ThreadNaming.h"
 
@@ -239,6 +240,8 @@ void GSThreadedBackend::Execute(const std::vector<uint8_t> &chunk, GSPrimitiveBa
         case Op::Submit:
             if (!discardDraws())
                 m_inner->Submit(readAt<GSPrimitiveBatch>(payload));
+            else
+                gsFreeTrackBatch(readAt<GSPrimitiveBatch>(payload));
             break;
         case Op::LoadClut:
         {
@@ -271,6 +274,8 @@ void GSThreadedBackend::Execute(const std::vector<uint8_t> &chunk, GSPrimitiveBa
             std::memcpy(&draw, payload, offsetof(GSPrimitiveBatch, state));
             if (!discardDraws())
                 m_inner->Submit(draw);
+            else
+                gsFreeTrackBatch(draw);
             break;
         case Op::Present:
             m_inner->Present(readAt<GSPresentationRequest>(payload));

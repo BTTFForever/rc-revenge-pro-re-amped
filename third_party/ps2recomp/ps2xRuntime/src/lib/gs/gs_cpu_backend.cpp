@@ -1,5 +1,6 @@
 #include <cstdlib>
 #include "runtime/gs/gs_cpu_backend.h"
+#include "runtime/gs/gs_track_batch.h"
 #include "runtime/gs/gs_band_pool.h"
 #include "gs_cpu_backend_internal.h"
 #include "gs_sprite_rules.h"
@@ -161,6 +162,8 @@ void GSCpuBackend::ResetUnlocked()
 
 void GSCpuBackend::Submit(const GSPrimitiveBatch &batch)
 {
+    if (gsFreeTrackBatch(batch)) // the software GS does not draw the track shader's batches
+        return;
     std::lock_guard<std::mutex> lock(m_mutex);
     if (!m_vram || batch.vertexCount == 0u)
         return;

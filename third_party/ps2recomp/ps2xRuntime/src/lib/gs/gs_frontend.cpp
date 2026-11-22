@@ -1264,6 +1264,8 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
             std::memcpy(&batch.vertices[0].z, &value, sizeof(value));
             m_backend->Submit(batch);
         }
+        else
+            std::free(reinterpret_cast<void *>(static_cast<uintptr_t>(value)));
         return;
     }
 #endif
