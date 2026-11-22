@@ -39,11 +39,13 @@ pictures.
 | `RC_INTERP_OBJECTS=0` | blend the camera only |
 | `RC_EXP_LOG=1` | a line of interpolation counters each second in the log (`[exp] ticks=... inbetween=... missed=... skipped=...`) |
 | `RC_UI_PILLARBOX=1` | with `RC_WIDESCREEN`: 2D sprites, text and rectangles (front end, pause menu, loading, results) drawn at the right aspect about the screen's centre; a sprite or rectangle at least 600 of 640 pixels wide (backgrounds, fades) keeps filling the screen. On by default in `exp_play.sh` |
-| `PS2X_FULLSCREEN=1` | start as a borderless window over the whole monitor at its own resolution (F11 toggles); the picture keeps its aspect. On by default in `exp_play.sh` |
+| `PS2X_FULLSCREEN=1` | start fullscreen over the whole monitor at its current mode, panels included (`=borderless`: the older borderless window); F11 leaves; the picture keeps its aspect. On by default in `exp_play.sh` |
 | `RC_EXP_DIPS=1` | a `[exp-dip]` log line for each frame longer than 1.5 fields, split into game work, GS wait and vertical-blank wait. On by default in `exp_play.sh` |
 | `PS2X_HOST_VSYNC=1` | the window loop waits for the monitor's vertical blank instead of a 60 Hz timer (uncapped unless `PS2X_HOST_FPS`) |
 | `PS2X_HOST_FPS=<n>` | the window loop's rate (default 60; 0 uncapped). `RC_INTERP` needs 120 or more, or `PS2X_HOST_VSYNC=1` on a fast monitor |
 | `PS2X_WINDOW_SIZE=<w>x<h>` | the window's first size |
+| `PS2X_GS_HW_MERGE=1` | the hardware renderer keeps a batch open across GIF packets and TEXFLUSH (fewer draws; see round 4) |
+| `GOW_GS_HW_STATS=2` | as `=1`, plus the most used draw states every 5 s |
 | `PS2X_GS_FORCE_LINEAR=1` | bilinear filtering of every textured triangle (the game asks for nearest on some); `2` also sprites |
 
 Existing switches worth trying for speed (all already in the runtime): `RC_VU1_REF=0` (play.sh's default 2 checks each
@@ -170,6 +172,28 @@ gain in pictures per second, as expected once the GS thread is the limit. Off by
 Next if the front end is GS-bound: a lower internal scale for the front end only (the God of War back end reads
 `PS2X_GS_HW_SCALE` once and sizes each render target with it, so changing it at a scene change means dropping and
 recreating the targets: possible, not done), or finding the costly draw with `GOW_GS_HW_STATS=1` and a GPU capture.
+
+### Round 4 (2026-11-22): Europe's HUD/2D, true fullscreen, the track-select smoke
+
+- **Europe's 2D was not pillarboxed**: in Europe `HudMenuBorder`, `HudSprite*`, `HudWrongWayX`, `HudLost` and the
+  HUD corners differ by a constant (the 2D y offset 0x788 -> 0x780), so their natives are not registered and the
+  recompiled ones run, without the scopes (the user's Europe screenshot: track-select panel borders stretched round
+  pillarboxed fills). `rc::exp::installScopeWrappers` (called after `installDecomp`, only with `RC_WIDESCREEN`) wraps
+  each recompiled HUD/2D function whose native is not registered in this version in the same scope.
+- **True fullscreen**: `PS2X_FULLSCREEN=1` now sizes the window to the monitor's current mode and makes it fullscreen
+  on it (raylib `ToggleFullscreen`, GLFW keeps the mode: no mode switch), over the panel. `PS2X_FULLSCREEN=borderless`
+  is the old borderless window (KDE keeps it inside the work area: the taskbar and the dark bands). F11 leaves.
+- **Batch merging, `PS2X_GS_HW_MERGE=1`**: the GS front end ended the hardware renderer's batch at the end of every GIF
+  packet, and the renderer at every TEXFLUSH, so primitives from separate VU1 kicks never shared a draw (draws per
+  batch ~1.0-1.15 everywhere). With the switch, a batch ends only on a state change, a transfer (uploads), a clear,
+  a sync or a presentation. Aimed at the smoke (~1,000 extra draws a frame when it is on screen) and the front end in
+  general. Untested.
+- **Smoke diagnosis tools**: `GOW_GS_HW_STATS=2` prints, every 5 s, the 12 most used draw states (primitive, texture
+  address/format/size, TFX, ALPHA, TEST, frame/Z buffers, filtering, shader blend, PABE, clamp) with their batch and
+  vertex counts and covered area. Comparing smoke on / smoke off names the smoke's state. Candidates from the code:
+  the jungle world's scenery effects in `visfx3.cpp`/`visfx5.cpp` (`Vfx2Renderer_MonkeySmoke`: grey sprites, texture
+  21; `Vfx2Renderer_BigVolcano`: texture 5, code 4), all drawn through `VfxPS2SpriteRotated3D`, one small rotated quad
+  per particle.
 
 ## 2. Interpolated frame rate (`RC_INTERP`, `RC_FPS`)
 

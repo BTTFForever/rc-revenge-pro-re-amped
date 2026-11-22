@@ -16,6 +16,8 @@
 
 #include <cstdint>
 
+class PS2Runtime;
+
 namespace rc::exp {
 
 struct Config
@@ -62,6 +64,9 @@ private:
     uint32_t m_buffer = 0, m_anchorX = 0;
     int32_t m_tag = -1, m_start = 0;
 };
+
+// Wraps the recompiled HUD/2D functions whose natives this version does not register (Europe) in the same scopes.
+void installScopeWrappers(::PS2Runtime &runtime);
 
 // Frame-time dips (RC_EXP_DIPS), from GfxP2_SwapBuffers: 0 at its start, 1 when the GS is idle (after its second
 // sceGsSyncPath), 2 after the vertical blank.

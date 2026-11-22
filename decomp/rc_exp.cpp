@@ -244,6 +244,56 @@ HudAnchorScope::~HudAnchorScope()
     walk();
 }
 
+// In a version where a HUD or 2D function's native is not registered (Europe: HudMenuBorder, HudSprite*, the HUD
+// corners and more differ in a constant, so the recompiled ones run), the scope wraps the recompiled function instead.
+namespace {
+template <const FnInfo &F, uint32_t Anchor, int Kind>
+void scopedOriginal(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+{
+    const HudAnchorScope scope(Anchor, static_cast<HudAnchorScope::Kind>(Kind));
+    F.original(rdram, ctx, runtime);
+}
+
+template <const FnInfo &F, uint32_t Anchor, int Kind>
+int wrapIfRecompiled(PS2Runtime &runtime)
+{
+    if constexpr (!registeredHere<F>)
+        return runtime.replaceFunction(F.address, &scopedOriginal<F, Anchor, Kind>) ? 1 : 0;
+    else
+        return 0;
+}
+} // namespace
+
+void installScopeWrappers(PS2Runtime &runtime)
+{
+    if (!g_config.widescreen)
+        return;
+    constexpr int Ui = HudAnchorScope::Ui, Hud = HudAnchorScope::Hud;
+    int n = 0;
+    n += wrapIfRecompiled<fns::HudMenuBorder, 5, Ui>(runtime);
+    n += wrapIfRecompiled<fns::HudSprite, 5, Ui>(runtime);
+    n += wrapIfRecompiled<fns::HudSpriteMirror, 5, Ui>(runtime);
+    n += wrapIfRecompiled<fns::HudSpriteHI, 5, Ui>(runtime);
+    n += wrapIfRecompiled<fns::HudRotSpriteHI, 5, Ui>(runtime);
+    n += wrapIfRecompiled<fns::HudWrongWayX, 5, Ui>(runtime);
+    n += wrapIfRecompiled<fns::HudLost, 5, Ui>(runtime);
+    n += wrapIfRecompiled<fns::HudTopRight, 8, Hud>(runtime);
+    n += wrapIfRecompiled<fns::HudBottomRight, 10, Hud>(runtime);
+    n += wrapIfRecompiled<fns::HudBottomLeft, 9, Hud>(runtime);
+    n += wrapIfRecompiled<fns::HudMiddle, 5, Hud>(runtime);
+    n += wrapIfRecompiled<fns::SpriteRenderFast, 5, Ui>(runtime);
+    n += wrapIfRecompiled<fns::SpriteRender, 5, Ui>(runtime);
+    n += wrapIfRecompiled<fns::SpriteRenderHalf, 5, Ui>(runtime);
+    n += wrapIfRecompiled<fns::SpriteRenderScaled, 5, Ui>(runtime);
+    n += wrapIfRecompiled<fns::SpriteRenderNew, 5, Ui>(runtime);
+    n += wrapIfRecompiled<fns::SpriteRenderFont, 5, Ui>(runtime);
+    n += wrapIfRecompiled<fns::RectRender, 5, Ui>(runtime);
+    n += wrapIfRecompiled<fns::RectRenderGouraud, 5, Ui>(runtime);
+    n += wrapIfRecompiled<fns::LineRender2D, 5, Ui>(runtime);
+    if (n)
+        std::fprintf(stderr, "[exp] %d recompiled HUD/2D functions wrapped in anchor scopes\n", n);
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Frame-time dips
 

@@ -807,6 +807,22 @@ bool GS::continueGifTag(const uint8_t *data, uint32_t sizeBytes, uint32_t &offse
     return true;
 }
 
+namespace
+{
+    // exp/quick-dirty: PS2X_GS_HW_MERGE=1 stops ending the back end's batch at the end of every GIF packet (each VU1
+    // XGKICK is one), so consecutive primitives with the same state from separate packets share one draw. Batches still
+    // end on a state change, a transfer, a clear, a sync and a presentation.
+    bool mergeAcrossPackets()
+    {
+        static const bool merge = []
+        {
+            const char *v = std::getenv("PS2X_GS_HW_MERGE");
+            return v && *v == '1';
+        }();
+        return merge;
+    }
+}
+
 void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
 {
     if (s_rawGifSink)
@@ -863,7 +879,8 @@ void GS::processGIFPacket(const uint8_t *data, uint32_t sizeBytes)
         if (!continueGifTag(data, sizeBytes, offset))
             break;
     }
-    m_backend->Flush();
+    if (!mergeAcrossPackets())
+        m_backend->Flush();
 }
 
 bool GS::processNativePackedGIFPacket(const uint8_t *data, uint32_t sizeBytes)
@@ -899,7 +916,8 @@ bool GS::processNativePackedGIFPacket(const uint8_t *data, uint32_t sizeBytes)
 
         return true; });
 
-    m_backend->Flush();
+    if (!mergeAcrossPackets())
+        m_backend->Flush();
     if (!processed)
         return false;
 

@@ -1052,11 +1052,21 @@ bool PS2Runtime::initialize(const char *title)
                        ps2_host_display::initialHeight > 0 ? ps2_host_display::initialHeight : HOST_WINDOW_HEIGHT, title);
             if (ps2_host_display::startMaximized && !ps2_host_display::headless)
                 MaximizeWindow();
-            // exp/quick-dirty: PS2X_FULLSCREEN=1 (or borderless) starts as a borderless window over the whole monitor at
-            // its own resolution (F11 toggles back); the picture keeps its aspect, letter- or pillarboxed.
-            if (const char *v = std::getenv("PS2X_FULLSCREEN"); v && (*v == '1' || std::string_view(v) == "borderless") &&
-                !ps2_host_display::headless)
-                ToggleBorderlessWindowed();
+            // exp/quick-dirty: PS2X_FULLSCREEN=1 covers the whole monitor, panels included: the window is sized to the
+            // monitor's current mode and made fullscreen on it (GLFW keeps that mode, so no mode switch). =borderless
+            // is raylib's borderless window, which a desktop can keep inside its work area. The picture keeps its
+            // aspect, letter- or pillarboxed.
+            if (const char *v = std::getenv("PS2X_FULLSCREEN"); v && *v && *v != '0' && !ps2_host_display::headless)
+            {
+                if (std::string_view(v) == "borderless")
+                    ToggleBorderlessWindowed();
+                else
+                {
+                    const int monitor = GetCurrentMonitor();
+                    SetWindowSize(GetMonitorWidth(monitor), GetMonitorHeight(monitor));
+                    ToggleFullscreen();
+                }
+            }
             SetExitKey(KEY_NULL);
         }
         if (ps2_host_display::headless)
@@ -3105,7 +3115,14 @@ void PS2Runtime::run()
             lastSwap = now;
         }
 #if !defined(PLATFORM_VITA)
-        if (IsKeyPressed(KEY_F11))
+        if (IsKeyPressed(KEY_F11) && IsWindowFullscreen()) // exp/quick-dirty: out of PS2X_FULLSCREEN=1's fullscreen
+        {
+            ps2_host_input::releaseMouse();
+            ToggleFullscreen();
+            SetWindowSize(ps2_host_display::initialWidth > 0 ? ps2_host_display::initialWidth : 1280,
+                          ps2_host_display::initialHeight > 0 ? ps2_host_display::initialHeight : 720);
+        }
+        else if (IsKeyPressed(KEY_F11))
         {
             ps2_host_input::releaseMouse();
             const bool leavingFullscreen = IsWindowState(FLAG_BORDERLESS_WINDOWED_MODE);

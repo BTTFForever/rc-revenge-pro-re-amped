@@ -11,6 +11,8 @@
 
 #include <array>
 #include <map>
+#include <string>
+#include <map>
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -631,6 +633,9 @@ struct GSHwBackend::Impl
         uint64_t shuffles = 0;
         uint64_t draws = 0, batches = 0, skippedPsm = 0, unsupportedBlend = 0, texDecodes = 0, texHits = 0, skippedPrim = 0;
         uint64_t barriers = 0, softBlends = 0, pabeDraws = 0, dateDraws = 0; // exp/quick-dirty
+        // GOW_GS_HW_STATS=2: batches by draw state (exp/quick-dirty): count, vertices, covered area in GS pixels.
+        struct StateUse { uint64_t batches = 0, verts = 0; double area = 0; };
+        std::map<std::string, StateUse> byState;
         std::chrono::steady_clock::time_point last = std::chrono::steady_clock::now();
     } stats;
     bool statsEnabled = std::getenv("GOW_GS_HW_STATS") != nullptr;
@@ -2358,6 +2363,24 @@ struct GSHwBackend::Impl
             softBlend = true;
         if (softBlend || zAliasWrite) // the shader produces the final colour (a Z write replaces the colour word)
             blend = false;
+        static const bool stateStats = [] { const char *v = std::getenv("GOW_GS_HW_STATS"); return v && v[0] == '2'; }();
+        if (stateStats && !verts.empty()) // exp/quick-dirty
+        {
+            float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f;
+            for (const HwVertex &v : verts)
+                x0 = std::min(x0, v.x), x1 = std::max(x1, v.x), y0 = std::min(y0, v.y), y1 = std::max(y1, v.y);
+            char key[256];
+            std::snprintf(key, sizeof(key), "prim=%u tme=%d fst=%d tbp=%x psm=%x tw=%u th=%u tfx=%u tcc=%u alpha=%llx test=%llx fbp=%x zbp=%x zmsk=%d lin=%d soft=%d pabe=%d clamp=%llx",
+                          static_cast<unsigned>(s.prim.type), s.prim.tme ? 1 : 0, s.prim.fst ? 1 : 0, c.tex0.tbp0, c.tex0.psm,
+                          static_cast<unsigned>(c.tex0.tw), static_cast<unsigned>(c.tex0.th), static_cast<unsigned>(c.tex0.tfx),
+                          static_cast<unsigned>(c.tex0.tcc), (unsigned long long)c.alpha, (unsigned long long)c.test, c.frame.fbp,
+                          c.zbuf.zbp, c.zbuf.zmask ? 1 : 0, s.linearFilter ? 1 : 0, softBlend ? 1 : 0, (s.prim.abe && s.pabe) ? 1 : 0,
+                          (unsigned long long)c.clamp);
+            Stats::StateUse &use = stats.byState[key];
+            use.batches += 1;
+            use.verts += verts.size();
+            use.area += static_cast<double>(x1 - x0) * static_cast<double>(y1 - y0);
+        }
         stats.softBlends += softBlend ? 1u : 0u; // exp/quick-dirty
         stats.pabeDraws += pabe ? 1u : 0u;
         stats.dateDraws += ((c.test >> 14) & 1u) != 0u ? 1u : 0u;
@@ -2798,6 +2821,16 @@ struct GSHwBackend::Impl
         std::fprintf(stderr, "[gs-hw-exp] barriers=%llu softBlends=%llu pabe=%llu date=%llu\n", (unsigned long long)stats.barriers,
                      (unsigned long long)stats.softBlends, (unsigned long long)stats.pabeDraws, (unsigned long long)stats.dateDraws);
         stats.barriers = stats.softBlends = stats.pabeDraws = stats.dateDraws = 0;
+        if (!stats.byState.empty())
+        {
+            std::vector<std::pair<std::string, Stats::StateUse>> top(stats.byState.begin(), stats.byState.end());
+            std::sort(top.begin(), top.end(), [](const auto &a, const auto &b) { return a.second.batches > b.second.batches; });
+            for (size_t i = 0; i < top.size() && i < 12; ++i)
+                std::fprintf(stderr, "[gs-hw-state] %llu batches %llu verts area %.0f | %s\n", (unsigned long long)top[i].second.batches,
+                             (unsigned long long)top[i].second.verts, top[i].second.area, top[i].first.c_str());
+            std::fprintf(stderr, "[gs-hw-state] %zu states\n", top.size());
+            stats.byState.clear();
+        }
         std::fprintf(stderr, "[gs-hw] shuffles=%llu draws=%llu batches=%llu texDecodes=%llu texHits=%llu skippedPsm=%llu skippedPrim=%llu unsupportedBlend=%llu textures=%zu\n",
                      (unsigned long long)stats.shuffles, (unsigned long long)stats.draws, (unsigned long long)stats.batches, (unsigned long long)stats.texDecodes,
                      (unsigned long long)stats.texHits, (unsigned long long)stats.skippedPsm, (unsigned long long)stats.skippedPrim,
@@ -2944,7 +2977,11 @@ void GSHwBackend::Flush()
 
 void GSHwBackend::TextureFlush()
 {
-    m_impl->flushPending(); // textures are re-read from the store when an upload overlaps them, not on TEXFLUSH
+    // exp/quick-dirty: with PS2X_GS_HW_MERGE=1 a TEXFLUSH does not end the batch (an upload already does, in
+    // BeginTransfer, and a draw with another texture is another state).
+    static const bool merge = [] { const char *v = std::getenv("PS2X_GS_HW_MERGE"); return v && *v == '1'; }();
+    if (!merge)
+        m_impl->flushPending(); // textures are re-read from the store when an upload overlaps them, not on TEXFLUSH
 }
 
 void GSHwBackend::Sync(GSSyncReason)
