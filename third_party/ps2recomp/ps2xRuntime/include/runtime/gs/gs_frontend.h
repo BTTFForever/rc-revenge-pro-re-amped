@@ -137,7 +137,7 @@ public:
                                           uint32_t &outHeight,
                                           uint32_t *outDisplayFbp = nullptr,
                                           uint32_t *outSourceFbp = nullptr,
-                                          bool *outUsedPreferred = nullptr) const;
+                                          bool *outUsedPreferred = nullptr);
     bool clearFramebufferContext(uint32_t contextIndex, uint32_t rgba);
     bool clearActiveFramebuffer(uint32_t rgba);
     uint64_t nativeImageUploadCount() const { return m_nativeImageUploadCount; }

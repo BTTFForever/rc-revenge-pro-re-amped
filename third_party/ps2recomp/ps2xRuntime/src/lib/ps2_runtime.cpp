@@ -25,6 +25,7 @@
 #include "ps2_capture_hooks.h"
 #include "ps2x/iop/iop_subsystem.h"
 
+#include <string_view>
 #include <iostream>
 #include <stdexcept>
 #include <fstream>
@@ -569,7 +570,7 @@ namespace ps2x::vu1run
 
 static void UploadFrame(Texture2D *tex, PS2Runtime *rt, uint32_t &outWidth, uint32_t &outHeight,
                         bool hashImages, GSSharedPresent::Frame &diagnostic,
-                        const std::vector<uint8_t> **pixels = nullptr, bool *fresh = nullptr)
+                        const std::vector<uint8_t> **pixels = nullptr, bool *fresh = nullptr, bool wantPicture = true)
 {
     static uint64_t s_lastPresentationTick = std::numeric_limits<uint64_t>::max();
     static uint32_t s_lastWidth = 0u;
@@ -591,9 +592,21 @@ static void UploadFrame(Texture2D *tex, PS2Runtime *rt, uint32_t &outWidth, uint
         return;
     }
     s_lastPresentationTick = currentTick;
+    if (!wantPicture)
+    {
+        // The host shows another picture (RC_VK_PICTURE=native): no drain, latch or read-back. The next wanted picture
+        // reads back synchronously (the GS backend drops read-backs older than 100 ms), so it is never an old one.
+        diagnostic.hashValid = false;
+        outWidth = s_lastWidth = 0u;
+        outHeight = s_lastHeight = 0u;
+        return;
+    }
     // With VU1 on its own thread the display registers can run ahead of the drawing,
     // which shows a cleared buffer as a black frame. Let queued work finish first.
-    ps2x::asyncvif::sync(rt->memory());
+    // PS2X_PRESENT_DRAIN=0 (experiment): no drain here.
+    static const bool drain = [] { const char *v = std::getenv("PS2X_PRESENT_DRAIN"); return !(v && *v == '0'); }();
+    if (drain)
+        ps2x::asyncvif::sync(rt->memory());
     rt->gs().latchHostPresentationFrame();
     if (GSSharedPresent::Active())
     {
@@ -2685,7 +2698,11 @@ static void runHostPlatformLoop(PS2Runtime &runtime, const ps2_host_platform::Ho
         GSSharedPresent::Frame frame;
         const std::vector<uint8_t> *pixels = nullptr;
         bool fresh = false;
-        UploadFrame(nullptr, &runtime, width, height, hashImages, frame, &pixels, &fresh);
+        // RC_VK_GS_PICTURE=always: read the emulated GS picture back every frame even when it is not shown (as before).
+        static const bool alwaysPicture = [] { const char *v = std::getenv("RC_VK_GS_PICTURE"); return v && std::string_view(v) == "always"; }();
+        const bool shotSoon = !screenshotFields.empty() && runtime.eeScheduler().currentVSyncTick() + 2u >= screenshotFields.back();
+        const bool wantPicture = alwaysPicture || !platform.wantsGsPicture || platform.wantsGsPicture() || shotSoon || hashImages;
+        UploadFrame(nullptr, &runtime, width, height, hashImages, frame, &pixels, &fresh, wantPicture);
         const bool havePicture = pixels && width != 0u && height != 0u && pixels->size() >= static_cast<size_t>(width) * height * 4u;
         platform.present(havePicture && fresh ? pixels->data() : nullptr, havePicture ? width : 0u, havePicture ? height : 0u,
                          ps2_host_display::aspect());

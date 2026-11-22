@@ -723,7 +723,7 @@ bool GS::copyLatchedHostPresentationFrame(std::vector<uint8_t> &outPixels,
                                           uint32_t &outHeight,
                                           uint32_t *outDisplayFbp,
                                           uint32_t *outSourceFbp,
-                                          bool *outUsedPreferred) const
+                                          bool *outUsedPreferred)
 {
     std::lock_guard<std::mutex> lock(m_presentationMutex);
     if (!m_hasHostPresentationFrame || m_hostPresentationFrame.empty())
@@ -762,6 +762,16 @@ bool GS::copyLatchedHostPresentationFrame(std::vector<uint8_t> &outPixels,
         if (outUsedPreferred)
             *outUsedPreferred = false;
         return false;
+    }
+    // The latched picture is handed over whole when it is exactly the packed size (the usual case): its buffer is
+    // swapped with the caller's instead of copied, and the latch is then empty until the next latchHostPresentationFrame
+    // (the one caller, UploadFrame, latches right before each copy). PS2X_PRESENT_COPY=1: always copy, as before.
+    static const bool alwaysCopy = [] { const char *v = std::getenv("PS2X_PRESENT_COPY"); return v && *v == '1'; }();
+    if (!alwaysCopy && packedBytes == m_hostPresentationFrame.size())
+    {
+        outPixels.swap(m_hostPresentationFrame);
+        m_hasHostPresentationFrame = false;
+        return true;
     }
     outPixels.assign(m_hostPresentationFrame.begin(), m_hostPresentationFrame.begin() + static_cast<std::ptrdiff_t>(packedBytes));
     return true;

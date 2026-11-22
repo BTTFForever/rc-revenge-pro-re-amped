@@ -49,6 +49,8 @@ namespace rc::live
     // After the frame's present: screenshots that came due (RC_VK_SHOT_*); the emulated GS picture of the same present beside
     // them when given.
     void afterPresent(const uint8_t *gsPixels = nullptr, uint32_t gsWidth = 0, uint32_t gsHeight = 0);
+    // A screenshot pair (RC_VK_SHOT_*) is waiting for the emulated GS picture.
+    bool shotPending();
     // The closing report (reader and presenter figures).
     void report();
 }

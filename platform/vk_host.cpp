@@ -159,6 +159,7 @@ namespace
         bool native = false;     // the live 2D renderer is running
         bool showNative = false; // F7 toggles
         uint32_t f7Presses = 0;  // F7 key-down events (not repeats) since the last present
+        bool nativeShown = false; // the last present showed the native picture
         std::string title;
     };
 
@@ -456,6 +457,7 @@ namespace
             rhi_submit(cl);
         }
         const bool showNative = h.native && h.showNative && native.valid && native.height;
+        h.nativeShown = showNative;
         if (h.gpuReady && pixels && width && height && !showNative)
         {
             if (!h.picture.id || h.pictureWidth != width || h.pictureHeight != height)
@@ -573,6 +575,14 @@ namespace
         ++h.presents;
         if (h.native)
             rc::live::afterPresent(pixels, width, height);
+    }
+
+    // The emulated GS picture is read back only while it can be shown: the GS picture is on, F7 was pressed, the native
+    // picture is not ready, or a screenshot pair waits for it.
+    bool wantsGsPicture()
+    {
+        const Host &h = g_host;
+        return !h.native || !h.showNative || h.f7Presses != 0u || !h.nativeShown || rc::live::shotPending();
     }
 
     bool keyDown(int key)
@@ -693,6 +703,7 @@ namespace
         gamepadAvailable,
         gamepadButtonDown,
         gamepadAxis,
+        wantsGsPicture,
     };
 
     // Installed before main, so before the runtime is made. RC_RENDERER unset or "gs": the raylib window as before.

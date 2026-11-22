@@ -39,6 +39,10 @@ namespace ps2_host_platform
         bool (*gamepadAvailable)(int gamepad);
         bool (*gamepadButtonDown)(int gamepad, int button);
         float (*gamepadAxis)(int gamepad, int axis); // raylib's ranges: sticks -1..1, triggers -1 (released)..1
+        // Optional (may be null: always). False while the host does not show the emulated GS picture (RC_VK_PICTURE=native
+        // with the native picture on screen): the host loop then skips the VU1/GIF drain, the GS latch and the read-back,
+        // and calls present with no picture.
+        bool (*wantsGsPicture)();
     };
 
     inline const Hooks *g_hooks = nullptr;

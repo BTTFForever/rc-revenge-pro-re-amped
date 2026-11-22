@@ -180,6 +180,8 @@ namespace rc::live
         return out;
     }
 
+    bool shotPending() { return g_host && g_host->shotDue; }
+
     void afterPresent(const uint8_t *gsPixels, uint32_t gsWidth, uint32_t gsHeight)
     {
         if (!g_host || !g_host->gpu || !g_host->shotDue)

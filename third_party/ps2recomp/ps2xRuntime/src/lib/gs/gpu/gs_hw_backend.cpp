@@ -1998,18 +1998,37 @@ struct GSHwBackend::Impl
 
     // The composed frame reaches the CPU through pixel buffers, so presenting does not wait for the GPU. What is shown is a
     // frame or two old. A size change (a video ending, say) reads synchronously once so no stale picture is scaled.
-    struct ReadbackSlot { GLuint buffer = 0; GLsync fence = nullptr; uint32_t width = 0, height = 0; };
+    // The mapped pixel buffer is copied straight into the frame (one pass; the frame is not zero-filled first and no
+    // second copy is kept). A slot whose read-back is older than kStaleReadback (presents skipped meanwhile: RC_VK_PICTURE
+    // =native, the window minimised) is dropped, and that present reads synchronously instead of showing an old picture.
+    // PS2X_GS_HW_READBACK_COPY=1: the old path (a kept copy, then copied again into the frame).
+    struct ReadbackSlot { GLuint buffer = 0; GLsync fence = nullptr; uint32_t width = 0, height = 0; std::chrono::steady_clock::time_point issued{}; };
     std::array<ReadbackSlot, 4> readbackSlots;
     uint32_t readbackNext = 0u;
     std::vector<uint8_t> readbackLast;
     uint32_t readbackLastWidth = 0u, readbackLastHeight = 0u;
+    static bool readbackKeepCopy()
+    {
+        static const bool on = [] { const char *v = std::getenv("PS2X_GS_HW_READBACK_COPY"); return v && *v == '1'; }();
+        return on;
+    }
     void readBackFrame(const Api &g, uint32_t width, uint32_t height, std::vector<uint8_t> &pixels)
     {
         constexpr GLenum kPixelPack = 0x88EB, kStreamRead = 0x88E1, kSyncGpuDone = 0x9117;
         constexpr GLenum kAlreadySignaled = 0x911A, kConditionSatisfied = 0x911C;
+        constexpr auto kStaleReadback = std::chrono::milliseconds(100);
         const size_t bytes = static_cast<size_t>(width) * height * 4u;
+        const bool keepCopy = readbackKeepCopy();
+        const auto now = std::chrono::steady_clock::now();
         ReadbackSlot &slot = readbackSlots[readbackNext];
         bool free = slot.fence == nullptr;
+        bool fresh = false; // pixels hold this present's (asynchronous) picture
+        if (slot.fence && !keepCopy && now - slot.issued > kStaleReadback)
+        {
+            g.DeleteSync(slot.fence);
+            slot.fence = nullptr;
+            free = true;
+        }
         if (slot.fence)
         {
             const GLenum status = g.ClientWaitSync(slot.fence, kSyncFlushCommandsBit, 0u);
@@ -2019,9 +2038,18 @@ struct GSHwBackend::Impl
                 if (slot.width == width && slot.height == height)
                     if (void *mapped = g.MapBufferRange(kPixelPack, 0, static_cast<GLsizeiptr>(bytes), 0x1u))
                     {
-                        readbackLast.assign(static_cast<const uint8_t *>(mapped), static_cast<const uint8_t *>(mapped) + bytes);
-                        readbackLastWidth = width;
-                        readbackLastHeight = height;
+                        const uint8_t *from = static_cast<const uint8_t *>(mapped);
+                        if (keepCopy)
+                        {
+                            readbackLast.assign(from, from + bytes);
+                            readbackLastWidth = width;
+                            readbackLastHeight = height;
+                        }
+                        else
+                        {
+                            pixels.assign(from, from + bytes);
+                            fresh = true;
+                        }
                         g.UnmapBuffer(kPixelPack);
                     }
                 g.BindBuffer(kPixelPack, 0);
@@ -2044,12 +2072,18 @@ struct GSHwBackend::Impl
             g.ReadPixels(0, 0, static_cast<GLsizei>(width), static_cast<GLsizei>(height), kRgba, kUnsignedByte, nullptr);
             g.BindBuffer(kPixelPack, 0);
             slot.fence = g.FenceSync(kSyncGpuDone, 0u);
+            slot.issued = now;
             readbackNext = (readbackNext + 1u) % readbackSlots.size();
         }
-        if (readbackLastWidth == width && readbackLastHeight == height && readbackLast.size() == bytes)
+        if (fresh)
+            return;
+        if (keepCopy && readbackLastWidth == width && readbackLastHeight == height && readbackLast.size() == bytes)
+        {
             pixels = readbackLast;
-        else
-            g.ReadPixels(0, 0, static_cast<GLsizei>(width), static_cast<GLsizei>(height), kRgba, kUnsignedByte, pixels.data());
+            return;
+        }
+        pixels.resize(bytes);
+        g.ReadPixels(0, 0, static_cast<GLsizei>(width), static_cast<GLsizei>(height), kRgba, kUnsignedByte, pixels.data());
     }
 
     int dumpPresents = std::getenv("GOW_GS_HW_DUMP") ? std::atoi(std::getenv("GOW_GS_HW_DUMP")) : -1;
@@ -3188,8 +3222,8 @@ PresentationFrame GSHwBackend::Present(const GSPresentationRequest &request)
     const uint32_t outW = static_cast<uint32_t>(std::ceil(w * d.scale)), outH = static_cast<uint32_t>(std::ceil(h * d.scale));
     frame.width = outW;
     frame.height = outH;
-    if (!shared)
-        frame.pixels.assign(static_cast<size_t>(outW) * outH * 4u, 0u);
+    if (!shared && Impl::readbackKeepCopy())
+        frame.pixels.assign(static_cast<size_t>(outW) * outH * 4u, 0u); // readBackFrame sizes and fills it otherwise
     const Api &g = d.gl();
     g.PixelStorei(kPackAlignment, 1);
     static const int depthDumpAt = std::getenv("GOW_GS_HW_DEPTHDUMP") ? std::atoi(std::getenv("GOW_GS_HW_DEPTHDUMP")) : -1;
@@ -3239,7 +3273,10 @@ PresentationFrame GSHwBackend::Present(const GSPresentationRequest &request)
 
     // compose the read circuits on the GPU, then read the result back once
     if (!d.presentProgram)
+    {
+        frame.pixels.assign(static_cast<size_t>(outW) * outH * 4u, 0u);
         return frame;
+    }
     if (!d.presentFbo || d.presentW != outW || d.presentH != outH)
     {
         if (d.presentTex)
