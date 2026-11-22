@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "runtime/gs/gs_cpu_backend.h"
 #include "runtime/gs/gs_band_pool.h"
 #include "gs_cpu_backend_internal.h"
@@ -162,6 +163,10 @@ void GSCpuBackend::Submit(const GSPrimitiveBatch &batch)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (!m_vram || batch.vertexCount == 0u)
+        return;
+    // RC_GS_NO_RASTER=1 (measurement only, default off; RENDERER_P2_DESIGN.md 21): the primitive is not rasterised.
+    static const bool noRaster = [] { const char *v = std::getenv("RC_GS_NO_RASTER"); return v && *v == '1'; }();
+    if (noRaster)
         return;
     DrawPrimitive(batch);
 }

@@ -7,7 +7,13 @@ a wait. Europe (eu) first picks the language (the first). The editor's keys are 
 SCRIPT replaces the random edit (after the start grid is placed): tokens separated by commas, each a key (u d l r x o
 t q st sel l1 l2 r1 r2) with an optional *N (pressed N times) and :G (G frames after each press, default 30), or wN
 (wait N frames). The editor's menu (st) is: New Track, Load Track, Save Track, Play Track, Help Screen, Options (Complete
-Track, Random Track, Track Theme, Soundtrack), Quit (see NOTES.md, TEDIT part 2, for the walks used)."""
+Track, Random Track, Track Theme, Soundtrack), Quit (see NOTES.md, TEDIT part 2, for the walks used).
+Two named pieces may stand among the tokens: `loop` builds a closed track by hand, a flat ring of 1 x 1 pieces round a
+4 x 4 square (the start grid, a straight, then three times a right turn and two straights, and the last right turn:
+"Track is complete", accepted); `race` opens the editor's menu, Play Track, Single Race, the default car, the race.
+The ring keeps the placement rule (NOTES.md, P2 batch 7): it never turns back beside itself, so nothing collides; a
+track that crosses itself must go two or more pieces away before turning round, then climb over or drop under.
+`tedit_walk.py 1 0 loop,race` reaches the Track Editor's race from the front end in about 4,300 frames."""
 import random, sys
 seed, frames = int(sys.argv[1]), int(sys.argv[2])
 args = sys.argv[3:]
@@ -34,7 +40,12 @@ for _ in range(r.randint(0, 3)):
 press(CROSS, 6, 60)                            # place it
 KEYS = {'u': UP, 'd': DOWN, 'l': LEFT, 'r': RIGHT, 'x': CROSS, 'o': CIR, 't': TRI, 'q': SQ, 'st': START, 'sel': SELECT,
         'l1': L1, 'l2': L2, 'r1': R1, 'r2': R2}
+MACROS = {
+    'loop': 'x:40,r:30,x:40,l:30,x*2:40,r:30,x:40,l:30,x*2:40,r:30,x:40,l:30,x*2:40,r:30,x:120,x:150',
+    'race': 'st:90,d*3:30,x:150,x:150,x:150,x:150',
+}
 if script:
+    script = ','.join(MACROS.get(t.strip(), t) for t in script.split(','))
     for token in script.split(','):
         token = token.strip()
         if not token:
