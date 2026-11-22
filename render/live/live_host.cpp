@@ -30,6 +30,7 @@ namespace rc::live
             std::string shotDir;
             std::vector<uint64_t> shotAt; // sorted
             bool shotDue = false;
+            uint32_t shotWaits = 0;
             uint64_t shots = 0;
             uint64_t reportEvery = 600, reportFrames = 0; // the presenter's periodic line (RC_VK_NATIVE_REPORT, in frames with lists)
             uint64_t windowFirstCycle = 0;
@@ -183,6 +184,12 @@ namespace rc::live
     {
         if (!g_host || !g_host->gpu || !g_host->shotDue)
             return;
+        // (P2 step 9 batch 6) With the reader on its own thread a list can reach a present that carries no emulated GS
+        // picture; the pair is then taken at the next present that has one (at most 60 presents later; then the native
+        // picture alone), so each pair is still of one present.
+        if (!(gsPixels && gsWidth && gsHeight) && ++g_host->shotWaits <= 60u)
+            return;
+        g_host->shotWaits = 0;
         g_host->shotDue = false;
         Presenter &p = *g_host->presenter;
         const Presenter::View &v = p.view();
