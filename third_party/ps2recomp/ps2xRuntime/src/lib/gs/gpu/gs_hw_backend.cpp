@@ -632,7 +632,7 @@ struct GSHwBackend::Impl
     {
         uint64_t shuffles = 0;
         uint64_t draws = 0, batches = 0, skippedPsm = 0, unsupportedBlend = 0, texDecodes = 0, texHits = 0, skippedPrim = 0;
-        uint64_t barriers = 0, softBlends = 0, pabeDraws = 0, dateDraws = 0; // exp/quick-dirty
+        uint64_t barriers = 0, softBlends = 0, pabeDraws = 0, dateDraws = 0, culledZ0 = 0; // exp/quick-dirty
         // GOW_GS_HW_STATS=2: batches by draw state (exp/quick-dirty): count, vertices, covered area in GS pixels.
         struct StateUse { uint64_t batches = 0, verts = 0; double area = 0; };
         std::map<std::string, StateUse> byState;
@@ -1821,6 +1821,12 @@ struct GSHwBackend::Impl
         pending.clear();
     }
 
+    static bool subtractiveFixedFunction()
+    {
+        static const bool on = [] { const char *v = std::getenv("PS2X_GS_HW_SUBBLEND"); return !(v && *v == '0'); }();
+        return on;
+    }
+
     void blendState(const GSDrawState &s, bool &enabled, GLenum &sf, GLenum &df, float &fixScale, float &constant, GLenum &equation, bool &soft)
     {
         enabled = false;
@@ -1859,6 +1865,10 @@ struct GSHwBackend::Impl
         else if (a == 2 && b == 0 && d == 1) { sf = cs; df = kOne; equation = kFuncReverseSubtract; } // Cd - Cs*C
         else if (a == 1 && b == 2 && d == 0 && c != 1) { sf = kOne; df = cs; }    // Cd*C + Cs
         else if (a == 1 && b == 0 && d == 0 && c != 1) { sf = cd; df = cs; }      // Cs*(1-C) + Cd*C
+        // exp/quick-dirty: (Cd - Cs)*C, the subtractive smoke (RdrPolyTexture style 4, ALPHA 0xa1). It went through the
+        // shader blend, which reads the destination with one barrier per batch: overlapping particles of one batch read
+        // undefined (tiled) results, the black blocky smoke. Fixed function does it exactly, clamped at 0 (COLCLAMP=1).
+        else if (a == 1 && b == 0 && d == 2 && c != 1 && subtractiveFixedFunction()) { sf = cs; df = cs; equation = kFuncReverseSubtract; }
         else { soft = true; sf = cs; df = cd; }
         if (soft)
             ++stats.unsupportedBlend;
@@ -2283,6 +2293,32 @@ struct GSHwBackend::Impl
             g.DepthFunc(ztst == 0 ? kNever : ztst == 1 ? kAlways : ztst == 2 ? kLEqual : kLess);
         else
             g.DepthFunc(ztst == 0 ? kNever : ztst == 1 ? kAlways : ztst == 2 ? kGEqual : kGreater);
+        // exp/quick-dirty (PS2X_GS_HW_CULLZ0, on unless 0): a batch whose every vertex has Z 0 under ZTST GREATER (or
+        // any batch under NEVER) cannot pass the depth test anywhere, so it is not drawn. The front end's VU1 shapes kick
+        // such triangles by the hundred a frame (all-zero colour, Z and STQ, corners clamped to the scissor: half the
+        // screen each), and at 3x their fragments were most of the GPU's work.
+        {
+            static const bool cullZ0 = [] { const char *v = std::getenv("PS2X_GS_HW_CULLZ0"); return !(v && *v == '0'); }();
+            if (cullZ0 && !noDepth && !zAlias && !zInv && ((c.test >> 16) & 1u) != 0u)
+            {
+                bool dead = ztst == 0u;
+                if (!dead && ztst == 3u)
+                {
+                    dead = true;
+                    for (const HwVertex &v : verts)
+                        if (v.z > 0.0f)
+                        {
+                            dead = false;
+                            break;
+                        }
+                }
+                if (dead)
+                {
+                    ++stats.culledZ0;
+                    return;
+                }
+            }
+        }
         std::vector<HwVertex> flippedZ;
         if (zInv)
         {
@@ -2363,7 +2399,7 @@ struct GSHwBackend::Impl
             softBlend = true;
         if (softBlend || zAliasWrite) // the shader produces the final colour (a Z write replaces the colour word)
             blend = false;
-        static const bool stateStats = [] { const char *v = std::getenv("GOW_GS_HW_STATS"); return v && v[0] == '2'; }();
+        static const bool stateStats = [] { const char *v = std::getenv("GOW_GS_HW_STATS"); return v && (v[0] == '2' || v[0] == '3'); }();
         if (stateStats && !verts.empty()) // exp/quick-dirty
         {
             float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f;
@@ -2376,6 +2412,16 @@ struct GSHwBackend::Impl
                           static_cast<unsigned>(c.tex0.tcc), (unsigned long long)c.alpha, (unsigned long long)c.test, c.frame.fbp,
                           c.zbuf.zbp, c.zbuf.zmask ? 1 : 0, s.linearFilter ? 1 : 0, softBlend ? 1 : 0, (s.prim.abe && s.pabe) ? 1 : 0,
                           (unsigned long long)c.clamp);
+            static int triDump = [] { const char *v = std::getenv("GOW_GS_HW_TRIDUMP"); return v ? std::atoi(v) : 0; }();
+            static const unsigned triTbp = [] { const char *v = std::getenv("GOW_GS_HW_TRIDUMP_TBP"); return v ? static_cast<unsigned>(std::strtoul(v, nullptr, 16)) : 0u; }();
+            if (triDump > 0 && verts.size() <= 6 && (triTbp == 0u || c.tex0.tbp0 == triTbp))
+            {
+                --triDump;
+                std::fprintf(stderr, "[gs-hw-tri] %s\n", key);
+                for (const HwVertex &v : verts)
+                    std::fprintf(stderr, "[gs-hw-tri]   x %.2f y %.2f z %.6f rgba %.0f %.0f %.0f %.0f stq %.4f %.4f %.4f uv %.2f %.2f\n",
+                                 v.x, v.y, v.z, v.r, v.g, v.b, v.a, v.s, v.t, v.q, v.u, v.v);
+            }
             Stats::StateUse &use = stats.byState[key];
             use.batches += 1;
             use.verts += verts.size();
@@ -2818,14 +2864,16 @@ struct GSHwBackend::Impl
         if (now - stats.last < std::chrono::seconds(5))
             return;
         stats.last = now;
-        std::fprintf(stderr, "[gs-hw-exp] barriers=%llu softBlends=%llu pabe=%llu date=%llu\n", (unsigned long long)stats.barriers,
-                     (unsigned long long)stats.softBlends, (unsigned long long)stats.pabeDraws, (unsigned long long)stats.dateDraws);
-        stats.barriers = stats.softBlends = stats.pabeDraws = stats.dateDraws = 0;
+        std::fprintf(stderr, "[gs-hw-exp] barriers=%llu softBlends=%llu pabe=%llu date=%llu culledZ0=%llu\n", (unsigned long long)stats.barriers,
+                     (unsigned long long)stats.softBlends, (unsigned long long)stats.pabeDraws, (unsigned long long)stats.dateDraws,
+                     (unsigned long long)stats.culledZ0);
+        stats.barriers = stats.softBlends = stats.pabeDraws = stats.dateDraws = stats.culledZ0 = 0;
         if (!stats.byState.empty())
         {
             std::vector<std::pair<std::string, Stats::StateUse>> top(stats.byState.begin(), stats.byState.end());
             std::sort(top.begin(), top.end(), [](const auto &a, const auto &b) { return a.second.batches > b.second.batches; });
-            for (size_t i = 0; i < top.size() && i < 12; ++i)
+            static const size_t limit = [] { const char *v = std::getenv("GOW_GS_HW_STATS"); return v && v[0] == '3' ? size_t(100000) : size_t(12); }();
+            for (size_t i = 0; i < top.size() && i < limit; ++i)
                 std::fprintf(stderr, "[gs-hw-state] %llu batches %llu verts area %.0f | %s\n", (unsigned long long)top[i].second.batches,
                              (unsigned long long)top[i].second.verts, top[i].second.area, top[i].first.c_str());
             std::fprintf(stderr, "[gs-hw-state] %zu states\n", top.size());
