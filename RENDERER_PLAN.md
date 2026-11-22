@@ -565,7 +565,11 @@ After step 1: fold its answers into this plan's open questions.
    machine pass with it, half the references' time (design section 15). Batch 2 (triangles straight into the list,
    the CLUT and state-packet memos, `FrameReader::Options::fast`, `RC_VK_READER=fast`) built 2026-11-22: check (e)
    (`rc_replay --consumer lists`) passes the 67 and the 17 live dumps, its faults fail; the GIF walk and list 0.39-0.54
-   of before; a live fast session matches the strict reader on every list (design section 16).
+   of before; a live fast session matches the strict reader on every list (design section 16). Batch 3 (the track's
+   fast path, `render/shape`, `rc_shape`) built 2026-11-22: (e) passes the 67 and the 18 live dumps with every TRdr
+   entry-0 run on the path (324.9 M quick triangles straight into the list, 16.0 M hard through the lean step), its
+   five faults fail; the reader 0.63-0.81 of batch 2's (level 18 17.0 ms a cycle off-line, 18.2 live on the EE thread,
+   every live list equal to the strict reader's) (design section 17).
 10. Pipelines built at start-up, performance pass on the heavy levels (18, 17, 24, 6, 8, 9, 12), a DIVERGENCES list.
 Then `vk` becomes the default renderer; `gs` stays as the reference.
 

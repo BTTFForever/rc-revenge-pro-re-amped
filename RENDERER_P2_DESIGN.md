@@ -1060,3 +1060,103 @@ the triangle entry, the memos and the texture cache.
 - `rc_replay --consumer vif --reader fast` has no check (b) (no hash); its check is (e).
 - Batch 3 (the track's fast path) calls `path1Triangle` with its own quadwords; it must decline to the walker in
   the same cases (the packet bytes then have to exist: build the 160-byte packet from the nine quadwords).
+
+## 17. Batch 3 as built (2026-11-22): the track's fast path
+
+**What was built.**
+
+- **`render/shape/`, library `rc_shape`** (on `rc_vu1_lean`; the references' flags; no runtime header, no GIF reader):
+  `fast_run.h` (the interface: `FastSink`, `FastStats`, `FastFault`, `FastOptions`, `kTrdrFastNotReproduced`,
+  `kMaxRunInput`) and `fast_trdr.cpp`, **`rc::shape::runTrdr`**: `TRdr_VUShapeProg` entry 0 (track cells, cars and
+  scenery without the env map, `RDRPOLY`'s and `RDRALPHA`'s buffers: one program) from `shape_lean.cpp`'s `fastTrdr`.
+  The run is the reference's step for step: the header packet (247), the constants, the register blocks and texture
+  blocks kicked from VU memory, the packet buffer's position `vi11` with its wrap and flush packets. Per triangle the
+  SSE path decides culled / all behind / beyond one edge / quick / hard; a hard triangle, or one with a value of 4.1's
+  third column anywhere in it, goes to **`rc::vu1l::trdrStep`** (`trdr_shape.cpp`, exported with `trdrLayout()` in
+  the lean build only, so the strict objects and the game's are byte-identical to before) on one `ShapeProgram` kept
+  for the run (the reader's VU memory and registers, the constants loaded).
+- **The quick triangle's packet.** The slot's GIF tag is read from VU memory (`vi11 - 1`). When it is the triangle
+  tag with EOP (the packet is then exactly 160 bytes) the nine quadwords go to `FastSink::triangle` ->
+  `Path1Sink::triangle` -> `FrameReader::Bridge::triangle` -> **`Gif2dReader::feedPath1Triangle`** (`feedPath1`'s
+  first branch: started, `path1Direct`, no tag open, then `path1Triangle`); when the sink declines, the 160-byte
+  packet is built (tag + nine) and sent as a packet; when the tag is anything else, the nine quadwords are stored in
+  the slot and the packet kicked from VU memory as the program does. The bridge declines when the reader is not
+  fast, collects PATH1 bytes, or has a tap that does not say `fastTriangles()` (the `vif --with-emu` tap gets every
+  packet; `lists`' taps take the fast route). The flush after a wrap is sent as the 16-byte tag from VU memory when
+  it is a tag with EOP and NLOOP 0 (always), and dropped by the sink as in batch 2.
+- **MADD**: the path's `madd` has the three fall-backs of `vu_lean.h` (a zero product of two non-zero factors, tested
+  on the bits as `vu_lean.h` does; a product of the largest magnitude; **the third: a sum below 2^-101 from a non-zero
+  accumulator**), and the tint's `fmadd(acc, tint, 1.0)` goes through it too (it was a plain add in `fastTrdr`).
+  `shape_lean.cpp`'s `fastTrdr` has the same now.
+- **Registers and poison** (4.2): the path writes back the `ShapeProgram`'s registers (the constants, and whatever the
+  hard steps left: VF25.w, VF26, VF29 are written by hard triangles only, so they are the reference's). The lanes the
+  program writes for every triangle it reads and the path does not (VF05-VF07 xyz, VF17.w, VF18-VF20) are poisoned
+  after the run with the other unreproduced lanes (`kTrdrFastNotReproduced`, in `Vif1Reader::runProgram`).
+- **Declines** (4.3): a run whose count walk leaves `kMaxRunInput` = 0x180 quadwords from TOP is the lean
+  reference's (none in the dumps: the largest input is 383 quadwords); every run of a program without a fast path
+  is counted as declined by program.
+- `Vif1Reader::Options::fastPaths` (with the lean library), `FrameReader::Options::fastPaths` (default on under
+  `fast`; `RC_VK_READER=fast` gets it), planted faults `FrameReader::Options::fastFault` / `fastFaultCycle`.
+- `rc_replay --consumer lists`: `--fault bias|fused|round-x|edge-two|hard-quick[:<cycle>]` and a "fast paths" line
+  (runs, declines by program, the outcomes, odd triangles, the largest input). `rc_replay --consumer vif --reader
+  fast-nopaths` is batch 2's fast reader, to time the paths against.
+
+**Changes to the design, and why.**
+
+1. **`rc_shape` does not link `rc_gs2d`** (2 said it would): the path's output goes through an interface
+   (`FastSink`), so the VIF1 reader adapts its `Path1Sink` and nothing in `render/shape` knows the GIF reader. `rc_vif`
+   links `rc_shape`.
+2. **The fast path keeps `vi11` and sends the flushes** where the design said it "never makes one": the slot decides
+   which tag the packet carries, and the tags are VU memory the stream writes, so the slot is kept exactly; the
+   flush is one virtual call of a 16-byte view into VU memory, which the sink drops.
+3. **Odd triangles** (a value of 4.1's third column) are decided before the facing test, as `fastTrdr` decided them;
+   the third MADD fall-back makes them occur on real data now (exact cancellations to zero in a corner transform: 3,012
+   in the 67 dumps, 50,657 in the live dumps). The step decides them, so nothing is lost but time. `shapestat` no
+   longer compares the classification of a run with an odd triangle (the classifier may cull what the path hands to
+   the step) and counts those runs separately.
+4. **Batch 2's open lever, `primitive()`'s state compare, was tried and left out:** a generation counter in place of
+   the 128-byte `GsState` compare per triangle saved 0.03 ms a cycle on level 18 (5.50 to 5.47 ms GIF side, within
+   noise), so it is not where the GIF side's time is; the cull's set-up (`gsTriSetup`) decides what the list holds and
+   stays. Not pursued further in this batch.
+
+**Checks.**
+
+| check | result |
+|---|---|
+| (e) the 67 exact dumps, `--consumer lists --quiet`, four at a time, 9.5 minutes | **67 / 67 PASS**: 45,619 cycles equal byte for byte (50.4 M commands, 29.3 GB encoded), register file equal at 1,604,039 kicks, 43,076,205 runs with the six lanes equal (other lanes differ after 33.6 M runs: the poisoned ones, not judged), 0 guards, 0 run-count differences. Fast paths: **32,642,628 runs** (every TRdr entry-0 run), 0 declined by the parse test; 9,701,659 declined as having no path yet (Env 5,685,356, skin 2,978,048, water 1,028,995, TERdr 9,260); 1,141,089,355 triangles read: 474,675,452 culled, 275,871,092 all behind, 49,732,287 beyond one edge, **324,857,240 quick, all straight into the list** (0 rebuilt as packets), **15,953,284 hard** (3,012 of them odd); 62.2 M texture blocks. (3.3's counts but for the odd triangles, which the path hands to the step before the facing test: 2,932 more hard than 3.3's 15,950,352, and 1,045 fewer quick, 1,165 fewer culled, 679 fewer all behind, 43 fewer beyond one edge.) |
+| (e) the live dumps, `--from-reset`, all 18 in `build-*/frame-dumps/live` (batch 2's 17 and its `fastl17`), 5 minutes | **18 / 18 PASS**: 42,950 cycles equal (31.9 M commands), 42,336 VIF1 kicks, register file equal at 737,224 kicks, 21,612,005 runs with the six lanes equal; 15,585,579 fast runs, 0 declined by parse; 553.3 M triangles read, 156.1 M quick straight into the list, 10.1 M hard (50,657 odd) |
+| (e) fast-path faults on USA `s5/l17`, from cycle 300 | each **FAILs at cycle 300**: `bias` (kick 35: the register file, XYZ2 differs; 400 cycles differ), `fused` (command 875, a SCREEN_PRIMS payload byte; 399 cycles), `round-x` (command 36, another triangle count after the cull; 400 cycles), `edge-two` (command 2582, one triangle fewer; 132 cycles), `hard-quick` (kick 35 run 880: VF25.w differs, the hard path's lane; 384 cycles) |
+| the lanes | the six lanes equal after every one of the 64.7 M runs above; the extra poisoned lanes never reach a packet (the lists are equal with them poisoned) |
+| `shapestat` with the third MADD fall-back | USA `s5/l17`: 2,875,035 quick triangles compared with the reference's packets, **0 differ**; 0 runs with another count or classification; 6 runs with an odd triangle not classified; self-test 0 of 16 M |
+| live, `RC_VK_READER=fast RC_BOOT_LEVEL=18 LIVE_SHOTS=600,700 tools/live_check.sh fastl18 800` (USA, RTX 2060, 100 s) | `dlst` (the strict reader off-line, 51.3 ms a cycle there): **800 / 800 live lists equal byte for byte** (1.9 M commands, 913 MB); `vk --verify` **PASS** (925,765 draws, 8,766 barriers); 0 guarded kicks. The live fast reader **18.2 ms a cycle on the EE thread** on level 18 (14.2 to 21.8 by hundred cycles, largest kick 30.2), against 54.7 for the strict reader in 3D design 20.4; level 17's batch 2 figure was 16.6 |
+| the strict build | `trdr_shape.cpp`, `vu_shape.cpp`, `env_shape.cpp` compiled before and after with the game's flags: byte-identical objects; both `rc_oracle` executables byte-identical |
+| the game relinked (`rc_live`) | `playtest2` (`RC_SCENE_LOG`, `RC_DEBUG_DUMP`, 75 s, default renderer): USA scene 3020 at frame 658, 60 fps; Europe 3020 at frame 1167, 50 fps. Oracle `--all`: USA seed 9331 1,631 ok, 0 FAIL, 1 skipped (`PathBuilder`'s original timed out on a level 17 input: its setup can cycle, NOTES "AMenuDisplayMIT"; the same with `--only PathBuilder`), 98 without a setup (477 s); Europe seed 9332 1,563 ok, 0 FAIL, 90 without a setup (858 s) |
+
+**The reader's time a cycle** (one K2 kick a cycle; `rc_replay <dump> --consumer vif --quiet --vu1 lean --reader
+fast-nopaths|fast`, single runs one after the other on an otherwise idle machine, Ryzen 7 3750H; USA `s5` dumps but
+the last; mean / largest, ms; "references" now includes the fast path):
+
+| scene | batch 2 (no paths): references, VIF walk, GIF walk and list, **all** | batch 3: references, VIF walk, GIF walk and list, **all** | all, batch 3 / batch 2 | section 10's estimate after 3 | per kick: TRdr runs fast; runs declined; triangles read; hard (odd in the dump) |
+|---|---|---|---|---|---|
+| front end | 8.53, 1.35, 2.88, **12.77** / 24.16 | 5.03, 1.31, 2.73, **9.07** / 17.94 | 0.71 | 7.9 | 541; 185; 19,257; 393 (3) |
+| level 5 | 9.58, 1.47, 3.77, **14.82** / 22.17 | 6.87, 1.42, 3.66, **11.95** / 18.46 | 0.81 | 10.2 | 497; 301; 17,150; 324 (26) |
+| level 17 | 9.74, 1.55, 3.88, **15.17** / 21.39 | 6.61, 1.52, 3.86, **11.99** / 17.66 | 0.79 | 9.9 | 585; 266; 20,472; 303 (24) |
+| level 18 | 17.33, 2.97, 5.70, **26.00** / 40.71 | 8.59, 2.89, 5.56, **17.04** / 35.87 | 0.66 | 14.1 | 1,412; 241; 50,597; 618 (34) |
+| level 21 | 11.88, 2.04, 4.33, **18.25** / 27.09 | 7.11, 2.06, 4.32, **13.49** / 21.54 | 0.74 | 11.5 | 952; 239; 33,155; 502 (19) |
+| Track Editor | 0.22, 0.06, 0.05, **0.33** / 0.59 | 0.17, 0.06, 0.05, **0.29** / 0.71 | 0.88 | 0.4 | 11; 7; 364; 91 (0) |
+| level 18, Europe | 17.02, 2.99, 5.56, **25.57** / 51.33 | 8.11, 2.84, 5.15, **16.09** / 29.36 | 0.63 | 13.8 | 1,411; 235; 50,588; 616 (0) |
+
+The track's share of the references fell as measured in 3.7 (level 18: 17.3 to 8.6 ms, of which env, skin and
+water are about 4.8 lean): what is left of the track is its path, its 618 hard triangles a kick through the lean
+step and the texture and register blocks' packets (a profile on level 18: `runTrdr` 15% of the process,
+`setupTriangle` and the other reference routines of the hard steps and of the declined programs about 20%,
+`primitive()` 9%). Every scene is 2 to 3 ms over section 10's "after 3" column, because the GIF side after batch 2 is
+0.4 of before rather than a third (section 16) and the lean env, skin and water are what they were; batch 4 takes the
+next 3 to 5 ms.
+
+**Open.**
+
+- Env, skin and TERdr still run lean (batch 4), water by design; they are now most of the references' time.
+- The GIF side (2.7 to 5.6 ms) is batch 2's; `primitive()`'s state compare is not the lever (item 4); its cull set-up
+  and the walker on the texture and register blocks remain.
+- The `vif --with-emu` tap still receives every triangle as a packet (correct, slower); nothing there was rerun.

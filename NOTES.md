@@ -1275,8 +1275,15 @@ exact dumps and 17 / 17 live dumps (`--from-reset`) PASS; faults `--fault adc|cl
 (clut-memo only where palettes are re-uploaded: `s5/front`, `s5/boot`). The GIF walk and list fell to 0.39-0.54 of
 before (level 18: 14.2 to 5.6 ms a cycle). Live: `RC_VK_READER=fast` opts in (default strict); a fast session on
 level 17 matched the strict reader off-line on 800 / 800 lists, 16.6 ms a cycle on the EE thread (P1: 35.1). `rc_replay
---consumer vif --reader fast` times it. **Next: batch 3** (the track's fast path, `fastTrdr` with the third MADD
-fall-back, through `path1Triangle`). The measurements are `rc_replay <dump> --consumer shapestat` ("Shape survey"
+--consumer vif --reader fast` times it. **Batch 3 (the track's fast path) is done too** (design section 17): `render/shape/`
+(`rc_shape`, `rc::shape::runTrdr`: TRdr entry 0 in SSE with the three MADD fall-backs, hard and odd triangles through
+the lean build's exported `trdrStep`, quick triangles into the list by `Gif2dReader::feedPath1Triangle`, `vi11` and the
+flushes kept, extra lanes poisoned, runs over 0x180 quadwords declined); `FrameReader::Options::fastPaths` (on under
+`fast`, so `RC_VK_READER=fast` has it). Check (e) 67 / 67 and 18 / 18 live PASS, faults `--fault bias|fused|round-x|
+edge-two|hard-quick` fail; the reader 0.63-0.81 of batch 2's off-line (level 18: 26.0 to 17.0 ms a cycle); live fast
+on level 18 matched the strict reader on 800 / 800 lists at 18.2 ms a cycle on the EE thread. `rc_replay --consumer vif
+--reader fast-nopaths` times batch 2's reader. **Next: batch 4** (env, skin, TERdr paths; they and water are now most
+of the references' time). The measurements are `rc_replay <dump> --consumer shapestat` ("Shape survey"
 above). The rest of this section is the decompilation's.
 
 305 of 2,486 functions native on 2026-11-12 (1510 on 2026-11-18, after the FRONT batch at the end of this section, 1710 after TEDIT part 2, 1730 on 2026-11-19 after LEFTOVERS: every function of the game's own source files is native, only the SDK and C libraries remain; 1,653 of them registered in the Europe build, see "Europe version"). Done since 2026-11-10: collision, route nodes, AI (all) and the smaller PLAYER functions, and the renderer from the DMA chain up: RDRSTATE, RDR, RDRPOLY, RDR_SHAPE, RDR_SKIN, RDR_WATER, RDRALPHA, RDR_PARTICLE, SPRITE and most of GFX_P2, with the SDK's VIF packet library and three libvu0 helpers.
