@@ -84,4 +84,19 @@ void runTerdrShapeIo(Io &io)
     std::memcpy(io.vf, p.r, sizeof(p.r));
 }
 
+#if RC_VU1_LEAN
+// (P2 step 9 batch 4, RENDERER_P2_DESIGN.md 4.2) The program's per-triangle step and layout, for the TERdr fast path
+// (render/shape/fast_terdr.cpp). The lean build only, and after everything else in the file: the strict build's text,
+// and so the game's objects, are as before.
+const ShapeLayout &terdrLayout() { return kLayout; }
+
+void terdrStep(ShapeProgram &p, int reader)
+{
+    if (!p.setupTriangle(reader))
+        return;
+    lightCorners(p);
+    p.drawTriangle();
+}
+#endif
+
 } // namespace rc::RC_VU1_NAMESPACE

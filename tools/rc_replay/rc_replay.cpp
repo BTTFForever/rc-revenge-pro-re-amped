@@ -505,7 +505,7 @@ namespace
                              "            [--fault depth|clear|texture|flip:<cycle>[:<cycles>]]\n"
                              "       dlst (a dump from boot with RC_FRAME_RECORD_DRAWLISTS=1): the live reader's lists against the recorded DLST chunks\n"
                              "            [--fault list:<cycle>[:<byte>]]\n"
-                             "       lists (check (e)): the fast reader against the strict reader [--from-reset] [--fault adc|clut-memo|state-memo|bias|fused|round-x|edge-two|hard-quick[:<cycle>]]\n"
+                             "       lists (check (e)): the fast reader against the strict reader [--from-reset] [--fault adc|clut-memo|state-memo|bias|fused|round-x|edge-two|hard-quick|last-step|lit-regs[@trdr|env|skin|terdr][:<cycle>]]\n"
                              "       vif, lists: [--vu1 strict|lean] (vif) [--reader strict|fast|fast-nopaths] (vif: the reader timed)\n");
     }
 }
@@ -1199,7 +1199,7 @@ int main(int argc, char **argv)
         {
             if (!rc::replay::parseListsFault(emuOptions.faultKind))
             {
-                std::fprintf(stderr, "rc_replay lists: --fault adc|clut-memo|state-memo|bias|fused|round-x|edge-two|hard-quick[:<cycle>]\n");
+                std::fprintf(stderr, "rc_replay lists: --fault adc|clut-memo|state-memo|bias|fused|round-x|edge-two|hard-quick|last-step|lit-regs[@trdr|env|skin|terdr][:<cycle>]\n");
                 return 2;
             }
             o.fault = emuOptions.faultKind;

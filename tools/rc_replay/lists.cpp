@@ -45,9 +45,11 @@ namespace rc::replay
             f.gif.frameUploads = true;
             f.fast = fast;
             rc::shape::FastFault path = rc::shape::FastFault::None;
-            if (fast && !o.fault.empty() && rc::shape::parseFastFault(o.fault.c_str(), path))
+            uint8_t programs = 0xFF;
+            if (fast && !o.fault.empty() && rc::shape::parseFastFault(o.fault.c_str(), path, &programs))
             {
                 f.fastFault = path;
+                f.fastFaultPrograms = programs;
                 f.fastFaultCycle = o.faultCycle;
             }
             else if (fast && !o.fault.empty())
@@ -318,21 +320,31 @@ namespace rc::replay
                     " (strict %" PRIu64 "), %" PRIu64 " of them from the load memo, %" PRIu64 " TEX0 writes answered by the memo; palette checks skipped %" PRIu64 "\n",
                     gf.path1Packets, gf.path1Triangles, gf.path1TrianglesWalked, gf.path1Flushes, gf.stateMemoHits, gf.path1Walked, vf.directRuns, gf.clutLoads,
                     gs.clutLoads, gf.clutLoadsFromMemo, gf.clutMemoHits, s.fast.gif().cache().stats().paletteChecksSkipped);
-        const rc::shape::FastStats &fs = vf.fast;
-        uint64_t declined = 0;
+        const rc::shape::FastStats &fst = vf.fast;
+        const rc::shape::FastCounts fs = fst.total();
         std::string byProgram;
         for (uint32_t p = 0; p < 6; ++p)
-            if (fs.declined[p])
-            {
-                declined += fs.declined[p];
-                byProgram += std::string(byProgram.empty() ? "" : ", ") + rc::vu1::programName(static_cast<rc::vu1::Program>(p)) + " " + std::to_string(fs.declined[p]);
-            }
-        std::printf("lists: fast paths: %" PRIu64 " runs (TRdr entry 0; largest input %u quadwords), %" PRIu64 " declined (%s; of them %" PRIu64
-                    " TRdr runs whose input does not parse within the buffer); %" PRIu64 " triangles read: %" PRIu64 " culled, %" PRIu64 " all behind, %" PRIu64
+            if (fst.by[p].declined)
+                byProgram += std::string(byProgram.empty() ? "" : ", ") + rc::vu1::programName(static_cast<rc::vu1::Program>(p)) + " " + std::to_string(fst.by[p].declined) +
+                             (fst.by[p].declinedParse ? " (" + std::to_string(fst.by[p].declinedParse) + " by the parse test)" : "");
+        std::printf("lists: fast paths: %" PRIu64 " runs (largest input %u quadwords), %" PRIu64 " declined (%s; of them %" PRIu64
+                    " runs whose input does not parse within the buffer); %" PRIu64 " triangles read: %" PRIu64 " culled, %" PRIu64 " all behind, %" PRIu64
                     " beyond one edge, %" PRIu64 " quick (%" PRIu64 " straight into the list, %" PRIu64 " as packets), %" PRIu64 " hard (%" PRIu64
-                    " of them for a value the mode cannot take); %" PRIu64 " texture blocks; triangles into the list without a packet %" PRIu64 "\n",
-                    fs.runs, fs.maxExtent, declined, byProgram.empty() ? "none" : byProgram.c_str(), fs.declinedParse, fs.in, fs.culled, fs.allBehind, fs.edge,
-                    fs.quick, fs.direct, fs.rebuilt, fs.hard, fs.odd, fs.blocks, gf.path1FastTriangles);
+                    " of them for a value the mode cannot take), %" PRIu64 " last triangles to the step; %" PRIu64 " texture blocks; triangles into the list without a packet %" PRIu64 "\n",
+                    fs.runs, fst.maxExtent, fs.declined, byProgram.empty() ? "none" : byProgram.c_str(), fs.declinedParse, fs.in, fs.culled, fs.allBehind, fs.edge,
+                    fs.quick, fs.direct, fs.rebuilt, fs.hard, fs.odd, fs.lastSteps, fs.blocks, gf.path1FastTriangles);
+        for (uint32_t p = 0; p < 6; ++p)
+        {
+            const rc::shape::FastCounts &c = fst.by[p];
+            if (!c.runs && !c.declined)
+                continue;
+            std::printf("lists: fast path %s: %" PRIu64 " runs%s, %" PRIu64 " declined (%" PRIu64 " by the parse test); %" PRIu64 " triangles read: %" PRIu64
+                        " culled, %" PRIu64 " all behind, %" PRIu64 " beyond one edge, %" PRIu64 " quick, %" PRIu64 " hard (%" PRIu64 " odd), %" PRIu64
+                        " last to the step; %" PRIu64 " blocks\n",
+                        rc::vu1::programName(static_cast<rc::vu1::Program>(p)), c.runs,
+                        p == rc::vu1::kEnv ? (" (" + std::to_string(c.envRuns) + " env-mapped)").c_str() : "", c.declined, c.declinedParse, c.in, c.culled,
+                        c.allBehind, c.edge, c.quick, c.hard, c.odd, c.lastSteps, c.blocks);
+        }
         const double tS = s.strict.vif().nsPerTick() / 1e6, tF = s.fast.vif().nsPerTick() / 1e6;
         const Vif1Reader::Stats &vs = s.strict.vif().stats();
         if (s.path1Kicks)

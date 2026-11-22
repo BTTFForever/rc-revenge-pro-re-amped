@@ -301,7 +301,8 @@ target_link_libraries(rc_replay PRIVATE rc_vu1_ref)
 # consumers); not by the game or the oracle. Neither includes a runtime header.
 # (P2 step 9 batch 3, RENDERER_P2_DESIGN.md 4.2) rc_shape: the fast paths (render/shape), on the lean references; the
 # references' flags. No runtime header, no GIF reader (a path's output goes to a FastSink).
-add_library(rc_shape STATIC EXCLUDE_FROM_ALL render/shape/fast_trdr.cpp)
+add_library(rc_shape STATIC EXCLUDE_FROM_ALL render/shape/fast_trdr.cpp render/shape/fast_env.cpp render/shape/fast_terdr.cpp
+    render/shape/fast_skin.cpp)
 target_compile_options(rc_shape PRIVATE -O2 -fwrapv -fno-strict-aliasing)
 target_link_libraries(rc_shape PUBLIC rc_vu1_lean)
 add_library(rc_vif STATIC EXCLUDE_FROM_ALL render/vif/vif1_reader.cpp render/vif/vu1_programs.cpp)

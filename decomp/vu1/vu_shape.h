@@ -294,6 +294,18 @@ void runTextureBlocks(ShapeProgram &p, int reader, PerTriangle perTriangle)
 // drawTriangle on the triangle at `reader`), for the fast path's hard triangles. The lean build only.
 const ShapeLayout &trdrLayout();
 void trdrStep(ShapeProgram &p, int reader);
+// (P2 step 9 batch 4) The same for the fast paths of the Env, TERdr and skin programs (render/shape): env_shape.cpp's
+// step (setupTriangle; environmentCorners under the map, else the colours' integers; applyTint and drawTriangle for a
+// triangle that faces the viewer), terdr_shape.cpp's (setupTriangle, lightCorners, drawTriangle), skin_shape.cpp's
+// (loadAndTransform, drawTriangle on the sixteen quadwords at `reader`) and the skin program's register loads before
+// its loop.
+const ShapeLayout &envLayout();
+void envStep(ShapeProgram &p, int reader, bool environment);
+const ShapeLayout &terdrLayout();
+void terdrStep(ShapeProgram &p, int reader);
+const ShapeLayout &skinLayout();
+void skinPrologue(ShapeProgram &p);
+void skinStep(ShapeProgram &p, int reader);
 #endif
 
 } // namespace rc::RC_VU1_NAMESPACE

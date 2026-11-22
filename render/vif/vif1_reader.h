@@ -105,11 +105,13 @@ namespace rc::rd
             // the program sends the packet at TOP unchanged and leaves every register as it was) copies that packet to
             // the sink without running a reference (RENDERER_P2_DESIGN.md 4.2's table).
             bool directEntries = false;
-            // (P2 step 9 batch 3, RENDERER_P2_DESIGN.md 4.2) With the lean library: an MSCAL to a program with a fast path
-            // (render/shape: TRdr entry 0) runs the path instead of the reference, unless the path declines the run
-            // (4.3); every other run is the lean reference's, counted as declined.
+            // (P2 step 9 batches 3 and 4, RENDERER_P2_DESIGN.md 4.2) With the lean library: an MSCAL to a program with a
+            // fast path (render/shape: TRdr entry 0, Env entries 0 and 0x78, the skin program, TERdr entry 0) runs the path
+            // instead of the reference, unless the path declines the run (4.3); every other run is the lean reference's,
+            // counted as declined.
             bool fastPaths = false;
             rc::shape::FastFault fastFault = rc::shape::FastFault::None; // planted, from fastFaultCycle on
+            uint8_t fastFaultPrograms = 0xFF;                           // ... in these programs' paths (bit per rc::vu1::Program)
             int64_t fastFaultCycle = 0;
         };
         // More XGKICKs than any run can send (the largest kick of the 67 dumps sends 63,013): the run is abandoned.
@@ -122,6 +124,7 @@ namespace rc::rd
             uint64_t directRuns = 0; // runs of a direct entry answered by Options::directEntries
             rc::shape::FastStats fast; // Options::fastPaths
             uint64_t refNs = 0, walkNs = 0, sinkNs = 0; // in TSC ticks (nsPerTick): the references; the walk and decode; the sink's time
+            uint64_t refNsByProgram[kVu1ProgramCount] = {}; // refNs by the program run (the table's index), fast paths included
         };
 
         Vif1Reader();

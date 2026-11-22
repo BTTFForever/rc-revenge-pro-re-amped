@@ -51,6 +51,7 @@ namespace rc::rd
             v.directEntries = true;
             v.fastPaths = m_opt.fastPaths;
             v.fastFault = m_opt.fastFault;
+            v.fastFaultPrograms = m_opt.fastFaultPrograms;
             v.fastFaultCycle = m_opt.fastFaultCycle;
             m_vif.setOptions(v);
         }

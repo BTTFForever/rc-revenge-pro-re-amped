@@ -13,7 +13,9 @@
 //
 // Planted faults (--fault <name>[:<cycle>], from that cycle on, in the fast reader only): adc (path1Triangle ignores ADC),
 // clut-memo (the CLUT memo ignores memory writes), state-memo (the state-packet memo compares bytes alone); (batch 3) the
-// track's fast path: bias, fused, round-x, edge-two, hard-quick (render/shape/fast_run.h FastFault). Each must fail.
+// track's fast path: bias, fused, round-x, edge-two, hard-quick (render/shape/fast_run.h FastFault); (batch 4) the same in
+// every fast path, or in one with `<name>@trdr|env|skin|terdr`, and last-step (an env-mapped or skin run's last triangle
+// not handed to the step), lit-regs (TERdr's light registers not reloaded). Each must fail.
 
 #include "consumer.h"
 

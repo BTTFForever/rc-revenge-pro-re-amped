@@ -55,6 +55,7 @@ namespace rc::rd
             // fastPaths), their quick triangles straight into the list. Off: batch 2's fast reader (to time the paths).
             bool fastPaths = true;
             rc::shape::FastFault fastFault = rc::shape::FastFault::None; // planted (check (e)), from fastFaultCycle on
+            uint8_t fastFaultPrograms = 0xFF;                           // ... in these programs' paths (bit per rc::vu1::Program)
             int64_t fastFaultCycle = 0;
         };
         struct Stats

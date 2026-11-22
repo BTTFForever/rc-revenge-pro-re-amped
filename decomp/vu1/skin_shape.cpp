@@ -151,4 +151,28 @@ void runSkinShapeIo(Io &io)
     std::memcpy(io.vf, p.r, sizeof(p.r));
 }
 
+#if RC_VU1_LEAN
+// (P2 step 9 batch 4, RENDERER_P2_DESIGN.md 4.2) The program's register loads, per-triangle step and layout, for the
+// skin fast path (render/shape/fast_skin.cpp): a hard or odd triangle, and a run's last triangle. The lean build only,
+// and after everything else in the file: the strict build's text, and so the game's objects, are as before.
+const ShapeLayout &skinLayout() { return kLayout; }
+
+void skinPrologue(ShapeProgram &p)
+{
+    for (int i = 0; i < 4; ++i)
+        p[5 + i] = p.load(21 + i);
+    p[9] = p.load(15);
+    p[10] = p.load(16);
+    p[21] = p.load(14);
+    p[22] = p.load(13);
+    p[23] = p.load(10);
+}
+
+void skinStep(ShapeProgram &p, int reader)
+{
+    loadAndTransform(p, reader);
+    p.drawTriangle();
+}
+#endif
+
 } // namespace rc::RC_VU1_NAMESPACE

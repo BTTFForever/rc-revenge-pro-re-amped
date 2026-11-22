@@ -263,20 +263,23 @@ namespace rc::rd
                 onPacket(&user, m_direct.data(), static_cast<uint32_t>(m_direct.size()));
                 ++m_stats.directRuns;
             }
-            else if (m_options.fastPaths && m_options.library == Vu1Library::Lean && info.program == rc::vu1::kTrdr && pc == 0u &&
+            else if (m_options.fastPaths && m_options.library == Vu1Library::Lean && rc::shape::hasFastPath(info.program, pc) &&
                      [&]
                      {
                          FastAdapter adapter(&user);
                          rc::shape::FastOptions fo;
                          if (static_cast<int64_t>(k.cycle) >= m_options.fastFaultCycle)
+                         {
                              fo.fault = m_options.fastFault;
-                         return rc::shape::runTrdr(m_data.data(), m_vf, m_vif.top, adapter, m_stats.fast, fo);
+                             fo.faultPrograms = m_options.fastFaultPrograms;
+                         }
+                         return rc::shape::runFast(info.program, pc, m_data.data(), m_vf, m_vif.top, adapter, m_stats.fast, fo);
                      }())
                 fast = true;
             else if (m_options.library == Vu1Library::Lean)
             {
-                if (m_options.fastPaths && info.program < 8)
-                    ++m_stats.fast.declined[info.program];
+                if (m_options.fastPaths && info.program < rc::shape::kFastProgramSlots)
+                    ++m_stats.fast.by[info.program].declined;
                 rc::vu1l::run(info.program, io);
             }
             else
@@ -295,7 +298,7 @@ namespace rc::rd
         }
         if (m_poison)
             for (uint32_t reg = 0; reg < 32; ++reg)
-                if (const uint8_t lanes = info.notReproduced[reg] | (fast ? rc::shape::kTrdrFastNotReproduced[reg] : 0u))
+                if (const uint8_t lanes = info.notReproduced[reg] | (fast ? rc::shape::fastNotReproduced(info.program)[reg] : 0u))
                     for (uint32_t lane = 0; lane < 4; ++lane)
                         if (lanes & (1u << lane))
                         {
@@ -308,6 +311,7 @@ namespace rc::rd
         user.sinkNs += t3 - t2;
         m_stats.sinkNs += user.sinkNs;
         m_stats.refNs += (t3 - t0) - user.sinkNs;
+        m_stats.refNsByProgram[m_program] += (t3 - t0) - user.sinkNs;
         ++m_stats.runs[m_program];
         return true;
     }

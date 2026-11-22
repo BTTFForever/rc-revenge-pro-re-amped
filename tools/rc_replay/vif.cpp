@@ -830,6 +830,14 @@ namespace rc::replay
                         s.opt.withEmu ? " (with the comparisons beside the machine)" : s.opt.fast ? " (the fast reader)" : "", vu1LibraryName(s.fr->vif().options().library), v.refNs * ms / s.timedKicks, s.maxRefNs * ms,
                         v.walkNs * ms / s.timedKicks, s.maxWalkNs * ms, s.opt.withEmu ? "comparison, GIF walk and list" : "GIF walk and list",
                         v.sinkNs * ms / s.timedKicks, s.maxSinkNs * ms, (v.refNs + v.walkNs + v.sinkNs) * ms / s.timedKicks, s.maxTotalNs * ms);
+        if (s.timedKicks)
+        {
+            std::string by;
+            for (uint32_t p = 0; p < kVu1ProgramCount; ++p)
+                if (v.refNsByProgram[p])
+                    by += fmt("%s%s %.3f", by.empty() ? "" : ", ", vu1Program(p).name, v.refNsByProgram[p] * ms / s.timedKicks);
+            std::printf("vif: references by program (mean a channel 1 kick, ms; fast paths included): %s\n", by.empty() ? "none" : by.c_str());
+        }
         std::printf("(a) keyframes: %" PRIu64 " compared: VIF1 registers %" PRIu64 ", micro memory %" PRIu64 ", data memory %" PRIu64 ", vector registers %" PRIu64
                     " equal (%" PRIu64 " lanes excluded: not reproduced, poisoned); GS register file %" PRIu64 "/%" PRIu64 " equal to GSRG\n",
                     s.kfCompared, s.kfVifOk, s.kfMicroOk, s.kfDataOk, s.kfVfOk, s.kfPoisonedLanes, s.kfRegsOk, s.kfRegsCompared);

@@ -166,4 +166,26 @@ void runEnvShapeIo(Io &io)
     std::memcpy(io.vf, p.r, sizeof(p.r));
 }
 
+#if RC_VU1_LEAN
+// (P2 step 9 batch 4, RENDERER_P2_DESIGN.md 4.2) The program's per-triangle step and layout, for the Env fast path
+// (render/shape/fast_env.cpp): a hard or odd triangle, and an env-mapped run's last triangle. The lean build only, and
+// after everything else in the file: the strict build's text, and so the game's objects, are as before.
+const ShapeLayout &envLayout() { return kLayout; }
+
+void envStep(ShapeProgram &p, int reader, bool environment)
+{
+    const bool facing = p.setupTriangle(reader);
+    if (environment)
+        environmentCorners(p);
+    else
+        for (int corner = 0; corner < 3; ++corner)
+            for (int lane = 0; lane < 4; ++lane)
+                p[17 + corner].f[lane] = ftoi0(p[17 + corner].f[lane]);
+    if (!facing)
+        return;
+    p.applyTint();
+    p.drawTriangle();
+}
+#endif
+
 } // namespace rc::RC_VU1_NAMESPACE
