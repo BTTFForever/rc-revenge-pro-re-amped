@@ -1291,7 +1291,18 @@ only water (by design) and the direct entries run otherwise. Check (e) 67 / 67 a
 edge-two on Env and skin cannot: no such triangles); `rc_replay --consumer vk --verify --reader fast` 67 / 67 PASS; live
 fast on level 18: 800 / 800 lists equal the strict reader's, 16.8 ms a cycle on the EE thread. Off-line the reader is
 0.80-0.92 of batch 3's (level 18 15.0 ms a cycle); water is 8-19% of it and not what keeps level 18 over 12 ms (the GIF
-side is). **Next: batch 5** (TOPS views) and batch 6 (the reader's thread). The measurements are `rc_replay <dump> --consumer shapestat` ("Shape survey"
+side is). **Batch 5 (TOPS views, then the GIF side) is done too** (design section 19): the fast reader reads a run's
+input in place from the RAM view (`Vif1Reader::Options::views`: TOPS-relative UNPACKs as views, a run's input as
+segments, a hard triangle's ten quadwords copied in, everything copied in before register blocks, references, direct
+entries, skin runs and at the kick's end), leaves the chain walk's stream hash out and recognises uploaded programs by
+comparing bytes; then `primitive()`'s statistics loops, a lean cull (`gsTriBounds`), packets kicked in place
+(`kickPacket`) and sampled sink timing. Check (e) 67 / 67 and 20 / 20 live PASS, faults `view-hard`, `view-ref`, `cull`,
+`kick-cut` fail; the strict reader's (a), (b) 67 / 67; live fast on level 18: 800 / 800 lists equal, 13.3 ms a cycle on
+the EE thread (batch 4: 16.8). Off-line the reader is 0.80-0.91 of batch 4's (level 18 12.3 ms, VIF walk 2.9 to 0.8),
+but the views themselves are neutral here (what paid was the hash): `rc_replay vif --reader fast-noviews` times without
+them. Level 18 is still about 1.3 ms over section 10's 12 ms live; every other timed scene fits. **Next: batch 6** (the
+reader's thread), then batch 7 (frame rates) decides whether level 18 needs a lever (the track's near-plane hard
+triangles, water's first pass). The measurements are `rc_replay <dump> --consumer shapestat` ("Shape survey"
 above). The rest of this section is the decompilation's.
 
 305 of 2,486 functions native on 2026-11-12 (1510 on 2026-11-18, after the FRONT batch at the end of this section, 1710 after TEDIT part 2, 1730 on 2026-11-19 after LEFTOVERS: every function of the game's own source files is native, only the SDK and C libraries remain; 1,653 of them registered in the Europe build, see "Europe version"). Done since 2026-11-10: collision, route nodes, AI (all) and the smaller PLAYER functions, and the renderer from the DMA chain up: RDRSTATE, RDR, RDRPOLY, RDR_SHAPE, RDR_SKIN, RDR_WATER, RDRALPHA, RDR_PARTICLE, SPRITE and most of GFX_P2, with the SDK's VIF packet library and three libvu0 helpers.

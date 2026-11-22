@@ -1286,3 +1286,149 @@ thread and decides; nothing in this batch needs a water path.
 - The `vif --with-emu` tap still receives every triangle as a packet (as batch 3); not rerun.
 - TERdr's odd triangles are many on the Track Editor race (129,907 of 30.7 M read live; exact cancellations in the
   lighting's MADDs sent to the step): correct, a little slower; not worth a path of their own.
+
+## 19. Batch 5 as built (2026-11-22): TOPS views, then the GIF side
+
+Two stages, two commits: the views of 4.5 with the rest of the VIF walk (stage 1), then, because level 18 was still
+over section 10's budget, the GIF side that batches 2 to 4 named as the next lever (stage 2).
+
+**What was built, stage 1 (the VIF walk).**
+
+- **TOPS views** (`Vif1Reader::Options::views`, on under `FrameReader::Options::fast` with the fast paths). A
+  TOPS-relative UNPACK into the input buffers (quadwords 0x100-0x3ff, not wrapping) whose data lie in one range of the
+  stream is noted as a view (`{first, count, pointer into the RAM view}`) instead of copied into VU memory. Pending views
+  are kept disjoint: a later UNPACK over one drops it when it covers it wholly, trims it when it covers a prefix or a
+  suffix, and copies it in first otherwise; an absolute UNPACK (the constants, the bones) or one that cannot be a view
+  copies in any view it overlaps in part and drops the ones it covers.
+- **A run reads its input through them.** At an MSCAL of the track family (TRdr 0, Env 0 / 0x78, TERdr 0) the reader
+  gathers the view that holds TOP and those that follow it in VU memory without a gap (`rc::shape::FastInput`: a list of
+  segments; one, two for an input over 256 quadwords, and one an UNPACK a triangle for the polygon and alpha buffers);
+  the run's count walk stays inside them (else everything is copied in and the walk repeated on VU memory: never in the
+  dumps), and each triangle's ten quadwords are read in place (`Src::span`, gathered only when a triangle straddles two
+  views). The constants, header packets and work areas all lie below 0x100, where no view is ever made, so a fast run
+  of this family never reads VU memory a view covers.
+- **Materialised when needed** (4.5's list, as built): a hard (or odd, or last) triangle's step gets the triangle's ten
+  quadwords copied into VU memory (the step reads exactly those: `setupTriangle`), the view staying pending; a
+  register block's kick copies every pending view in first; so does a run of a reference (water, a declined run), a
+  direct entry, and a skin run (its last triangle is always the step's and its bones are read by address from
+  anywhere); a sink that reads VU memory around a run (`Path1Sink::readsVuMemory`: the `vif --with-emu` checker) turns
+  views off for the kick; the end of the kick copies in what is pending (never needed in the dumps: by then a direct
+  entry, a water run or a register block has always copied everything in). Comparisons and keyframes of VU memory happen between kicks, when nothing is pending.
+- **The chain walk's hash** (`walkChain(..., hash)`, `Vif1Reader::Options::streamHash`): the fast reader's walk no
+  longer hashes the 5.8 MB of stream a kick (`WalkResult::streamHash`, which the reader never read). It was the largest
+  part of the VIF walk.
+- **The program memo** (`Vif1Reader::Options::programMemo`): micro memory images already identified (eight, most
+  recent first) are recognised by comparing the 16 KB instead of the byte-wise FNV hash over them (a program is
+  uploaded about fifteen times a kick; the hash was a quarter of what was left of the walk).
+- Faults `--fault view-hard` (a hard triangle's quadwords not copied in) and `view-ref` (views not copied in before a
+  reference or direct-entry run). `rc_replay --consumer vif --reader fast-noviews` times the reader without the views.
+
+**What was built, stage 2 (the GIF side).**
+
+- `Gif2dReader::primitive()`: the per-primitive counts of groups needing a seeded or default register and of the
+  plan's guards loop over the set bits only (the loops over all sixteen groups and all guards ran for every primitive,
+  since every K2 primitive needs FBA seeded: a third of the function's time). Statistics only; the strict reader has it
+  too.
+- The fast reader's offscreen cull takes its decision from **`gsTriBounds`** (`gs_model.h`): `gsTriSetup`'s area test
+  and bounding box by the same integer expressions, without the edges, biases and the division. The strict reader keeps
+  `gsTriSetup`.
+- **`kickPacket`** (`fast_simd.h`): the fast paths' header, texture-block and register-block packets handed to the sink
+  in place in VU memory (the packet `copyGifPacket` would make: its tags walked, the same 64 K-quadword cut; the
+  program's own kick when it would wrap), instead of copied a quadword at a time into a vector.
+- **`Vif1Reader::Options::sampledTiming`** (on in the fast reader): the sink's time (the split between "references" and
+  "GIF walk and list") is taken around one sink call in eight and counted eight times, instead of two clock reads
+  around every packet and triangle. The clock reads alone were about 1 ms a kick on level 18, in the live reader too.
+  The kick's whole time and the VIF walk are still measured exactly; the split is an estimate.
+- Faults `--fault cull` (gsTriBounds' first pixel rounded down) and `kick-cut` (a packet kicked in place one quadword
+  short).
+- The clock reads of `sampledTiming` are clamped per run (the estimate of the sink's share cannot exceed the run's
+  time), so the largest kick's split stays meaningful.
+
+**Changes to the design, and why.**
+
+1. **The views do not pay on this machine; what paid in the VIF walk was the hash.** 4.5 expected the walk to fall to
+   0.3 of before through the views. It did (0.27 to 0.32 on the race scenes, below), but by three parts: the stream
+   hash left out (level 18: 2.9 to 1.7 ms), the program memo (1.7 to 1.4) and the views (1.4 to 0.8). The views' 0.6 ms
+   reappears in the fast paths (the same bytes, now read from memory by the path instead of by the copy: on level 18
+   the references went from 6.4 to 6.9 ms), so with and without them the reader's whole time is the same within the
+   noise of three runs (table below, `fast-noviews`). A rolling prefetch three triangles ahead, and a prefetch of a
+   view's lines when it is made, were tried and did not change that (left out). The views stay on (they are what 4.5
+   asked for, (e) proves them, and they take 0.6 ms off the VIF walk); `FrameReader::Options::views` turns them off.
+2. **"One view covers the walk" is not the common case.** A run's input is two UNPACKs when it is longer than 256
+   quadwords (one UNPACK's limit: the shapes' 0x100 + 0x77), and the polygon and alpha buffers are an UNPACK a triangle
+   (14 quadwords: block and triangle), so a run reads a list of segments, contiguous in VU memory, with a cursor; each
+   triangle's ten quadwords are found once (`Src::span`). With a single view as designed, the walk left it in nine
+   runs of ten on level 17 and everything was copied in.
+3. **A hard triangle does not materialise the views; its ten quadwords are copied in.** The step reads the triangle
+   (`setupTriangle`: reader to reader + 9) and nothing else of the input, so copying those keeps the views pending (the
+   bytes are the same). Materialising every view at a hard triangle (4.5's rule as written) copied in a third of the
+   views' quadwords on level 17; with this, 12% there and 6.5% over the 67 dumps.
+4. **Skin runs take no view** (4.5 did not say): every skin run's last triangle is the reference's step, which reads the
+   input from VU memory, and the program reads its bones by address from anywhere in VU memory; the views pending are
+   copied in before it.
+5. **Views only above quadword 0x100.** Every program's constants, header packets, packet buffer, clip lists and link
+   slots lie below 0x100 (the layouts of `decomp/vu1`), so a fast run's own writes never meet a pending view and a view
+   never has to be ordered against them. A TOPS-relative UNPACK below 0x100 (none in the dumps) is copied.
+6. **Not tried as named in section 16 / 17: `primitive()`'s state compare** (batch 3 found it worth 0.03 ms). What the
+   profile showed instead was the statistics: the two per-primitive loops over sixteen groups and every guard bit.
+7. **Tried and left out (stage 2 stopped there):** a direct decoder for the texture and register blocks
+   (`GifWalker::feedAd`: one PACKED tag of PRIM, TEX0, CLAMP, A+D and NOP descriptors, which every one of level 17's
+   8.1 M walked packets is). (e) passed with it and its fault failed, but level 18 was 12.34 against 12.31 ms without
+   it (four runs each): the walker is not where the GIF side's time is. After stage 2 the GIF side's profile is flat
+   (`primitive()` 6%, `path1Triangle` 5% of the process, nothing else above 2%).
+
+**Checks** (the final tree, stage 2; stage 1's own run of (e) on the 67 and the 20 live dumps passed as well, logs in
+`build-decomp/batch5-logs/stage1/`).
+
+| check | result |
+|---|---|
+| (e) the 67 exact dumps, `--consumer lists --quiet`, four at a time, 11 minutes | **67 / 67 PASS**: 45,619 cycles equal byte for byte (50.4 M commands, 29.3 GB encoded), register file equal at 1,604,039 kicks, 43,076,205 runs with the six lanes equal, 0 guards, 0 run-count differences; the fast paths' counts are batch 4's (41,315,292 runs, 499.3 M quick triangles straight into the list, 17.1 M hard). **Views:** 97,141,177 UNPACKs taken as views (14.2 G quadwords, 227 GB), 12,799 TOPS-relative ones copied (data in two ranges); 88,263,389 dropped unread (a later UNPACK covered them wholly), 6,510,877 trimmed; 8,877,788 copied in (before a register block's kick 1,835,405, before a reference or direct-entry run 6,909,729, before a skin run 49,317, under an overlapping write 83,337, at the walk 0, at the kick's end 0): 918 M quadwords, **6.5% of what the views hold**; 38,337,244 fast runs read their input through views (36,700,319 of them to the end without anything copied in), 17,367,832 hard triangles copied in from a view |
+| (e) all 20 live dumps in `build-*/frame-dumps/live` (batch 4's 18, its `b4fastl18`, batch 3's `fastl18`), `--from-reset`, 5 minutes | **20 / 20 PASS**: 44,550 cycles equal (35.6 M commands), register file equal at 790,860 kicks, 24,274,934 runs with the six lanes equal; 49,571,757 views (7.9 G quadwords), 467 M quadwords copied in (5.9%) |
+| (e) faults, USA `s5/l17` from cycle 300 | each **FAILs at cycle 300** (400 of 400 cycles differ): `view-hard` (kick 35 run 10, VF25.w: a hard triangle's step read the quadwords an earlier run left), `view-ref` (kick 35: a water run read stale VU memory and ran away into the guard, 800 runs against 943), `cull` (command 4: another triangle count), `kick-cut` (kick 35: GS register PRIM differs) |
+| (a), (b) for the strict reader, `rc_replay <dump> --consumer vif --verify --quiet`, the 67, 6.5 minutes | **67 / 67 PASS**: (b) 44,200 / 44,200 VIF1 kicks equal to the recorded GIF hash (1,045,771,646 packets); (a) keyframes 131 / 131 (VIF1 registers, micro and data memory, vector registers), `GSRG` 198 / 198, register file 157,195,822 values at 1,604,039 kicks, 0 differ |
+| (d) and the chained replay, `rc_replay <dump> --consumer vk --verify --quiet --reader fast`, the 67, two at a time on the RTX 2060 | **67 / 67 PASS** (26 minutes, beside the oracle): 45,619 pictures at the flip of 45,619 equal to the reference's hash, 2,860 of 2,860 stored pictures equal; 24.8 M draws, 245.3 M primitives, 1.18 M barriers; validation errors 0 (layer off); 41.3 M fast runs, 499.3 M quick triangles |
+| live, `RC_VK_READER=fast RC_BOOT_LEVEL=18 LIVE_SHOTS=600,700 tools/live_check.sh b5fastl18 800` (USA, RTX 2060, 99 s) | `dlst` (the strict reader off-line): **800 / 800 live lists equal byte for byte** (1.9 M commands, 922 MB); `vk --verify` **PASS** (925,080 draws, 8,446 barriers); 0 guarded kicks. The live fast reader **13.29 ms a cycle on the EE thread** (10.75 to 16.05 by hundred cycles, largest kick 22.8), against 16.76 for batch 4's on the same level (section 18) and 54.7 for the strict reader (3D design 20.4) |
+| the strict build | the 82 strict objects of `decomp/vu1` in `build-decomp`, `build-eu`, `build-oracle`, `build-oracle-eu` byte-identical to batch 4's list (the two oracle directories' game objects had not been rebuilt since 2026-11-19; rebuilt now, they equal `build-decomp`'s and `build-eu`'s, which are unchanged); both `rc_oracle` executables byte-identical |
+| the game relinked (`rc_live`, `rc_record`) | `playtest2` (`RC_SCENE_LOG`, `RC_DEBUG_DUMP`, 75 s, default renderer, RTX 2060): USA scene 3020 at frame 658, 60.0 fps after the load; Europe 3020 at frame 1167, 50.0-50.2 (one 45.8 sample across the race's load, as USA's 55.6). Oracle `--all` (its executables byte-identical, run as the rule asks): USA seed 9551 **1,631 ok, 0 FAIL**, 1 skipped (`PathBuilder`'s original timed out on level 17, as in batch 3), 98 without a setup (504 s); Europe seed 9552 **1,563 ok, 0 FAIL**, 90 without a setup (918 s) |
+
+**The reader's time a cycle** (one K2 kick a cycle; `rc_replay <dump> --consumer vif --quiet --vu1 lean --reader fast`,
+the three builds alternated three times each on an otherwise idle machine, Ryzen 7 3750H, means of the three; "batch 4"
+is batch 4's tree rebuilt and measured beside this one; USA `s5` dumps but the last; ms; batch 5's split between
+references and GIF side is sampled, its VIF walk and its whole time are not):
+
+| scene | batch 4: references, VIF walk, GIF walk and list, **all** | batch 5: references, VIF walk, GIF walk and list, **all** / largest | batch 5 without the views: VIF walk, **all** | VIF walk, batch 5 / batch 4 | all, batch 5 / batch 4 | section 10's estimate after 5 |
+|---|---|---|---|---|---|---|
+| front end | 3.25, 1.32, 2.75, **7.32** | 3.33, 0.42, 2.38, **6.14** / 14.7 | 0.65, **6.05** | 0.32 | 0.84 | 4.6 |
+| level 5 | 4.35, 1.44, 3.69, **9.48** | 4.51, 0.43, 3.37, **8.29** / 14.6 | 0.69, **8.08** | 0.30 | 0.87 | 6.0 |
+| level 17 | 4.67, 1.56, 3.88, **10.10** | 4.59, 0.45, 3.37, **8.42** / 15.3 | 0.74, **8.36** | 0.29 | 0.83 | 6.2 |
+| level 18 | 6.60, 2.87, 5.38, **14.84** | 6.89, 0.80, 4.65, **12.34** / 27.2 | 1.40, **12.39** | 0.28 | 0.83 | 9.2 |
+| level 21 | 5.29, 2.02, 4.23, **11.55** | 5.85, 0.61, 4.04, **10.49** / 26.4 | 0.99, **10.04** | 0.30 | 0.91 | 7.6 |
+| Track Editor | 0.13, 0.06, 0.05, **0.25** | 0.13, 0.01, 0.04, **0.18** / 0.6 | 0.01, **0.17** | 0.17 | 0.72 | 0.3 |
+| level 18, Europe | 6.65, 2.92, 5.32, **14.89** | 6.69, 0.79, 4.44, **11.92** / 28.5 | 1.39, **12.21** | 0.27 | 0.80 | 9.0 |
+
+Where level 18's 2.5 ms went (from the builds measured on the way, three runs each, so each step is good to about 0.3
+ms): the stream hash 1.2 (VIF walk 2.9 to 1.7), the program memo 0.3 (to 1.4), the views 0.6 off the VIF walk and 0.5
+onto the paths, stage 2 about 0.8 (the statistics loops and the cull, the clock reads, the packets in place). By program
+(single runs): TRdr 4.47, Env 0.51, skin 0.43, water 1.52 ms a cycle on level 18.
+
+**Section 10's budget.** Every timed scene but level 18 is now under 12 ms off-line, level 21 at 10.5 the nearest. Level
+18 is 12.3 (USA) and 11.9 ms (Europe) off-line, and live 13.3 ms on the EE thread (1.08 times off-line here), so on its
+own thread (batch 6) it would be about 1.3 ms over section 10's 12 ms, against about 2.5 estimated after batch 4.
+Stage 2 stopped because its last lever did not pay (item 7) and the GIF side's profile is flat. What is left on level 18,
+largest first: the track's path and its hard triangles (TRdr 4.5 ms, of which the path itself is about 2.1: the rest is
+the 620 hard triangles a kick through the lean step, the packets and blocks), `path1Triangle` and `primitive()` (12% of
+the process's samples between them, no single hot spot left in either), water 1.5 ms. The next lever is a fast path for the
+near-plane cases of the track's hard triangles (8.8 M of its 16.0 M in the dumps: one or two corners behind, clipped to
+one or two triangles, no guard band), or water's first pass; batch 7 decides with the reader on its own thread.
+
+**Open.**
+
+- Level 18 is about 1.3 ms over section 10's 12 ms live (above); batch 6 moves the reader off the EE thread, batch 7
+  measures. Not decided here: which lever, if any (the hard triangles' near-plane path, water's first pass, 8.3's skip).
+- The views are neutral on this machine (item 1). Whether they pay on the reader's own thread (batch 6: the RAM image
+  is then the thread's, and the copies compete with the EE thread's caches differently) is batch 6's to measure with
+  `FrameReader::Options::views` both ways.
+- The split between references and GIF side in the fast reader is now sampled (one sink call in eight); the strict
+  reader's is not.
+- The `vif --with-emu` checker turns views off for its kicks (it reads VU memory around each run), so views are never
+  compared beside the emulated machine; (e) is their proof.

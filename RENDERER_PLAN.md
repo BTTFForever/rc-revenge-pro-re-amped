@@ -572,7 +572,12 @@ After step 1: fold its answers into this plan's open questions.
    every live list equal to the strict reader's) (design section 17). Batch 4 (Env, skin, TERdr) built 2026-11-22:
    every run but water's on a fast path, (e) passes the 67 and the 18 live dumps (499.3 M quick triangles straight into
    the list), the faults fail where the data can show them, `vk --reader fast` 67 / 67; the reader 0.80-0.92 of batch
-   3's (level 18 15.0 ms a cycle off-line, 16.8 live), water 8-19% of it, no water path needed yet (design section 18).
+   3's (level 18 15.0 ms a cycle off-line, 16.8 live), water 8-19% of it, no water path needed yet (design section 18). Batch
+   5 (TOPS views, then the GIF side) built 2026-11-22: UNPACK data read in place, the stream hash and the program hash
+   gone from the walk, the GIF side's statistics and cull made lean; (e) passes the 67 and the 20 live dumps, its four
+   faults fail; the VIF walk 0.27-0.32 of batch 4's, the reader 0.80-0.91 (level 18 12.3 ms off-line, 13.3 live on the
+   EE thread), the views alone neutral on this machine; level 18 about 1.3 ms over the 12 ms budget, the rest under it
+   (design section 19).
 10. Pipelines built at start-up, performance pass on the heavy levels (18, 17, 24, 6, 8, 9, 12), a DIVERGENCES list.
 Then `vk` becomes the default renderer; `gs` stays as the reference.
 

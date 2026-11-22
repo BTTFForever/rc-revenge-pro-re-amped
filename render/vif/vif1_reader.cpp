@@ -504,6 +504,8 @@ namespace rc::rd
         sink.runEnd(run, m_data.data(), m_vf);
         const uint64_t t3 = nowNs();
         user.sinkNs += t3 - t2;
+        // Options::sampledTiming: the sink's share is an estimate, which in a short run can exceed the run's time.
+        user.sinkNs = std::min(user.sinkNs, t3 - t0);
         m_stats.sinkNs += user.sinkNs;
         m_stats.refNs += (t3 - t0) - user.sinkNs;
         m_stats.refNsByProgram[m_program] += (t3 - t0) - user.sinkNs;
