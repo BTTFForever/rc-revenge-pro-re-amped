@@ -4,6 +4,17 @@ A native decompilation PC port of the PlayStation 2 game *RC Revenge Pro* (2000)
 ordinary program built from C++ source. The USA (SLUS-20153, NTSC) and Europe (SLES-50077, PAL) releases are both
 supported.
 
+> **Project direction (November 2026).** This repository now has two lines of work:
+> - **`main`: the enhanced recomp.** The goal is to play the game well on a modern PC: high frame rates and
+>   resolutions, widescreen, efficient performance, new features and removed limits. Exact PS2 accuracy is no longer
+>   a requirement here. Bugs are fixed as they appear, and the verification tools below are kept but no longer gate
+>   changes. The decompiled native code and the native Vulkan renderer are kept and built on.
+> - **`decomp-exact`: the accuracy-first decompilation**, frozen at tag `decomp-exact-2026-11-22`. Every native
+>   function is behaviour-matching and oracle-checked, with an exact native Vulkan renderer (P1, P2 through batch 6).
+>   It is the base for anyone who wants to continue towards a fully native, PS2-free PC port.
+>
+> The description below was written for the decompilation and still applies to the code both lines share.
+
 **No game data is included or distributed.** You need your own legal copy of the game disc, PAL or NTSC. The setup
 script reads everything it needs from your disc image.
 
