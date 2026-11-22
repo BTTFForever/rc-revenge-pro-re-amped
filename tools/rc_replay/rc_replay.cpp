@@ -506,7 +506,7 @@ namespace
                              "       dlst (a dump from boot with RC_FRAME_RECORD_DRAWLISTS=1): the live reader's lists against the recorded DLST chunks\n"
                              "            [--fault list:<cycle>[:<byte>]]\n"
                              "       lists (check (e)): the fast reader against the strict reader [--from-reset] [--fault adc|clut-memo|state-memo|bias|fused|round-x|edge-two|hard-quick|last-step|lit-regs[@trdr|env|skin|terdr][:<cycle>]]\n"
-                             "       vif, lists: [--vu1 strict|lean] (vif) [--reader strict|fast|fast-nopaths] (vif: the reader timed)\n");
+                             "       vif, lists, vk: [--vu1 strict|lean] (vif) [--reader strict|fast|fast-nopaths] (vif: the reader timed; vk: strict|fast, the reader drawn)\n");
     }
 }
 
@@ -1177,6 +1177,12 @@ int main(int argc, char **argv)
         o.fault = emuOptions.faultKind;
         o.faultCycle = emuOptions.faultCycle;
         o.faultCycles = faultHasCount ? emuOptions.faultN : 1u;
+        if (readerKind != "strict" && readerKind != "fast")
+        {
+            std::fprintf(stderr, "rc_replay vk: --reader strict|fast\n");
+            return 2;
+        }
+        o.fastReader = readerKind == "fast";
         if (!o.fault.empty() && o.fault != "depth" && o.fault != "clear" && o.fault != "texture" && o.fault != "flip")
         {
             std::fprintf(stderr, "rc_replay vk: --fault depth|clear|texture|flip:<cycle>[:<cycles>]\n");

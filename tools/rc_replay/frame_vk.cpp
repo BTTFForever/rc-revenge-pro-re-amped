@@ -61,9 +61,10 @@ namespace rc::replay
             n.payloadOffset = offset;
         }
 
-        FrameReader::Options readerOptions()
+        FrameReader::Options readerOptions(bool fast)
         {
             FrameReader::Options o;
+            o.fast = fast;
             o.gif.seed = true;          // GSRG at the first keyframe: every register is known from there on
             o.gif.cullOffscreen = true; // the reference's own early exits (RENDERER_3D_DESIGN.md 8)
             o.gif.path1Prims = true;    // K2 is drawn
@@ -75,7 +76,8 @@ namespace rc::replay
     struct FrameVkCheck::Impl
     {
         FrameVkOptions opt;
-        FrameReader reader{readerOptions()};
+        FrameReader reader;
+        explicit Impl(const FrameVkOptions &options) : opt(options), reader(readerOptions(options.fastReader)) {}
         Gs2dVk vk;
         bool rhiUp = false, up = false, seeded = false;
         std::string adapter;
@@ -128,7 +130,7 @@ namespace rc::replay
         void compareKeyframe(const Keyframe &kf, const uint8_t *mem);
     };
 
-    FrameVkCheck::FrameVkCheck(const FrameVkOptions &options) : m(std::make_unique<Impl>()) { m->opt = options; }
+    FrameVkCheck::FrameVkCheck(const FrameVkOptions &options) : m(std::make_unique<Impl>(options)) {}
 
     FrameVkCheck::~FrameVkCheck()
     {
@@ -654,6 +656,12 @@ namespace rc::replay
                     groups += std::string(groups.empty() ? "" : ", ") + gsGroupName(b) + " " + std::to_string(gs.neededSeeded[b]) + (gs.neededDefault[b] ? " (default " + std::to_string(gs.neededDefault[b]) + ")" : "");
             std::printf("vk: reader: registers still the keyframe's GSRG at a draw, by group: %s; with a value other than the default: %s\n", groups.empty() ? "none" : groups.c_str(),
                         [&] { std::string t; for (uint32_t b = 0; b < kGsGroupCount; ++b) if (gs.neededSeededNotDefault[b]) t += std::string(t.empty() ? "" : ", ") + gsGroupName(b) + " " + std::to_string(gs.neededSeededNotDefault[b]); return t.empty() ? std::string("none") : t; }().c_str());
+        }
+        if (m->opt.fastReader)
+        {
+            const rc::shape::FastCounts fc = m->reader.vif().stats().fast.total();
+            std::printf("vk: reader: fast (P2: lean references, fast paths): %" PRIu64 " fast runs, %" PRIu64 " declined, %" PRIu64 " quick triangles\n", fc.runs,
+                        fc.declined, fc.quick);
         }
         std::printf("vk: Gs2dVk: %" PRIu64 " lists, %" PRIu64 " draws (%.1f a cycle, largest %" PRIu64 "), %" PRIu64 " primitives, %" PRIu64 " barriers (%.2f a cycle, largest %" PRIu64
                     "), clears %" PRIu64 ", unsupported states %" PRIu64 ", sprites skipped %" PRIu64 ", vertices beyond the viewport %" PRIu64 ", triangles with a vertex Z >= 2^24 %" PRIu64

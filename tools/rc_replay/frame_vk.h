@@ -40,6 +40,9 @@ namespace rc::replay
         std::string fault;
         int64_t faultCycle = -1;
         uint32_t faultCycles = 1;
+        // (P2 step 9 batch 4) --reader fast: the fast reader (FrameReader::Options::fast, with the fast paths) in place of
+        // the strict one, for check (d) and the chained replay as a regression (RENDERER_P2_DESIGN.md 9).
+        bool fastReader = false;
     };
 
     class FrameVkCheck final : public rc::rec::Consumer
