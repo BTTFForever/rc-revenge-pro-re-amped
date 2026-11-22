@@ -10,6 +10,8 @@
 //   - Pass, per cycle with a reference picture: every pixel equals the reference (R, G, B, A as stored). Before step 8
 //     batch 4 K2's pixels were left out; they are still counted (a pixel a channel 1 kick changed in the shown target or
 //     in Z, read from the emulated machine's memory around each such kick, kept until a clear or upload kick).
+//   - --reader-thread (P2 step 9 batch 6): the reader behind the live KickQueue on a thread of its own (the thread
+//     sanitizer's harness: build-tsan).
 //   - --live-shots <dir>: the game's own screenshots (RC_VK_SHOT_DIR, native_<cycle>.rgba) of cycles in the dump; at each,
 //     the off-line native picture must equal the live one on every pixel: the live session drew what the reader and
 //     presenter draw from the recorded kicks.
@@ -30,6 +32,14 @@ namespace rc::replay
         std::string blend = "auto"; // read, ff
         std::string shotsDir, pngDir;
         std::function<const uint8_t *()> vram; // the emulated GS memory (the emu machine behind this consumer)
+        // (P2 step 9 batch 6) --reader fast: the fast reader (FrameReader::Options::fast).
+        bool fast = false;
+        // (P2 step 9 batch 6) --reader-thread: the reader runs behind an rc::live::KickQueue on its own thread, as live; this
+        // thread feeds it the dump's events and presents and judges each list when it is published (up to two cycles
+        // later). The K2 mask's bookkeeping then leaves out what clears and uploads give back to K1 (the reader's own list,
+        // which tells them from draws, belongs to the other thread), so the K2 pixel counts are larger; pass and fail are
+        // unchanged: every pixel against the reference.
+        bool thread = false;
     };
 
     class Live2dCheck final : public rc::rec::Consumer

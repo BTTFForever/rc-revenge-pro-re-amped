@@ -501,6 +501,7 @@ namespace
                              "       blit: [--no-gpu] [--validation] [--png <dir>] [--fault tile:<cycle>:<n> | dispfb:<cycle> | byte|gpubyte:<cycle>:<pixel>]\n"
                              "       emu --rereference <out.rcfr> (exact dumps): a copy with the references this machine makes\n"
                              "       live2d (exact dumps; the live 2D renderer, RC_VK_PICTURE=native): [--live-shots <dir>] [--vk-blend read|ff] [--validation] [--png <dir>]\n"
+                             "              [--reader strict|fast] [--reader-thread] (P2 step 9 batch 6: the reader behind the live KickQueue on its own thread)\n"
                              "       vk (exact dumps; the chained replay, no emulated machine): [--vk-blend read|ff] [--validation] [--png <dir>]\n"
                              "            [--fault depth|clear|texture|flip:<cycle>[:<cycles>]]\n"
                              "       dlst (a dump from boot with RC_FRAME_RECORD_DRAWLISTS=1): the live reader's lists against the recorded DLST chunks\n"
@@ -862,6 +863,7 @@ int main(int argc, char **argv)
     bool verify = false, quiet = false, withEmu = false, noGpu = false, validation = false, noTables = false, vk = false, vifRoundNearest = false,
          vifNoPoison = false;
     bool vkBoxes = false, vkNoFill = false, faultHasCount = false, fromReset = false;
+    bool readerThread = false; // (P2 step 9 batch 6) live2d: the reader behind the KickQueue on its own thread
     std::string vkBias = "on", vkBlend = "auto", vkFaults, vkPng, vifSubstitute = "bytes", vifOut, liveShots, rereference, vu1Library = "strict", readerKind = "strict";
     uint64_t first = 0, last = ~0ull;
     rc::replay::EmuOptions emuOptions;
@@ -941,6 +943,8 @@ int main(int argc, char **argv)
             liveShots = argv[++i];
         else if (a == "--no-tables")
             noTables = true;
+        else if (a == "--reader-thread")
+            readerThread = true;
         else if (a == "--validation")
             validation = true;
         else if (a == "--rereference" && i + 1 < argc)
@@ -1281,6 +1285,13 @@ int main(int argc, char **argv)
         l.validation = validation;
         l.blend = vkBlend;
         l.shotsDir = liveShots;
+        if (readerKind != "strict" && readerKind != "fast")
+        {
+            std::fprintf(stderr, "live2d: --reader strict|fast\n");
+            return 2;
+        }
+        l.fast = readerKind == "fast";
+        l.thread = readerThread;
         l.pngDir = emuOptions.pngDir;
         emuOptions.pngDir.clear();
         return runEmu(reader, path, emuOptions, verify, true, first, last, nullptr, false, nullptr, false, false, nullptr, &l);

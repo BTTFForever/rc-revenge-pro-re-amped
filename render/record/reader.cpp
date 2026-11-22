@@ -317,16 +317,8 @@ namespace rc::rec
     {
         if (!m_file)
             return fail("not open");
-        if (!m_ram)
-        {
-            m_ram.reset(new uint8_t[kRamBytes]);
-            m_scratch.reset(new uint8_t[kScratchpadBytes]);
-        }
-        std::memset(m_ram.get(), 0, kRamBytes);
-        std::memset(m_scratch.get(), 0, kScratchpadBytes);
-        m_present.assign(kPageCount, 0u);
-        m_generation.assign(kPageCount, 0u);
-        RamView view{m_ram.get(), m_scratch.get(), m_present.data(), m_generation.data()};
+        m_image.reset();
+        const RamView view = m_image.view();
 
         // Where to start.
         uint64_t startOffset = 0;
@@ -351,7 +343,10 @@ namespace rc::rec
         std::vector<const TagView *> labels;
         uint32_t cycleIndex = 0;
         bool ok = true;
-        bool lastDelivered = false; // the last CYCL was delivered (a DLST after it goes to the consumers)
+        // A CYCL has been delivered: DLST chunks go to the consumers from then on. (P2 step 9 batch 6) Live the lists close on
+        // the reader thread, so a cycle's DLST follows its CYCL by up to a few cycles and may follow a keyframe; consumers
+        // match them by the cycle number in the chunk.
+        bool delivering = false;
         for (; ci < m_chunks.size() && ok; ++ci)
         {
             const ChunkRef &ref = m_chunks[ci];
@@ -363,7 +358,7 @@ namespace rc::rec
                 cs.stored += ref.header.storedBytes;
                 cs.raw += ref.header.rawBytes;
                 // (step 8 batch 4) A draw list after a delivered cycle goes to the consumers.
-                if (id == kChunkDrawList && lastDelivered)
+                if (id == kChunkDrawList && delivering)
                 {
                     if (!readPayload(ref, raw))
                     {
@@ -375,7 +370,6 @@ namespace rc::rec
                 }
                 continue; // REFI is read with its cycle; INDX, ENDF, TNAM and unknown chunks are skipped
             }
-            lastDelivered = false;
             if (!readPayload(ref, raw))
             {
                 ok = false;
@@ -396,7 +390,7 @@ namespace rc::rec
                 if (!(kf.header.flags & kKeyFinal))
                 {
                     // A new segment: the image starts empty (section 3.4).
-                    std::fill(m_present.begin(), m_present.end(), 0u);
+                    m_image.forget();
                     // (batch 3) Tags made before the segment that its first kicks refer to: TAGP holds them as TAG
                     // records. They are known to the store (a replay that starts here finds them) but not delivered
                     // again as tag events.
@@ -457,7 +451,7 @@ namespace rc::rec
             if (end.cycle > lastCycle)
                 break;
             const bool deliver = end.cycle >= firstCycle;
-            lastDelivered = deliver;
+            delivering = delivering || deliver;
             const uint8_t *refRgba = nullptr;
             if (deliver && end.hasImage && ci + 1 < m_chunks.size() && m_chunks[ci + 1].header.id == kChunkPicture)
             {
@@ -500,15 +494,7 @@ namespace rc::rec
                         break;
                     }
                     const uint8_t *src = body + sizeof(pb);
-                    for (uint32_t i = 0; i < pb.count; ++i)
-                    {
-                        const uint32_t page = pb.firstPage + i;
-                        uint8_t *dst = page < kRamPages ? m_ram.get() + static_cast<size_t>(page) * kPageBytes
-                                                        : m_scratch.get() + static_cast<size_t>(page - kRamPages) * kPageBytes;
-                        std::memcpy(dst, src + static_cast<size_t>(i) * kPageBytes, kPageBytes);
-                        m_present[page] = 1u;
-                        ++m_generation[page];
-                    }
+                    m_image.apply(pb.firstPage, pb.count, src);
                     if (deliver)
                         for (Consumer *c : consumers)
                             c->pages(pb.firstPage, pb.count, src);

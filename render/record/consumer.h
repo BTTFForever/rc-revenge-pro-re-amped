@@ -2,7 +2,8 @@
 
 // The one interface live and off-line consumers of the kick record share (RENDERER_FRAME_RECORD.md section 4.2).
 // All calls are made on one thread, in event order: the EE thread live (inside the runtime's hooks), the tool's
-// thread off-line. A live consumer must not block on the GPU or another thread's work.
+// thread off-line. A live consumer must not block on the GPU or another thread's work (but for rc::live::KickQueue's
+// bounded wait of RENDERER_P2_DESIGN.md 8.3, and drain()).
 
 #include "format.h"
 
@@ -114,6 +115,10 @@ namespace rc::rec
         // after that cycle's cycleEnd; its payload uncompressed.
         virtual void chunk(uint32_t /*id*/, const uint8_t * /*data*/, uint64_t /*bytes*/) {}
         virtual void close() {}
+        // (P2 step 9 batch 6) Live only: return once every event delivered so far has been handled, including any work a
+        // consumer hands to another thread (rc::live::KickQueue's reader thread). The capture calls it before it closes a
+        // recording, so the lists of every recorded cycle reach the dump (DLST) before it is closed.
+        virtual void drain() {}
         virtual ~Consumer() = default;
     };
 }

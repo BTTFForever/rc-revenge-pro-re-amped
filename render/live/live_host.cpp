@@ -1,5 +1,6 @@
 #include "live_host.h"
 
+#include "kick_queue.h"
 #include "live2d.h"
 
 #include "../frame/dlst.h"
@@ -22,6 +23,7 @@ namespace rc::live
         {
             Mailbox box;
             std::unique_ptr<Reader> reader;
+            std::unique_ptr<KickQueue> queue; // (P2 step 9 batch 6) the reader's thread; null with RC_VK_READER_THREAD=0
             std::unique_ptr<Presenter> presenter;
             bool gpu = false;
             std::vector<Published> pending;
@@ -55,12 +57,24 @@ namespace rc::live
         // (P2 step 9 batch 2) RC_VK_READER=fast: the fast reader (lean references, triangles straight into the list, the
         // memos); its lists are the strict reader's (check (e)). Default: the strict reader of P1.
         const bool fast = on("RC_VK_READER", "fast");
-        g_host->reader = std::make_unique<Reader>(g_host->box, true, fast);
+        // (P2 step 9 batch 6) RC_VK_READER_VIEWS=0: the fast reader without its TOPS views (to time them).
+        const bool views = !on("RC_VK_READER_VIEWS", "0");
+        // (P2 step 9 batch 6, RENDERER_P2_DESIGN.md 8) The reader on its own thread behind a KickQueue (the default);
+        // RC_VK_READER_THREAD=0 keeps it on the EE thread, as in P1: the same lists either way.
+        const bool threaded = !on("RC_VK_READER_THREAD", "0");
+        g_host->reader = std::make_unique<Reader>(g_host->box, true, fast, views);
         uint64_t every = 600;
         if (const char *v = std::getenv("RC_VK_NATIVE_REPORT"); v && *v)
             every = std::strtoull(v, nullptr, 10);
         g_host->reader->setReportEvery(every);
         g_host->reportEvery = every;
+        if (threaded)
+        {
+            g_host->reader->setThreadName("the reader thread");
+            KickQueue::Options qo;
+            qo.reportEvery = every;
+            g_host->queue = std::make_unique<KickQueue>(*g_host->reader, qo);
+        }
         // (step 8 batch 4) RC_FRAME_RECORD_DRAWLISTS=1: each recorded cycle's list into the dump (DLST), for the live check.
         g_host->reader->setListSink([](uint64_t cycle, const rc::rd::DrawList &list, uint32_t k2Kicks)
                                     {
@@ -85,9 +99,10 @@ namespace rc::live
                 }
             std::sort(g_host->shotAt.begin(), g_host->shotAt.end());
         }
-        rc::rec::addLiveConsumer(g_host->reader.get());
-        std::fprintf(stderr, "[vk-native] RC_VK_PICTURE=native: the %s frame reader runs on the EE thread; the native picture (K2 and K1) is "
-                             "presented (F7 toggles the emulated GS picture)\n", fast ? "fast" : "strict");
+        rc::rec::addLiveConsumer(threaded ? static_cast<rc::rec::Consumer *>(g_host->queue.get()) : g_host->reader.get());
+        std::fprintf(stderr, "[vk-native] RC_VK_PICTURE=native: the %s frame reader%s runs on %s; the native picture (K2 and K1) is "
+                             "presented (F7 toggles the emulated GS picture)\n", fast ? "fast" : "strict", fast && !views ? " (no TOPS views)" : "",
+                     threaded ? "its own thread (the EE thread queues kicks and changed pages; RC_VK_READER_THREAD=0: on the EE thread)" : "the EE thread");
         return true;
     }
 
@@ -209,12 +224,28 @@ namespace rc::live
     {
         if (!g_host)
             return;
+        // (P2 step 9 batch 6) The reader thread is drained and ended first: its figures are then final and its own.
+        if (g_host->queue)
+        {
+            g_host->queue->stop();
+            const KickQueue::Stats q = g_host->queue->stats();
+            const double c = q.cycles ? static_cast<double>(q.cycles) : 1.0, rc = q.readerCycles ? static_cast<double>(q.readerCycles) : 1.0;
+            std::fprintf(stderr,
+                         "[vk-native] reader thread: %llu cycles queued, %llu read; the EE thread %.2f ms a cycle (largest %.2f; %llu kicks, %.1f MB of "
+                         "pages compared and %.2f MB copied a cycle); the reader thread %.2f ms a cycle (largest %.2f; pages into its image %.2f); "
+                         "%llu waits at a cycle close (%.1f ms in all, largest %.1f); at most %u closed cycles waiting\n",
+                         static_cast<unsigned long long>(q.cycles), static_cast<unsigned long long>(q.readerCycles), q.eeNs / c / 1e6,
+                         q.maxCycleEeNs / 1e6, static_cast<unsigned long long>(q.kicks), static_cast<double>(q.pagesCompared) * 4096.0 / c / 1048576.0,
+                         static_cast<double>(q.pagesCopied) * 4096.0 / c / 1048576.0, q.readerNs / rc / 1e6, q.maxCycleReaderNs / 1e6,
+                         q.applyNs / rc / 1e6, static_cast<unsigned long long>(q.waits), q.waitNs / 1e6, q.maxWaitNs / 1e6, q.maxClosedWaiting);
+        }
         const Reader::Stats &r = g_host->reader->stats();
         std::fprintf(stderr,
-                     "[vk-native] reader: %llu cycles, %.2f ms a cycle on the EE thread (largest %.2f); %llu VIF1 kicks, %.2f ms each (largest %.2f); "
+                     "[vk-native] reader: %llu cycles, %.2f ms a cycle on %s (largest %.2f); %llu VIF1 kicks, %.2f ms each (largest %.2f); "
                      "%llu PATH3 kicks; %llu guarded VIF1 kicks; %llu frame uploads not drawn (not CT32 / FBW 10); %llu lists published, "
                      "%llu reduced to textures and uploads\n",
-                     static_cast<unsigned long long>(r.cycles), r.cycles ? r.ns / r.cycles / 1e6 : 0.0, r.maxCycleNs / 1e6,
+                     static_cast<unsigned long long>(r.cycles), r.cycles ? r.ns / r.cycles / 1e6 : 0.0, g_host->queue ? "the reader thread" : "the EE thread",
+                     r.maxCycleNs / 1e6,
                      static_cast<unsigned long long>(r.path1Kicks), r.path1Kicks ? r.path1Ns / r.path1Kicks / 1e6 : 0.0, r.maxPath1Ns / 1e6,
                      static_cast<unsigned long long>(r.path3Kicks), static_cast<unsigned long long>(r.guarded),
                      static_cast<unsigned long long>(g_host->reader->frame().gif().stats().frameUploadsOther),

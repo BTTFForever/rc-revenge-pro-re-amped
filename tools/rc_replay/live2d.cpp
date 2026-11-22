@@ -3,6 +3,7 @@
 
 #include "png.h"
 
+#include "../../render/live/kick_queue.h"
 #include "../../render/live/live2d.h"
 #include "../../render/tex/gs_layout.h"
 
@@ -49,7 +50,18 @@ namespace rc::replay
     {
         Live2dOptions opt;
         rc::live::Mailbox box;
-        rc::live::Reader reader{box, false};
+        std::unique_ptr<rc::live::Reader> readerPtr;
+        rc::live::Reader *reader = nullptr;
+        std::unique_ptr<rc::live::KickQueue> queue; // (batch 6) --reader-thread
+        rc::rec::Consumer *front = nullptr;         // the queue, or the reader
+        // (batch 6) With the queue: what each closed cycle is judged with once its list is published.
+        struct Closed
+        {
+            RecEndBody end{};
+            std::vector<uint8_t> ref; // empty: none
+            std::vector<uint8_t> k2;
+        };
+        std::map<uint64_t, Closed> closed;
         rc::live::Presenter presenter;
         bool rhiUp = false, up = false, seeded = false;
         std::string adapter;
@@ -69,14 +81,32 @@ namespace rc::replay
         std::vector<std::string> failures;
         std::vector<std::string> shotLines;
 
+        void present(std::vector<rc::live::Published> &lists, const RecEndBody &end, const uint8_t *refRgba, const std::vector<uint8_t> &k2state);
+        void presentPublished(); // (batch 6) with the queue: every published list, each with its own cycle's reference
         void writePngs(const std::string &tag, uint64_t cycle, const std::vector<uint8_t> &native, const uint8_t *ref, const std::vector<uint8_t> &mask,
                        const std::vector<uint8_t> *live, uint32_t w, uint32_t h);
     };
 
-    Live2dCheck::Live2dCheck(const Live2dOptions &options) : m(std::make_unique<Impl>()) { m->opt = options; }
+    Live2dCheck::Live2dCheck(const Live2dOptions &options) : m(std::make_unique<Impl>())
+    {
+        m->opt = options;
+        m->readerPtr = std::make_unique<rc::live::Reader>(m->box, false, options.fast);
+        m->reader = m->readerPtr.get();
+        m->front = m->reader;
+        if (options.thread)
+        {
+            rc::live::KickQueue::Options q;
+            q.live = false;
+            m->reader->setThreadName("the reader thread");
+            m->queue = std::make_unique<rc::live::KickQueue>(*m->reader, q);
+            m->front = m->queue.get();
+        }
+    }
 
     Live2dCheck::~Live2dCheck()
     {
+        if (m->queue)
+            m->queue->stop();
         if (m->rhiUp)
         {
             m->presenter.destroy();
@@ -120,10 +150,10 @@ namespace rc::replay
         return true;
     }
 
-    void Live2dCheck::open(const FileInfo &info) { m->reader.open(info); }
+    void Live2dCheck::open(const FileInfo &info) { m->front->open(info); }
     void Live2dCheck::keyframe(const Keyframe &kf)
     {
-        m->reader.keyframe(kf);
+        m->front->keyframe(kf);
         // The first keyframe (and one after a save-state load): the targets start as the machine's GS memory was (live they
         // start as at reset, zero, with the game).
         if (m->up && (!m->seeded || (kf.header.flags & kKeyAfterStateLoad)) && !(kf.header.flags & kKeyFinal))
@@ -141,20 +171,22 @@ namespace rc::replay
         // changes it.
         if (m->k2.size() != kPixels)
             m->k2.assign(kPixels, 0u);
-        m->reader.cycleBegin(cycle);
+        m->front->cycleBegin(cycle);
     }
 
-    void Live2dCheck::hw(uint32_t address, uint32_t width, uint64_t value, uint32_t callerRa) { m->reader.hw(address, width, value, callerRa); }
+    void Live2dCheck::hw(uint32_t address, uint32_t width, uint64_t value, uint32_t callerRa) { m->front->hw(address, width, value, callerRa); }
 
     void Live2dCheck::kick(const KickView &k, const RamView &ram)
     {
-        m->reader.kick(k, ram);
+        m->front->kick(k, ram);
         m->haveBefore = m->rewrite = false;
-        if (k.channel == 2u)
+        if (k.channel == 2u && m->queue)
+            m->rewrite = false; // (batch 6) the reader's list is the other thread's: see Live2dOptions::thread
+        else if (k.channel == 2u)
         {
-            const DrawList &l = m->reader.frame().list();
+            const DrawList &l = m->reader->frame().list();
             bool rewrites = false, draws = false;
-            for (size_t i = m->reader.frame().gif().kickFirstCommand(); i < l.cmds.size(); ++i)
+            for (size_t i = m->reader->frame().gif().kickFirstCommand(); i < l.cmds.size(); ++i)
             {
                 rewrites |= l.cmds[i].op == kOpClear || l.cmds[i].op == kOpImageBlit;
                 draws |= l.cmds[i].op == kOpScreenPrims;
@@ -227,15 +259,52 @@ namespace rc::replay
 
     void Live2dCheck::cycleEnd(const CycleInfo &info, const uint8_t *refRgba)
     {
-        m->reader.cycleEnd(info, refRgba);
+        m->front->cycleEnd(info, refRgba);
+        if (m->queue)
+        {
+            // (batch 6) Kept until the reader thread publishes the cycle's list.
+            Impl::Closed &c = m->closed[info.end.cycle];
+            c.end = info.end;
+            if (refRgba)
+                c.ref.assign(refRgba, refRgba + static_cast<size_t>(info.end.refWidth) * info.end.refHeight * 4u);
+            c.k2 = m->k2;
+            m->presentPublished();
+            return;
+        }
         m->lists.clear();
         m->box.take(m->lists);
-        if (!m->up || m->lists.empty())
+        m->present(m->lists, info.end, refRgba, m->k2);
+    }
+
+    void Live2dCheck::Impl::presentPublished()
+    {
+        std::vector<rc::live::Published> got, one;
+        box.take(got);
+        for (rc::live::Published &p : got)
+        {
+            const auto it = closed.find(p.cycle);
+            one.clear();
+            one.push_back(std::move(p));
+            if (it == closed.end())
+            {
+                present(one, RecEndBody{}, nullptr, k2); // never: every list is of a closed cycle
+                continue;
+            }
+            present(one, it->second.end, it->second.ref.empty() ? nullptr : it->second.ref.data(), it->second.k2);
+            closed.erase(it);
+        }
+    }
+
+    void Live2dCheck::Impl::present(std::vector<rc::live::Published> &lists, const RecEndBody &end, const uint8_t *refRgba,
+                                    const std::vector<uint8_t> &k2state)
+    {
+        Impl *m = this;
+        if (!m->up || lists.empty())
             return;
         // The presenter's frame, as the vk host makes it (then waited for and read back).
         rhi_wait_frame();
         RhiCommandList cl = rhi_begin_commands();
-        const rc::live::Presenter::View v = m->presenter.record(cl, m->lists);
+        const rc::live::Presenter::View v = m->presenter.record(cl, lists);
         rhi_submit(cl);
         rhi_wait_idle();
         if (m->presenter.stats().failures != m->drawFailures)
@@ -249,24 +318,24 @@ namespace rc::replay
             return;
         }
         const uint32_t w = v.width, h = std::min(v.height, kH);
-        const uint32_t fbp = static_cast<uint32_t>(info.end.dispfb2 & 0x1FFu);
+        const uint32_t fbp = static_cast<uint32_t>(end.dispfb2 & 0x1FFu);
         const uint32_t t = fbp == 0x50u ? 1u : 0u;
         std::vector<uint8_t> mask(static_cast<size_t>(w) * h, 0u);
         for (uint32_t y = 0; y < h; ++y)
             for (uint32_t x = 0; x < w; ++x)
-                mask[y * w + x] = (m->k2[y * kW + x] & ((1u << t) | 4u)) ? 1u : 0u;
+                mask[y * w + x] = (k2state[y * kW + x] & ((1u << t) | 4u)) ? 1u : 0u;
         // The cycle's clear colour (the flip's draw environment), for the count of pixels K1 changed.
         uint32_t clear = 0;
         bool haveClear = false;
-        for (const DrawCmd &c : m->lists.back().list.cmds)
+        for (const DrawCmd &c : lists.back().list.cmds)
             if (c.op == kOpClear)
             {
                 clear = c.a;
                 haveClear = true;
             }
 
-        const uint64_t cycle = info.end.cycle;
-        const bool hasRef = refRgba && info.end.refWidth == w && info.end.refHeight == h;
+        const uint64_t cycle = end.cycle;
+        const bool hasRef = refRgba && end.refWidth == w && end.refHeight == h;
         bool failedHere = false;
         if (hasRef)
         {
@@ -364,15 +433,31 @@ namespace rc::replay
 
     bool Live2dCheck::failed() const
     {
-        return m->cyclesFailing || m->drawFailures || m->readFailures || m->validationErrors || m->shotsJudged != m->shotsEqual ||
+        return (m->queue && !m->closed.empty()) || m->cyclesFailing || m->drawFailures || m->readFailures || m->validationErrors || m->shotsJudged != m->shotsEqual ||
                (m->shots.size() && !m->shotsJudged);
     }
 
     void Live2dCheck::summary()
     {
+        if (m->queue)
+        {
+            // (batch 6) The lists still owed, then the reader thread's figures.
+            m->queue->stop();
+            m->presentPublished();
+            const rc::live::KickQueue::Stats q = m->queue->stats();
+            std::printf("live2d: reader thread: %" PRIu64 " cycles queued, %" PRIu64 " read; the feeding thread %.2f ms a cycle (%.2f MB of pages copied "
+                        "a cycle); the reader thread %.2f ms a cycle (pages %.2f); %" PRIu64 " waits (%.1f ms); at most %u closed cycles waiting; %zu "
+                        "cycles never published\n",
+                        q.cycles, q.readerCycles, q.cycles ? q.eeNs / q.cycles / 1e6 : 0.0,
+                        q.cycles ? static_cast<double>(q.pagesCopied) * 4096.0 / q.cycles / 1048576.0 : 0.0,
+                        q.readerCycles ? q.readerNs / q.readerCycles / 1e6 : 0.0, q.readerCycles ? q.applyNs / q.readerCycles / 1e6 : 0.0, q.waits,
+                        q.waitNs / 1e6, q.maxClosedWaiting, m->closed.size());
+            if (!m->closed.empty())
+                m->failures.push_back(std::to_string(m->closed.size()) + " closed cycles never published");
+        }
         const bool layer = m->rhiUp && rhi_limits() && rhi_limits()->validationLayer;
         const rc::live::Presenter::Stats &ps = m->presenter.stats();
-        const rc::live::Reader::Stats &rs = m->reader.stats();
+        const rc::live::Reader::Stats &rs = m->reader->stats();
         const double gpu = ps.gpuSamples ? ps.gpuMs / ps.gpuSamples : 0.0, gpuMax = ps.maxGpuMs;
         if (m->rhiUp)
         {

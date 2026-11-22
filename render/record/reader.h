@@ -4,6 +4,7 @@
 // A dump that was cut short (no index, no ENDF) is scanned and read up to its last whole chunk.
 
 #include "consumer.h"
+#include "ram_image.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -70,9 +71,7 @@ namespace rc::rec
         std::string m_error;
         std::string m_tagNames;
 
-        // The rebuilt image.
-        std::unique_ptr<uint8_t[]> m_ram, m_scratch;
-        std::vector<uint8_t> m_present;
-        std::vector<uint32_t> m_generation;
+        // The rebuilt image (batch 6 of renderer P2 step 9: RamImage, shared with the live reader thread).
+        RamImage m_image;
     };
 }

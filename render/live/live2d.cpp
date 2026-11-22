@@ -59,10 +59,11 @@ namespace rc::live
     // --- Reader ----------------------------------------------------------------------------------------------------
     namespace
     {
-        FrameReader::Options readerOptions(bool fast)
+        FrameReader::Options readerOptions(bool fast, bool views)
         {
             FrameReader::Options o;
             o.fast = fast;
+            o.views = views;
             o.gif.cullOffscreen = true;
             o.gif.path1Prims = true;   // (step 8 batch 4) K2 is drawn
             o.gif.frameUploads = true; // uploads into the frame buffers, in order with the draws
@@ -70,7 +71,7 @@ namespace rc::live
         }
     }
 
-    Reader::Reader(Mailbox &box, bool live, bool fast) : m_box(box), m_frame(readerOptions(fast)), m_live(live)
+    Reader::Reader(Mailbox &box, bool live, bool fast, bool views) : m_box(box), m_frame(readerOptions(fast, views)), m_live(live)
     {
         if (live)
             m_frame.startLive();
@@ -159,9 +160,9 @@ namespace rc::live
         {
             const Stats &w = m_window;
             std::fprintf(stderr,
-                         "[vk-native] cycles %llu-%llu: reader %.2f ms a cycle on the EE thread (largest %.2f); VIF1 kicks %llu, %.2f ms each "
+                         "[vk-native] cycles %llu-%llu: reader %.2f ms a cycle on %s (largest %.2f); VIF1 kicks %llu, %.2f ms each "
                          "(largest %.2f); PATH3 kicks %llu; guarded %llu\n",
-                         static_cast<unsigned long long>(m_windowFirst), static_cast<unsigned long long>(info.end.cycle), w.ns / w.cycles / 1e6,
+                         static_cast<unsigned long long>(m_windowFirst), static_cast<unsigned long long>(info.end.cycle), w.ns / w.cycles / 1e6, m_threadName,
                          w.maxCycleNs / 1e6, static_cast<unsigned long long>(w.path1Kicks), w.path1Kicks ? w.path1Ns / w.path1Kicks / 1e6 : 0.0,
                          w.maxPath1Ns / 1e6, static_cast<unsigned long long>(w.path3Kicks), static_cast<unsigned long long>(w.guarded));
             m_window = Stats{};

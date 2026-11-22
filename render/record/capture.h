@@ -47,9 +47,11 @@ namespace rc::rec
     // initializer). The consumer lives for the rest of the run.
     void addLiveConsumer(Consumer *consumer);
 
-    // (step 8 batch 4) RC_FRAME_RECORD_DRAWLISTS=1 with a recording: a live consumer's draw list of the cycle just closed
-    // goes into the dump as a DLST chunk (render/frame/dlst.h) right after that cycle. Call both from the consumer's
-    // cycleEnd on the EE thread; drawListWanted is false when that cycle was not recorded (or the switch is off).
+    // (step 8 batch 4) RC_FRAME_RECORD_DRAWLISTS=1 with a recording: a live consumer's draw list of a closed cycle goes
+    // into the dump as a DLST chunk (render/frame/dlst.h). drawListWanted is false when that cycle was not recorded (or the
+    // switch is off). (P2 step 9 batch 6) Callable from any thread (the reader thread makes the lists up to a few cycles
+    // after their cycle closed): the chunk lands wherever the writer takes it, before the dump closes (the capture
+    // drains its live consumers first: Consumer::drain), and readers match it by the cycle number it carries.
     bool drawListWanted(uint64_t cycle);
     void recordDrawList(uint64_t cycle, std::vector<uint8_t> &&payload);
 }

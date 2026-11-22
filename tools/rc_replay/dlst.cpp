@@ -9,6 +9,7 @@
 #include <cinttypes>
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -25,13 +26,16 @@ namespace rc::replay
         std::vector<rc::live::Published> drained;
 
         bool firstCycleSeen = false, notFromBoot = false;
-        uint64_t firstCycle = 0;
-        // The off-line list of the cycle just closed, waiting for its DLST.
-        bool pending = false;
-        uint64_t pendingCycle = 0;
-        std::vector<uint8_t> offline;
+        uint64_t firstCycle = 0, lastClosed = 0;
+        // The off-line lists of closed cycles, waiting for their DLST. (P2 step 9 batch 6) Live the lists close on the
+        // reader thread, so a cycle's DLST can follow later cycles (and a keyframe): chunks are matched by their cycle
+        // number. A list still waiting kLate cycles after its own is missing.
+        static constexpr uint64_t kLate = 16u;
+        std::map<uint64_t, std::vector<uint8_t>> pending;
+        std::vector<uint8_t> offline; // the one being compared
+        std::vector<std::vector<uint8_t>> spare;
 
-        uint64_t cycles = 0, chunks = 0, equal = 0, differ = 0, missing = 0, stray = 0, bytes = 0, commands = 0, k2Kicks = 0;
+        uint64_t cycles = 0, chunks = 0, equal = 0, differ = 0, missing = 0, stray = 0, late = 0, bytes = 0, commands = 0, k2Kicks = 0;
         uint64_t keyframesPassed = 0;
         std::vector<std::string> failures;
         uint64_t failuresDropped = 0;
@@ -44,13 +48,16 @@ namespace rc::replay
             else
                 ++failuresDropped;
         }
-        void closePending()
+        // Lists waiting since before `before` (all: ~0) have no DLST.
+        void expire(uint64_t before)
         {
-            if (!pending)
-                return;
-            ++missing;
-            fail("cycle " + std::to_string(pendingCycle) + ": no DLST chunk");
-            pending = false;
+            while (!pending.empty() && pending.begin()->first < before)
+            {
+                ++missing;
+                fail("cycle " + std::to_string(pending.begin()->first) + ": no DLST chunk");
+                spare.push_back(std::move(pending.begin()->second));
+                pending.erase(pending.begin());
+            }
         }
         std::string firstDifference(const uint8_t *live, uint64_t liveBytes);
     };
@@ -60,17 +67,22 @@ namespace rc::replay
         m->opt = options;
         m->reader.setListSink([this](uint64_t cycle, const DrawList &list, uint32_t k2)
                               {
-                                  encodeDlst(list, cycle, k2, m->offline);
-                                  if (static_cast<int64_t>(cycle) == m->opt.faultCycle && !m->offline.empty())
+                                  std::vector<uint8_t> enc;
+                                  if (!m->spare.empty())
+                                  {
+                                      enc = std::move(m->spare.back());
+                                      m->spare.pop_back();
+                                  }
+                                  encodeDlst(list, cycle, k2, enc);
+                                  if (static_cast<int64_t>(cycle) == m->opt.faultCycle && !enc.empty())
                                   {
                                       const size_t at = m->opt.faultByte ? m->opt.faultByte
                                                                          : sizeof(DlstHeader) + list.cmds.size() * sizeof(DrawCmd) + list.payload.size() / 2u;
-                                      m->offline[std::min(at, m->offline.size() - 1u)] ^= 0x01u;
+                                      enc[std::min(at, enc.size() - 1u)] ^= 0x01u;
                                       std::printf("dlst: planted fault: byte %zu of cycle %" PRIu64 "'s off-line list flipped\n",
-                                                  std::min(at, m->offline.size() - 1u), cycle);
+                                                  std::min(at, enc.size() - 1u), cycle);
                                   }
-                                  m->pending = true;
-                                  m->pendingCycle = cycle;
+                                  m->pending[cycle] = std::move(enc);
                                   m->commands += list.cmds.size();
                                   m->k2Kicks += k2;
                               });
@@ -107,8 +119,10 @@ namespace rc::replay
 
     void DlstCheck::cycleEnd(const CycleInfo &info, const uint8_t *refRgba)
     {
-        m->closePending(); // the previous cycle's DLST would have come before this cycle
         m->reader.cycleEnd(info, refRgba);
+        m->lastClosed = info.end.cycle;
+        if (info.end.cycle >= Impl::kLate)
+            m->expire(info.end.cycle - Impl::kLate);
         m->drained.clear();
         m->box.take(m->drained);
         ++m->cycles;
@@ -185,27 +199,36 @@ namespace rc::replay
         ++m->chunks;
         DlstHeader h{};
         const bool ok = decodeDlstHeader(data, bytes, h);
-        if (!m->pending)
+        const auto it = ok ? m->pending.find(h.cycle) : m->pending.end();
+        if (it == m->pending.end())
         {
             ++m->stray;
-            m->fail("a DLST chunk" + std::string(ok ? " of cycle " + std::to_string(h.cycle) : "") + " with no cycle before it");
+            m->fail("a DLST chunk" + std::string(ok ? " of cycle " + std::to_string(h.cycle) : "") + " with no closed cycle waiting for it");
             return;
         }
-        m->pending = false;
+        const uint64_t cycle = it->first;
+        m->offline = std::move(it->second);
+        m->pending.erase(it);
         m->bytes += bytes;
-        if (bytes == m->offline.size() && std::memcmp(data, m->offline.data(), bytes) == 0)
+        if (cycle != m->lastClosed)
+            ++m->late;
+        const bool same = bytes == m->offline.size() && std::memcmp(data, m->offline.data(), bytes) == 0;
+        if (same)
         {
             ++m->equal;
             if (!m->opt.quiet)
-                std::printf("cycle %" PRIu64 ": %u commands, %" PRIu64 " payload bytes, %u VIF1 kicks: equal\n", m->pendingCycle, h.cmdCount,
+                std::printf("cycle %" PRIu64 ": %u commands, %" PRIu64 " payload bytes, %u VIF1 kicks: equal\n", cycle, h.cmdCount,
                             h.payloadBytes, h.k2Kicks);
-            return;
         }
-        ++m->differ;
-        const std::string why = m->firstDifference(data, bytes);
-        m->fail("cycle " + std::to_string(m->pendingCycle) + ": the live list differs: " + why);
-        if (!m->opt.quiet)
-            std::printf("cycle %" PRIu64 ": DIFFERS: %s\n", m->pendingCycle, why.c_str());
+        else
+        {
+            ++m->differ;
+            const std::string why = m->firstDifference(data, bytes);
+            m->fail("cycle " + std::to_string(cycle) + ": the live list differs: " + why);
+            if (!m->opt.quiet)
+                std::printf("cycle %" PRIu64 ": DIFFERS: %s\n", cycle, why.c_str());
+        }
+        m->spare.push_back(std::move(m->offline));
     }
 
     bool DlstCheck::refused() const { return m->notFromBoot || m->chunks == 0u; }
@@ -214,7 +237,7 @@ namespace rc::replay
 
     void DlstCheck::summary()
     {
-        m->closePending();
+        m->expire(~0ull);
         const rc::live::Reader::Stats &r = m->reader.stats();
         const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - m->t0).count();
         if (m->notFromBoot)
@@ -222,9 +245,9 @@ namespace rc::replay
                         "cannot be compared with one started here; record from boot (RC_FRAME_RECORD_AT=boot+n)\n",
                         m->firstCycle);
         std::printf("dlst: %" PRIu64 " cycles from %" PRIu64 ", %" PRIu64 " DLST chunks (%.1f MB): %" PRIu64 " equal byte for byte, %" PRIu64 " differ, %" PRIu64
-                    " cycles without one, %" PRIu64 " stray; %" PRIu64 " commands, %" PRIu64 " VIF1 kicks (%" PRIu64 " guarded), %" PRIu64
+                    " cycles without one, %" PRIu64 " stray, %" PRIu64 " after a later cycle; %" PRIu64 " commands, %" PRIu64 " VIF1 kicks (%" PRIu64 " guarded), %" PRIu64
                     " keyframes after a state load; reader %.2f ms a cycle; %.1f s\n",
-                    m->cycles, m->firstCycle, m->chunks, m->bytes / 1048576.0, m->equal, m->differ, m->missing, m->stray, m->commands, m->k2Kicks,
+                    m->cycles, m->firstCycle, m->chunks, m->bytes / 1048576.0, m->equal, m->differ, m->missing, m->stray, m->late, m->commands, m->k2Kicks,
                     r.guarded, m->keyframesPassed, r.cycles ? r.ns / r.cycles / 1e6 : 0.0, s);
         for (const std::string &f : m->failures)
             std::printf("FAIL dlst %s\n", f.c_str());

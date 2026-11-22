@@ -116,17 +116,32 @@ namespace rc::rec
             Capture() : m_keyEvery(300u) { m_state = Done; }
 
             // (step 8 batch 4) RC_FRAME_RECORD_DRAWLISTS=1: a live consumer's list of a recorded cycle, as a DLST chunk.
-            bool drawListWanted(uint64_t cycle) const
+            // (P2 step 9 batch 6) From any thread: the reader thread closes a cycle's list up to a few cycles after the EE
+            // thread closed the cycle, so a list is wanted for any cycle of the recording in progress that has been
+            // closed (m_dlFirst..m_dlLast, under m_dlMutex), and the writer takes the chunk wherever it falls; finish()
+            // drains the live consumers before it closes the writer.
+            bool drawListWanted(uint64_t cycle)
             {
-                return m_drawLists && m_writer && m_state == Recording && static_cast<int64_t>(cycle) == m_lastRecordedCycle &&
-                       std::this_thread::get_id() == m_ee;
+                std::lock_guard<std::mutex> lock(m_dlMutex);
+                return wantedLocked(cycle);
             }
             void drawList(uint64_t cycle, std::vector<uint8_t> &&payload)
             {
-                if (!drawListWanted(cycle))
+                std::lock_guard<std::mutex> lock(m_dlMutex);
+                if (!wantedLocked(cycle))
                     return;
                 m_writer->drawList(cycle, std::move(payload));
                 ++m_drawListsWritten;
+            }
+            bool wantedLocked(uint64_t cycle) const
+            {
+                return m_dlOpen && static_cast<int64_t>(cycle) >= m_dlFirst && static_cast<int64_t>(cycle) <= m_dlLast;
+            }
+            // Before the writer closes or writes the ring: every list the live consumers still owe is made.
+            void drainLive()
+            {
+                for (Consumer *c : m_live)
+                    c->drain();
             }
 
             void setRecording(std::string path, Trigger trigger, uint64_t keyEvery)
@@ -895,6 +910,13 @@ namespace rc::rec
                 m_state = Recording;
                 m_recorded = 0;
                 m_firstCycle = m_cycle;
+                if (m_drawLists)
+                {
+                    std::lock_guard<std::mutex> lock(m_dlMutex);
+                    m_dlOpen = true;
+                    m_dlFirst = static_cast<int64_t>(m_cycle);
+                    m_dlLast = -1;
+                }
                 if (m_ring)
                     std::fprintf(stderr, "[frame-record] ring: keeping the last %llu display cycles in memory (segments of %llu) from cycle %llu; "
                                          "F10 writes them to %s\n",
@@ -912,6 +934,13 @@ namespace rc::rec
 
             void finish()
             {
+                // (P2 step 9 batch 6) The lists of the cycles recorded so far, made on the reader thread, go in first.
+                if (m_drawLists)
+                {
+                    drainLive();
+                    std::lock_guard<std::mutex> lock(m_dlMutex);
+                    m_dlOpen = false;
+                }
                 keyframe(true);
                 for (Consumer *c : m_consumers)
                     c->close();
@@ -1032,6 +1061,11 @@ namespace rc::rec
                     for (Consumer *c : m_consumers)
                         c->cycleEnd(info, picture);
                     m_lastRecordedCycle = static_cast<int64_t>(m_cycle);
+                    if (m_drawLists)
+                    {
+                        std::lock_guard<std::mutex> lock(m_dlMutex);
+                        m_dlLast = m_lastRecordedCycle;
+                    }
                     m_hookNsTotal += m_cycleHookNs;
                     m_hookNsMax = std::max(m_hookNsMax, m_cycleHookNs);
                     m_statusHookMax = std::max(m_statusHookMax, m_cycleHookNs);
@@ -1111,6 +1145,8 @@ namespace rc::rec
             // then the writer's worker writes the ring and it to the next file. Recording goes on.
             void ringDump()
             {
+                if (m_drawLists)
+                    drainLive();
                 keyframe(true);
                 const std::string path = pathFor(m_dumpIndex++);
                 const Writer::RingStats r = m_writer->ringStats();
@@ -1193,6 +1229,9 @@ namespace rc::rec
             bool m_recordingSet = false; // RC_FRAME_RECORD configured a recording
             std::vector<Consumer *> m_live; // (batch 5) live consumers
             bool m_drawLists = false;        // (step 8 batch 4) RC_FRAME_RECORD_DRAWLISTS=1
+            std::mutex m_dlMutex;            // (P2 step 9 batch 6) the cycles whose lists are wanted, from any thread
+            bool m_dlOpen = false;
+            int64_t m_dlFirst = 0, m_dlLast = -1;
             int64_t m_lastRecordedCycle = -1;
             uint64_t m_drawListsWritten = 0;
             KickView m_kick{};

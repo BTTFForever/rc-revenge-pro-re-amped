@@ -14,7 +14,12 @@
 //                          the emulated GS picture handed to the same present as gs_<cycle>.png and .rgba (its own size)
 //   RC_VK_NATIVE_REPORT=<n> a reader line every n display cycles and a presenter line every n frames with lists (GPU time,
 //                          K2's GPU time a VIF1 kick; default 600; 0 none)
-//   RC_FRAME_RECORD_DRAWLISTS=1 (with RC_FRAME_RECORD) each recorded cycle's list into the dump as DLST (the live check)
+//   RC_VK_READER=fast      (P2 step 9) the fast reader (the same lists as the strict one; check (e))
+//   RC_VK_READER_THREAD=0  (P2 step 9 batch 6) the reader on the EE thread, as in P1; default: on its own thread behind a
+//                          KickQueue (render/live/kick_queue.h; the EE thread waits when it is more than two cycles behind)
+//   RC_VK_READER_VIEWS=0   (batch 6) the fast reader without its TOPS views (FrameReader::Options::views), to time them
+//   RC_FRAME_RECORD_DRAWLISTS=1 (with RC_FRAME_RECORD) each recorded cycle's list into the dump as DLST (the live check;
+//                          with the reader thread the chunk follows its cycle by up to a few cycles)
 //   RC_VK_PRESENT_FILTER=nearest  (vk_host) the native picture sampled nearest instead of linear when presented
 
 #include "rhi.h"

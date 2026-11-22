@@ -166,7 +166,7 @@ target_link_libraries(rc_revenge_pro PRIVATE rc_ico_rhi)
 find_package(ZLIB REQUIRED)
 set(RC_RECORD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/render/record")
 add_library(rc_record STATIC "${RC_RECORD_DIR}/page_tracker.cpp" "${RC_RECORD_DIR}/chain_walk.cpp" "${RC_RECORD_DIR}/writer.cpp"
-    "${RC_RECORD_DIR}/reader.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/render/gfx/tags.cpp")
+    "${RC_RECORD_DIR}/reader.cpp" "${RC_RECORD_DIR}/ram_image.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/render/gfx/tags.cpp")
 target_link_libraries(rc_record PRIVATE ZLIB::ZLIB)
 target_compile_definitions(rc_record PRIVATE RC_GFX_TAGS=1)
 target_compile_options(rc_record PRIVATE -O2)
@@ -325,7 +325,7 @@ set_property(SOURCE tools/rc_replay/shape_lean.cpp APPEND PROPERTY INCLUDE_DIREC
 # through Gs2dVk (render/live). The game links it (and through it rc_frame, rc_vif, rc_gs2d, rc_gs2d_vk, rc_blit, rc_tex)
 # with no usage requirements reaching the game's other sources; platform/vk_host.cpp calls it only when RC_VK_PICTURE=native.
 # The oracle links none of it. rc_replay's live2d consumer runs the same reader and presenter on a dump.
-add_library(rc_live STATIC EXCLUDE_FROM_ALL render/live/live2d.cpp render/live/live_host.cpp)
+add_library(rc_live STATIC EXCLUDE_FROM_ALL render/live/live2d.cpp render/live/live_host.cpp render/live/kick_queue.cpp)
 target_compile_options(rc_live PRIVATE -O2)
 target_link_libraries(rc_live PRIVATE rc_frame rc_vif rc_blit rc_gs2d_vk rc_gs2d rc_tex rc_record rc_ico_rhi ZLIB::ZLIB)
 target_link_libraries(rc_revenge_pro PRIVATE rc_live)

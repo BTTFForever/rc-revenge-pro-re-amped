@@ -45,7 +45,7 @@ namespace rc::live
         uint32_t fbp = 0, width = 640, height = 240; // the picture: DISPFB2's FBP, 640 x the version's lines
         rc::rd::DrawList list;
         std::vector<uint32_t> k2Ranges; // the cycle's VIF1 kicks: command index begin, end pairs of `list`
-        double readerMs = 0.0;          // the reader's time on the EE thread in this cycle
+        double readerMs = 0.0;          // the reader's time in this cycle (on the EE thread, or the reader thread: batch 6)
     };
 
     // The EE thread pushes, the presenter takes everything at once. Nothing is dropped that a later list depends on:
@@ -76,7 +76,10 @@ namespace rc::live
         };
         // live: start from reset (the game's live reader); false: from the dump's first keyframe (rc_replay).
         // fast (P2 step 9 batch 2; RC_VK_READER=fast in the game): FrameReader::Options::fast, the same lists.
-        Reader(Mailbox &box, bool live, bool fast = false);
+        // views (P2 step 9 batch 6; RC_VK_READER_VIEWS=0 in the game turns them off): FrameReader::Options::views.
+        Reader(Mailbox &box, bool live, bool fast = false, bool views = true);
+        // (P2 step 9 batch 6) The thread the reader runs on, for its report: "the EE thread" (default) or "the reader thread".
+        void setThreadName(const char *name) { m_threadName = name; }
 
         void open(const rc::rec::FileInfo &info) override;
         void keyframe(const rc::rec::Keyframe &kf) override;
@@ -103,6 +106,7 @@ namespace rc::live
         double m_cycleNs = 0.0;
         Stats m_stats, m_window;
         uint64_t m_reportEvery = 0, m_windowFirst = 0;
+        const char *m_threadName = "the EE thread";
     };
 
     class Presenter
