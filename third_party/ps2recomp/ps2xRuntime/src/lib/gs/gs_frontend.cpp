@@ -1945,6 +1945,16 @@ GSPrimitiveBatch GS::buildDrawBatch(int vertexCount) const
     const uint8_t mmag = static_cast<uint8_t>((tex1 >> 5u) & 0x1u);
     const uint8_t mmin = static_cast<uint8_t>((tex1 >> 6u) & 0x7u);
     batch.state.linearFilter = mmag != 0u || mmin == 1u || (mmin & 0x4u) != 0u;
+    // exp/quick-dirty: PS2X_GS_FORCE_LINEAR=1 filters every textured triangle bilinearly (the game asks for nearest on
+    // some); 2 also sprites. Indexed textures stay nearest in the HW backend either way.
+    static const int forceLinear = []
+    {
+        const char *v = std::getenv("PS2X_GS_FORCE_LINEAR");
+        return v && *v ? std::atoi(v) : 0;
+    }();
+    if (forceLinear != 0 && m_prim.tme &&
+        (forceLinear >= 2 || m_prim.type == GS_PRIM_TRIANGLE || m_prim.type == GS_PRIM_TRISTRIP || m_prim.type == GS_PRIM_TRIFAN))
+        batch.state.linearFilter = true;
     return batch;
 }
 

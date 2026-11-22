@@ -2,6 +2,8 @@
 // texture uploads (the rest of the file, the packet builders, is in rdr.cpp). The SDK's GS, DMA and device libraries
 // stay guest calls.
 
+#include "rc_exp.h" // exp/quick-dirty
+#include "runtime/ps2_display_options.h"
 #include "display_fuzz.h"
 
 RC_VERSION_VARIANT(GfxP2_Init)                // Europe: the PAL display mode
@@ -46,6 +48,8 @@ void GfxP2_SwapBuffers()
         const rc::gfx::SpanKicks flip(rc::gfx::KickLabel{rc::gfx::KickFlip, guest_addr(&dbuff), rdr.frameNumber, 0u});
         guest_call(kSceGsSwapDBuff, guest_addr(&dbuff), rdr.frameNumber);
     }
+    if (rc::exp::config().interp) // exp/quick-dirty: present each flip (RC_INTERP)
+        ps2_host_display::notifyFlip();
 
     const uint32_t now = hw_read32(kT0Count);
     const uint32_t flipStart = G(swapTime1);

@@ -6,6 +6,7 @@
 // DisplayClearBackground, DisplayRenderFrame, DisplayRenderFrameProfileNoDraw, DisplayRegisterDeviceWindow,
 // DisplaySetHardwareXY, DisplayTermHiRes and every CELL.c function but CellInit and CellRenderInit.
 
+#include "rc_exp.h" // exp/quick-dirty
 #include "display_fuzz.h"
 
 #include <cstring>
@@ -234,7 +235,9 @@ void View3dInitViewconeReject()
     view3dClass &view = G(view3dVarG);
     const uint16 d = G(init3dVarG).currentD;
     const int16 halfY = static_cast<int16>(-(static_cast<int16_t>(view.dUY) >> 1));
-    const int16 halfX = static_cast<int16>(-(static_cast<int16_t>(view.dUX) >> 1));
+    int16 halfX = static_cast<int16>(-(static_cast<int16_t>(view.dUX) >> 1));
+    if (rc::exp::widescreen()) // exp/quick-dirty: the view cone widened as the projection is
+        halfX = static_cast<int16>(static_cast<float>(halfX) / rc::exp::hscale());
     view.srcXNorm.x = static_cast<int16>(d);
     view.srcYNorm.z = halfY;
     view.srcXNorm.z = halfX;

@@ -8,6 +8,7 @@
 // overrides' MainFrontProcess (RC_BOOT_LEVEL) and MainGameLevelInit wrappers reach these through decompOr.
 
 #include "main.h"
+#include "rc_exp.h" // exp/quick-dirty
 #include "main_fuzz.h"
 
 RC_VERSION_VARIANT(printf) // Europe also stores $f12-$f18
@@ -457,6 +458,7 @@ void MainGameProcess()
     RC_DIVERT_IF_CHANGED(MainGameProcess);
     GuestFrame frame(0xf0);
     const uint32_t temp = frame.local<uint8_t>(0x40).address;
+    rc::exp::interp::reset(); // exp/quick-dirty
     frames() = 0;
     frameTime() = guest_call<uint32_t>(kTimerGet, kTimer);
     guest_call(kFontSet, at<uint32_t>(at<uint32_t>(at<uint32_t>(kLevel) + 0x40u) + 0x4cu));
@@ -497,6 +499,70 @@ void MainGameProcess()
         guest_call(kGfxP2Tex, at<uint32_t>(at<uint32_t>((sym::visFxVarG + 0x6cu)) + 0x60u));
         call(kGfxP2RenderDmaSend);
         call(kAIDoRaceOrder);
+        // exp/quick-dirty (RC_INTERP, EXPERIMENT.md): the tick's in-between pictures, drawn after its logic with the
+        // camera and the cars blended between the last tick and this one, each ended without waiting for the vertical
+        // blank; then the frame is set up again for the tick's own picture.
+        rc::exp::interp::capture();
+        if (rc::exp::interp::active(splitScreen() != 0 || at<uint16_t>(kMain + 0x366u) != 0))
+        {
+            const int n = rc::exp::interp::passes();
+            const uint32_t t = gameTime();
+            const auto setUp = [&]
+            {
+                SetFrameWindow(0, static_cast<tTime>(t));
+                guest_call(kInit3dChangeViewcone, at<uint16_t>(kCamera + 0x574u));
+                guest_call(kLsFrameInit, t, splitScreen(), 0);
+                guest_call(kGfxP2Tex, at<uint32_t>(at<uint32_t>((sym::visFxVarG + 0x6cu)) + 0x60u));
+                call(kGfxP2RenderDmaSend);
+            };
+            rc::exp::interp::save2D();
+            for (int k = 1; k <= n; ++k)
+            {
+                if (k > 1)
+                {
+                    call(kRdrStartFrame);
+                    rc::exp::interp::replay2D();
+                }
+                rc::exp::interp::apply(static_cast<float>(k) / static_cast<float>(n + 1));
+                if (k > 1)
+                    setUp();
+                else
+                {
+                    // The camera was blended after the tick's set-up: make its view again.
+                    SetFrameWindow(0, static_cast<tTime>(t));
+                    guest_call(kInit3dChangeViewcone, at<uint16_t>(kCamera + 0x574u));
+                    guest_call(kLsFrameInit, t, splitScreen(), 0);
+                }
+                guest_call(kMemset, temp, 0, 0xc);
+                at<uint32_t>(kMain + 0x378u) = 0;
+                SetFrameWindow(0, static_cast<tTime>(t));
+                if (level() != 0x61)
+                    call(kLsRenderWorld);
+                else
+                    call(kTEditRenderGameTrack);
+                call(kVfxRenderShadows);
+                call(kObjectRenderAll);
+                call(kVertAnimRender);
+                guest_call(kTSORender, t);
+                guest_call(kPickupRenderAll, t);
+                guest_call(kHudPanel, at<uint32_t>(at<uint32_t>(kCurrentCamera) + 0xacu), 0);
+                guest_call(kWeaponRenderAll, 0);
+                call(kRdrAlphaAddToDmaChain);
+                call(kApplyDefaultState);
+                call(kVfxRender);
+                call(kApplyDefaultState);
+                call(kGfxP2RenderDmaSend);
+                SetFrameWindow(2, static_cast<tTime>(t));
+                call(kGfxP2RenderDmaSend);
+                rc::exp::interp::restore();
+                rc::exp::interp::paceWait(k);
+                rc::exp::interp::endFrameNoVSync();
+            }
+            // The tick's own picture: a new frame with what the tick drew before the in-between pictures.
+            call(kRdrStartFrame);
+            rc::exp::interp::replay2D();
+            setUp();
+        }
         guest_call(kMemset, temp, 0, 0xc);
         {
             const uint32_t t = gameTime();
@@ -577,6 +643,7 @@ void MainGameProcess()
         if (at<uint32_t>(sym::playerVarG + 0xcu) & 0x800u)
             status() = 8;
         call(kRdrEndFrame);
+        rc::exp::interp::afterRealFrame(); // exp/quick-dirty
         frames() = frames() + 1;
     } while (status() == 1 || status() == 0x20 || status() == 0x10);
     call(kSfxDoSfx);

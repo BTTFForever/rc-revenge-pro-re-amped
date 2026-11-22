@@ -27,3 +27,10 @@ dump_*.txt
 __pycache__/
 # Frame record dumps (RC_FRAME_RECORD, RENDERER_FRAME_RECORD.md): game data
 *.rcfr
+
+# exp/quick-dirty: links to the main checkout's generated inputs
+/game
+/output
+/output_eu
+/vu1
+/vu1_images

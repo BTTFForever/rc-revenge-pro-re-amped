@@ -3,6 +3,7 @@
 // microprogram uses to transform, light and clip the shape's prebuilt triangle list, then adds the packet and the
 // list to the frame's DMA chain. Packets come from a ring of 360 in gRdr.pShapeData (384 for the Track Editor).
 
+#include "rc_exp.h" // exp/quick-dirty
 #include "ee_math.h"
 
 namespace rc {
@@ -685,7 +686,7 @@ void alphaCamera(_sRdrCamera &cam)
     const ee_float half = ee_itof(ee_ftoi(ee_itof(fov) * ee_float(0.5f)) & 0xffff) * toRadians;
     const ee_float sine = ee_sinf(half), cosine = ee_cosf(half);
     const ee_float dValX = ee_float(1.0f) / (sine / cosine) * ee_itof(G(gGfxP2).wd) * ee_float(0.5f);
-    cam.dValX = dValX;
+    cam.dValX = rc::exp::widescreen() ? dValX * ee_float(rc::exp::hscale()) : dValX; // exp/quick-dirty: Hor+
     cam.dValY = dValX * *static_cast<ee_float *>(guest_host(sym::lit4_327bcc));
     const int32_t player = G(gRdrPolyPlayer);
     cam.vertDrawOffset = player == 1 ? -56.0f : player == 2 ? 56.0f : 0.0f;

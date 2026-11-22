@@ -6,6 +6,7 @@
 //
 // Written from the instructions (Ghidra's C was used for the sprite functions' vertex order, checked against them).
 
+#include "rc_exp.h" // exp/quick-dirty
 #include "hud_fuzz.h"
 #include "weapon.h"
 
@@ -410,6 +411,7 @@ void HudTopRight(ptr32<_sObject> pObj, int8 arg1, int8 player)
     RC_DIVERT_IF_CHANGED(HudTopRight, pObj, arg1, player);
     // Side tag: this element's sprites and text in the 2D packet.
     const rc::gfx::HudTag hud{rc::gfx::HudTopRight, rc::gfx::AnchorTopRight, {}};
+    const rc::exp::HudAnchorScope anchorScope(hud.anchor); // exp/quick-dirty: RC_HUD_ANCHOR
     const rc::gfx::Span2D span(rc::gfx::DrawKey{rc::gfx::DrawHud, pObj.address, rc::gfx::HudTopRight, static_cast<uint32_t>(player)}, &hud);
     const uint32_t car = pObj.address;
     const int32_t down = player == 0 ? 0 : 0x70;
@@ -480,6 +482,7 @@ void HudBottomRight(ptr32<_sObject> pObj, int8 size, int8 player)
     RC_DIVERT_IF_CHANGED(HudBottomRight, pObj, size, player);
     // Side tag: this element's sprites and text in the 2D packet.
     const rc::gfx::HudTag hud{rc::gfx::HudBottomRight, rc::gfx::AnchorBottomRight, {}};
+    const rc::exp::HudAnchorScope anchorScope(hud.anchor); // exp/quick-dirty: RC_HUD_ANCHOR
     const rc::gfx::Span2D span(rc::gfx::DrawKey{rc::gfx::DrawHud, pObj.address, rc::gfx::HudBottomRight, static_cast<uint32_t>(player)}, &hud);
     const uint32_t res = hudRes();
     int32_t y = slide() + 0x98;
@@ -528,6 +531,7 @@ void HudBottomLeft(ptr32<_sObject> arg0, int8 size, int8 player)
     RC_DIVERT_IF_CHANGED(HudBottomLeft, arg0, size, player);
     // Side tag: this element's sprites and text in the 2D packet.
     const rc::gfx::HudTag hud{rc::gfx::HudBottomLeft, rc::gfx::AnchorBottomLeft, {}};
+    const rc::exp::HudAnchorScope anchorScope(hud.anchor); // exp/quick-dirty: RC_HUD_ANCHOR
     const rc::gfx::Span2D span(rc::gfx::DrawKey{rc::gfx::DrawHud, arg0.address, rc::gfx::HudBottomLeft, static_cast<uint32_t>(player)}, &hud);
     const uint32_t res = hudRes();
     const int32_t dx = at<int32_t>(kAINode + 0x1cu) - at<int32_t>(kAINode + 0x14u);
@@ -591,6 +595,7 @@ void HudMiddle(ptr32<_sObject> pObj, int8 size, int8 arg2)
     RC_DIVERT_IF_CHANGED(HudMiddle, pObj, size, arg2);
     // Side tag: this element's sprites and text in the 2D packet.
     const rc::gfx::HudTag hud{rc::gfx::HudMiddle, rc::gfx::AnchorCentre, {}};
+    const rc::exp::HudAnchorScope anchorScope(hud.anchor); // exp/quick-dirty: RC_HUD_ANCHOR
     const rc::gfx::Span2D span(rc::gfx::DrawKey{rc::gfx::DrawHud, pObj.address, rc::gfx::HudMiddle, static_cast<uint32_t>(arg2)}, &hud);
     const uint32_t car = pObj.address;
     const uint32_t res = hudRes();
@@ -668,6 +673,7 @@ void HudPanel(ptr32<_sObject> pObj, int8 player)
     RC_DIVERT_IF_CHANGED(HudPanel, pObj, player);
     // Side tag: this element's sprites and text in the 2D packet.
     const rc::gfx::HudTag hud{rc::gfx::HudPanel, rc::gfx::AnchorStretch, {}};
+    const rc::exp::HudAnchorScope anchorScope(hud.anchor); // exp/quick-dirty: RC_HUD_ANCHOR
     const rc::gfx::Span2D span(rc::gfx::DrawKey{rc::gfx::DrawHud, pObj.address, rc::gfx::HudPanel, static_cast<uint32_t>(player)}, &hud);
     const uint32_t res = hudRes();
     {

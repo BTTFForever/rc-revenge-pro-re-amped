@@ -25,6 +25,8 @@
 #include "ps2_capture_hooks.h"
 #include "ps2x/iop/iop_subsystem.h"
 
+#include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <stdexcept>
 #include <fstream>
@@ -92,6 +94,27 @@ namespace ps2_host_display
     void setHeadless(bool enabled)
     {
         headless = enabled;
+    }
+
+    // exp/quick-dirty
+    int initialWidth = 0, initialHeight = 0;
+    std::atomic<bool> presentOnFlip{false};
+    std::atomic<uint64_t> flipSerial{0};
+
+    void setInitialWindowSize(int width, int height)
+    {
+        initialWidth = width;
+        initialHeight = height;
+    }
+
+    void setPresentOnFlip(bool enabled)
+    {
+        presentOnFlip.store(enabled, std::memory_order_relaxed);
+    }
+
+    void notifyFlip()
+    {
+        flipSerial.fetch_add(1u, std::memory_order_release);
     }
 }
 
@@ -583,8 +606,13 @@ static void UploadFrame(Texture2D *tex, PS2Runtime *rt, uint32_t &outWidth, uint
     diagnostic.contentHash = s_lastHash;
     diagnostic.hashValid = hashImages && s_lastWidth != 0u && s_lastHeight != 0u;
 
+    // exp/quick-dirty: with present-on-flip each buffer flip the game reports is a new picture too.
+    static uint64_t s_lastFlip = 0u;
+    const uint64_t flip = ps2_host_display::flipSerial.load(std::memory_order_acquire);
     const uint64_t currentTick = rt->eeScheduler().currentVSyncTick();
-    if (currentTick == s_lastPresentationTick)
+    const bool newFlip = ps2_host_display::presentOnFlip.load(std::memory_order_relaxed) && flip != s_lastFlip;
+    s_lastFlip = flip;
+    if (currentTick == s_lastPresentationTick && !newFlip)
     {
         outWidth = s_lastWidth;
         outHeight = s_lastHeight;
@@ -941,7 +969,17 @@ bool PS2Runtime::initialize(const char *title)
             SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_ALWAYS_RUN);
             if (ps2_host_display::headless)
                 SetConfigFlags(FLAG_WINDOW_HIDDEN);
-            InitWindow(HOST_WINDOW_WIDTH, HOST_WINDOW_HEIGHT, title);
+            // exp/quick-dirty: PS2X_HOST_VSYNC=1 paces the window loop by the monitor (with PS2X_HOST_FPS unset, uncapped).
+            if (const char *v = std::getenv("PS2X_HOST_VSYNC"); v && *v == '1')
+                SetConfigFlags(FLAG_VSYNC_HINT);
+            if (const char *size = std::getenv("PS2X_WINDOW_SIZE"); size && *size)
+            {
+                int w = 0, h = 0;
+                if (std::sscanf(size, "%dx%d", &w, &h) == 2 && w > 0 && h > 0)
+                    ps2_host_display::setInitialWindowSize(w, h);
+            }
+            InitWindow(ps2_host_display::initialWidth > 0 ? ps2_host_display::initialWidth : HOST_WINDOW_WIDTH,
+                       ps2_host_display::initialHeight > 0 ? ps2_host_display::initialHeight : HOST_WINDOW_HEIGHT, title);
             if (ps2_host_display::startMaximized && !ps2_host_display::headless)
                 MaximizeWindow();
             SetExitKey(KEY_NULL);
@@ -965,7 +1003,16 @@ bool PS2Runtime::initialize(const char *title)
             std::cerr << "Failed to bind runtime core subsystems" << std::endl;
             return false;
         }
-        SetTargetFPS(60);
+        {
+            // exp/quick-dirty: PS2X_HOST_FPS=<n> sets the window loop's rate (0 = uncapped); with PS2X_HOST_VSYNC=1
+            // and no PS2X_HOST_FPS, uncapped (the swap waits for the monitor).
+            int hostFps = 60;
+            if (const char *v = std::getenv("PS2X_HOST_VSYNC"); v && *v == '1')
+                hostFps = 0;
+            if (const char *v = std::getenv("PS2X_HOST_FPS"); v && *v)
+                hostFps = std::atoi(v);
+            SetTargetFPS(hostFps);
+        }
         // RC: the frame record (ps2_capture_hooks.h) observes this runtime from here on.
         if (const ps2x::capture::Hooks *capture = ps2x::capture::g_hooks; capture && capture->attach)
             capture->attach(this);
