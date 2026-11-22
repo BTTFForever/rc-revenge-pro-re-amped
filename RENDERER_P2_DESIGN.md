@@ -1160,3 +1160,129 @@ next 3 to 5 ms.
 - The GIF side (2.7 to 5.6 ms) is batch 2's; `primitive()`'s state compare is not the lever (item 4); its cull set-up
   and the walker on the texture and register blocks remain.
 - The `vif --with-emu` tap still receives every triangle as a packet (correct, slower); nothing there was rerun.
+
+## 18. Batch 4 as built (2026-11-22): Env, skin, TERdr
+
+**What was built.**
+
+- **The track program's family, one run** (`render/shape/fast_track.h`, `runFamily<Trdr | Env | Terdr>`): batch 3's
+  `runTrdr` turned into a template that the three programs sharing the ten-quadword triangle and `setupTriangle` run
+  through; `fast_trdr.cpp`, `fast_env.cpp`, `fast_terdr.cpp` instantiate it. The SSE operations with their checks, the
+  quick path of `writeQuickTriangle` (`quickTriangle`) and the packet's way out (`emitQuick`: the slot's tag,
+  `FastSink::triangle`, `vi11`, the wrap and its flush as the layout's `QuickWrap` says) moved to
+  `render/shape/fast_simd.h`, shared with the skin path. Where the three differ (the table at the head of
+  `fast_track.h`):
+  - **`EnvRdr_VUShapeProg` entries 0 and 0x78** (0x78: the second-pass entry, the constants still in the registers;
+    no header packet). Its own block loop (the first quadword is always a texture block; quadword 3 takes VF31, with
+    constant 10.xy in place of xy under the map). The map off: the colour registers' floats to integers (every lane,
+    as `ftoi0`), then `applyTint`. The map on (constant 10.z, 1,890,346 of 5,685,356 runs): `environmentCorners` in
+    SSE, one VU operation to one SSE operation on x, y, z, with the reference's own scalar `reciprocalLength` (two a
+    corner); the colour, which is the same for every corner of a block (`10.w * VF31.w`, clamped, tinted), computed
+    once a block with the lean build's scalar operations. **An env-mapped run's last triangle is handed to
+    `rc::vu1l::envStep`** whatever it is (4.2): it writes VF26-VF28 for every triangle, drawn or not.
+  - **`TERdr_VUShapeProg` entry 0**: `lightCorners` in SSE (three MADDs to the light, the clamp at zero, four to the
+    colour); the depth bias added to z after the clip flags, as `biasInQuickPath`; no bias in `setupTriangle`. Every
+    triangle that faces the viewer loads VF24-VF30 from VU memory 18-24 (VF25.w, VF26 and VF29 among them), so the path
+    notes when it has lit one and **reloads those registers after the run and before any step** (`relight`), so a
+    step finds them as the program would have left them and the run leaves them so.
+- **`Rdr_VUSkinProg`** (`render/shape/fast_skin.cpp`): its fixed input at quadword 512, one quadword of texture state a
+  block; per triangle the six bone transforms (two matrices a corner by the addresses in the triangle, all four rows
+  through `transform4`), the blend, the offset of VU memory 12 and the view matrix (with VF08.xyz the near test, as
+  the program has it), then the shared quick path with VF01-VF03 as its scratch registers (their w lanes are the last
+  bone matrix's, per triangle). No facing test, no tint, no flush on the quick path's wrap. The program writes every
+  register it writes for every triangle, so **every run's last triangle is handed to `rc::vu1l::skinStep`**, and the
+  registers it leaves are then all the program's (`kSkinFastNotReproduced` is empty).
+- **The lean build's exports** (`vu_shape.h`, under `RC_VU1_LEAN`, each placed after everything else in its file):
+  `envLayout`/`envStep(p, reader, environment)`, `terdrLayout`/`terdrStep`, `skinLayout`/`skinPrologue`/`skinStep`.
+- **The dispatch:** `rc::shape::hasFastPath(program, pc)` and `runFast` (TRdr 0, Env 0 and 0x78, skin 0, TERdr 0);
+  `fastNotReproduced(program)` for the poison (TRdr, Env, TERdr: batch 3's VF05-VF07 xyz, VF17.w, VF18-VF20; skin:
+  none). `FastStats` per program (`FastCounts`: runs, declines and parse declines, the outcomes, hard and odd, last
+  triangles to the step, env-mapped runs). `Vif1Reader::Stats::refNsByProgram` times the references (fast paths
+  included) by program; the `vif` consumer prints it ("references by program").
+- **Faults** (`--fault <name>[@trdr|env|skin|terdr][:<cycle>]`): batch 3's five in every path, or in the one named;
+  new `last-step` (an env-mapped or skin run's last triangle not handed to the step) and `lit-regs` (TERdr's reload
+  left out).
+- **`rc_replay --consumer vk --reader fast`**: check (d) and the chained replay drawing the fast reader's lists (the
+  consumer had no way to choose the reader; section 9 asks for it).
+
+**Changes to the design, and why.**
+
+1. **One run for three programs**, not three files of their own (2 listed `fast_env`, `fast_terdr` as paths): Env and
+   TERdr are the track program with other colours, textures and settings, so a template keeps one transcription of
+   `setupTriangle` and the quick path, and batch 3's proven path is now one instantiation of it (check (e) re-proves
+   it with the others). The three files are there, as instantiations.
+2. **The skin run's last triangle goes to the step too**, not only the env-mapped run's (4.2 named only that one):
+   the skin program loads VF25 (all of it), VF26 and VF29 from each triangle's weights and bones, so a run's last
+   triangle decides them whatever it is.
+3. **TERdr's light registers** are a third case 4.2 did not list: they are loaded from VU memory (constant for a
+   run), so they are put back, not computed, and a step is preceded by the same reload.
+4. **The env colour a block** is computed with the lean build's scalar operations, not SSE: it is the same for all
+   three corners and every triangle of the block.
+5. **Checks on x, y, z only** in the env corners and the skin's second positions: their w lanes reach only VF26-VF30.w,
+   which the run's last step leaves right; an infinity there would send a triangle to the step for nothing.
+6. **Faults that cannot fail on the data:** no Env or TERdr triangle in the dumps carries a depth bias (a temporary
+   count, removed: 0 of 2.8 M quick Env triangles on `s5/front`, `l5`, `l17` and 0 of 4.2 M quick TERdr triangles on
+   the Track Editor race have a non-zero bias), so `bias@env` and `bias@terdr` pass; the skin has no bias. `edge-two`
+   on Env and skin passes on `s5/l17`, `l5`, `l18`, `front` (cars and characters near a guard-band edge with two
+   corners beyond it and the third not, on the same side: none). The Track Editor dumps (`s5/tedit`) have no TERdr
+   triangle behind the near plane or beyond an edge, and flat pieces, so `fused`, `edge-two` and `hard-quick` on TERdr
+   were planted on the two Track Editor race sessions, where they fail.
+7. **`last-step` and `lit-regs` fail on the six lanes, not on a list** (VF26.w after an env-mapped run on `s5/l5`,
+   `l17`, `l18`; VF25.w after a skin run; VF25.w after a TERdr run). The lists stayed equal on those dumps: the lanes
+   did not reach a later packet in those dumps (3D design 3.4 found VF26.w in water's packets; not looked into which
+   of water's paths carries it or why these did not). Check (e) judges
+   the lanes after every run precisely so that such a fault is caught before it is drawn.
+
+**Checks.**
+
+| check | result |
+|---|---|
+| (e) the 67 exact dumps, `--consumer lists --quiet`, four at a time, 8.5 minutes | **67 / 67 PASS**: 45,619 cycles equal byte for byte (50.4 M commands, 29.3 GB encoded), register file equal at 1,604,039 kicks, 43,076,205 runs with the six lanes equal, 0 guards, 0 run-count differences. Fast paths: **41,315,292 runs** (every run of TRdr 0, Env 0 and 0x78, skin, TERdr 0), 0 declined by the parse test; declined: water's 1,028,995 runs only (and the direct entries, which the reader copies: 731,918). 1,432.5 M triangles read: 574.2 M culled, 285.7 M all behind, 51.3 M beyond one edge, **499.3 M quick, all straight into the list**, 17.1 M hard (11,560 odd), 4.87 M last triangles to the step. By program: TRdr as batch 3 (324.9 M quick, 15.95 M hard, 3,012 odd); **Env** 5,685,356 runs (1,890,346 env-mapped), 203.4 M read, 100.5 M quick, 149,115 hard (7,798 odd), 1,890,346 last to the step; **skin** 2,978,048 runs, 87.7 M read, 73.8 M quick, 997,910 hard (669 odd), 2,978,048 last to the step; **TERdr** 9,260 runs, 306,656 read, 162,015 quick, 81 hard (all odd). (3.3's counts but for the last triangles, which the step takes whatever they are, and the odd ones.) Largest input: 508 quadwords from 512 (a skin run); 383 from TOP as before |
+| (e) the live dumps, `--from-reset`, the 18 of batch 3, 5 minutes | **18 / 18 PASS**: 42,950 cycles equal (31.9 M commands), register file equal at 737,224 kicks, 21,612,005 runs with the six lanes equal; 20,712,903 fast runs, 0 declined by parse (water 520,697 declined); 717.5 M triangles read, 256.2 M quick straight into the list, 11.6 M hard (185,176 odd). TERdr on the Track Editor sessions (`tedit`, `terace`, `tecard`, both versions): 1,040,628 runs, 30.7 M read, 11.8 M quick, 570,499 hard (129,907 odd: exact cancellations in the lighting's MADDs); skin 1,986,517 runs; Env 2,100,179 (684,957 env-mapped). And the new live session below (`b4fastl18`): PASS, 800 cycles, 1,326,693 runs |
+| (e) faults, USA `s5/l17` from cycle 300 (TERdr: `s5/tedit`, and the Track Editor race sessions `terace` of both versions from reset) | **Env:** `fused` FAIL at 300 (a SCREEN_PRIMS payload byte; 400 cycles differ), `round-x` FAIL at 300 (another triangle count; 400), `hard-quick` FAIL at 333 (1 cycle; the six lanes after 74 runs), `last-step` FAIL at 300 (VF26.w after an env-mapped run, kick 35 run 547; lists equal; also on `s5/l5` at cycle 5 and `s5/l18`), `bias` and `edge-two` pass (item 6; also on `front`, `l5`, `l18` from 0). **Skin:** `fused` FAIL at 300 (326 cycles), `round-x` FAIL at 300 (394), `hard-quick` FAIL at 404 (9), `last-step` FAIL at 300 (VF25.w, kick 35 run 668; lists equal), `edge-two` passes (also `front`, `l18`), `bias` has nothing to change. **TERdr:** `round-x` FAIL at the first cycle on `tedit` (700 of 700 differ), `lit-regs` FAIL there (VF25.w; lists equal), `bias`, `fused`, `edge-two`, `hard-quick` pass on `tedit` (item 6); on `terace` `fused` FAILs (USA cycle 3262, 2,529 cycles; Europe 3412, 2,383), `edge-two` FAILs (USA 4086: VF29.w, 7 cycles; Europe 4249, 14), `hard-quick` FAILs (USA 4083, 1,697 cycles; Europe 4238, 1,554), `bias` passes. **TRdr** (now through the shared run): all five FAIL at cycle 300 as in batch 3 (`bias` 400 cycles, now first on RGBAQ's Q at kick 35; `fused` 399; `round-x` 400; `edge-two` 132; `hard-quick` VF25.w at run 880, 384) |
+| the lanes | the six lanes equal after every one of the 64.7 M runs above and the 1.3 M of the new session; the extra poisoned lanes (`fastNotReproduced`) never reach a packet |
+| (d) and the chained replay, `rc_replay <dump> --consumer vk --verify --quiet --reader fast`, the 67, two at a time on the RTX 2060, 26 minutes | **67 / 67 PASS**: 45,619 pictures at the flip of 45,619 equal to the reference's hash, 2,860 of 2,860 stored pictures equal; 24.8 M draws, 245.3 M primitives, 1.18 M barriers; validation errors 0. The fast reader drew them: 41.3 M fast runs, 499.3 M quick triangles |
+| live, `RC_VK_READER=fast RC_BOOT_LEVEL=18 LIVE_SHOTS=600,700 tools/live_check.sh b4fastl18 800` (USA, RTX 2060, 103 s) | `dlst` (the strict reader off-line): **800 / 800 live lists equal byte for byte** (1.9 M commands, 910 MB); `vk --verify` **PASS** (916,985 draws, 8,816 barriers); 0 guarded kicks. The live fast reader **16.8 ms a cycle on the EE thread** (13.7 to 19.7 by hundred cycles, largest kick 36.7), against 18.2 for batch 3's on the same level and 54.7 for the strict reader (3D design 20.4) |
+| the strict build | the 82 strict objects of `decomp/vu1` in `build-decomp`, `build-eu`, `build-oracle`, `build-oracle-eu` (the game's and `rc_vu1_ref`'s) byte-identical to before the batch after the rebuild; the eight sources compiled from HEAD and from the batch's tree with `rc_vu1_ref`'s command: identical objects; both `rc_oracle` executables relinked and byte-identical |
+| the game relinked (`rc_live`) | `playtest2` (`RC_SCENE_LOG`, `RC_DEBUG_DUMP`, 75 s, default renderer, RTX 2060): USA scene 3020 at frame 658, 60.0 fps after the load; Europe 3020 at frame 1167, 50.0-50.2. Oracle `--all` (its executables byte-identical, run as the rule asks): USA seed 9441 **1,632 ok, 0 FAIL**, 98 without a setup (499 s; `PathBuilder` did not time out this time); Europe seed 9442 **1,563 ok, 0 FAIL**, 90 without a setup (915 s) |
+
+**The reader's time a cycle** (one K2 kick a cycle; `rc_replay <dump> --consumer vif --quiet --vu1 lean --reader fast`,
+single runs one after the other on an otherwise idle machine, Ryzen 7 3750H; USA `s5` dumps but the last; mean /
+largest, ms; "references" includes the fast paths; batch 3's columns are section 17's):
+
+| scene | batch 3: references, VIF walk, GIF walk and list, **all** | batch 4: references, VIF walk, GIF walk and list, **all** | all, batch 4 / batch 3 | section 10's estimate after 4 | references by program, batch 4: TRdr, Env, skin, **water** (water's share of all) |
+|---|---|---|---|---|---|
+| front end | 5.03, 1.31, 2.73, **9.07** / 17.94 | 3.24, 1.31, 2.72, **7.27** / 19.62 | 0.80 | 5.5 | 1.72, 0.24, 0.68, **0.60** (8%) |
+| level 5 | 6.87, 1.42, 3.66, **11.95** / 18.46 | 4.66, 1.51, 3.91, **10.08** / 16.78 | 0.84 | 7.1 | 1.54, 0.68, 0.60, **1.84** (18%) |
+| level 17 | 6.61, 1.52, 3.86, **11.99** / 17.66 | 4.56, 1.52, 3.78, **9.86** / 17.11 | 0.82 | 7.4 | 1.66, 0.56, 0.44, **1.91** (19%) |
+| level 18 | 8.59, 2.89, 5.56, **17.04** / 35.87 | 6.72, 2.88, 5.44, **15.04** / 36.22 | 0.88 | 11.4 | 4.35, 0.50, 0.46, **1.42** (9%) |
+| level 21 | 7.11, 2.06, 4.32, **13.49** / 21.54 | 5.78, 2.12, 4.56, **12.45** / 24.77 | 0.92 | 9.2 | 2.96, 0.48, 0.41, **1.93** (15%) |
+| Track Editor | 0.17, 0.06, 0.05, **0.29** / 0.71 | 0.12, 0.06, 0.05, **0.23** / 0.58 | 0.79 | 0.3 | TRdr 0.09, TERdr 0.03 |
+| level 18, Europe | 8.11, 2.84, 5.15, **16.09** / 29.36 | 6.55, 2.87, 5.23, **14.65** / 31.15 | 0.91 | 11.2 | 4.22, 0.48, 0.47, **1.38** (9%) |
+
+The three paths took Env from 0.9-2.4 ms lean (3.8) to 0.24-0.68 and skin from 1.2-2.0 to 0.41-0.68; what is left of
+the references is the track's (its path, its hard triangles through the lean step: 1.5 to 4.3 ms) and water, which
+is now the largest single program on levels 5, 17 and 21. Every scene stays 1.8 to 3.6 ms over section 10's "after
+4" column, as after batch 3, for the same reason: the GIF side (2.7 to 5.4 ms) is 0.4 of P1's rather than a third
+(section 16), and the estimate assumed the third.
+
+**Water, and section 10's budget.** Water is 0.6 to 1.9 ms a cycle (8 to 19%; 9% on level 18). With batch 5's VIF walk
+at 0.3 of today's, the off-line reader comes to about 6.4 (front end), 9.0 (level 5), 8.8 (level 17), 11.0 (level 21)
+and 13.0 ms (level 18); the live reader ran 1.12 times its off-line time on level 18 here (16.8 against 15.0). So
+every timed scene but level 18 should hold section 10's 12 ms on the reader's thread **without a water path**, and
+level 18 would not hold it **with** one: its water is 1.4 ms, its excess about 2.5 ms live. The levers for level 18 by
+size are the GIF side (5.4 ms: `primitive()`'s cull set-up, the walker on the texture and register blocks: section
+16's open item), the track's 620 hard triangles a kick through the lean step, and only then water (section 10 lists
+water's first pass first; the measurements put it third). Batch 7 measures the scenes live with the reader on its own
+thread and decides; nothing in this batch needs a water path.
+
+**Open.**
+
+- Level 18 is over section 10's 12 ms after batch 5 by about 1 ms off-line (2.5 ms live, estimated); the GIF side is
+  the first lever (above). Water stays on the lean reference.
+- `bias@env`, `bias@terdr`, `edge-two@env`, `edge-two@skin` cannot fail on the recorded data (item 6); the code they
+  plant into is shared with the paths where they do fail (the bias as TRdr's; the edge test is `quickTriangle`'s).
+- `last-step` and `lit-regs` show only on the six lanes (item 7); no dump has a lane of theirs reach a packet.
+- The `vif --with-emu` tap still receives every triangle as a packet (as batch 3); not rerun.
+- TERdr's odd triangles are many on the Track Editor race (129,907 of 30.7 M read live; exact cancellations in the
+  lighting's MADDs sent to the step): correct, a little slower; not worth a path of their own.

@@ -1282,8 +1282,16 @@ flushes kept, extra lanes poisoned, runs over 0x180 quadwords declined); `FrameR
 `fast`, so `RC_VK_READER=fast` has it). Check (e) 67 / 67 and 18 / 18 live PASS, faults `--fault bias|fused|round-x|
 edge-two|hard-quick` fail; the reader 0.63-0.81 of batch 2's off-line (level 18: 26.0 to 17.0 ms a cycle); live fast
 on level 18 matched the strict reader on 800 / 800 lists at 18.2 ms a cycle on the EE thread. `rc_replay --consumer vif
---reader fast-nopaths` times batch 2's reader. **Next: batch 4** (env, skin, TERdr paths; they and water are now most
-of the references' time). The measurements are `rc_replay <dump> --consumer shapestat` ("Shape survey"
+--reader fast-nopaths` times batch 2's reader. **Batch 4 (env, skin, TERdr) is done too** (design section 18):
+`render/shape/fast_track.h` runs TRdr 0, Env 0 / 0x78 and TERdr 0 as one template (Env: the colours' integers, or under
+the environment map the corner pass in SSE and the run's last triangle to the lean step; TERdr: the lighting in SSE, its
+VF24-VF30 reloaded), `fast_skin.cpp` the skin program (bone transforms in SSE, every run's last triangle to the step);
+only water (by design) and the direct entries run otherwise. Check (e) 67 / 67 and 18 / 18 live PASS, the new faults
+(`--fault <name>@env|skin|terdr`, `last-step`, `lit-regs`) fail where the data can show them (bias on Env and TERdr and
+edge-two on Env and skin cannot: no such triangles); `rc_replay --consumer vk --verify --reader fast` 67 / 67 PASS; live
+fast on level 18: 800 / 800 lists equal the strict reader's, 16.8 ms a cycle on the EE thread. Off-line the reader is
+0.80-0.92 of batch 3's (level 18 15.0 ms a cycle); water is 8-19% of it and not what keeps level 18 over 12 ms (the GIF
+side is). **Next: batch 5** (TOPS views) and batch 6 (the reader's thread). The measurements are `rc_replay <dump> --consumer shapestat` ("Shape survey"
 above). The rest of this section is the decompilation's.
 
 305 of 2,486 functions native on 2026-11-12 (1510 on 2026-11-18, after the FRONT batch at the end of this section, 1710 after TEDIT part 2, 1730 on 2026-11-19 after LEFTOVERS: every function of the game's own source files is native, only the SDK and C libraries remain; 1,653 of them registered in the Europe build, see "Europe version"). Done since 2026-11-10: collision, route nodes, AI (all) and the smaller PLAYER functions, and the renderer from the DMA chain up: RDRSTATE, RDR, RDRPOLY, RDR_SHAPE, RDR_SKIN, RDR_WATER, RDRALPHA, RDR_PARTICLE, SPRITE and most of GFX_P2, with the SDK's VIF packet library and three libvu0 helpers.

@@ -569,7 +569,10 @@ After step 1: fold its answers into this plan's open questions.
    fast path, `render/shape`, `rc_shape`) built 2026-11-22: (e) passes the 67 and the 18 live dumps with every TRdr
    entry-0 run on the path (324.9 M quick triangles straight into the list, 16.0 M hard through the lean step), its
    five faults fail; the reader 0.63-0.81 of batch 2's (level 18 17.0 ms a cycle off-line, 18.2 live on the EE thread,
-   every live list equal to the strict reader's) (design section 17).
+   every live list equal to the strict reader's) (design section 17). Batch 4 (Env, skin, TERdr) built 2026-11-22:
+   every run but water's on a fast path, (e) passes the 67 and the 18 live dumps (499.3 M quick triangles straight into
+   the list), the faults fail where the data can show them, `vk --reader fast` 67 / 67; the reader 0.80-0.92 of batch
+   3's (level 18 15.0 ms a cycle off-line, 16.8 live), water 8-19% of it, no water path needed yet (design section 18).
 10. Pipelines built at start-up, performance pass on the heavy levels (18, 17, 24, 6, 8, 9, 12), a DIVERGENCES list.
 Then `vk` becomes the default renderer; `gs` stays as the reference.
 
