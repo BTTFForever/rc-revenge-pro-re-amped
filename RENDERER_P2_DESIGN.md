@@ -948,3 +948,115 @@ untouched by this batch (lean runs: 1.4-2.9 ms and 6-14 ms a cycle on the race s
 
 **Open.** `fastTrdr`'s MADD check (item 1) for batch 3. Nothing in the live reader uses the lean library yet: batch
 2's `FrameReader::Options::fast` is the first to select it.
+
+## 16. Batch 2 as built (2026-11-22): triangles straight into the list
+
+**What was built.**
+
+- `Gif2dReader::Options::path1Direct` (`render/gs2d/gif2d_reader.*`): with no GIF tag open, `feedPath1` looks at the
+  packet's first tag. A **triangle packet** (160 bytes; NLOOP 3, PACKED, NREG 3, no PRE; descriptors ST RGBAQ XYZ2;
+  EOP and, without PRE, the PRIM field are ignored because the walker ignores them) goes to
+  **`path1Triangle(const uint32_t *nine)`**, which does what the walker, `reg()` and `vertex()` would: per corner ST
+  (and the Q for the RGBAQ), RGBAQ, XYZ2 or XYZ3 (ADC) into the register file with stream provenance, the vertex
+  with the reference's Q (0.0 reads 1.0), UV from the register, the counters, then `primitive()` once. It declines
+  (returns false, nothing changed; the packet goes through the walker) when the vertex queue is not empty, PRIM is
+  not a triangle list, the third corner has ADC, or a planted register fault (`gif2d --fault`) is on in the cycle.
+  A **16-byte packet with NLOOP 0 and no PRE** (the flush) is dropped. Everything else is walked as before.
+- **The state-packet memo** (`Options::stateMemo`): a packet of register writes only (one PACKED tag whose data are
+  PRIM, TEX0, CLAMP descriptors, NOP or A+D to a register below 0x50 other than RGBAQ, ST, UV, XYZF2, XYZ2, XYZF3,
+  XYZ3) whose bytes equal the last such packet's is skipped when no register was written (`m_regSerial`: every
+  `reg()`, a triangle, a guard, a keyframe, seeding) and no byte of GS memory changed (`GsMemory::writes()`, new:
+  every changed pixel, `clear`, `load`) since that packet was walked.
+- **The CLUT memo** (`Options::clutMemo`), in three layers, each exact by construction:
+  1. as designed: a TEX0 write equal to the last TEX0 write, with TEXCLUT and memory unchanged since, does not touch
+     the CLUT buffer (a write is idempotent);
+  2. **`Clut::writeMemo`** (`render/tex/tex_decode.*`, with `ClutLoadMemo`): `write()`'s CLD decision unchanged, the
+     load split into what it reads (a function of CBP, CPSM, CSM, CSA, 4 or 8 bits, TEXCLUT for CSM2, and memory) and
+     where it puts it; the values read are kept per palette until memory changes, so each palette is read from the
+     shadow once per change of memory instead of at every TEX0 write (the blocks of a kick alternate palettes, so
+     layer 1 alone answered a fifth of the loads);
+  3. `TextureCache::get(..., clutVersioned)`: the palette compare of an indexed texture (256 lookups and a memcmp at
+     every state rebuild) is skipped while the CLUT buffer's new `version()` (bumped by every `load()` and by every
+     `writeMemo` that changed an entry) and TEXA are those the entry's palette was made or found equal with.
+- **Direct entries** (`Vif1Reader::Options::directEntries`): an MSCAL to TRdr 0x2050, Env 0x2370 or TERdr 0x2198
+  copies the packet at TOP (`rc::vu1::copyGifPacket`, through the same runaway cut) without building a
+  `ShapeProgram`; registers untouched, poisoned lanes as before.
+- **`FrameReader::Options::fast`** (`render/frame/frame_reader.*`): the lean library, the direct entries,
+  `path1Direct`, both memos, and no PATH1 hash (D-P2-3: `path1Hash()` stays 0). Off: P1's strict reader, whose code
+  path is unchanged but for a counter increment in `reg()` and the cache's new argument left false.
+- **The live reader:** `rc::live::Reader(box, live, fast)`; in the game **`RC_VK_READER=fast`** opts in (the
+  start-up line names the reader); default strict, as before.
+- **`rc_replay <dump> --consumer lists`** (`tools/rc_replay/lists.{h,cpp}`): check (e). The strict and the fast
+  reader on the same events, seeded alike: by default from the first keyframe with the chained replay's options;
+  **`--from-reset`** for the live dumps (both from reset, no keyframe but one after a state load, the live
+  reader's options, as `dlst`). Per kick the register file (values and provenance, all 0x63 registers); per VU1 run
+  the six lanes of 3D design 3.4 (and the other 122, reported, not judged); per cycle the two lists as DLST
+  encodes them, byte for byte, the first difference named by `dlstFirstDifference` (now shared with `dlst`, which
+  also names the first differing command when the counts differ). Faults: `--fault adc|clut-memo|state-memo[:<cycle>]`
+  in the fast reader from that cycle. `rc_replay --consumer vif --reader fast` times the fast reader ((b) is not
+  available there: no hash).
+
+**Changes to the design, and why.**
+
+1. **The CLUT memo grew two layers** (2 and 3 above). With the memo as designed the GIF walk and list on level 17
+   fell only from 9.5 to 7.8 ms: the profile still had a fifth of the process in `GsMemory::read32`,
+   `layoutTables`, `Clut::load` (loads of *other* palettes: a kick's texture blocks alternate them, so 'the same
+   TEX0 again' answers 550 K of 2.6 M loads) and in `Clut::lookup` / `palette` (the cache's palette check). Layer 2
+   took it to 4.6 ms, the copy as two `memcmp` / `memcpy` runs to 3.8, layer 3 is in both. All three are memos in the
+   design's sense: they skip work whose result is provably what is already there; (e) is their proof.
+2. **The CLUT memo fault cannot fail on `s5/l17`** (nor `l12`, `tedit`): no palette is rewritten in memory while it
+   is loaded there. It fails on the front end and the boot dump, where palettes are re-uploaded (below).
+3. **The ADC fault fails on the register file, not the list.** No third corner carries ADC (3D design 3.4), so
+   ignoring ADC draws nothing extra; it writes XYZ2 where the walker writes XYZ3, which (e)'s register comparison
+   catches at the first kick.
+4. **`--from-reset` is a flag**, not guessed: the `s5` dumps start at cycle 0 too (booted into the level), so a
+   dump's first cycle does not tell a live session from an exact one.
+5. Packets recognised as triangles but declined: none in any dump (the queue is always empty and PRIM a triangle
+   list at a triangle packet), so `path1Triangle` is the only way K2's triangles enter the fast reader's list.
+
+**Checks.**
+
+| check | result |
+|---|---|
+| (e) the 67 exact dumps, `--consumer lists --quiet`, four at a time, 10 minutes | **67 / 67 PASS**. USA 34: 24,174 cycles, every list equal byte for byte (27.5 M commands, 15.0 GB encoded), register file equal at all 839,921 kicks, 22,517,443 runs with the six lanes (and all 128) equal, 0 guards, 0 run-count differences. Europe 33: 21,445 cycles equal (22.9 M commands, 13.6 GB), 764,118 kicks, 20,558,762 runs, all equal. In the fast reader: 1,045,771,646 PATH1 packets, **556,240,491 triangles straight into the list** (0 declined), **209,170,126 flushes dropped**, 18.9 M state packets skipped by the memo, 261.4 M other packets walked; 731,918 direct-entry runs; CLUT loads 60.4 M (strict 127.7 M), 55.9 M of them from the load memo, 52.2 M TEX0 writes answered by layer 1, 68.6 M palette checks skipped. (The counts of 3D design 3.5: 556.2 M triangle packets, 209.2 M flushes, 731,918 direct entries.) |
+| (e) the live dumps, `--from-reset`, all 17 in `build-*/frame-dumps/live` (both versions: front, l5, l17, l18, the Track Editor, its race, the memory card, l5long, l5hunt, recheck_l17), 5 minutes | **17 / 17 PASS**: 42,150 cycles equal (30.6 M commands), 41,544 VIF1 kicks, register file equal at 706,070 kicks, 20,900,007 runs equal; 277.6 M triangles direct, 106.4 M flushes dropped |
+| (e) faults on USA `s5/l17`, from cycle 300 | `adc`: **FAIL at cycle 300 kick 35**, the first VIF1 kick of the cycle: GS register 0x0d (XYZ3) differs (386 kicks in all); lists equal, as item 3 says. `state-memo`: **FAIL at cycle 300**, command 14 (a SCREEN_PRIMS of 0x31 against 0x34 triangles: a state packet skipped though registers it sets had been written since its twin); 400 of 400 cycles differ. `clut-memo`: PASS on `l17` (item 2); from cycle 0 it **FAILs on `s5/front` at cycle 606** (command 27, a TEXTURE payload: a palette re-uploaded since its values were kept; 290 cycles differ) and **on `s5/boot` at cycle 883** (17 cycles); `l12` and `tedit` pass with it |
+| `gif2d` (a), the 67, `--consumer gif2d --verify --quiet --no-tables` (the strict reader: K1 and K2 in one register file) | **67 / 67 PASS**: 157,195,822 register values at 1,604,039 kicks, 0 differ, 6 minutes |
+| the live reader unchanged unless opted in | the strict path changed only by a counter (`m_regSerial`) and the cache's new argument (false); (e) is strict against fast, and `gif2d` (a) above is the strict reader against the recorded register files. The game relinked (`rc_live`): see below |
+| a live session with the fast reader (`RC_VK_READER=fast RC_BOOT_LEVEL=17 LIVE_SHOTS=600,700 tools/live_check.sh fastl17 800`, USA) | `dlst` (the strict reader off-line): **800 / 800 live lists equal byte for byte**; `vk --verify` PASS; the live reader **16.6 ms a cycle** on the EE thread (largest 26.2), against 35.1 for the strict reader in 3D design 20.4 |
+| the game relinked (`rc_live`; the oracle executables did not rebuild) | `playtest2` (`RC_SCENE_LOG`, `RC_DEBUG_DUMP`, 75 s, default renderer): USA scene 3020 at frame 658, 60.0 fps; Europe 3020 at frame 1167, 50 fps. Oracle `--all`: USA seed 9221 1,632 ok, 0 FAIL, 98 without a setup (471 s); Europe seed 9222 1,563 ok, 0 FAIL, 90 without a setup (857 s) |
+
+**"GIF walk and list" a cycle** (one K2 kick a cycle; `rc_replay <dump> --consumer vif --quiet --vu1 lean --reader
+strict|fast`, single runs one after the other on an otherwise idle machine, Ryzen 7 3750H; USA `s5` dumps but the
+last; the vif consumer decodes no textures, as in 3D design 16.3 and section 15):
+
+| scene | before (strict reader), mean / largest (ms) | after (fast reader), mean / largest (ms) | after / before | the fast reader's whole kick (references lean + VIF walk + GIF walk and list), before / after |
+|---|---|---|---|---|
+| front end | 6.15 / 17.57 | 2.82 / 11.12 | 0.46 | 16.07 / 12.49 |
+| level 5 | 9.22 / 14.10 | 3.89 / 8.09 | 0.42 | 20.01 / 15.20 |
+| level 17 | 9.57 / 16.50 | 3.91 / 8.06 | 0.41 | 20.66 / 15.19 |
+| level 18 | 14.19 / 24.16 | 5.57 / 14.95 | 0.39 | 34.01 / 25.44 |
+| level 21 | 8.23 / 14.60 | 4.46 / 10.21 | 0.54 | 22.20 / 18.85 |
+| Track Editor | 0.11 / 0.30 | 0.05 / 0.27 | 0.45 | 0.39 / 0.34 |
+| level 18, Europe | 13.54 / 23.89 | 5.44 / 15.03 | 0.40 | 32.73 / 25.13 |
+
+Expected a third; measured 0.39 to 0.54 (0.41 on the race scenes but level 21). Two things to know when reading it:
+(i) "before" is larger than 3.8's figures (4.5 to 9.4 ms, from 3D design 16.3): step 8 batch 2's CLUT buffer and
+its reload at every TEX0 write came after those were measured, and that is exactly the part the memo removes; (ii)
+both columns carry two `rdtsc` a packet for the split between references and sink (about 0.5 ms a kick on level 17),
+which the fast reader pays as well: the stamps are taken around every packet the references send, flushes
+included, before the sink drops them. What is left in the fast
+reader's GIF side (profile, level 17): `primitive()` (state compare, the cull's setup, the list append) about a
+third, the walker on the texture and state blocks (a quarter of all packets, 43% on level 17) a quarter, the rest
+the triangle entry, the memos and the texture cache.
+
+**Open.**
+
+- The GIF side is 0.4 of before, not a third; level 21 0.54. The levers are in `primitive()` (a flag in place of
+  the `GsState` compare per triangle; the walker for the texture blocks: their registers could be written by a
+  decoder of that one packet shape) and are batch 3's to weigh against the reader's total, which is now the
+  references' (lean): 9.4 to 17 ms of 12.5 to 25.4 on the race scenes.
+- The CLUT memo fault is proven on the front end and boot dumps, not on `s5/l17` as the design asked (item 2).
+- `rc_replay --consumer vif --reader fast` has no check (b) (no hash); its check is (e).
+- Batch 3 (the track's fast path) calls `path1Triangle` with its own quadwords; it must decline to the walker in
+  the same cases (the packet bytes then have to exist: build the 160-byte packet from the nine quadwords).

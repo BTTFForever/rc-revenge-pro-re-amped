@@ -562,7 +562,10 @@ After step 1: fold its answers into this plan's open questions.
    and U3, 8 `SHAPE_BATCH` and units; the new check is (e), list equality with the strict (P1) reader.
    **User, 2026-11-22: U4 = A, U5 yes, U6 not in exact mode.** Batch 1 (the lean references: `rc_vu1_lean`,
    `rc_vu1_test`, `rc_replay --vu1 lean`) built 2026-11-22: check (s) 0 differ, the 67 and the fourteen beside the
-   machine pass with it, half the references' time (design section 15).
+   machine pass with it, half the references' time (design section 15). Batch 2 (triangles straight into the list,
+   the CLUT and state-packet memos, `FrameReader::Options::fast`, `RC_VK_READER=fast`) built 2026-11-22: check (e)
+   (`rc_replay --consumer lists`) passes the 67 and the 17 live dumps, its faults fail; the GIF walk and list 0.39-0.54
+   of before; a live fast session matches the strict reader on every list (design section 16).
 10. Pipelines built at start-up, performance pass on the heavy levels (18, 17, 24, 6, 8, 9, 12), a DIVERGENCES list.
 Then `vk` becomes the default renderer; `gs` stays as the reference.
 

@@ -864,6 +864,8 @@ cullOffscreen` leaves out triangles of no area or outside the scissor. Seeded fr
   `L` lines per program and lane). `RC_VIF_LIST_TRACE=1` (list modes) compares the register file at every triangle of
   the raw and the encoded stream.
 - `--fault unpack|tops|dbf|mpg|mscal|mxcsr|lane|packet|vumem:<cycle>[:<n>]`: the planted faults of the design's 11.6.
+- `--reader fast` (2026-11-22, P2 step 9 batch 2): the fast reader (`FrameReader::Options::fast`, `RENDERER_P2_DESIGN.md`
+  16) for timing; no check (b) (it keeps no PATH1 hash). Its check is `--consumer lists` (check (e)), next to this one.
 - `--vu1 strict|lean` (2026-11-22, P2 step 9 batch 1): the build of the references the reader runs
   (`Vif1Reader::Options::library`); lean is `rc_vu1_lean` (`decomp/vu1/vu_lean.h`, `RENDERER_P2_DESIGN.md` 4.1 and
   15). `--fault mxcsr` has no effect on lean (it sets its mode itself). `build-*/rc_vu1_test` checks its operations.
@@ -1262,9 +1264,20 @@ mode) is being built; batch 1 (the lean references) is done** (its section 15). 
 `vu_lean.h`: the host's operations under MXCSR RZ + FTZ + DAZ, `vu1l::run` sets the mode); `rc_vu1_test` is check
 (s) (0 differ); `rc_replay <dump> --consumer vif --verify --vu1 lean` passes the 67 and the fourteen beside the
 machine; the references take half the time (16.8 against 33.6 ms a cycle on level 18). A third MADD fall-back was
-found and added (an exact cancellation after an inexact product); batch 3 must add it to `fastTrdr`. **Next: batch 2**
-(triangles straight into the list, `--consumer lists`, check (e)). The measurements are `rc_replay <dump> --consumer
-shapestat` ("Shape survey" above). The rest of this section is the decompilation's.
+found and added (an exact cancellation after an inexact product); batch 3 must add it to `fastTrdr`. **Batch 2
+(triangles straight into the list) is done too** (design section 16): `FrameReader::Options::fast` = the lean
+references + direct entries + `Gif2dReader::path1Triangle` (triangle packets recognised by their tag go into the
+list without the walker, NLOOP 0 flushes dropped) + the CLUT memo (the same TEX0 again; each palette's load values
+kept until GS memory changes; the cache's palette check skipped while the CLUT buffer's version is unchanged) + the
+state-packet memo; no PATH1 hash. **Check (e): `rc_replay <dump> --consumer lists [--from-reset] [--quiet]`** (the
+fast reader against the strict one: lists byte for byte, register file every kick, six lanes every run): 67 / 67
+exact dumps and 17 / 17 live dumps (`--from-reset`) PASS; faults `--fault adc|clut-memo|state-memo:<cycle>` fail
+(clut-memo only where palettes are re-uploaded: `s5/front`, `s5/boot`). The GIF walk and list fell to 0.39-0.54 of
+before (level 18: 14.2 to 5.6 ms a cycle). Live: `RC_VK_READER=fast` opts in (default strict); a fast session on
+level 17 matched the strict reader off-line on 800 / 800 lists, 16.6 ms a cycle on the EE thread (P1: 35.1). `rc_replay
+--consumer vif --reader fast` times it. **Next: batch 3** (the track's fast path, `fastTrdr` with the third MADD
+fall-back, through `path1Triangle`). The measurements are `rc_replay <dump> --consumer shapestat` ("Shape survey"
+above). The rest of this section is the decompilation's.
 
 305 of 2,486 functions native on 2026-11-12 (1510 on 2026-11-18, after the FRONT batch at the end of this section, 1710 after TEDIT part 2, 1730 on 2026-11-19 after LEFTOVERS: every function of the game's own source files is native, only the SDK and C libraries remain; 1,653 of them registered in the Europe build, see "Europe version"). Done since 2026-11-10: collision, route nodes, AI (all) and the smaller PLAYER functions, and the renderer from the DMA chain up: RDRSTATE, RDR, RDRPOLY, RDR_SHAPE, RDR_SKIN, RDR_WATER, RDRALPHA, RDR_PARTICLE, SPRITE and most of GFX_P2, with the SDK's VIF packet library and three libvu0 helpers.
 
