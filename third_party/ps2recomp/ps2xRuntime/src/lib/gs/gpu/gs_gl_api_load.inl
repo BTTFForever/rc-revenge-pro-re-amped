@@ -92,6 +92,10 @@ load(a.TexSubImage2D, "glTexSubImage2D", missing);
     load(a.DeleteSamplers, "glDeleteSamplers", samplerMissing);
     load(a.BindSampler, "glBindSampler", samplerMissing);
     load(a.SamplerParameteri, "glSamplerParameteri", samplerMissing);
+    std::string bindlessMissing;
+    load(a.GetTextureHandleARB, "glGetTextureHandleARB", bindlessMissing);
+    load(a.MakeTextureHandleResidentARB, "glMakeTextureHandleResidentARB", bindlessMissing);
+    load(a.MakeTextureHandleNonResidentARB, "glMakeTextureHandleNonResidentARB", bindlessMissing);
     std::string parallelMissing;
     load(a.MaxShaderCompilerThreads, "glMaxShaderCompilerThreadsARB", parallelMissing);
     if (!a.MaxShaderCompilerThreads)

@@ -4,6 +4,7 @@
 // Enable with RC_TRACK_SHADER=1 and PS2X_GS_HW=1. The program's non-triangle packets still go to the GS as they did,
 // and each texture block's triangles become one batch in the GS command stream, drawn with the state in force at that
 // point. decomp/shaders/trdr_shape.vert is the same file tools/shader_check.cpp checks against the VU1 program.
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
@@ -47,10 +48,14 @@ void kickPacket(PS2Memory *memory, const uint8_t *vu, int quad)
 }
 
 // One texture block's triangles, as a GS packet writing PRIM and then the batch's pointer.
-void sendTriangles(PS2Memory *memory, const uint8_t *vu, int first, int triangles, int32_t shapeMode = 0, const void *block = nullptr)
+// Skin (shapeMode 3) reads all of VU memory. `skinRun` numbers the program's runs; after a run's first block, which
+// carries the memory, the others (`skinShared`) carry none: the backend keeps the run's copy (gs_track_batch.h).
+void sendTriangles(PS2Memory *memory, const uint8_t *vu, int first, int triangles, int32_t shapeMode = 0, const void *block = nullptr,
+                   uint32_t skinRun = 0u, bool skinShared = false)
 {
     const size_t quadBytes = shapeMode == 3 ? 0x4000u : triangles * 160u;
-    auto *batch = static_cast<GSTrackBatch *>(std::malloc(offsetof(GSTrackBatch, quads) + quadBytes));
+    const size_t carried = skinShared ? 0u : quadBytes;
+    auto *batch = static_cast<GSTrackBatch *>(std::malloc(offsetof(GSTrackBatch, quads) + std::max<size_t>(carried, sizeof(float))));
     batch->triangles = static_cast<uint32_t>(triangles);
     batch->quadBytes = shapeMode == 3 ? 0x4000u : 0u;
     std::memset(batch->draw, 0, sizeof(batch->draw));
@@ -80,6 +85,8 @@ void sendTriangles(PS2Memory *memory, const uint8_t *vu, int first, int triangle
     {
         std::memcpy(batch->draw + 44, vu + 12 * 16, 16);
         batch->draw[60] = static_cast<float>(first);
+        std::memcpy(batch->draw + kGSTrackSkinRun, &skinRun, 4);
+        batch->draw[kGSTrackSkinShared] = skinShared ? 1.0f : 0.0f;
     }
     else if (shapeMode != 0)
     {
@@ -88,7 +95,10 @@ void sendTriangles(PS2Memory *memory, const uint8_t *vu, int first, int triangle
         std::memcpy(batch->draw + 60, block, 16);
     }
     if (shapeMode == 3)
-        std::memcpy(batch->quads, vu, 0x4000u);
+    {
+        if (!skinShared)
+            std::memcpy(batch->quads, vu, 0x4000u);
+    }
     else
         for (int i = 0; i < triangles * 10; ++i)
             std::memcpy(batch->quads + i * 4, vu + ((first + i) & 0x3FF) * 16, 16);
@@ -220,11 +230,17 @@ VU1InterpreterAccess::StepResult VU1InterpreterAccess::runImage<kShaderSkin>(VU1
     uint8_t *const memory = args.vuData;
     int reader = 512;
     int16_t count = loadCount(memory, reader);
+    // The loop changes only quadword 4 (the texture state it sends), which the shader never reads: the run's first
+    // block carries VU memory for all of them. A model of one-triangle blocks sent ~9,000 copies of 16 KB a frame.
+    static uint32_t runs = 0u;
+    const uint32_t run = ++runs;
+    bool shared = false;
     for (;;)
     {
         std::memcpy(memory + 4 * 16, memory + reader * 16, 16);
         kickPacket(args.memory, memory, 0);
-        sendTriangles(args.memory, memory, reader + 1, count, 3);
+        sendTriangles(args.memory, memory, reader + 1, count, 3, nullptr, run, shared);
+        shared = true;
         reader += 1 + count * 16;
         count = loadCount(memory, reader);
         if (count == 0)

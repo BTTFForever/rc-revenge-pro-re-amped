@@ -68,13 +68,22 @@ flat out vec4 vColFlat;
 smooth out vec3 vSTQ;
 smooth out vec2 vUV;
 flat out vec4 vUVClamp;
+flat out int vSlot; // a multi-texture track batch: the triangle's texture slot (uMulti)
+// A multi-texture track batch (uMulti): per triangle, its texture slot (low 16 bits) and, for skin, its first quadword
+// in VU memory (high 16 bits).
+#define TRDR_TRIANGLE_SLOTS 1
+uniform int uMulti;
+layout(std430, binding = 2) readonly buffer TriangleSlots { uint triangleSlot[]; };
 )";
     const char *kVsMain = R"(uniform int uTrack;
 void main()
 {
+    vSlot = 0;
     if (uTrack != 0)
     {
         trackMain();
+        if (uMulti != 0)
+            vSlot = int(triangleSlot[gl_VertexID / 3] & 0xFFFFu);
         return;
     }
     gl_Position = vec4(aPos * uInvSize * 2.0 - 1.0, aZ * 2.0 - 1.0, 1.0);
@@ -86,7 +95,10 @@ void main()
 }
 )";
 
-    const char *kFsSource = R"(#version 430 core
+    // The fragment shader's first line: with bindless textures a track batch can read a paletted texture per triangle.
+    const char *kFsVersion = "#version 430 core\n";
+    const char *kFsVersionMulti = "#version 430 core\n#extension GL_ARB_bindless_texture : require\n#define RC_MULTITEX 1\n";
+    const char *kFsSource = R"(
 noperspective in vec4 vCol;
 flat in vec4 vColFlat;
 smooth in vec3 vSTQ;
@@ -191,8 +203,34 @@ vec4 reinterpretTexel(ivec2 p)
 uniform int uIndexed, uLinear;
 uniform ivec4 uWrap; // per axis (x, y): 0 repeat, 1 clamp
 uniform sampler2D uIdxPalette;
+// A multi-texture track batch (uMulti): each triangle's slot names its index texture and palette (bindless handles),
+// its TW/TH and its wrap per axis. Two uvec4 per slot: (index handle, palette handle), (width, height, wrap x, wrap y).
+uniform int uMulti;
+flat in int vSlot;
+#ifdef RC_MULTITEX
+layout(std430, binding = 3) readonly buffer TextureSlots { uvec4 textureSlot[]; };
+#endif
+vec2 texDim()
+{
+#ifdef RC_MULTITEX
+    if (uMulti != 0)
+        return vec2(textureSlot[vSlot * 2 + 1].xy);
+#endif
+    return uTexDim;
+}
 vec4 indexedTexel(ivec2 p)
 {
+#ifdef RC_MULTITEX
+    if (uMulti != 0)
+    {
+        uvec4 handles = textureSlot[vSlot * 2], info = textureSlot[vSlot * 2 + 1];
+        ivec2 msize = max(ivec2(info.xy), ivec2(1));
+        p.x = (info.z == 0u) ? ((p.x % msize.x) + msize.x) % msize.x : clamp(p.x, 0, msize.x - 1);
+        p.y = (info.w == 0u) ? ((p.y % msize.y) + msize.y) % msize.y : clamp(p.y, 0, msize.y - 1);
+        int midx = int(texelFetch(sampler2D(handles.xy), p, 0).r * 255.0 + 0.5);
+        return texelFetch(sampler2D(handles.zw), ivec2(midx, 0), 0);
+    }
+#endif
     ivec2 size = max(ivec2(uTexDim), ivec2(1));
     p.x = (uWrap.x == 0) ? ((p.x % size.x) + size.x) % size.x : clamp(p.x, 0, size.x - 1);
     p.y = (uWrap.y == 0) ? ((p.y % size.y) + size.y) % size.y : clamp(p.y, 0, size.y - 1);
@@ -254,7 +292,7 @@ void main()
     {
         // U = S/Q with the sign of Q: a negative Q flips both coordinates (the menu Kratos has one)
         float q = (abs(vSTQ.z) < 1e-30) ? 1e-30 : vSTQ.z;
-        vec2 uv = (uFst != 0) ? vUV : (vSTQ.xy / q) * uTexDim;
+        vec2 uv = (uFst != 0) ? vUV : (vSTQ.xy / q) * texDim();
         // at the internal scale a pixel samples between the GS's sample points: keep it inside the range the GS samples
         // (sprites), so filtering never reaches the texel beyond the primitive's last one
         uv = clamp(uv, vUVClamp.xy, vUVClamp.zw);
@@ -681,7 +719,16 @@ struct GSHwBackend::Impl
         const Api &g = gl();
         const GLuint v = compile(GSGL::kVertexShader,
                                  {kVsSource, g_gsTrackVertexShader ? g_gsTrackVertexShader : "void trackMain() { gl_Position = vec4(2.0); }\n", kVsMain});
-        const GLuint f = compile(GSGL::kFragmentShader, {kFsSource, kReinterpretSource, kFsTail});
+        // PS2X_GS_HW_TRACK_MULTITEX=0: every track texture block is its own draw again (as before the multi-texture batches).
+        const char *multiSetting = std::getenv("PS2X_GS_HW_TRACK_MULTITEX");
+        multiTex = g.GetTextureHandleARB && g.MakeTextureHandleResidentARB && g.MakeTextureHandleNonResidentARB &&
+                   g_gsTrackVertexShader != nullptr && !(multiSetting && *multiSetting == '0');
+        GLuint f = multiTex ? compile(GSGL::kFragmentShader, {kFsVersionMulti, kFsSource, kReinterpretSource, kFsTail}) : 0u;
+        if (!f)
+        {
+            multiTex = false;
+            f = compile(GSGL::kFragmentShader, {kFsVersion, kFsSource, kReinterpretSource, kFsTail});
+        }
         if (!v || !f)
         {
             failed = true;
@@ -713,6 +760,7 @@ struct GSHwBackend::Impl
         locSwBlend = loc("uSwBlend"); locColClamp = loc("uColClamp"); locAbcd = loc("uAbcd"); locFix = loc("uFix");
         locZAlias = loc("uZAlias"); locZAliasWrite = loc("uZAliasWrite"); locZAliasMax = loc("uZAliasMax");
         locRtTex24 = loc("uRtTex24"); locTa0 = loc("uTa0"); locTa1 = loc("uTa1"); locAem = loc("uAem");
+        locMulti = loc("uMulti");
 
         g.GenVertexArrays(1, &vao);
         g.BindVertexArray(vao);
@@ -834,6 +882,7 @@ struct GSHwBackend::Impl
             g.BindSampler(1u, pointSampler);
         }
         std::fprintf(stderr, "[gs-hw] draw textures: %s\n", useSamplers ? "sampler objects" : "glTexParameteri per draw");
+        std::fprintf(stderr, "[gs-hw] track batches: %s\n", multiTex && useSamplers ? "multi-texture (bindless paletted textures)" : "one texture each");
     }
 
     // ---- render targets -------------------------------------------------------------------------------------------
@@ -1072,6 +1121,8 @@ struct GSHwBackend::Impl
         tex.blockLo = t.tbp0;
         tex.blockHi = t.tbp0 + spanBlocks(t.psm, t.tbw, tex.height);
         const Api &g = gl();
+        if (tex.id && retireIfHandled(tex.id)) // a texture with a bindless handle can't be re-specified
+            tex.id = 0;
         if (!tex.id)
             g.GenTextures(1, &tex.id);
         g.BindTexture(kTexture2D, tex.id);
@@ -1114,7 +1165,8 @@ struct GSHwBackend::Impl
         if (palettes.size() > 4096u)
         {
             for (auto &kv : palettes)
-                g.DeleteTextures(1, &kv.second);
+                if (!retireIfHandled(kv.second))
+                    g.DeleteTextures(1, &kv.second);
             palettes.clear();
         }
         uint32_t colors[256];
@@ -1137,7 +1189,7 @@ struct GSHwBackend::Impl
         {
             if (it->second.lastUse + 3000u < useCounter)
             {
-                if (it->second.id)
+                if (it->second.id && !retireIfHandled(it->second.id))
                     g.DeleteTextures(1, &it->second.id);
                 it = textures.erase(it);
             }
@@ -2289,6 +2341,152 @@ struct GSHwBackend::Impl
     GSDrawState trackPendingState{};
     GLint locTrack = -1;
 
+    // ---- multi-texture track batches ------------------------------------------------------------------------------
+    // Some track meshes come as one triangle per texture block, each block with its own paletted texture and CLUT load
+    // (AKLM Studios' hillsides close up: ~9,000 one-triangle draws a frame, 15 fps). With bindless textures, consecutive
+    // blocks of one shape whose GS state differs only in the paletted texture (TEX0, CLUT, size, wrap) join one draw: each
+    // block's index texture and palette are resolved when it arrives (so a CLUT load in between need not flush) and kept
+    // as a slot; each triangle carries its slot. Draw order is unchanged. PS2X_GS_HW_TRACK_MULTITEX=0: off.
+    bool multiTex = false;
+    GLint locMulti = -1;
+    struct TrackSlot
+    {
+        GLuint64 index = 0, palette = 0;
+        uint32_t width = 1, height = 1, wrapX = 0, wrapY = 0;
+        bool operator==(const TrackSlot &o) const
+        {
+            return index == o.index && palette == o.palette && width == o.width && height == o.height && wrapX == o.wrapX && wrapY == o.wrapY;
+        }
+    };
+    static constexpr size_t kMaxTrackSlots = 256u;
+    std::vector<TrackSlot> trackSlots;        // the pending batch's slots
+    std::vector<uint32_t> trackTriangleSlots; // the slot of each of its triangles
+    bool trackMultiOk = false;                // the pending batch may take blocks with other paletted textures
+    bool trackMultiDraw = false;              // the batch being drawn uses its slots
+    std::unordered_map<GLuint, GLuint64> textureHandles;
+    // A texture with a handle is deleted (or re-specified) only a few presents later: the GL does not track bindless reads.
+    struct RetiredTexture { GLuint id; GLuint64 handle; uint64_t at; };
+    std::vector<RetiredTexture> retiredTextures;
+    uint64_t presentSerial = 0;
+
+    GLuint64 handleFor(GLuint id)
+    {
+        const auto it = textureHandles.find(id);
+        if (it != textureHandles.end())
+            return it->second;
+        const Api &g = gl();
+        const GLuint64 handle = g.GetTextureHandleARB(id);
+        if (handle != 0u)
+            g.MakeTextureHandleResidentARB(handle);
+        textureHandles.emplace(id, handle);
+        return handle;
+    }
+    // True when the texture has a handle: it is then deleted later, and the caller must not delete or re-specify it.
+    bool retireIfHandled(GLuint id)
+    {
+        const auto it = textureHandles.find(id);
+        if (it == textureHandles.end())
+            return false;
+        retiredTextures.push_back({id, it->second, presentSerial});
+        textureHandles.erase(it);
+        return true;
+    }
+    void reapRetiredTextures()
+    {
+        if (retiredTextures.empty())
+            return;
+        const Api &g = gl();
+        size_t kept = 0;
+        for (const RetiredTexture &r : retiredTextures)
+        {
+            if (r.at + 4u <= presentSerial)
+            {
+                if (r.handle != 0u)
+                    g.MakeTextureHandleNonResidentARB(r.handle);
+                g.DeleteTextures(1, &r.id);
+            }
+            else
+                retiredTextures[kept++] = r;
+        }
+        retiredTextures.resize(kept);
+    }
+
+    static int32_t trackMode(const GSTrackBatch *batch)
+    {
+        int32_t mode = 0;
+        std::memcpy(&mode, batch->draw + 41, sizeof(mode));
+        return mode;
+    }
+    static uint32_t skinRunOf(const GSTrackBatch *batch)
+    {
+        uint32_t run = 0u;
+        std::memcpy(&run, batch->draw + kGSTrackSkinRun, sizeof(run));
+        return run;
+    }
+    // The VU memory of the current skin run (carried by its first batch).
+    std::vector<float> skinMemory;
+    uint32_t skinRun = 0u;
+
+    // A track block drawn through the plain paletted path (index texture + palette, not read from a render target).
+    bool trackMultiEligible(const GSDrawState &s, const GSTrackBatch *batch)
+    {
+        if (!multiTex || !useSamplers || !s.prim.tme || vram == nullptr || !isIndexed(s.context.tex0.psm))
+            return false;
+        const int32_t mode = trackMode(batch);
+        if (!(mode == 0 && batch->quadBytes == 0u) && !(mode == 3 && batch->quadBytes == 0x4000u))
+            return false;
+        const GSContext &c = s.context;
+        if (findReinterpretSource(c.tex0.tbp0, c.tex0.psm) != nullptr)
+            return false;
+        if (!depthAsColorOff() && findDepthReinterpretSource(c.tex0.tbp0, target(c.frame.fbp, c.frame.fbw)) != nullptr)
+            return false;
+        return true;
+    }
+    // The two states draw alike apart from the paletted texture they read.
+    static bool sameExceptTexture(const GSDrawState &a, const GSDrawState &b)
+    {
+        GSDrawState x = a;
+        GSTex0Reg &t = x.context.tex0;
+        const GSTex0Reg &u = b.context.tex0;
+        t.tbp0 = u.tbp0; t.tbw = u.tbw; t.psm = u.psm; t.tw = u.tw; t.th = u.th;
+        t.cbp = u.cbp; t.cpsm = u.cpsm; t.csm = u.csm; t.csa = u.csa; t.cld = u.cld;
+        x.context.clamp = b.context.clamp;
+        x.texclut = b.texclut;
+        x.textureWidth = b.textureWidth;
+        x.textureHeight = b.textureHeight;
+        return sameState(x, b);
+    }
+    // Resolves the block's index texture and palette now and gives each of its triangles their slot.
+    void addTrackSlot(const GSDrawState &s, const GSTrackBatch *batch)
+    {
+        const uint32_t triangles = batch->triangles;
+        TrackSlot slot;
+        slot.index = handleFor(indexTextureFor(s).id);
+        slot.palette = handleFor(paletteFor(s));
+        slot.width = std::max<uint32_t>(s.textureWidth, 1u);
+        slot.height = std::max<uint32_t>(s.textureHeight, 1u);
+        slot.wrapX = (s.context.clamp & 3u) == 0u ? 0u : 1u;
+        slot.wrapY = ((s.context.clamp >> 2) & 3u) == 0u ? 0u : 1u;
+        uint32_t at = static_cast<uint32_t>(trackSlots.size());
+        for (uint32_t i = static_cast<uint32_t>(trackSlots.size()); i-- > 0u;)
+            if (trackSlots[i] == slot)
+            {
+                at = i;
+                break;
+            }
+        if (at == trackSlots.size())
+            trackSlots.push_back(slot);
+        if (trackMode(batch) == 3)
+        {
+            // skin: each triangle's 16 quadwords start at the block's first quadword (envBlock.x for a single block)
+            const uint32_t first = static_cast<uint32_t>(batch->draw[60]);
+            for (uint32_t i = 0; i < triangles; ++i)
+                trackTriangleSlots.push_back(at | (((first + i * 16u) & 0x3FFu) << 16));
+        }
+        else
+            trackTriangleSlots.insert(trackTriangleSlots.end(), triangles, at);
+    }
+
     // Draws a batch through the current GS state. The placeholder triangle tells the common path which part of the
     // target this batch can touch; the triangles themselves come from the batch.
     void drawTrack(const GSPrimitiveBatch &b)
@@ -2302,19 +2500,71 @@ struct GSHwBackend::Impl
         }
         prepareTrackBuffers();
         const size_t quadBytes = batch->quadBytes != 0u ? batch->quadBytes : batch->triangles * 160u;
+        const float *quads = batch->quads;
+        const int32_t mode = trackMode(batch);
+        if (mode == 3)
+        {
+            const uint32_t run = skinRunOf(batch);
+            if (batch->draw[kGSTrackSkinShared] == 0.0f)
+            {
+                skinMemory.assign(batch->quads, batch->quads + 0x4000u / sizeof(float));
+                skinRun = run;
+            }
+            else if (run != skinRun || skinMemory.size() * sizeof(float) != 0x4000u)
+            {
+                std::free(batch); // the run's first batch never arrived
+                return;
+            }
+            else
+            {
+                quads = skinMemory.data();
+                if (trackTriangleBuffer.base == nullptr)
+                {
+                    // the path below keeps the batch itself until it is drawn: give it the memory
+                    auto *full = static_cast<GSTrackBatch *>(std::malloc(offsetof(GSTrackBatch, quads) + 0x4000u));
+                    std::memcpy(full, batch, offsetof(GSTrackBatch, quads));
+                    std::memcpy(full->quads, quads, 0x4000u);
+                    std::free(batch);
+                    batch = full;
+                    quads = batch->quads;
+                }
+            }
+        }
         if (trackTriangleBuffer.base != nullptr)
         {
+            // Skin blocks of one run share the run's VU memory: with a multi-texture batch pending, a block of the same
+            // run and draw constants (its first quadword aside) joins it with no data of its own.
+            if (mode == 3 && trackPending != nullptr && trackInRing && trackMultiOk && trackMode(trackPending) == 3 &&
+                skinRunOf(trackPending) == skinRunOf(batch) && trackSlots.size() < kMaxTrackSlots &&
+                std::memcmp(trackPending->draw, batch->draw, 36u * sizeof(float)) == 0 &&
+                std::memcmp(trackPending->draw + 41, batch->draw + 41, 19u * sizeof(float)) == 0 &&
+                (sameState(trackPendingState, b.state) || sameExceptTexture(trackPendingState, b.state)) && trackMultiEligible(b.state, batch))
+            {
+                addTrackSlot(b.state, batch);
+                trackPending->triangles += batch->triangles;
+                std::free(batch);
+                return;
+            }
             // Straight into the GPU's buffer: joined batches are simply written next to each other.
             PersistentRing &ring = trackTriangleBuffer;
-            const bool joins = trackPending != nullptr && trackInRing && trackPending->quadBytes == 0u && batch->quadBytes == 0u &&
-                               sameState(trackPendingState, b.state) &&
-                               std::memcmp(trackPending->draw, batch->draw, 36u * sizeof(float)) == 0 &&
-                               std::memcmp(trackPending->draw + 41, batch->draw + 41, 23u * sizeof(float)) == 0 &&
-                               ring.head == trackRingOffset + trackRingBytes &&
-                               trackRingOffset / ring.sectorBytes == (ring.head + quadBytes - 1u) / ring.sectorBytes;
+            const bool sameDraw = trackPending != nullptr && trackInRing && trackPending->quadBytes == 0u && batch->quadBytes == 0u &&
+                                  std::memcmp(trackPending->draw, batch->draw, 36u * sizeof(float)) == 0 &&
+                                  std::memcmp(trackPending->draw + 41, batch->draw + 41, 23u * sizeof(float)) == 0 &&
+                                  ring.head == trackRingOffset + trackRingBytes &&
+                                  trackRingOffset / ring.sectorBytes == (ring.head + quadBytes - 1u) / ring.sectorBytes;
+            bool joins = sameDraw && sameState(trackPendingState, b.state);
+            if (sameDraw && trackMultiOk)
+            {
+                // A multi-texture batch takes every block it can and gives each its slot (a CLUT load in between did not
+                // flush, so even a block with the same state may read another palette).
+                joins = trackSlots.size() < kMaxTrackSlots && (joins || sameExceptTexture(trackPendingState, b.state)) &&
+                        trackMultiEligible(b.state, batch);
+                if (joins)
+                    addTrackSlot(b.state, batch);
+            }
             if (joins)
             {
-                std::memcpy(ring.base + ring.head, batch->quads, quadBytes);
+                std::memcpy(ring.base + ring.head, quads, quadBytes);
                 ring.head += quadBytes;
                 trackRingBytes += quadBytes;
                 trackPending->triangles += batch->triangles;
@@ -2326,11 +2576,16 @@ struct GSHwBackend::Impl
                                                                : "track batch not joinable");
             flushPending(); // Also draws the previous batch.
             trackRingOffset = ring.allocate(gl(), quadBytes, 256u);
-            std::memcpy(ring.base + trackRingOffset, batch->quads, quadBytes);
+            std::memcpy(ring.base + trackRingOffset, quads, quadBytes);
             trackRingBytes = quadBytes;
             trackInRing = true;
             trackPending = batch;
             trackPendingState = b.state;
+            trackSlots.clear();
+            trackTriangleSlots.clear();
+            trackMultiOk = trackMultiEligible(b.state, batch);
+            if (trackMultiOk)
+                addTrackSlot(b.state, batch);
             return;
         }
         // Consecutive batches with the same state and constants are one draw.
@@ -2351,6 +2606,7 @@ struct GSHwBackend::Impl
         flushPending(); // Also draws the previous batch.
         trackPending = batch;
         trackPendingState = b.state;
+        trackMultiOk = false;
     }
 
     void flushTrack()
@@ -2371,10 +2627,13 @@ struct GSHwBackend::Impl
             batch->draw[38] = 0.5f / scale;
             batch->draw[40] = zMaxFor(c.zbuf.psm);
             trackDraw = batch;
+            trackMultiDraw = trackMultiOk; // even with one slot: a CLUT load since its first block changed the current palette
             draw(trackPendingState, extent);
             trackDraw = nullptr;
+            trackMultiDraw = false;
         }
         trackInRing = false;
+        trackMultiOk = false;
         std::free(batch);
         ++stats.draws;
     }
@@ -2616,10 +2875,11 @@ struct GSHwBackend::Impl
             if (rsrc == &rt)
                 g.TextureBarrier();
             const bool indexed = !(src || rsrc || zsrc) && isIndexed(c.tex0.psm) && vram != nullptr;
-            Texture &tex = (src || rsrc || zsrc) ? dummy : indexed ? indexTextureFor(s) : textureFor(s);
+            // a multi-texture track batch reads its slots' textures (resolved as its blocks arrived)
+            Texture &tex = (src || rsrc || zsrc || trackMultiDraw) ? dummy : indexed ? indexTextureFor(s) : textureFor(s);
             setUniform1i(g, locIndexed, indexed ? 1 : 0);
             setUniform1i(g, locLinear, s.linearFilter ? 1 : 0);
-            if (indexed)
+            if (indexed && !trackMultiDraw)
             {
                 g.ActiveTexture(kTexture0 + 5);
                 g.BindTexture(kTexture2D, paletteFor(s));
@@ -2766,6 +3026,14 @@ struct GSHwBackend::Impl
                 else
                     put(kStorage, trackTriangles, trackTriangleRing, kRingBytes, 0, trackDraw->quads, static_cast<GLsizeiptr>(trackDraw->quadBytes != 0u ? trackDraw->quadBytes : trackDraw->triangles * 160u));
                 put(kUniform, trackConstants, trackConstantRing, kConstantRingBytes, 1, trackDraw->draw, static_cast<GLsizeiptr>(sizeof(trackDraw->draw)));
+                if (trackMultiDraw)
+                {
+                    put(kStorage, trackTriangles, trackTriangleRing, kRingBytes, 2, trackTriangleSlots.data(),
+                        static_cast<GLsizeiptr>(trackTriangleSlots.size() * sizeof(uint32_t)));
+                    put(kStorage, trackTriangles, trackTriangleRing, kRingBytes, 3, trackSlots.data(),
+                        static_cast<GLsizeiptr>(trackSlots.size() * sizeof(TrackSlot)));
+                }
+                setUniform1i(g, locMulti, trackMultiDraw ? 1 : 0);
                 g.Uniform1i(locTrack, 1);
                 g.Enable(kClipDistance0);
                 trackBound = true;
@@ -2884,6 +3152,7 @@ struct GSHwBackend::Impl
         {
             g.Disable(0x3000u); // GL_CLIP_DISTANCE0
             g.Uniform1i(locTrack, 0);
+            setUniform1i(g, locMulti, 0); // the fragment shader reads it for every draw
         }
         ++stats.batches;
         g.Disable(kScissorTest);
@@ -3070,11 +3339,18 @@ void GSHwBackend::LoadClut(const GSTex0Reg &tex0, const GSTexClutReg &texclut)
     d.lastClutKey = clutKey;
     d.lastClutPlace = clutPlace;
     d.lastClutUploads = d.uploadEpoch;
-    d.noteBreak("CLUT load");
-    d.flushPending();
+    // A pending multi-texture track batch has resolved its blocks' palettes already: the next block may join it. A CLUT
+    // read from a render target draws on the GPU, so the batch goes first (it may have drawn into that target).
+    if (!(d.trackPending != nullptr && d.trackMultiOk && d.findReinterpretSource(tex0.cbp, tex0.cpsm) == nullptr))
+    {
+        d.noteBreak(d.trackPending == nullptr ? "CLUT load" : !d.trackMultiOk ? "CLUT load (track batch, single texture)" : "CLUT load (track batch, CLUT in a target)");
+        d.flushPending();
+    }
     if (d.initialized)
         d.store.LoadClut(tex0, texclut, [&d](const GSTex0Reg &t, uint32_t width, const uint16_t *xy, uint32_t count, uint32_t *words)
                          {
+                             if (d.trackPending != nullptr && d.findReinterpretSource(t.cbp, t.cpsm) != nullptr)
+                                 d.flushTrack(); // its slots are resolved: drawing it reads nothing from the CLUT store
                              const bool used = d.clutFromTarget(t, width, xy, count, words);
                              d.lastClutFromTarget = d.lastClutFromTarget || used;
                              return used; });
@@ -3215,6 +3491,8 @@ PresentationFrame GSHwBackend::Present(const GSPresentationRequest &request)
     d.limitFramesInFlight();
     ++d.presentCount;
     d.reportBreaks();
+    ++d.presentSerial;
+    d.reapRetiredTextures();
     d.dumpAfterSkip = false;
     d.frameBatch = 0;
     d.reportStats();

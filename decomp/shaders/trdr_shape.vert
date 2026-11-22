@@ -49,7 +49,12 @@ TrdrVertex trdrVertex(int index)
 {
     const int triangle = index / 3;
     const int corner = index % 3;
-    const int base = shapeMode == 3 ? int(envBlock.x) + triangle * 16 : triangle * 10;
+    int base = shapeMode == 3 ? int(envBlock.x) + triangle * 16 : triangle * 10;
+#ifdef TRDR_TRIANGLE_SLOTS
+    // The GS backend's multi-texture batches join a skin run's blocks: each triangle's first quadword is in its table.
+    if (shapeMode == 3 && uMulti != 0)
+        base = int(triangleSlot[triangle] >> 16);
+#endif
 
     const vec4 normal = quad[base];
     vec4 position = quad[base + 1 + corner];

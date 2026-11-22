@@ -168,6 +168,11 @@ namespace GSGL
         void (*DeleteSamplers)(GLsizei, const GLuint *) = nullptr;
         void (*BindSampler)(GLuint, GLuint) = nullptr;
         void (*SamplerParameteri)(GLuint, GLenum, GLint) = nullptr;
+        // Bindless textures (GL_ARB_bindless_texture, optional): the hardware renderer's track batches pick a paletted
+        // texture per triangle, so blocks that differ only in texture and CLUT are one draw.
+        GLuint64 (*GetTextureHandleARB)(GLuint) = nullptr;
+        void (*MakeTextureHandleResidentARB)(GLuint64) = nullptr;
+        void (*MakeTextureHandleNonResidentARB)(GLuint64) = nullptr;
         bool graphics = false;
     };
 

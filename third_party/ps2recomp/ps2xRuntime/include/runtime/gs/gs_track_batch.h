@@ -20,6 +20,12 @@ struct GSTrackBatch
     float quads[1]; // triangles * 40 floats: ten quadwords each, as the game sends them to VU1.
 };
 
+// Skin batches (draw[41] == 3, quadBytes 0x4000: all of VU memory): draw[kGSTrackSkinRun] holds the VU1 run's number
+// (uint32 bits) and draw[kGSTrackSkinShared] is 1.0 when the batch carries no memory of its own: it reads what the
+// run's first batch carried. A consumer that draws skin keeps that copy.
+constexpr int kGSTrackSkinRun = 61;
+constexpr int kGSTrackSkinShared = 62;
+
 // If `batch` (a GSPrimitiveBatch) is a track-batch marker, frees the batch it carries and returns true.
 template <class PrimitiveBatch>
 inline bool gsFreeTrackBatch(const PrimitiveBatch &batch)
