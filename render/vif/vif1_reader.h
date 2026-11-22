@@ -130,6 +130,10 @@ namespace rc::rd
             // one of them again is identified by comparing the bytes instead of hashing the 16 KB (matchVu1Program: a
             // quarter of the VIF walk on level 18, a program is uploaded fifteen times a kick).
             bool programMemo = false;
+            // (Batch 5) Stats::sinkNs (and so refNs, the rest of a run's time) from one sink call in eight, counted eight
+            // times, instead of two clock reads around every packet and triangle (about 1 ms a kick on level 18 in the
+            // reader's own time). The whole kick's time is still measured.
+            bool sampledTiming = false;
         };
         // Why pending views were copied into VU memory (the first three are rc::shape::Materialise's).
         enum ViewReason : uint8_t
@@ -221,6 +225,7 @@ namespace rc::rd
         std::vector<KnownImage> m_known; // Options::programMemo, most recent first
         bool m_viewsOn = false;        // in the kick in progress
         uint64_t m_viewSerial = 0;     // materialise() calls
+        uint32_t m_sampleTick = 0;     // Options::sampledTiming: sink calls so far
         static constexpr uint32_t kMaxSegments = 0x180u;
         rc::shape::FastSegment m_segs[kMaxSegments] = {}; // a run's input (rc::shape::FastInput::segments)
         bool m_poison = true;

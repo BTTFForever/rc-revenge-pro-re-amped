@@ -56,6 +56,7 @@ namespace rc::rd
             v.views = m_opt.fastPaths && m_opt.views;
             v.streamHash = false; // (batch 5) never read by the reader
             v.programMemo = true;
+            v.sampledTiming = true;
             m_vif.setOptions(v);
         }
     }

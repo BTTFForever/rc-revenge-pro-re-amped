@@ -33,6 +33,8 @@ namespace rc::replay
                 return Gif2dReader::Options::kFastFaultClutMemo;
             if (name == "state-memo")
                 return Gif2dReader::Options::kFastFaultStateMemo;
+            if (name == "cull")
+                return Gif2dReader::Options::kFastFaultCull;
             return Gif2dReader::Options::kFastFaultNone;
         }
 

@@ -13,6 +13,7 @@
 #include "gs_plan.h"
 #include "gs_state.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
@@ -71,6 +72,22 @@ namespace rc::rd
         int minX = 0, maxX = -1, minY = 0, maxY = -1;
     };
     bool gsTriSetup(const GsVertex v[3], uint32_t ofx, uint32_t ofy, GsTri &t);
+    // (P2 step 9 batch 5) What gsTriSetup decides for a cull and nothing else: false where it returns false (no area),
+    // else its minX, maxX, minY, maxY. The same integer expressions (the area as a0 (x0 - x1) + b0 (y0 - y1), which is
+    // gsTriSetup's a0 x0 + b0 y0 + c0 term for term), without the edges, the biases and the division.
+    inline bool gsTriBounds(const GsVertex v[3], uint32_t ofx, uint32_t ofy, int &minX, int &maxX, int &minY, int &maxY)
+    {
+        const int64_t x0 = static_cast<int64_t>(v[0].x) - ofx, x1 = static_cast<int64_t>(v[1].x) - ofx, x2 = static_cast<int64_t>(v[2].x) - ofx;
+        const int64_t y0 = static_cast<int64_t>(v[0].y) - ofy, y1 = static_cast<int64_t>(v[1].y) - ofy, y2 = static_cast<int64_t>(v[2].y) - ofy;
+        if (-(y2 - y1) * (x0 - x1) + (x2 - x1) * (y0 - y1) == 0)
+            return false;
+        auto floorDiv16 = [](int64_t q) { return q >= 0 ? q / 16 : -((-q + 15) / 16); };
+        minX = static_cast<int>(-floorDiv16(-std::min({x0, x1, x2})));
+        maxX = static_cast<int>(floorDiv16(std::max({x0, x1, x2})));
+        minY = static_cast<int>(-floorDiv16(-std::min({y0, y1, y2})));
+        maxY = static_cast<int>(floorDiv16(std::max({y0, y1, y2})));
+        return true;
+    }
     inline int64_t gsTriEdge(const GsTri &t, int i, int px, int py)
     {
         return t.a[i] * (static_cast<int64_t>(px) * 16) + t.b[i] * (static_cast<int64_t>(py) * 16) + t.c[i];

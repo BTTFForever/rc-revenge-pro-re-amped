@@ -94,6 +94,7 @@ namespace rc::rd
                 kFastFaultAdc,
                 kFastFaultClutMemo,
                 kFastFaultStateMemo,
+                kFastFaultCull,    // (batch 5) gsTriBounds' first pixel rounded down instead of up (a wider box: fewer culled)
             };
             uint8_t fastFault = kFastFaultNone;
             int64_t fastFaultCycle = 0;

@@ -245,7 +245,11 @@ namespace rc::rd
             Vif1Reader::Stats *stats;
             uint64_t sinkNs;
             uint32_t packets;
+            // (Batch 5) Options::sampledTiming: the sink's time taken on one call in kSampleEvery (the clock is read
+            // twice a call, which on level 18 was about 1 ms a kick in itself) and counted that many times.
+            uint32_t sampleMask = 0, tick = 0;
         };
+        constexpr uint32_t kSampleEvery = 8u;
         struct Runaway
         {
         };
@@ -256,9 +260,14 @@ namespace rc::rd
                 throw Runaway{}; // unwinds out of the reference (RAII only); the run is abandoned
             ++u->stats->packets;
             u->stats->packetBytes += bytes;
+            if (u->tick++ & u->sampleMask)
+            {
+                u->sink->packet(data, bytes);
+                return;
+            }
             const uint64_t t0 = nowNs();
             u->sink->packet(data, bytes);
-            u->sinkNs += nowNs() - t0;
+            u->sinkNs += (nowNs() - t0) * (u->sampleMask + 1u);
         }
     }
 
@@ -275,9 +284,15 @@ namespace rc::rd
             {
                 if (u->packets >= Vif1Reader::kMaxRunPackets)
                     throw Runaway{};
-                const uint64_t t0 = nowNs();
-                const bool taken = u->sink->triangle(nine);
-                u->sinkNs += nowNs() - t0;
+                bool taken;
+                if (u->tick++ & u->sampleMask)
+                    taken = u->sink->triangle(nine);
+                else
+                {
+                    const uint64_t t0 = nowNs();
+                    taken = u->sink->triangle(nine);
+                    u->sinkNs += (nowNs() - t0) * (u->sampleMask + 1u);
+                }
                 if (taken)
                 {
                     ++u->packets;
@@ -355,7 +370,7 @@ namespace rc::rd
         uint64_t t0 = nowNs();
         sink.runBegin(run);
         const uint64_t t1 = nowNs();
-        IoUser user{&sink, &m_stats, t1 - t0, 0u};
+        IoUser user{&sink, &m_stats, t1 - t0, 0u, m_options.sampledTiming ? kSampleEvery - 1u : 0u, m_sampleTick};
         if (m_fault == VifFault::Lane && static_cast<int64_t>(k.cycle) == m_faultCycle)
         {
             const uint32_t lane = m_faultN ? m_faultN : 25u * 4u + 3u;
@@ -467,6 +482,7 @@ namespace rc::rd
             runaway = true;
         }
         _mm_setcsr(saved);
+        m_sampleTick = user.tick;
         if (fast && input.count && m_viewSerial == serial)
             ++m_stats.viewRunsWhole;
         if (runaway)

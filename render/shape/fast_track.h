@@ -132,12 +132,12 @@ namespace rc::shape::detail
         // Header packet, then the constants.
         if constexpr (K == Family::Trdr)
         {
-            p.kick(247);
+            kickPacket(p, sink, 247);
             p.loadConstants();
         }
         else if constexpr (K == Family::Terdr)
         {
-            p.kick(248);
+            kickPacket(p, sink, 248);
             p.loadConstants();
         }
         else if (pc == 0u)
@@ -166,7 +166,7 @@ namespace rc::shape::detail
         const bool fBias = faultOn(opt, FastFault::Bias, prog), fFused = faultOn(opt, FastFault::Fused, prog),
                    fHardQuick = faultOn(opt, FastFault::HardQuick, prog), fLast = faultOn(opt, FastFault::LastStep, prog),
                    fLit = faultOn(opt, FastFault::LitRegs, prog);
-        const bool fViewHard = faultOn(opt, FastFault::ViewHard, prog);
+        const bool fViewHard = faultOn(opt, FastFault::ViewHard, prog), fKickCut = faultOn(opt, FastFault::KickCut, prog);
         // (Batch 5) Before anything reads the input from VU memory: the views copied in, and the input read there from then on.
         const auto materialise = [&](Materialise why)
         {
@@ -399,7 +399,7 @@ namespace rc::shape::detail
                 for (int i = 1; i < 4; ++i)
                     p.store(3 + i, ldv(src, reader + i));
                 reader += 4;
-                p.kick(0);
+                kickPacket(p, sink, 0, fKickCut);
                 p.vi11 = 26;
                 ++st.blocks;
                 for (; n != 0; --n, reader += 10)
@@ -422,7 +422,7 @@ namespace rc::shape::detail
                 while (n < 0)
                 {
                     materialise(Materialise::Block);
-                    p.kick(reader + 1);
+                    kickPacket(p, sink, reader + 1);
                     reader += 1 - n;
                     n = count(src, reader);
                 }
@@ -440,7 +440,7 @@ namespace rc::shape::detail
                 while (n < 0)
                 {
                     materialise(Materialise::Block);
-                    p.kick(reader + 1);
+                    kickPacket(p, sink, reader + 1);
                     reader += 1 - n;
                     n = count(src, reader);
                     if (n == 0)
@@ -454,7 +454,7 @@ namespace rc::shape::detail
                 for (int i = 0; i < 4; ++i)
                     p.store(3 + i, ldv(src, reader + i));
                 reader += 4;
-                p.kick(0);
+                kickPacket(p, sink, 0, fKickCut);
                 p.vi11 = layout.firstVertex;
                 ++st.blocks;
                 for (; n != 0; --n, reader += 10)

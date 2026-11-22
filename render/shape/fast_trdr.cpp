@@ -54,7 +54,7 @@ namespace rc::shape
 
     const char *fastFaultName(FastFault f)
     {
-        static const char *const names[] = {"none", "bias", "fused", "round-x", "edge-two", "hard-quick", "last-step", "lit-regs", "view-hard", "view-ref"};
+        static const char *const names[] = {"none", "bias", "fused", "round-x", "edge-two", "hard-quick", "last-step", "lit-regs", "view-hard", "view-ref", "kick-cut"};
         static_assert(sizeof(names) / sizeof(names[0]) == static_cast<size_t>(FastFault::Count));
         return static_cast<uint32_t>(f) < static_cast<uint32_t>(FastFault::Count) ? names[static_cast<uint32_t>(f)] : "?";
     }

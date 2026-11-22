@@ -54,6 +54,8 @@ namespace rc::shape
                    // triangle's step (the step reads VU memory as the earlier kicks and runs left it)
         ViewRef,   // (batch 5, applied by the VIF1 reader) the pending views are not materialised before a run of a reference
                    // (water, a declined run) or a direct entry
+        KickCut,   // (batch 5) a packet kicked in place from VU memory (kickPacket: header, texture and register blocks)
+                   // handed over one quadword short
         Count
     };
     // `name`, or `name@program` (program trdr, env, skin, terdr) to plant it in that path only.

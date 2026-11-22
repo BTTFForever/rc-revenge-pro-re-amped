@@ -313,6 +313,31 @@ namespace rc::shape::detail
         return Quick::Drawn;
     }
 
+    // (Batch 5) ShapeProgram::kick(quad) without the copy: the packet copyGifPacket would make (its tags walked from
+    // `quad`, the same cut after 64 K quadwords) handed to the sink in place in VU memory when it does not wrap past the
+    // last quadword; when it does, the program's own kick.
+    inline void kickPacket(v::ShapeProgram &p, FastSink &sink, int quad, bool cut = false)
+    {
+        const int at = quad & 0x3FF;
+        uint32_t total = 0;
+        do
+        {
+            uint64_t lo;
+            std::memcpy(&lo, p.mem + ((at + static_cast<int>(total)) & 0x3FF) * 16, 8);
+            const uint32_t nloop = lo & 0x7FFFu, format = (lo >> 58) & 3u;
+            uint32_t nreg = (lo >> 60) & 15u;
+            if (nreg == 0u)
+                nreg = 16u;
+            total += (format == 0u ? nloop * nreg : format == 1u ? (nloop * nreg + 1u) / 2u : nloop) + 1u;
+            if ((lo >> 15) & 1u)
+                break;
+        } while (total < 0x10000u && static_cast<uint32_t>(at) + total <= 0x400u);
+        if (static_cast<uint32_t>(at) + total <= 0x400u)
+            sink.packet(p.mem + at * 16, (total - (cut && total > 1u ? 1u : 0u)) * 16u);
+        else
+            p.kick(quad);
+    }
+
     // The flush packet: the tag alone when it is one with EOP and NLOOP 0 (always, in the dumps), else as kicked.
     inline void flushPacket(v::ShapeProgram &p, FastSink &sink)
     {
@@ -322,7 +347,7 @@ namespace rc::shape::detail
         if ((lo & kFlushFields) == kFlushTag)
             sink.packet(p.mem + at * 16, 16u);
         else
-            p.kick(p.layout.flushQuad);
+            kickPacket(p, sink, p.layout.flushQuad);
     }
 
     // The quick triangle's packet: the slot's tag (from the shape's packet, in VU memory) and the nine quadwords; then
@@ -354,7 +379,7 @@ namespace rc::shape::detail
             // Not the triangle tag: the packet as the program sends it, from VU memory.
             for (int i = 0; i < 9; ++i)
                 std::memcpy(mem + ((slot + i) & 0x3FF) * 16, nine + 4 * i, 16);
-            p.kick(slot - 1);
+            kickPacket(p, sink, slot - 1);
             ++st.rebuilt;
         }
         p.vi11 += 10;

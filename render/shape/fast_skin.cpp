@@ -159,7 +159,7 @@ namespace rc::shape
         {
             p.r[31] = p.load(reader);
             p.store(4, p.r[31]);
-            p.kick(0);
+            kickPacket(p, sink, 0);
             int n = count(mem, reader);
             ++reader;
             p.vi11 = p.layout.firstVertex;

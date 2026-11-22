@@ -874,15 +874,16 @@ namespace rc::rd
             if (!m_seenClear)
                 ++m_stats.neededBeforeFirstClear;
             else
-                for (uint32_t g = 0; g < kGsGroupCount; ++g)
-                {
-                    if (m_needSeeded & (1u << g))
-                        ++m_stats.neededSeeded[g];
-                    if (m_needSeededOff & (1u << g))
-                        ++m_stats.neededSeededNotDefault[g];
-                    if (m_needDefault & (1u << g))
-                        ++m_stats.neededDefault[g];
-                }
+            {
+                // (P2 step 9 batch 5) The groups' bits one by one: a loop over all groups for every primitive (every K2
+                // primitive needs FBA seeded) was a third of this function's time.
+                for (uint32_t m = m_needSeeded; m; m &= m - 1u)
+                    ++m_stats.neededSeeded[__builtin_ctz(m)];
+                for (uint32_t m = m_needSeededOff; m; m &= m - 1u)
+                    ++m_stats.neededSeededNotDefault[__builtin_ctz(m)];
+                for (uint32_t m = m_needDefault; m; m &= m - 1u)
+                    ++m_stats.neededDefault[__builtin_ctz(m)];
+            }
         }
         if (m_dropReason)
         {
@@ -891,9 +892,8 @@ namespace rc::rd
             ++m_kickDropped;
             return;
         }
-        for (uint32_t g = 1; g < kGuardCount; ++g)
-            if (m_plan.guards & (1u << g))
-                ++m_stats.guardPrims[g];
+        for (uint32_t m = m_plan.guards & ~1u & ((1u << kGuardCount) - 1u); m; m &= m - 1u) // (batch 5) the set bits only
+            ++m_stats.guardPrims[__builtin_ctz(m)];
         const uint32_t zpsm = static_cast<uint32_t>((m_state.zbuf >> 24) & 0xFu);
         if (zpsm != 0u)
             for (uint32_t i = 0; i < n; ++i)
@@ -908,11 +908,20 @@ namespace rc::rd
         {
             // The reference's early exits: no area, or a bounding box outside the scissor. No pixel and no later state
             // depends on such a triangle.
+            const uint32_t ofx = static_cast<uint32_t>(m_state.xyoffset & 0xFFFFu), ofy = static_cast<uint32_t>((m_state.xyoffset >> 32) & 0xFFFFu);
             GsTri t;
-            if (!gsTriSetup(v, static_cast<uint32_t>(m_state.xyoffset & 0xFFFFu), static_cast<uint32_t>((m_state.xyoffset >> 32) & 0xFFFFu), t))
+            // (batch 5) The fast reader takes the cull's decision without the rest of the set-up (gsTriBounds).
+            if (m_opt.path1Direct ? !gsTriBounds(v, ofx, ofy, t.minX, t.maxX, t.minY, t.maxY) : !gsTriSetup(v, ofx, ofy, t))
             {
                 ++m_stats.culledZeroArea;
                 return;
+            }
+            if (m_opt.path1Direct && fastFault(Options::kFastFaultCull))
+            {
+                const int64_t mx = std::min({static_cast<int64_t>(v[0].x), static_cast<int64_t>(v[1].x), static_cast<int64_t>(v[2].x)}) - ofx;
+                const int64_t my = std::min({static_cast<int64_t>(v[0].y), static_cast<int64_t>(v[1].y), static_cast<int64_t>(v[2].y)}) - ofy;
+                t.minX = static_cast<int>(mx >= 0 ? mx / 16 : -((-mx + 15) / 16));
+                t.minY = static_cast<int>(my >= 0 ? my / 16 : -((-my + 15) / 16));
             }
             const int sx0 = static_cast<int>(m_state.scissor & 0x7FFu), sx1 = static_cast<int>((m_state.scissor >> 16) & 0x7FFu);
             const int sy0 = static_cast<int>((m_state.scissor >> 32) & 0x7FFu), sy1 = static_cast<int>((m_state.scissor >> 48) & 0x7FFu);
