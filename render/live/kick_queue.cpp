@@ -3,6 +3,7 @@
 
 #include "../record/chain_walk.h"
 
+#include <pthread.h>
 #include <xmmintrin.h>
 
 #include <algorithm>
@@ -315,6 +316,7 @@ namespace rc::live
     // --- Reader thread ---------------------------------------------------------------------------------------------
     void KickQueue::run()
     {
+        pthread_setname_np(pthread_self(), "rc-reader"); // (for top -H, perf --per-thread)
         std::unique_lock<std::mutex> lock(m_mutex);
         for (;;)
         {
