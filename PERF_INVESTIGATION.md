@@ -191,6 +191,73 @@ lost now.
 - `PS2_RUNTIME_LOGS=1` and the RPC trace are compiled in (cheap).
 - The texture cache re-decodes ~22 textures a frame on the front end (1,320 per second).
 
+## As built (2026-11-23): causes 1, 3 and 4 fixed
+
+Commits on `main`: 4529302 (sampler objects), 38af110 (the jungle smoke's subtractive blend, from exp/quick-dirty
+928bf9a, blend part only), 63a6a24 (the track-batch leak), b514f1e (the present path), fcc190b (a batch-break
+diagnostic). Measured with `tools/perf_scene.sh` (`PERF_RENDERER=gs` unless noted, `PERF_SECS=60`, the window after
+15 s) and `tools/gl_count_shim.c` preloaded; "before" is 78f957e or the old path by its switch.
+
+| run | fps median (worst 5 s) | GPU | GS thread | process | draws a frame | other |
+|---|---|---|---|---|---|---|
+| level 18, 3x, before | 44.6 (39.8) | 99% at 1905 MHz | 0.96 | 1.86 cores | ~2,700 | fence waits 207 ms/s, 360k glTexParameteri/s |
+| level 18, 3x, samplers | 60.0 (53.2) | 39% | 0.81 | 1.94 | ~2,450 | fence waits 2 ms/s, ~250 glTexParameteri/s |
+| level 18, 3x, all | 59.8 (54.8) | 38% | 0.75 | 1.85 | ~2,400 | RSS 724 MB |
+| level 18, 1x, before (`PS2X_GS_HW_TEXPARAM=1`) | 53.8 (43.4) | 97% at 1905 MHz | 0.91 | 1.85 | ~2,600 | |
+| level 18, 1x, all | 59.8 (55.6) | 34% at 870 MHz | 0.72 | 1.76 | ~2,400 | |
+| front (`playtest2`), 3x, before | 60.0 (55.0) | 70% at 1905 MHz | 0.59 | 1.42 | ~450 | |
+| front, 3x, all | 59.8 (56.0) | 35% at 975 MHz | 0.47 | 1.32 | ~450 | |
+| Track Editor (`tedit`), 3x, all | 60.4 (58.8) | 32% at 780 MHz | 0.20 | 0.61 | ~140 | |
+| vk native, level 18, 3x, read-back every frame (`RC_VK_GS_PICTURE=always`) | 58.8 (51.4) | 38% | 0.87 | 3.33 | | 64 read-backs/s, 355 MB/s |
+| vk native, level 18, 3x, all | 58.2 (52.6) | 37% | 0.83 | 3.26 | | no read-back; the reader thread (15.4 ms a cycle) limits |
+
+Draws a frame are the shim's draws a second over the frame rate (they include the presents' few draws).
+
+**Cause 1, sampler objects** (`gs_hw_backend.cpp`, `drawSamplers`): the draw texture is bound on unit 6 with one of 8
+samplers (filter x wrap S x wrap T), rebound only when the combination changes; the reinterpret / CLUT source on unit
+1 has a fixed point sampler. The choice is the old one: linear only for non-indexed, non-depth sources (indexed
+textures use `texelFetch`; depth is point-sampled), repeat for CLAMP mode 0, clamp-to-edge otherwise; region
+clamp/repeat stay in the shader (`vUVClamp`, `indexedTexel`). `PS2X_GS_HW_TEXPARAM=1` is the old path.
+
+**Smoke** (`PS2X_GS_HW_SUBBLEND=0` is the old shader blend): the USA jungle track select (a scripted walk: START, Race,
+Single Race, the default car, right twice) shows smooth dark clouds where the blocks were.
+
+**Cause 4, the leak**: `gsFreeTrackBatch` (`gs_track_batch.h`) in the software GS, the compute GS, the discard path and
+the frontend without a backend. Level 18 with `PS2X_GS_HW=0 PS2X_GS_GPU=0`: VmRSS 293 MB at 5 s, 328 MB at 100 s
+(steps at level streaming, flat between); `PS2X_GS_DISCARD_DRAWS=1`: 343 -> 351 MB over 40 s.
+
+**Cause 3, the present path**:
+- gs path: the mapped pixel buffer is copied once, straight into the frame (no zero fill, no kept copy), and the
+  frontend swaps the latched buffer with the caller's instead of copying. Old: `PS2X_GS_HW_READBACK_COPY=1
+  PS2X_PRESENT_COPY=1`. Level 18 at 3x: GS 0.86 -> 0.75, main 0.15 -> 0.11, process 2.12 -> 1.85 cores.
+- Read-back slots older than 100 ms are dropped and that present reads synchronously, so a picture after skipped
+  presents is never an old one.
+- vk native: the optional host hook `wantsGsPicture` is false while the native picture is shown with no F7 press
+  pending and no `RC_VK_SHOT` pair waiting; the host loop then skips the drain, the latch and the read-back (also taken
+  for `PS2X_SCREENSHOT_FIELDS` and `PS2X_FRAME_HASH`). `RC_VK_GS_PICTURE=always` is the old path.
+- The `asyncvif::sync` drain before the latch stays. `PS2X_PRESENT_DRAIN=0` (an experiment switch) gave nothing
+  measurable on level 18 at 3x and the drain is the guard against black frames.
+- Not done: presenting from a shared texture (EGL shared context or GL/Vulkan interop). The upload to the window
+  (raylib `UpdateTexture`, 250-350 MB/s at 3x) and the PBO read-back remain on the gs path.
+
+**Cause 2, draws**: `PS2X_GS_HW_BREAKS=1` prints why batches end. Level 18 at 3x: TEX0 to another texture 46-49%,
+ALPHA with another blend 23-25%, CLUT load 22-26%, track batches that cannot join 4-7%; TEXFLUSH, transfers and syncs
+0%, and no breaks on unused bytes. Jungle track select: CLUT load 93% of ~1,000 draws, all batches of indexed
+textures that read the new palette (a flush that skipped batches not reading the palette was tried: no change, not
+kept). So the TEXFLUSH and "irrelevant bytes" items gain nothing; fewer draws needs a palette atlas (indexed
+textures look up a palette index per draw) and texture arrays or bindless textures. The per-primitive mutex
+(`GSThreadedBackend::Enqueue`) was left: it is on the GIF thread (0.17-0.19 of a core), which limits nothing at 60 fps.
+
+**Looked at for correctness** (screenshots, `PS2X_SCREENSHOT_DIR`/`PS2X_SCREENSHOT_FIELDS`): level 18's demo race at
+1x and 3x (town, cave, sand, water), the intro (Acclaim video, Dolby) and front end (mean brightness of every 50th
+field from 100 to 2900 equal old and new: no black or stale frames), the Track Editor walk (`tedit`), the jungle track
+select before and after the blend, the software GS race (water only: the track is not drawn there, as before), and
+GS pictures taken under vk native after long skipped stretches (current, not old). Not tested: F7 by hand (no input
+injection here), Europe, two-player.
+
+**Next**: route (b) below. On route (a) the GS thread is now 0.75 of a core at 60 fps with the GPU at ~38%; the next
+gains are the palette atlas (CLUT breaks), a shared-texture present, and an uncapped frame rate to see the headroom.
+
 ## The two renderer routes
 
 **(a) Keep the emulated GS's GL renderer and speed it up PCSX2-style.**
