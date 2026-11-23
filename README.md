@@ -18,8 +18,8 @@ supported.
 ## Enhanced recomp: playing with the enhancements (`main`)
 
 Run `tools/play.sh` (on a hybrid-graphics laptop it uses the discrete NVIDIA GPU) and set things up in the game:
-**Game Options > Enhancements**. Changes apply at once (resolution at the next start) and are saved to
-`~/.config/rc-revenge-pro/settings.ini`:
+**Game Options > Enhancements**, or in a race **Pause Menu > Enhancements** (start, then the last item). Changes apply
+at once, mid-race too (resolution at the next start), and are saved to `~/.config/rc-revenge-pro/settings.ini`:
 
 | Setting | Choices | What it does |
 |---|---|---|
@@ -29,12 +29,21 @@ Run `tools/play.sh` (on a hybrid-graphics laptop it uses the discrete NVIDIA GPU
 | Resolution (restart) | 1x to 6x | Internal resolution (3x-4x for 1080p-1440p) |
 | Race frame rate | 60, 90, 120, 144, 165, 240 | Races run up to this rate (match your screen); menus keep the original rate; game speed unchanged |
 | Smooth motion | On, Off | Cars, wheels and camera drawn between the game's 50 Hz physics steps: even motion at any frame rate (also at 60) |
+| V-Sync | Off, On, Adaptive | The window's swap interval. Adaptive (late frames tear instead of waiting) needs `GLX_EXT_swap_control_tear` from the X server; under XWayland with PRIME offload it is not offered, so it acts as On |
+| Variable refresh | Off, On | For a VRR (FreeSync/G-SYNC/Adaptive Sync) screen: each new picture is shown when it is ready (menus at the game's 50/60 Hz without judder), races capped 3 below the screen's rate (141 on 144 Hz). The desktop must allow VRR for the window (KDE: Display Configuration, Adaptive sync "Always", or fullscreen with "Automatic") |
 
 The same Game Options menu also shows the developers' **Debug Menus**, left hidden on the disc. Apart from Mirror
 Mode (the game's normal mirrored tracks), its items are not connected to anything in the released game.
 
+Europe: the race loop is still the recompiled original there, so race frame rate and smooth motion apply to the USA
+version only (Europe races run at 50); the other settings work in both.
+
 For one run, an environment variable overrides the file: `RC_ASPECT=16:9`, `PS2X_GS_HW_SCALE=<n>`,
-`PS2X_FULLSCREEN=1`, `PS2X_REFRESH_HZ=<n>`, `RC_INTERP=0`. Switches for comparing or bypassing the other enhancements
+`PS2X_FULLSCREEN=1`, `PS2X_REFRESH_HZ=<n>`, `RC_INTERP=0`, `PS2X_VSYNC=off|on|adaptive`, `PS2X_VRR=0|1`.
+`PS2X_PRESENT_LOG=<file>` writes the window's presentation once a second (presents and game fields per second, mean
+and longest gap, swap interval, VRR, monitor rate). `PS2X_PAD_LIVE=<file>` drives a running game from a test: lines
+`<buttons hex> <hold ms> <gap ms>` appended to the file are pressed in order (0x0008 start, 0x4000 cross, 0x1000
+triangle, 0x0010/0x0040/0x0080/0x0020 up/down/left/right). Switches for comparing or bypassing the other enhancements
 (all on by default): `RC_WATER_SHADER=0` (water on the CPU), `PS2X_GS_DIRECT_PRESENT=0` (frames copied through RAM),
 `PS2X_GS_HW_TRACK_MULTITEX=0` and `..._DIRECT=0` (fewer draws), `PS2X_GS_HW_MULTIPASS=0`. `RC_BOOT_LEVEL=<n>` starts
 the attract demo on level n, `RC_DEMO_SECS=<n>` lengthens it, `tools/track_sweep.sh` measures every track's frame rate

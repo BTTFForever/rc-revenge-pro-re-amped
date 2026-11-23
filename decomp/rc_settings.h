@@ -3,15 +3,16 @@
 //
 // File: $XDG_CONFIG_HOME/rc-revenge-pro/settings.ini (else ~/.config/...), lines of key=value:
 //   aspect=4:3|16:9|16:10|21:9   hud=corrected|stretched   fullscreen=0|1   scale=1..6
-//   race_fps=60|90|120|144|165|240   smooth_motion=0|1
+//   race_fps=60|90|120|144|165|240   smooth_motion=0|1   vsync=off|on|adaptive   vrr=0|1
 // An environment variable, where one exists, wins over the file for that run (RC_ASPECT / RC_WIDESCREEN,
-// RC_HUD_ANCHOR, PS2X_FULLSCREEN, PS2X_GS_HW_SCALE, PS2X_REFRESH_HZ, RC_INTERP), so test scripts keep working.
+// RC_HUD_ANCHOR, PS2X_FULLSCREEN, PS2X_GS_HW_SCALE, PS2X_REFRESH_HZ, RC_INTERP, PS2X_VSYNC, PS2X_VRR), so test scripts keep working.
 #pragma once
 
 #include <cstdint>
 
 namespace rc::settings {
 
+enum Vsync : int { VsyncOff = 0, VsyncOn, VsyncAdaptive };
 enum Aspect : int { Aspect4x3 = 0, Aspect16x9, Aspect16x10, Aspect21x9, AspectCount };
 inline constexpr int kRaceFps[] = {60, 90, 120, 144, 165, 240};
 inline constexpr int kRaceFpsCount = 6;
@@ -24,6 +25,8 @@ struct Settings
     int scale = 2;            // internal resolution (applies at the next start)
     int raceFps = 0;          // index into kRaceFps
     bool smoothMotion = true; // cars and cameras drawn between physics steps
+    int vsync = VsyncOff;     // the window's swap interval
+    bool vrr = false;         // variable refresh: each new picture presented when it is ready, races capped below the screen's rate
 };
 
 const Settings &get();
@@ -36,7 +39,7 @@ float hscale();                           // (4/3) / aspect: the projection's x 
 inline bool hudAnchor() { return widescreen() && get().hudCorrected; }
 inline bool uiPillarbox() { return widescreen() && get().hudCorrected; }
 inline bool smoothMotion() { return get().smoothMotion; }
-int raceRefreshHz();                      // races' frame rate (60: the original)
+int raceRefreshHz();                      // races' frame rate (60: the original); with VRR, below the screen's rate
 
 const char *filePath();
 

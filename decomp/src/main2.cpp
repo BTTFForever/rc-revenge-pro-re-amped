@@ -247,6 +247,10 @@ int32_t BuildRanking(int32_t flag)
     return static_cast<int32_t>(at<uint32_t>(sp + 0x38) ^ 1u);
 }
 
+namespace enhance {
+void poll(); // rc_enhance_menu.cpp
+}
+
 namespace {
 
 // The pause menu was left: music and sounds back.
@@ -349,6 +353,7 @@ uint32_t pauseMenuStep(uint32_t pm)
             at<uint16_t>(kPauseDelay) = 10;
             guest_call(kAMenuProcessAll, at<uint32_t>(at<uint32_t>(kPauseMenu)));
             guest_call(kMenuItemDisabler, at<uint32_t>(at<uint32_t>(kPauseMenu)));
+            enhance::poll(); // enhanced recomp: Pause Menu > Enhancements
             const uint32_t menu0 = at<uint32_t>(at<uint32_t>(kPauseMenu));
             const uint32_t mit = guest_call<uint32_t>(kAMenuGetMIT, menu0, static_cast<int32_t>(at<int8_t>(menu0 + 0x63u)));
             const uint32_t current = at<uint32_t>(mit + 4u);

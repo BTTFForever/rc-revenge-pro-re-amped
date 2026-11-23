@@ -114,7 +114,78 @@ namespace ps2_host_display
     {
         targetFpsRequest.store(fps, std::memory_order_release);
     }
+
+    std::atomic<int> swapIntervalRequest{0x7fff}; // 0x7fff: none
+    std::atomic<bool> variableRefresh{false};
+    int hostTargetFps = 60; // the window loop's frame cap without variable refresh (PS2X_REFRESH_HZ, race frame rate)
+    std::atomic<int> monitorHz{0};
+
+    void requestSwapInterval(int interval)
+    {
+        swapIntervalRequest.store(interval, std::memory_order_release);
+    }
+
+    void setVariableRefresh(bool enabled)
+    {
+        variableRefresh.store(enabled, std::memory_order_release);
+    }
+
+    int monitorRefreshHz()
+    {
+        return monitorHz.load(std::memory_order_acquire);
+    }
 }
+
+#if !defined(PLATFORM_VITA)
+extern "C" void glfwSwapInterval(int interval);       // raylib's GLFW (desktop)
+extern "C" int glfwExtensionSupported(const char *extension);
+#if defined(__linux__)
+// GLX directly (the window's context is current on the window thread, but the shared-present code makes it current
+// with GLX itself, so GLFW's own idea of the current context can't be relied on here).
+extern "C" void *glXGetCurrentDisplay();
+extern "C" unsigned long glXGetCurrentDrawable();
+extern "C" const char *glXQueryExtensionsString(void *display, int screen);
+extern "C" void (*glXGetProcAddressARB(const unsigned char *name))();
+#endif
+
+// Sets the window's swap interval; returns the interval applied (-1 falls back to 1 without late-swap tearing).
+static int applySwapInterval(int interval)
+{
+#if defined(__linux__)
+    if (std::getenv("PS2X_VSYNC_DEBUG"))
+        std::fprintf(stderr, "[present] glx current display %p drawable %lu\n", glXGetCurrentDisplay(), glXGetCurrentDrawable());
+    if (void *display = glXGetCurrentDisplay(); display && glXGetCurrentDrawable() != 0ul)
+    {
+        const char *extensions = glXQueryExtensionsString(display, 0);
+        const auto has = [&](const char *name)
+        {
+            if (!extensions)
+                return false;
+            const size_t n = std::strlen(name);
+            for (const char *p = std::strstr(extensions, name); p; p = std::strstr(p + n, name))
+                if (p[n] == ' ' || p[n] == '\0')
+                    return true;
+            return false;
+        };
+        if (std::getenv("PS2X_VSYNC_DEBUG"))
+            std::fprintf(stderr, "[present] glx display %p drawable %lu extensions %s\n", display, glXGetCurrentDrawable(), extensions ? extensions : "-");
+        using SwapIntervalEXT = void (*)(void *, unsigned long, int);
+        const auto swap = reinterpret_cast<SwapIntervalEXT>(glXGetProcAddressARB(reinterpret_cast<const unsigned char *>("glXSwapIntervalEXT")));
+        if (swap && has("GLX_EXT_swap_control"))
+        {
+            if (interval < 0 && !has("GLX_EXT_swap_control_tear"))
+                interval = 1;
+            swap(display, glXGetCurrentDrawable(), interval);
+            return interval;
+        }
+    }
+#endif
+    if (interval < 0 && !glfwExtensionSupported("GLX_EXT_swap_control_tear") && !glfwExtensionSupported("WGL_EXT_swap_control_tear"))
+        interval = 1;
+    glfwSwapInterval(interval);
+    return interval;
+}
+#endif
 
 #define ELF_MAGIC 0x464C457F // "\x7FELF" in little endian
 #define ET_EXEC 2            // Executable file
@@ -1006,7 +1077,8 @@ bool PS2Runtime::initialize(const char *title)
         {
             const char *refresh = std::getenv("PS2X_REFRESH_HZ");
             const int hz = refresh ? std::atoi(refresh) : 0;
-            SetTargetFPS(hz >= 30 && hz <= 500 ? hz : 60);
+            ps2_host_display::hostTargetFps = hz >= 30 && hz <= 500 ? hz : 60;
+            SetTargetFPS(ps2_host_display::hostTargetFps);
         }
         // RC: the frame record (ps2_capture_hooks.h) observes this runtime from here on.
         if (const ps2x::capture::Hooks *capture = ps2x::capture::g_hooks; capture && capture->attach)
@@ -2692,6 +2764,51 @@ void PS2Runtime::HandleIntegerOverflow(R5900Context *ctx)
     raiseCop0Exception(ctx, EXCEPTION_INTEGER_OVERFLOW);
 }
 
+// PS2X_PRESENT_LOG=<file>: once a second, the window's presentation (presents and new game fields per second, the
+// longest gap between presents, swap interval, variable refresh, the monitor's rate), flushed so it can be followed
+// while the game runs.
+struct PresentLog
+{
+    using Clock = std::chrono::steady_clock;
+    std::FILE *file = nullptr;
+    Clock::time_point start = Clock::now(), windowStart = start, last = start;
+    uint64_t presents = 0u, firstTick = 0u;
+    double longest = 0.0, sum = 0.0;
+    PresentLog()
+    {
+        if (const char *path = std::getenv("PS2X_PRESENT_LOG"); path && *path)
+            if ((file = std::fopen(path, "w")) != nullptr)
+                std::fprintf(file, "seconds presents_per_s fields_per_s mean_ms longest_ms swap_interval vrr monitor_hz\n");
+    }
+    ~PresentLog()
+    {
+        if (file)
+            std::fclose(file);
+    }
+    void frame(Clock::time_point now, int interval, bool vrr, uint64_t tick)
+    {
+        if (!file)
+            return;
+        const double gap = std::chrono::duration<double, std::milli>(now - last).count();
+        last = now;
+        if (presents == 0u)
+            firstTick = tick;
+        ++presents;
+        sum += gap;
+        longest = std::max(longest, gap);
+        const double span = std::chrono::duration<double>(now - windowStart).count();
+        if (span < 1.0)
+            return;
+        std::fprintf(file, "%.1f %.1f %.1f %.2f %.2f %d %d %d\n", std::chrono::duration<double>(now - start).count(), presents / span,
+                     static_cast<double>(tick - firstTick) / span, sum / static_cast<double>(presents), longest, interval, vrr ? 1 : 0,
+                     ps2_host_display::monitorRefreshHz());
+        std::fflush(file);
+        windowStart = now;
+        presents = 0u;
+        sum = longest = 0.0;
+    }
+};
+
 // RC (renderer plan P0 step 3): the host loop with a host platform (ps2_host_platform.h) in place of raylib's window.
 // The same steps as the raylib loop in run(): take the latest picture, present it, hold the loop to 60 per second
 // (raylib's SetTargetFPS(60) and EndDrawing's wait, timed with std::chrono since raylib's timer needs its window),
@@ -2868,6 +2985,9 @@ void PS2Runtime::run()
     uint32_t lastHashWidth = 0u;
     uint32_t lastHashHeight = 0u;
     bool hadHash = false;
+    int swapInterval = 0, appliedCap = ps2_host_display::hostTargetFps;
+    uint64_t presentCount = 0u, vrrLastTick = 0u;
+    PresentLog presentLog;
     const ps2_host_platform::Hooks *platform = ps2_host_platform::hooks();
     if (platform)
         runHostPlatformLoop(*this, *platform, gameThreadFinished, screenshotFields, hashImages);
@@ -2919,6 +3039,42 @@ void PS2Runtime::run()
             }
         });
         ps2_host_display::updateWindowAspect();
+#if !defined(PLATFORM_VITA)
+        // V-Sync, variable refresh and the frame cap (Game Options > Enhancements, PS2X_VSYNC, PS2X_VRR).
+        {
+            const int interval = ps2_host_display::swapIntervalRequest.exchange(0x7fff, std::memory_order_acq_rel);
+            if (interval != 0x7fff)
+            {
+                const int applied = applySwapInterval(interval);
+                swapInterval = applied;
+                std::cerr << "[present] swap interval " << applied << (interval < 0 && applied > 0 ? " (adaptive not supported)" : "") << std::endl;
+            }
+            if (const int fps = ps2_host_display::targetFpsRequest.exchange(0, std::memory_order_acq_rel); fps > 0)
+                ps2_host_display::hostTargetFps = fps;
+            const bool vrr = ps2_host_display::variableRefresh.load(std::memory_order_acquire);
+            const int cap = vrr ? 0 : ps2_host_display::hostTargetFps;
+            if (cap != appliedCap)
+            {
+                SetTargetFPS(cap);
+                appliedCap = cap;
+                std::cerr << "[present] " << (vrr ? "variable refresh: each new picture presented as it comes" : "fixed rate, cap ") << (vrr ? "" : std::to_string(cap)) << std::endl;
+            }
+            if ((presentCount++ & 63u) == 0u)
+                ps2_host_display::monitorHz.store(GetMonitorRefreshRate(GetCurrentMonitor()), std::memory_order_release);
+            if (vrr)
+            {
+                // Wait for the game's next vblank (its own rate: 50/60 in menus, the race frame rate in races) instead
+                // of presenting at a fixed rate, so a variable-refresh screen follows the game's pictures. A short wait
+                // at most, so the window stays responsive while the game is loading.
+                const auto waitStart = PresentClock::now();
+                while (eeScheduler().currentVSyncTick() == vrrLastTick && !isStopRequested() &&
+                       PresentClock::now() - waitStart < std::chrono::milliseconds(50))
+                    std::this_thread::sleep_for(std::chrono::microseconds(250));
+                vrrLastTick = eeScheduler().currentVSyncTick();
+            }
+            presentLog.frame(PresentClock::now(), swapInterval, vrr, eeScheduler().currentVSyncTick());
+        }
+#endif
         const auto submitStart = tracingFrames ? PresentClock::now() : presentStart;
         uint32_t presentWidth = 0u;
         uint32_t presentHeight = 0u;
@@ -3052,8 +3208,6 @@ void PS2Runtime::run()
                         MaximizeWindow();
                 }
             }
-            if (const int fps = ps2_host_display::targetFpsRequest.exchange(0, std::memory_order_acq_rel); fps > 0)
-                SetTargetFPS(fps);
         }
 #endif
         ps2_host_input::sample();

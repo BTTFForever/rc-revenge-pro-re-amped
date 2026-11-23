@@ -992,19 +992,20 @@ void PollingMemoryCard()
 // Hides the items the UI groups tagged 0x10000208 point at; for the pause menu (flag 1) also the two-player items
 // outside a two-player race, and in a cup the pause menu is the first group's.
 namespace {
-// RC_MENU_DUMP=1 (tool): the front end's menus as the level file builds them, once, to stderr.
+// RC_MENU_DUMP=1 (tool): the front end's menus as the level file builds them, and the first race's pause menu, once each, to stderr.
 std::string menuText(ptr32<sTextGroup> group)
 {
     if (!group || !group->pText[0])
         return "-";
     return std::string(static_cast<const char *>(guest_host(group->pText[0].address))).substr(0, 40);
 }
-void dumpMenus(ptr32<sUIgroup> pUIGroup)
+void dumpMenus(ptr32<sUIgroup> pUIGroup, int32_t flag)
 {
-    static bool done = false;
-    if (done || !std::getenv("RC_MENU_DUMP"))
+    static bool done[2] = {false, false}; // the front end's menus, the pause menu's
+    bool &once = done[flag == 1 ? 1 : 0];
+    if (once || !std::getenv("RC_MENU_DUMP"))
         return;
-    done = true;
+    once = true;
     int n = 0;
     for (ptr32<sUIgroup> g = pUIGroup; g->pSourceHeader.address != 0xffffffffu && n < 200; g = g + 1, ++n)
     {
@@ -1033,7 +1034,7 @@ void dumpMenus(ptr32<sUIgroup> pUIGroup)
 
 void MenuInitScan(ptr32<sUIgroup> pUIGroup, int32_t flag)
 {
-    dumpMenus(pUIGroup);
+    dumpMenus(pUIGroup, flag);
     GuestFrame frame(0x70);
     for (ptr32<sUIgroup> g = pUIGroup; g->pSourceHeader.address != 0xffffffffu; g = g + 1)
         if (g->selectionTag == 0x10000208u)

@@ -57,6 +57,19 @@ int fpsIndex(int hz)
     return best;
 }
 
+constexpr const char *kVsyncNames[] = {"off", "on", "adaptive"};
+
+int vsyncFromText(const std::string &text)
+{
+    if (text == "adaptive" || text == "-1")
+        return VsyncAdaptive;
+    if (text == "on" || text == "1")
+        return VsyncOn;
+    return VsyncOff;
+}
+
+int swapInterval(int vsync) { return vsync == VsyncAdaptive ? -1 : vsync == VsyncOn ? 1 : 0; }
+
 std::string defaultPath()
 {
     std::string base;
@@ -92,6 +105,10 @@ void readFile(Settings &s)
             s.raceFps = fpsIndex(number);
         else if (key == "smooth_motion")
             s.smoothMotion = number != 0;
+        else if (key == "vsync")
+            s.vsync = vsyncFromText(value);
+        else if (key == "vrr")
+            s.vrr = number != 0;
     }
 }
 
@@ -111,7 +128,9 @@ void writeFile(const Settings &s)
         << "fullscreen=" << (s.fullscreen ? 1 : 0) << "\n"
         << "scale=" << s.scale << "\n"
         << "race_fps=" << kRaceFps[s.raceFps] << "\n"
-        << "smooth_motion=" << (s.smoothMotion ? 1 : 0) << "\n";
+        << "smooth_motion=" << (s.smoothMotion ? 1 : 0) << "\n"
+        << "vsync=" << kVsyncNames[s.vsync] << "\n"
+        << "vrr=" << (s.vrr ? 1 : 0) << "\n";
 }
 
 // The presentation follows the aspect; the window loop takes requests from the game thread.
@@ -121,6 +140,10 @@ void applyLive(const Settings &before, const Settings &s, bool first)
         ps2_host_display::setAspect(kAspects[s.aspect]);
     if (!first && before.fullscreen != s.fullscreen)
         ps2_host_display::requestFullscreen(s.fullscreen);
+    if (first || before.vsync != s.vsync)
+        ps2_host_display::requestSwapInterval(swapInterval(s.vsync));
+    if (first || before.vrr != s.vrr)
+        ps2_host_display::setVariableRefresh(s.vrr);
 }
 
 // Before the runtime starts: the file, then the environment, then what the runtime reads from the environment.
@@ -144,6 +167,14 @@ __attribute__((constructor(101))) void load()
         s.raceFps = fpsIndex(std::atoi(v));
     if (envSet("RC_INTERP", v))
         s.smoothMotion = *v != '0';
+    if (envSet("PS2X_VSYNC", v))
+        s.vsync = vsyncFromText(v);
+    if (envSet("PS2X_VRR", v))
+        s.vrr = *v != '0';
+    // NVIDIA's driver allows G-SYNC/VRR for the window only when told so before the GL context is made (it matters
+    // when the NVIDIA GPU drives the screen; with PRIME offload the compositor's GPU does). Set either way: harmless.
+    setenv("__GL_GSYNC_ALLOWED", "1", 0);
+    setenv("__GL_VRR_ALLOWED", "1", 0);
     g_settings = s;
     // The runtime reads these itself.
     setenv("PS2X_GS_HW_SCALE", std::to_string(s.scale).c_str(), 1);
@@ -154,8 +185,9 @@ __attribute__((constructor(101))) void load()
     if (s.aspect != Aspect4x3)
         ps2_host_display::setInitialWindowSize(static_cast<int>(720 * kAspects[s.aspect] + 0.5f), 720);
     applyLive(s, s, true);
-    std::fprintf(stderr, "[settings] %s: aspect %s, hud %s, fullscreen %d, scale %d, race fps %d, smooth motion %d\n", g_path.c_str(),
-                 kAspectNames[s.aspect], s.hudCorrected ? "corrected" : "stretched", s.fullscreen, s.scale, kRaceFps[s.raceFps], s.smoothMotion);
+    std::fprintf(stderr, "[settings] %s: aspect %s, hud %s, fullscreen %d, scale %d, race fps %d, smooth motion %d, vsync %s, vrr %d\n", g_path.c_str(),
+                 kAspectNames[s.aspect], s.hudCorrected ? "corrected" : "stretched", s.fullscreen, s.scale, kRaceFps[s.raceFps], s.smoothMotion,
+                 kVsyncNames[s.vsync], s.vrr);
 }
 
 } // namespace
@@ -170,12 +202,23 @@ void set(const Settings &s)
     applyLive(before, s, false);
     if (kRaceFps[s.raceFps] != kRaceFps[before.raceFps])
         ps2_host_display::requestTargetFps(std::max(60, kRaceFps[s.raceFps]));
+    if (s.vrr != before.vrr)
+        std::fprintf(stderr, "[settings] variable refresh %s\n", s.vrr ? "on" : "off");
     writeFile(s);
 }
 
 float aspectRatio() { return kAspects[get().aspect]; }
 float hscale() { return (4.0f / 3.0f) / aspectRatio(); }
-int raceRefreshHz() { return kRaceFps[get().raceFps]; }
+int raceRefreshHz()
+{
+    int hz = kRaceFps[get().raceFps];
+    // VRR: kept a few frames below the screen's top rate, so the screen follows each picture instead of waiting a
+    // whole refresh (the usual cap: 141 on a 144 Hz screen).
+    const int screen = ps2_host_display::monitorRefreshHz();
+    if (get().vrr && screen > 60 && hz > screen - 3)
+        hz = screen - 3;
+    return hz;
+}
 const char *filePath() { return g_path.c_str(); }
 
 } // namespace rc::settings

@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <mutex>
+#include <deque>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -350,6 +351,71 @@ namespace ps2_host_input
             }
             input.active = input.active || input.buttons != 0u;
             return input;
+        }
+
+        // PS2X_PAD_LIVE=<file>: presses appended to the file while the game runs (a test driving a running game; no
+        // window focus or key injection needed). Each line is "<buttons hex> <hold ms> <gap ms>", run in order, held
+        // on top of the host's own input. Buttons as in the pad record (0x4000 cross, 0x1000 triangle, 0x0008 start,
+        // 0x0010 up, 0x0040 down, 0x0080 left, 0x0020 right).
+        uint16_t liveButtons()
+        {
+            static const char *path = []() -> const char * { const char *v = std::getenv("PS2X_PAD_LIVE"); return v && *v ? v : nullptr; }();
+            if (!path)
+                return 0u;
+            struct Press { uint16_t buttons; int hold, gap; };
+            using Clock = std::chrono::steady_clock;
+            static std::mutex mutex;
+            static long offset = 0;
+            static std::string partial;
+            static std::deque<Press> queue;
+            static Clock::time_point started{}, lastRead{};
+            static bool running = false;
+            std::lock_guard<std::mutex> lock(mutex);
+            const auto now = Clock::now();
+            if (now - lastRead > std::chrono::milliseconds(20))
+            {
+                lastRead = now;
+                if (std::FILE *file = std::fopen(path, "r"))
+                {
+                    std::fseek(file, 0, SEEK_END);
+                    const long size = std::ftell(file);
+                    if (size < offset)
+                        offset = 0; // the file was replaced
+                    std::fseek(file, offset, SEEK_SET);
+                    char text[256];
+                    size_t got;
+                    while ((got = std::fread(text, 1, sizeof(text), file)) > 0)
+                        partial.append(text, got);
+                    offset = size;
+                    std::fclose(file);
+                    size_t eol;
+                    while ((eol = partial.find('\n')) != std::string::npos)
+                    {
+                        unsigned buttons = 0;
+                        int hold = 100, gap = 100;
+                        if (std::sscanf(partial.substr(0, eol).c_str(), "%x %d %d", &buttons, &hold, &gap) >= 1)
+                            queue.push_back({static_cast<uint16_t>(buttons), hold, gap});
+                        partial.erase(0, eol + 1);
+                    }
+                }
+            }
+            while (!queue.empty())
+            {
+                if (!running)
+                {
+                    running = true;
+                    started = now;
+                }
+                const Press &p = queue.front();
+                const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(now - started).count();
+                if (age < p.hold)
+                    return p.buttons;
+                if (age < p.hold + p.gap)
+                    return 0u;
+                queue.pop_front();
+                running = false;
+            }
+            return 0u;
         }
 
         // PS2X_PAD_RECORD=<file> writes port 0's input as it changes; PS2X_PAD_REPLAY=<file> plays such a file back instead
@@ -799,6 +865,14 @@ namespace ps2_host_input
                 state.rightY = current.axes[3];
                 applyPressure(state);
             }
+            // after a replay, which sets the whole state
+            if (const uint16_t live = liveButtons(); live != 0u)
+            {
+                state.connected = true;
+                state.buttons |= live;
+                applyPressure(state);
+            }
+
             recordPad(frame, static_cast<uint16_t>(state.buttons), {state.leftX, state.leftY, state.rightX, state.rightY});
         }
         return state;

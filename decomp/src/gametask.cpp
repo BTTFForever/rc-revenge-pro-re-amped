@@ -212,9 +212,27 @@ int32_t stepTime = 0;
 bool stepped = false, applied = false, camApplied = false;
 float maxCamStep = 0.0f;
 
+void forget();
+
 bool enabled()
 {
-    return settings::smoothMotion(); // Game Options > Enhancements, the settings file or RC_INTERP
+    // Game Options > Enhancements, the settings file or RC_INTERP. Switched back on (in the pause menu): the states
+    // kept from before are stale, so blending starts again after the next physics step.
+    static bool was = settings::smoothMotion();
+    const bool on = settings::smoothMotion();
+    if (on && !was)
+        forget();
+    was = on;
+    return on;
+}
+
+void forget()
+{
+    stepped = false;
+    for (Car &c : cars)
+        c.havePrev = false;
+    for (Cam &c : cams)
+        c.havePrev = false;
 }
 
 // Before a physics step: what is drawn now becomes the previous state.
@@ -344,22 +362,42 @@ float jumpLimit()
 // The race frame rate (settings: Game Options > Enhancements, race_fps, PS2X_REFRESH_HZ): vblanks at n Hz while a race (or the demo) runs, so its loop draws up to n frames a second; the
 // race keeps time on its own clock. The front end and other screens step their animations once a frame, so they keep
 // the video mode's rate.
+namespace {
+bool g_racing = false;
+uint32_t g_normalPeriod = 0; // the video mode's vblank period, while a race runs faster
+}
+
 void RcRefreshRace(bool racing)
 {
-    static uint32_t normal = 0;
     EeScheduler &scheduler = g_runtime->eeScheduler();
+    g_racing = racing;
     if (racing)
     {
         const uint32_t hz = static_cast<uint32_t>(settings::raceRefreshHz()); // Game Options > Enhancements
         if (hz <= 60u)
             return;
-        normal = static_cast<uint32_t>(scheduler.vblankPeriod().count());
+        if (g_normalPeriod == 0u)
+            g_normalPeriod = static_cast<uint32_t>(scheduler.vblankPeriod().count());
         scheduler.setVBlankPeriodMicroseconds(1000000u / hz);
     }
-    else if (normal != 0u)
+    else if (g_normalPeriod != 0u)
     {
-        scheduler.setVBlankPeriodMicroseconds(normal);
-        normal = 0;
+        scheduler.setVBlankPeriodMicroseconds(g_normalPeriod);
+        g_normalPeriod = 0;
+    }
+}
+
+// The settings changed (Pause Menu > Enhancements): a race on picks up its new frame rate at once.
+void RcRefreshRaceUpdate()
+{
+    if (!g_racing)
+        return;
+    if (settings::raceRefreshHz() > 60)
+        RcRefreshRace(true);
+    else
+    {
+        RcRefreshRace(false);
+        g_racing = true;
     }
 }
 
