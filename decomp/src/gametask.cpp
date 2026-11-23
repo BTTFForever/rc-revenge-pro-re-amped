@@ -202,6 +202,10 @@ bool blended[kMaxObjects]{}, camBlended[2]{};
 // cars whose ground and shadow pass (GameTaskShadowCalc) ran during a blended draw: it is run again on the real state
 // afterwards, since the physics reads the wheels' ground material from it (grip)
 std::vector<uint32_t> shadowRedo;
+// cars whose wheels were placed from the drawn state (FPhysLibUpdateCarSpheres(car, 0) in ObjectRender): placed again
+// from the real state afterwards (the physics uses each wheel's local position)
+std::vector<uint32_t> wheelRedo;
+uint8_t blendedSnap[kMaxObjects][kPhysBytes]; // RC_INTERP_LOG=3: what the draw itself writes to the block
 uint32_t carCount = 0;
 int32_t stepTime = 0;
 bool stepped = false, applied = false;
@@ -355,13 +359,41 @@ void RcRefreshRace(bool racing)
         scheduler.setVBlankPeriodMicroseconds(normal);
 }
 
+namespace interp {
+// RC_INTERP_LOG=2: the drawn camera 0 and its car each frame (frames 3000-3600), to check the motion is even
+void logDrawn(int32_t time, float t)
+{
+    static const bool log2 = [] { const char *v = std::getenv("RC_INTERP_LOG"); return v && *v == '2'; }();
+    static uint64_t drawn = 0;
+    if (!log2 || ++drawn < 3000u || drawn >= 3600u)
+        return;
+    const uint32_t target = at<uint32_t>(kCameras + 0xacu);
+    const uint32_t phys = target ? at<uint32_t>(target + 0x20u) : 0u;
+    const uint32_t state = phys ? at<uint32_t>(phys + 0x1e8u) : 0u;
+    std::fprintf(stderr, "[interp-cam] time %d cam %d %d %d car %d %d %d mat %d %d %d blend %.3f step %d\n", time,
+                 at<int32_t>(kCameras + 0x38u), at<int32_t>(kCameras + 0x3cu), at<int32_t>(kCameras + 0x40u),
+                 state ? at<int32_t>(state + 4u) : 0, state ? at<int32_t>(state + 8u) : 0, state ? at<int32_t>(state + 12u) : 0,
+                 at<int16_t>(kCameras + 0x24u), at<int16_t>(kCameras + 0x24u + 2u), at<int16_t>(kCameras + 0x24u + 4u), t, stepTime);
+}
+} // namespace interp
+
+// FPhysLibUpdateCarSpheres (physics.cpp) calls this: a wheel placement during a blended draw is redone afterwards.
+void RcInterpNoteWheelPlacement(uint32_t phys)
+{
+    if (interp::applied)
+        interp::wheelRedo.push_back(phys);
+}
+
 // Called by the race loop after TaskProcess, before drawing: puts the blended state in place.
 void RcInterpBeginDraw(int32_t time)
 {
     using namespace interp;
     applied = false;
     if (!enabled() || !stepped)
+    {
+        logDrawn(time, 0.0f);
         return;
+    }
     const int32_t step = std::max<int32_t>(at<int32_t>(kTimeStep), 1);
     const float t = std::clamp(static_cast<float>(time - stepTime) / static_cast<float>(step), 0.0f, 1.0f);
     static const bool log = std::getenv("RC_INTERP_LOG") != nullptr;
@@ -403,6 +435,7 @@ void RcInterpBeginDraw(int32_t time)
         }
         applied = true;
         blended[i] = true;
+        std::memcpy(blendedSnap[i], guest_host(p), kPhysBytes);
     }
     for (uint32_t k = 0; k < 2; ++k)
     {
@@ -421,18 +454,7 @@ void RcInterpBeginDraw(int32_t time)
         camBlended[k] = true;
         applied = true;
     }
-    // RC_INTERP_LOG=2: the drawn camera 0 position each frame (frames 3000-3200), to check the motion is even
-    static uint64_t drawn = 0;
-    if (log && std::getenv("RC_INTERP_LOG")[0] == '2' && ++drawn >= 3000u && drawn < 3200u)
-    {
-        const uint32_t target = at<uint32_t>(kCameras + 0xacu); // camera 0's car
-        const uint32_t phys = target ? at<uint32_t>(target + 0x20u) : 0u;
-        const uint32_t state = phys ? at<uint32_t>(phys + 0x1e8u) : 0u;
-        std::fprintf(stderr, "[interp-cam] time %d cam %d %d %d car %d %d %d carf %.1f %.1f blend %.3f step %d\n", time,
-                     at<int32_t>(kCameras + 0x38u), at<int32_t>(kCameras + 0x3cu), at<int32_t>(kCameras + 0x40u),
-                     state ? at<int32_t>(state + 4u) : 0, state ? at<int32_t>(state + 8u) : 0, state ? at<int32_t>(state + 12u) : 0,
-                     phys ? static_cast<float>(at<ee_float>(phys + 8u)) : 0.f, phys ? static_cast<float>(at<ee_float>(phys + 16u)) : 0.f, t, stepTime);
-    }
+    logDrawn(time, t);
     if (log && ++frames % 600u == 0u)
     {
         std::fprintf(stderr, "[interp] largest step in the last 600 frames: car %.1f, camera %.1f (jump limit %.1f)\n", maxStep, maxCam, jumpLimit());
@@ -453,17 +475,28 @@ void RcInterpEndDraw()
         blended[i] = false;
         Car &c = cars[i];
         uint8_t *block = static_cast<uint8_t *>(guest_host(c.phys));
-        for (const auto &[offset, bytes] : kCarFields)
-            std::memcpy(block + offset, c.cur + offset, bytes);
-        // a draw recomputes the collision spheres from the drawn state for some cars: then again from the real one,
-        // as the original's draw leaves them
-        if (c.sphereAt != 0u && !c.spheres.empty() && std::memcmp(guest_host(c.sphereAt), c.spheres.data(), c.spheres.size()) != 0)
-            FPhysLibUpdateCarSpheres(ptr32<_sFPhysLibCar>(c.phys), 0);
+        static const bool check = [] { const char *v = std::getenv("RC_INTERP_LOG"); return v && *v == '3'; }();
+        if (check)
+        {
+            // which bytes the draw wrote (to see that the re-runs below cover them all)
+            static uint64_t reported = 0;
+            for (uint32_t o = 0; o < kPhysBytes; ++o)
+                if (block[o] != blendedSnap[i][o] && (reported & (1ull << (o / 4u % 64u))) == 0u)
+                {
+                    reported |= 1ull << (o / 4u % 64u);
+                    std::fprintf(stderr, "[interp-check] the draw wrote car block offset 0x%x\n", o);
+                }
+        }
+        // the exact state the physics left, then what the original's draw does to it, from that state
+        std::memcpy(block, c.cur, kPhysBytes);
     }
     applied = false;
     for (const uint32_t obj : shadowRedo)
         GameTaskShadowCalc(ptr32<_sObject>(obj));
     shadowRedo.clear();
+    for (const uint32_t phys : wheelRedo)
+        FPhysLibUpdateCarSpheres(ptr32<_sFPhysLibCar>(phys), 0);
+    wheelRedo.clear();
     for (uint32_t k = 0; k < 2; ++k)
         if (camBlended[k])
         {

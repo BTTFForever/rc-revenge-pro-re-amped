@@ -735,8 +735,12 @@ void FCollisionResponseCarCar(ptr32<_sFPhysLibCar> pCar)
 
 // FUPDATE.c: integrating impulses into motion.
 
+void RcInterpNoteWheelPlacement(uint32_t phys); // gametask.cpp (enhancement: drawing between physics steps)
+
 void FPhysLibUpdateCarSpheres(ptr32<_sFPhysLibCar> pCar, int32_t bFullUpdate)
 {
+    if (bFullUpdate == 0)
+        RcInterpNoteWheelPlacement(pCar.address);
     _sFPhysLibCar &car = *pCar;
     const uint8_t startFlags = car.flags;
     _sFPhysLibWheel *wheel = car.wheel;

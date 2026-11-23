@@ -406,6 +406,12 @@ the car juddered "like the physics were glitching"):
   only the blended fields are put back; any car whose shadow pass ran during a blended draw has it run again on the
   real state, and spheres a draw recomputed are recomputed from the real state, so the physics sees what the
   original's draw would have left.
+- The car still juddered with interpolation on (and not with `RC_INTERP=0`, the user's A/B). The draw also places the
+  wheels (`FPhysLibUpdateCarSpheres(car, 0)` in `ObjectRender`: each wheel's `pos` and `localPos`, the latter the
+  lever arm the physics uses) from the drawn, blended state, and `localPos` was not put back. Now the whole block is
+  restored after drawing and the draw's two writers are re-run on the real state (the ground/shadow pass and the wheel
+  placement, noted when they run during a blended draw). `RC_INTERP_LOG=3` lists the block bytes a draw writes: on
+  level 4 at 144 Hz exactly the four wheels' `pos`, `localPos`, ground material and shadow height.
 
 ## The two renderer routes
 
