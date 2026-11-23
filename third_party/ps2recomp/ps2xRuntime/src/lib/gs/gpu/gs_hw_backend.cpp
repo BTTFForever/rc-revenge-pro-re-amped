@@ -227,6 +227,8 @@ vec4 indexedTexel(ivec2 p)
         ivec2 msize = max(ivec2(info.xy), ivec2(1));
         p.x = (info.z == 0u) ? ((p.x % msize.x) + msize.x) % msize.x : clamp(p.x, 0, msize.x - 1);
         p.y = (info.w == 0u) ? ((p.y % msize.y) + msize.y) % msize.y : clamp(p.y, 0, msize.y - 1);
+        if (handles.z == 0u && handles.w == 0u)
+            return texelFetch(sampler2D(handles.xy), p, 0); // a direct-colour texture
         int midx = int(texelFetch(sampler2D(handles.xy), p, 0).r * 255.0 + 0.5);
         return texelFetch(sampler2D(handles.zw), ivec2(midx, 0), 0);
     }
@@ -1006,11 +1008,16 @@ struct GSHwBackend::Impl
         tex.height = std::max<uint32_t>(1u, s.textureHeight);
         tex.blockLo = t.tbp0;
         tex.blockHi = t.tbp0 + spanBlocks(t.psm, t.tbw, tex.height);
+        if (tex.id && retireIfHandled(tex.id)) // a texture with a bindless handle can't be re-specified
+            tex.id = 0;
         if (!tex.id)
             g.GenTextures(1, &tex.id);
         g.BindTexture(kTexture2D, tex.id);
         g.PixelStorei(kUnpackAlignment, 4);
         g.TexImage2D(kTexture2D, 0, static_cast<GLint>(kRgba8), tex.width, tex.height, 0, kRgba, kUnsignedByte, pixels.data());
+        // complete without mipmaps, so a multi-texture batch can take a bindless handle to it (draws use sampler objects)
+        g.TexParameteri(kTexture2D, kTextureMinFilter, kNearest);
+        g.TexParameteri(kTexture2D, kTextureMagFilter, kNearest);
         tex.valid = true;
         if (textures.size() > 6000u)
             evictOld();
@@ -2653,7 +2660,9 @@ struct GSHwBackend::Impl
     // A track block drawn through the plain paletted path (index texture + palette, not read from a render target).
     bool trackMultiEligible(const GSDrawState &s, const GSTrackBatch *batch)
     {
-        if (!multiTex || !useSamplers || !s.prim.tme || vram == nullptr || !isIndexed(s.context.tex0.psm))
+        const uint8_t psm = s.context.tex0.psm;
+        const bool direct = psm == GS_PSM_CT32 || psm == GS_PSM_CT24 || psm == GS_PSM_CT16 || psm == GS_PSM_CT16S;
+        if (!multiTex || !useSamplers || !s.prim.tme || vram == nullptr || !(isIndexed(psm) || (direct && multiTexDirect())))
             return false;
         const int32_t mode = trackMode(batch);
         if (!(mode == 0 && batch->quadBytes == 0u) && !(mode == 3 && batch->quadBytes == 0x4000u))
@@ -2664,6 +2673,13 @@ struct GSHwBackend::Impl
         if (!depthAsColorOff() && findDepthReinterpretSource(c.tex0.tbp0, target(c.frame.fbp, c.frame.fbw)) != nullptr)
             return false;
         return true;
+    }
+    // Direct-colour textures (CT32/24/16, decoded with TEXA's alpha rules, which a batch's states share) as slots with
+    // no palette. PS2X_GS_HW_TRACK_MULTITEX_DIRECT=0: paletted textures only, as before.
+    static bool multiTexDirect()
+    {
+        static const bool on = [] { const char *v = std::getenv("PS2X_GS_HW_TRACK_MULTITEX_DIRECT"); return !(v && *v == '0'); }();
+        return on;
     }
     // The two states draw alike apart from the paletted texture they read.
     static bool sameExceptTexture(const GSDrawState &a, const GSDrawState &b)
@@ -2684,8 +2700,16 @@ struct GSHwBackend::Impl
     {
         const uint32_t triangles = batch->triangles;
         TrackSlot slot;
-        slot.index = handleFor(indexTextureFor(s).id);
-        slot.palette = handleFor(paletteFor(s));
+        if (isIndexed(s.context.tex0.psm))
+        {
+            slot.index = handleFor(indexTextureFor(s).id);
+            slot.palette = handleFor(paletteFor(s));
+        }
+        else
+        {
+            slot.index = handleFor(textureFor(s).id); // a direct-colour texture: no palette
+            slot.palette = 0u;
+        }
         slot.width = std::max<uint32_t>(s.textureWidth, 1u);
         slot.height = std::max<uint32_t>(s.textureHeight, 1u);
         slot.wrapX = (s.context.clamp & 3u) == 0u ? 0u : 1u;
@@ -3103,7 +3127,7 @@ struct GSHwBackend::Impl
             const bool indexed = !(src || rsrc || zsrc) && isIndexed(c.tex0.psm) && vram != nullptr;
             // a multi-texture track batch reads its slots' textures (resolved as its blocks arrived)
             Texture &tex = (src || rsrc || zsrc || trackMultiDraw) ? dummy : indexed ? indexTextureFor(s) : textureFor(s);
-            setUniform1i(g, locIndexed, indexed ? 1 : 0);
+            setUniform1i(g, locIndexed, indexed || trackMultiDraw ? 1 : 0); // a multi-texture batch reads its slots (both kinds)
             setUniform1i(g, locLinear, s.linearFilter ? 1 : 0);
             if (indexed && !trackMultiDraw)
             {

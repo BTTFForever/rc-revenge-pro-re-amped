@@ -446,6 +446,18 @@ compared, worst x,y 1.0/16 pixel, z 2 GS units, colour exact, texture coordinate
 
 The GS thread is now the limit there.
 
+**Direct-colour textures in multi-texture batches** (`gs_hw_backend.cpp`): `PS2X_GS_HW_BREAKS=2` on level 9 after the
+water change: ~710 draws a frame, 57% skin blocks split because CT32/CT16 textures could not join a multi-texture batch.
+A slot can now hold a direct-colour texture (decoded with TEXA's alpha rules, which a batch's states share) as a handle
+with no palette; the fragment shader fetches it with the slots' own wrap and filtering. Direct textures are created
+complete (nearest filter; draws use sampler objects, so nothing else changes), or the bindless handle fails
+(GL_INVALID_OPERATION), and like the paletted ones are retired, not re-specified, once they have a handle.
+`PS2X_GS_HW_TRACK_MULTITEX_DIRECT=0`: paletted only. Draws a frame: level 9 ~800 -> ~440, level 18 ~280-460; no GL
+errors; window captures of levels 9, 4, 18 look right. New pictures a second at 4x, 144 Hz (55 s windows): level 9
+131 -> 134, level 18 135 -> 133, level 21 130 -> 135. The GS thread stays at ~0.9 of a core: by inclusive time
+drawing 33% (was 43%), CLUT loads 16%, slot set-up 10%, the rest spread over the command queue, VRAM uploads and
+the present. Halving the draws mostly lowered the driver's share.
+
 ## The two renderer routes
 
 **(a) Keep the emulated GS's GL renderer and speed it up PCSX2-style.**
