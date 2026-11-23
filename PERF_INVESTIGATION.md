@@ -369,6 +369,32 @@ a race (`replay playtest2`, 4x): 0.02% late. Checked in window captures (`specta
 race and the HUD, upright and with the right colours; the native Vulkan route (`RC_RENDERER=vk`) has its own window
 and is unchanged. Not tested: Europe (built), two-player, the Track Editor, resizing or fullscreen.
 
+## As built (2026-11-23): high refresh rates and drawing between physics steps
+
+**How the game keeps time.** The race clock is EE timer 0 (`TimerGet`, milliseconds), not a vblank count. The physics
+is a task that reschedules itself every `gameTaskTimeStep` = 20 ms (50 Hz) and integrates with a fixed step
+(`kTimestep` 0.59375); `TaskProcess` catches up with as many steps as are due. The camera is updated inside the step
+(`CameraProcess` in `GameTaskProcess`). The race loop draws once a loop with the latest step and waits for a vblank,
+so at 60 fps one picture in five repeats the cars and camera (a judder of the original), and changing the step would
+change how the game plays.
+
+**`PS2X_REFRESH_HZ=<n>`** (opt-in): the emulated vblank runs at n Hz (`Syscalls/System.cpp`) and the window presents up
+to n frames a second. Game speed is unchanged (the demo still ends after 30 s of real time). At 144 Hz, 3x: level 1
+draws ~140 new pictures a second; level 9 (heavy water) ~100, the VU1 thread at 0.8 of a core being the limit.
+
+**`RC_INTERP`** (on by default, `RC_INTERP=0` off; `gametask.cpp`, hooks in `MainGameProcess`): before each physics
+step the cars' physics blocks (0x23c bytes) and both cameras' position and matrix are kept as the previous state.
+After the frame's game logic, just before the render camera is built, each car's drawn fields (float position and
+render position, body and front-wheel matrices, the four wheel positions, and the integer copy the renderer reads)
+and each camera are blended between the previous and current state by how far the frame's time is into the step
+(rows of the matrices rescaled to the current lengths); after drawing, the exact current state (and the collision
+spheres, which a draw may recompute) is put back, so the simulation never sees a blend. A step longer than
+`RC_INTERP_JUMP` (65536 physics units for cars, /256 for cameras: normal driving is up to ~14,000 and ~45) is drawn
+without a blend (respawns, camera cuts). `RC_INTERP_LOG=1` logs the largest steps; `=2` logs the drawn camera per
+frame. Level 1 at 144 Hz: the drawn camera moves an even 11.3 units a frame (standard deviation 1.1, no still frames)
+where unblended it moves ~35 every third frame. Window captures of levels 18 and 9 at 144 Hz look right.
+Not yet covered: projectiles and other objects outside the car list, split screen checked only by construction.
+
 ## The two renderer routes
 
 **(a) Keep the emulated GS's GL renderer and speed it up PCSX2-style.**
