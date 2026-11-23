@@ -336,6 +336,39 @@ All 24 levels after: median 60, no second under 55, worst seconds 56-60. Level 9
 draws: skinned blocks with direct-colour textures (track mode 3, 4 triangles a draw) and blocks of track modes 1 and
 2, not yet on the multi-texture path. Not tested: Europe (built only), two-player, the Track Editor.
 
+## As built (2026-11-23): 4x judder, shared-texture presentation on Linux
+
+**Symptom.** At 4x (2560x2048) the user saw smooth play but "around 45-50 fps", with loud fans. A logged session:
+races average 57-59 fps but ~4% of frames take over 20 ms (each shows the previous picture for an extra refresh);
+GPU 40-50% busy at 83-87 C. A 4x sweep (`tools/track_sweep.sh`, `PS2X_GS_HW_SCALE=4`): levels 9, 20, 21 had 12-21%
+late frames, 5, 6, 8, 11, 12, 17, 18 had 1.5-5%; at 3x the same levels had 0.0-0.3%. Every late frame spent ~23 ms in
+the present's submit step, against ~7 ms normally.
+
+**Cause.** On Linux the GS context (EGL, no surface) shared nothing with the window's (GLFW on X11: GLX), so each
+picture was read back to RAM (`readBackFrame`, a PBO) and uploaded again (raylib `UpdateTexture`): 21 MB a frame at
+4x, ~1.3 GB/s each way. When the previous asynchronous read-back's fence had not signalled, `readBackFrame` fell back
+to a synchronous `glReadPixels` of the whole picture. The shared path (`GSSharedPresent`, slot textures behind fences)
+existed for Windows only.
+
+**Fix** (`gs_gl.cpp`, `gs_gl.h`, `gs_gl_api_load.inl`, `gs_hw_backend.cpp`): the slot machinery is common to both
+platforms; on Linux `CaptureHostContext` takes the window's GLX context and `Context::Create` makes the GS context with
+GLX sharing it (its own X connection and pbuffer). The HW renderer's `Present` composes as before, then copies the
+picture into a free slot with `glCopyImageSubData` (`GSGL::PublishSharedTexture`); pictures written straight into memory
+(movies) go through a texture first. When the window holds every slot, the picture is dropped. On by default on Linux;
+`PS2X_GS_DIRECT_PRESENT=0` restores the read-back. The session log says `[gs-present] shared GPU textures active`.
+
+| level, 4x (130 s demo, 15-140 s) | late frames (>20 ms) before / after | 99th percentile frame | worst second |
+|---|---|---|---|
+| 9 | 21.2% / 0.0% | 29.7 / 16.7 ms | 44 / 59 fps |
+| 20 | 12.5% / 0.0% | 27.4 / 16.7 ms | 42 / 59 fps |
+| 21 | 12.5% / 0.0% | 28.6 / 16.7 ms | 41 / 59 fps |
+| 5, 6, 8, 11, 12, 17, 18 | 1.5-5.2% / 0.0% | 20.9-23.9 / 16.7 ms | 47-54 / 59 fps |
+
+GPU over those runs: 44% busy, 67 W, 83 C before (all 24 levels); 35%, 31 W, 59 C after (the ten levels). Front end and
+a race (`replay playtest2`, 4x): 0.02% late. Checked in window captures (`spectacle -b -n -a`): the intro movie, a 4x
+race and the HUD, upright and with the right colours; the native Vulkan route (`RC_RENDERER=vk`) has its own window
+and is unchanged. Not tested: Europe (built), two-player, the Track Editor, resizing or fullscreen.
+
 ## The two renderer routes
 
 **(a) Keep the emulated GS's GL renderer and speed it up PCSX2-style.**
