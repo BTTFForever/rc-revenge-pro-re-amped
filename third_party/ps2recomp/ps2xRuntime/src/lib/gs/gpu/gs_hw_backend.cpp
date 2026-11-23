@@ -2378,6 +2378,9 @@ struct GSHwBackend::Impl
         static const bool on = [] { const char *v = std::getenv("PS2X_GS_HW_READBACK_COPY"); return v && *v == '1'; }();
         return on;
     }
+    GLuint uploadTex = 0;           // shared presentation: a picture written straight into memory (movies)
+    uint32_t uploadW = 0, uploadH = 0;
+    uint64_t sharedSequence = 0;    // shared presentation: pictures published
     void readBackFrame(const Api &g, uint32_t width, uint32_t height, std::vector<uint8_t> &pixels)
     {
         constexpr GLenum kPixelPack = 0x88EB, kStreamRead = 0x88E1, kSyncGpuDone = 0x9117;
@@ -3759,13 +3762,13 @@ PresentationFrame GSHwBackend::Present(const GSPresentationRequest &request)
     uint32_t fbp1, fbw1, dbx1, dby1, w1, h1, fbp2, fbw2, dbx2, dby2, w2, h2;
     const bool ok1 = enable1 && decode(true, request.dispfb1, request.display1, fbp1, fbw1, dbx1, dby1, w1, h1);
     const bool ok2 = enable2 && decode(true, request.dispfb2, request.display2, fbp2, fbw2, dbx2, dby2, w2, h2);
-    const bool shared = false; // This runtime always reads the frame back; no shared texture path.
+    // Shared presentation (a GS context sharing objects with the window's, gs_gl.cpp): the composed picture is copied on
+    // the GPU into a shared slot texture and the window draws it; no read-back to RAM and no upload back to the GPU.
+    const bool shared = d.context.Shared() && GSSharedPresent::Active() && d.gl().CopyImageSubData != nullptr;
     if (!ok1 && !ok2)
-    {
-        if (shared)
-            return frame;
         return frame;
-    }
+    if (shared && !GSGL::SharedAvailable(d.gl()))
+        return frame; // the window still holds every slot: this picture is dropped
     // The host window shows the TV area of the game's own picture: 448 lines from DY 50 (gameplay, menus). The movies set
     // a 480-line display at the same DY; their streams are 640x480 with the picture in the top 448 lines and 32 black
     // lines below, which a TV shows in its bottom border. Taller displays are cut to 448 lines, so a movie fills the
@@ -3799,6 +3802,29 @@ PresentationFrame GSHwBackend::Present(const GSPresentationRequest &request)
             }
             frame.width = w;
             frame.height = h;
+            if (shared)
+            {
+                // a movie frame or full-screen image written straight into memory: through a texture into a shared slot
+                const Api &g = d.gl();
+                if (!d.uploadTex || d.uploadW != w || d.uploadH != h)
+                {
+                    if (d.uploadTex)
+                        g.DeleteTextures(1, &d.uploadTex);
+                    g.GenTextures(1, &d.uploadTex);
+                    g.BindTexture(kTexture2D, d.uploadTex);
+                    g.TexImage2D(kTexture2D, 0, static_cast<GLint>(kRgba8), w, h, 0, kRgba, kUnsignedByte, nullptr);
+                    g.TexParameteri(kTexture2D, kTextureMinFilter, kLinear);
+                    g.TexParameteri(kTexture2D, kTextureMagFilter, kLinear);
+                    d.uploadW = w;
+                    d.uploadH = h;
+                }
+                g.BindTexture(kTexture2D, d.uploadTex);
+                g.PixelStorei(kUnpackAlignment, 1);
+                g.TexSubImage2D(kTexture2D, 0, 0, 0, w, h, kRgba, kUnsignedByte, frame.pixels.data());
+                g.BindTexture(kTexture2D, 0u);
+                GSGL::PublishSharedTexture(g, d.uploadTex, w, h, ++d.sharedSequence);
+                return PresentationFrame{};
+            }
             return frame;
         }
     }
@@ -3969,6 +3995,7 @@ PresentationFrame GSHwBackend::Present(const GSPresentationRequest &request)
     g.ColorMask(kTrue, kTrue, kTrue, kTrue);
     if (shared)
     {
+        GSGL::PublishSharedTexture(g, d.presentTex, outW, outH, ++d.sharedSequence);
         return PresentationFrame{};
     }
     d.readBackFrame(g, outW, outH, frame.pixels);

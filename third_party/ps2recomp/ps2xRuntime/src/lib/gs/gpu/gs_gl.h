@@ -170,6 +170,8 @@ namespace GSGL
         void (*SamplerParameteri)(GLuint, GLenum, GLint) = nullptr;
         // Bindless textures (GL_ARB_bindless_texture, optional): the hardware renderer's track batches pick a paletted
         // texture per triangle, so blocks that differ only in texture and CLUT are one draw.
+        // glCopyImageSubData (optional, GL 4.3): the hardware renderer's shared presentation copies its picture on the GPU.
+        void (*CopyImageSubData)(GLuint, GLenum, GLint, GLint, GLint, GLint, GLuint, GLenum, GLint, GLint, GLint, GLint, GLsizei, GLsizei, GLsizei) = nullptr;
         GLuint64 (*GetTextureHandleARB)(GLuint) = nullptr;
         void (*MakeTextureHandleResidentARB)(GLuint64) = nullptr;
         void (*MakeTextureHandleNonResidentARB)(GLuint64) = nullptr;
@@ -203,6 +205,8 @@ namespace GSGL
 
     bool PublishShared(const Api &gl, GLuint buffer, uint32_t width, uint32_t height, uint64_t renderSequence,
                        GLuint hashProgram, GLint hashLocation);
+    // Publishes a finished picture held in a texture (copied on the GPU into a shared slot); false when no slot is free.
+    bool PublishSharedTexture(const Api &gl, GLuint texture, uint32_t width, uint32_t height, uint64_t renderSequence);
     bool SharedAvailable(const Api &gl);
     void DestroyShared(const Api &gl);
 }

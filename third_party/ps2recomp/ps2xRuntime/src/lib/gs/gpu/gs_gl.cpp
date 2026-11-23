@@ -9,25 +9,11 @@
 #include <string_view>
 #include <unordered_map>
 
-#if defined(_WIN32)
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
 
+// Shared presentation (both platforms): the GS context shares objects with the window's context; finished pictures go
+// into a ring of slot textures guarded by fences, and the window draws the newest one (no read-back to RAM).
 namespace
 {
-    constexpr int kContextMajorVersion = 0x2091;
-    constexpr int kContextMinorVersion = 0x2092;
-    constexpr int kContextFlags = 0x2094;
-    constexpr int kContextProfileMask = 0x9126;
-    constexpr int kContextCoreProfileBit = 0x0001;
-
-    using CreateContextAttribs = HGLRC(WINAPI *)(HDC, HGLRC, const int *);
-
     struct SharedSlot
     {
         GSSharedPresent::Frame frame;
@@ -42,10 +28,6 @@ namespace
     std::mutex s_sharedMutex;
     std::array<SharedSlot, 8> s_sharedSlots;
     GSGL::Api s_hostApi;
-    HGLRC s_hostContext = nullptr;
-    HDC s_hostDc = nullptr;
-    PIXELFORMATDESCRIPTOR s_hostFormat{};
-    int s_hostFormatIndex = 0;
     int s_readingSlot = -1;
     uint64_t s_sharedSequence = 0;
     std::atomic<bool> s_sharedActive{false};
@@ -69,85 +51,11 @@ namespace
         s_readingSlot = -1;
     }
 
-    HMODULE openGlModule()
-    {
-        static HMODULE module = LoadLibraryA("opengl32.dll");
-        return module;
-    }
-
-    void *loadProc(const char *name)
-    {
-        void *proc = reinterpret_cast<void *>(wglGetProcAddress(name));
-        const auto value = reinterpret_cast<intptr_t>(proc);
-        if (value == 0 || value == 1 || value == 2 || value == 3 || value == -1)
-            proc = reinterpret_cast<void *>(GetProcAddress(openGlModule(), name));
-        return proc;
-    }
-
-    template <typename T>
-    bool load(T &target, const char *name, std::string &missing)
-    {
-        target = reinterpret_cast<T>(loadProc(name));
-        if (!target)
-        {
-            missing += missing.empty() ? name : std::string(", ") + name;
-            return false;
-        }
-        return true;
-    }
-
-    LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
-    {
-        return DefWindowProcA(window, message, wparam, lparam);
-    }
-}
-
-namespace
-{
-    void loadContextApi(GSGL::Api &a, std::string &missing)
-    {
-#include "gs_gl_api_load.inl"
-    }
+    void forgetHostPlatform(); // the platform part of ShutdownHost
 }
 
 namespace GSSharedPresent
 {
-    void CaptureHostContext()
-    {
-        const char *value = std::getenv("PS2X_GS_DIRECT_PRESENT");
-        if (!value || *value != '1')
-            return;
-        const HDC dc = wglGetCurrentDC();
-        const HGLRC context = wglGetCurrentContext();
-        if (!dc || !context)
-            return;
-        std::string missing;
-        GSGL::Api api;
-        load(api.FenceSync, "glFenceSync", missing);
-        load(api.ClientWaitSync, "glClientWaitSync", missing);
-        load(api.DeleteSync, "glDeleteSync", missing);
-        load(api.Flush, "glFlush", missing);
-        if (!missing.empty())
-        {
-            std::fprintf(stderr, "[gs-present] shared presentation unavailable: %s\n", missing.c_str());
-            return;
-        }
-        std::lock_guard<std::mutex> lock(s_sharedMutex);
-        s_hostFormatIndex = GetPixelFormat(dc);
-        if (!DescribePixelFormat(dc, s_hostFormatIndex, sizeof(s_hostFormat), &s_hostFormat))
-            return;
-        s_hostApi = api;
-        s_hostContext = context;
-        s_hostDc = dc;
-        wglMakeCurrent(nullptr, nullptr);
-    }
-
-    void RestoreHostContext()
-    {
-        if (s_hostDc && s_hostContext)
-            wglMakeCurrent(s_hostDc, s_hostContext);
-    }
-
     bool Active()
     {
         return s_sharedActive.load(std::memory_order_acquire);
@@ -191,8 +99,7 @@ namespace GSSharedPresent
         std::lock_guard<std::mutex> lock(s_sharedMutex);
         releaseReading();
         s_sharedActive.store(false, std::memory_order_release);
-        s_hostContext = nullptr;
-        s_hostDc = nullptr;
+        forgetHostPlatform();
     }
 }
 
@@ -300,6 +207,53 @@ namespace GSGL
         return true;
     }
 
+    bool PublishSharedTexture(const Api &gl, GLuint texture, uint32_t width, uint32_t height, uint64_t renderSequence)
+    {
+        if (!gl.CopyImageSubData)
+            return false;
+        std::lock_guard<std::mutex> lock(s_sharedMutex);
+        if (!s_sharedActive.load(std::memory_order_relaxed))
+            return false;
+        SharedSlot *available = nullptr;
+        for (SharedSlot &slot : s_sharedSlots)
+        {
+            if (slot.reading || !completed(gl, slot.produced) || !completed(gl, slot.consumed))
+                continue;
+            if (!available || slot.frame.sequence < available->frame.sequence)
+                available = &slot;
+        }
+        if (!available)
+            return false;
+        SharedSlot &slot = *available;
+        if (slot.produced)
+            gl.DeleteSync(slot.produced);
+        if (slot.consumed)
+            gl.DeleteSync(slot.consumed);
+        slot.produced = slot.consumed = nullptr;
+        slot.frame.hashValid = false;
+        if (!slot.frame.texture)
+            gl.GenTextures(1, &slot.frame.texture);
+        if (slot.frame.width != width || slot.frame.height != height)
+        {
+            gl.BindTexture(kTexture2D, slot.frame.texture);
+            gl.TexImage2D(kTexture2D, 0, kRgba8, width, height, 0, kRgba, kUnsignedByte, nullptr);
+            gl.TexParameteri(kTexture2D, kTextureMinFilter, kLinear);
+            gl.TexParameteri(kTexture2D, kTextureMagFilter, kLinear);
+            gl.TexParameteri(kTexture2D, kTextureWrapS, kClampToEdge);
+            gl.TexParameteri(kTexture2D, kTextureWrapT, kClampToEdge);
+            gl.BindTexture(kTexture2D, 0u);
+        }
+        gl.CopyImageSubData(texture, kTexture2D, 0, 0, 0, 0, slot.frame.texture, kTexture2D, 0, 0, 0, 0,
+                            static_cast<GLsizei>(width), static_cast<GLsizei>(height), 1);
+        slot.frame.width = width;
+        slot.frame.height = height;
+        slot.frame.sequence = ++s_sharedSequence;
+        slot.frame.renderSequence = renderSequence;
+        slot.produced = gl.FenceSync(kSyncGpuCommandsComplete, 0u);
+        gl.Flush();
+        return true;
+    }
+
     void DestroyShared(const Api &gl)
     {
         std::lock_guard<std::mutex> lock(s_sharedMutex);
@@ -320,7 +274,121 @@ namespace GSGL
         }
         s_readingSlot = -1;
     }
+}
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+
+namespace
+{
+    constexpr int kContextMajorVersion = 0x2091;
+    constexpr int kContextMinorVersion = 0x2092;
+    constexpr int kContextFlags = 0x2094;
+    constexpr int kContextProfileMask = 0x9126;
+    constexpr int kContextCoreProfileBit = 0x0001;
+
+    using CreateContextAttribs = HGLRC(WINAPI *)(HDC, HGLRC, const int *);
+
+    HGLRC s_hostContext = nullptr;
+    HDC s_hostDc = nullptr;
+    PIXELFORMATDESCRIPTOR s_hostFormat{};
+    int s_hostFormatIndex = 0;
+
+    void forgetHostPlatform()
+    {
+        s_hostContext = nullptr;
+        s_hostDc = nullptr;
+    }
+
+    HMODULE openGlModule()
+    {
+        static HMODULE module = LoadLibraryA("opengl32.dll");
+        return module;
+    }
+
+    void *loadProc(const char *name)
+    {
+        void *proc = reinterpret_cast<void *>(wglGetProcAddress(name));
+        const auto value = reinterpret_cast<intptr_t>(proc);
+        if (value == 0 || value == 1 || value == 2 || value == 3 || value == -1)
+            proc = reinterpret_cast<void *>(GetProcAddress(openGlModule(), name));
+        return proc;
+    }
+
+    template <typename T>
+    bool load(T &target, const char *name, std::string &missing)
+    {
+        target = reinterpret_cast<T>(loadProc(name));
+        if (!target)
+        {
+            missing += missing.empty() ? name : std::string(", ") + name;
+            return false;
+        }
+        return true;
+    }
+
+    LRESULT CALLBACK windowProc(HWND window, UINT message, WPARAM wparam, LPARAM lparam)
+    {
+        return DefWindowProcA(window, message, wparam, lparam);
+    }
+}
+
+namespace
+{
+    void loadContextApi(GSGL::Api &a, std::string &missing)
+    {
+#include "gs_gl_api_load.inl"
+    }
+}
+
+namespace GSSharedPresent
+{
+    void CaptureHostContext()
+    {
+        const char *value = std::getenv("PS2X_GS_DIRECT_PRESENT");
+        if (!value || *value != '1')
+            return;
+        const HDC dc = wglGetCurrentDC();
+        const HGLRC context = wglGetCurrentContext();
+        if (!dc || !context)
+            return;
+        std::string missing;
+        GSGL::Api api;
+        load(api.FenceSync, "glFenceSync", missing);
+        load(api.ClientWaitSync, "glClientWaitSync", missing);
+        load(api.DeleteSync, "glDeleteSync", missing);
+        load(api.Flush, "glFlush", missing);
+        if (!missing.empty())
+        {
+            std::fprintf(stderr, "[gs-present] shared presentation unavailable: %s\n", missing.c_str());
+            return;
+        }
+        std::lock_guard<std::mutex> lock(s_sharedMutex);
+        s_hostFormatIndex = GetPixelFormat(dc);
+        if (!DescribePixelFormat(dc, s_hostFormatIndex, sizeof(s_hostFormat), &s_hostFormat))
+            return;
+        s_hostApi = api;
+        s_hostContext = context;
+        s_hostDc = dc;
+        wglMakeCurrent(nullptr, nullptr);
+    }
+
+    void RestoreHostContext()
+    {
+        if (s_hostDc && s_hostContext)
+            wglMakeCurrent(s_hostDc, s_hostContext);
+    }
+
+}
+
+namespace GSGL
+{
     Context::~Context()
     {
         Destroy();
@@ -643,6 +711,14 @@ namespace
         Glx &g = glx();
         std::lock_guard<std::mutex> lock(g.mutex);
         return g.MakeContextCurrent(g.display, context ? g.pbuffer : nullptr, context ? g.pbuffer : nullptr, context) != 0;
+    }
+
+    // The window's GLX context, when shared presentation was asked for (CaptureHostContext).
+    void *s_hostGlxContext = nullptr;
+
+    void forgetHostPlatform()
+    {
+        s_hostGlxContext = nullptr;
     }
 
     void *loadProc(const char *name)
@@ -1023,22 +1099,39 @@ namespace
 
 namespace GSGL
 {
-    bool PublishShared(const Api &, GLuint, uint32_t, uint32_t, uint64_t, GLuint, GLint) { return false; }
-    bool SharedAvailable(const Api &) { return false; }
-    void DestroyShared(const Api &) {}
-
     Context::~Context()
     {
         Destroy();
     }
 
-    // The context is not shared with the window, so presentation reads frames back to RAM.
+    // With the window's GLX context captured, the GS context is GLX and shares objects with it (pictures are presented
+    // from shared textures); otherwise it is EGL (or GLX) on its own and presentation reads frames back to RAM.
     bool Context::Create(std::string &error)
     {
         Destroy();
+        if (s_hostGlxContext && startGlx())
+        {
+            void *shared = createGlxContext(s_hostGlxContext);
+            if (shared && makeGlxCurrent(shared))
+            {
+                glx().active = true;
+                m_dc = glx().display;
+                m_context = shared;
+                m_shared = true;
+            }
+            else
+            {
+                if (shared)
+                    glx().DestroyContext(glx().display, shared);
+                std::fprintf(stderr, "[gs-present] GLX context sharing with the window failed; frames are read back to RAM\n");
+            }
+        }
         Egl &e = egl();
-        EGLContext context = e.ready ? createEglContext(nullptr) : nullptr;
-        if (context && e.MakeCurrent(e.display, nullptr, nullptr, context))
+        EGLContext context = m_context || !e.ready ? nullptr : createEglContext(nullptr);
+        if (m_context)
+        {
+        }
+        else if (context && e.MakeCurrent(e.display, nullptr, nullptr, context))
         {
             m_dc = e.display;
             m_context = context;
@@ -1068,8 +1161,13 @@ namespace GSGL
             return false;
         }
         if (m_api.GetString)
-            std::fprintf(stderr, "[gs-gl] EGL: %s / %s\n", reinterpret_cast<const char *>(m_api.GetString(kRenderer)),
+            std::fprintf(stderr, "[gs-gl] %s: %s / %s\n", glx().active ? "GLX" : "EGL", reinterpret_cast<const char *>(m_api.GetString(kRenderer)),
                          reinterpret_cast<const char *>(m_api.GetString(kVersion)));
+        if (m_shared)
+        {
+            s_sharedActive.store(true, std::memory_order_release);
+            std::fprintf(stderr, "[gs-present] shared GPU textures active\n");
+        }
         return true;
     }
 
@@ -1132,10 +1230,37 @@ namespace GSGL
 }
 namespace GSSharedPresent
 {
-    void CaptureHostContext() {}
+    // The window's context (GLFW on X11: GLX), captured on the main thread before the GS context is made. Shared
+    // presentation is on by default here; PS2X_GS_DIRECT_PRESENT=0 reads every frame back to RAM as before.
+    void CaptureHostContext()
+    {
+        const char *value = std::getenv("PS2X_GS_DIRECT_PRESENT");
+        if (value && *value == '0')
+            return;
+        void *lib = dlopen("libGL.so.1", RTLD_NOW | RTLD_LOCAL);
+        if (!lib)
+            return;
+        const auto currentContext = reinterpret_cast<void *(*)()>(dlsym(lib, "glXGetCurrentContext"));
+        const auto procAddress = reinterpret_cast<void *(*)(const unsigned char *)>(dlsym(lib, "glXGetProcAddressARB"));
+        void *context = currentContext ? currentContext() : nullptr;
+        if (!context || !procAddress)
+            return;
+        GSGL::Api api;
+        const auto get = [&](auto &target, const char *name) {
+            target = reinterpret_cast<std::remove_reference_t<decltype(target)>>(procAddress(reinterpret_cast<const unsigned char *>(name)));
+            return target != nullptr;
+        };
+        if (!get(api.FenceSync, "glFenceSync") || !get(api.ClientWaitSync, "glClientWaitSync") || !get(api.DeleteSync, "glDeleteSync") ||
+            !get(api.Flush, "glFlush"))
+        {
+            std::fprintf(stderr, "[gs-present] shared presentation unavailable: no sync functions\n");
+            return;
+        }
+        std::lock_guard<std::mutex> lock(s_sharedMutex);
+        s_hostApi = api;
+        s_hostGlxContext = context;
+    }
+
     void RestoreHostContext() {}
-    bool Active() { return false; }
-    bool Acquire(Frame &) { return false; }
-    void ShutdownHost() {}
 }
 #endif

@@ -93,6 +93,10 @@ load(a.TexSubImage2D, "glTexSubImage2D", missing);
     load(a.BindSampler, "glBindSampler", samplerMissing);
     load(a.SamplerParameteri, "glSamplerParameteri", samplerMissing);
     std::string bindlessMissing;
+    {
+        std::string copyMissing;
+        load(a.CopyImageSubData, "glCopyImageSubData", copyMissing);
+    }
     load(a.GetTextureHandleARB, "glGetTextureHandleARB", bindlessMissing);
     load(a.MakeTextureHandleResidentARB, "glMakeTextureHandleResidentARB", bindlessMissing);
     load(a.MakeTextureHandleNonResidentARB, "glMakeTextureHandleNonResidentARB", bindlessMissing);
