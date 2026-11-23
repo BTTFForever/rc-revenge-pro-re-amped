@@ -15,6 +15,29 @@ supported.
 >
 > The description below was written for the decompilation and still applies to the code both lines share.
 
+## Enhanced recomp: playing with the enhancements (`main`)
+
+Run through `tools/play.sh` as below (on a hybrid-graphics laptop it uses the discrete NVIDIA GPU). Recommended:
+
+```sh
+PS2X_GS_HW_SCALE=4 RC_VU1_REF=0 tools/play.sh                     # 4x resolution, 60 fps
+PS2X_GS_HW_SCALE=4 RC_VU1_REF=0 PS2X_REFRESH_HZ=144 tools/play.sh # races at up to 144 fps (match your screen)
+```
+
+| Setting | Default | What it does |
+|---|---|---|
+| `PS2X_GS_HW_SCALE=<n>` | 1 | Internal resolution multiplier (3 or 4 is 1080p-1440p class). |
+| `PS2X_REFRESH_HZ=<n>` | off | Races run at up to n frames a second; menus keep the original rate. The game's speed is unchanged. |
+| `RC_INTERP=0` | on | Cars, wheels and the camera are drawn between the game's 50 Hz physics steps, so motion is even at any frame rate (also at 60). The simulation itself is untouched. |
+| `RC_WATER_SHADER=0` | on | Water drawn by the GPU instead of the CPU. |
+| `PS2X_GS_DIRECT_PRESENT=0` | on (Linux) | Frames go to the window as shared GPU textures instead of a copy through RAM. |
+| `PS2X_GS_HW_TRACK_MULTITEX=0`, `..._DIRECT=0` | on | Scenery and animated models with different textures drawn together (far fewer draw calls). |
+| `PS2X_GS_HW_MULTIPASS=0` | on | Multi-pass effects drawn pass by pass. |
+
+The `=0` forms switch an enhancement off, for comparison or if something looks wrong. `RC_BOOT_LEVEL=<n>` starts the
+attract demo on level n, `RC_DEMO_SECS=<n>` lengthens it, and `tools/track_sweep.sh` measures every track's frame
+rate over a lap. `PERF_INVESTIGATION.md` records each change, how it was checked and what it gained.
+
 **No game data is included or distributed.** You need your own legal copy of the game disc, PAL or NTSC. The setup
 script reads everything it needs from your disc image.
 
