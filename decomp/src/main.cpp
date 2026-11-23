@@ -9,6 +9,7 @@
 
 #include "main.h"
 #include "main_fuzz.h"
+#include <cstdlib>
 
 RC_VERSION_VARIANT(printf) // Europe also stores $f12-$f18
 
@@ -817,7 +818,13 @@ void MainLoop()
                     else
                     {
                         call(sym::MainGameLevelInit);
-                        guest_call(sym::TaskSet, kMain + 0x37cu, sym::MainDemoEndTask, 1, 30000); // ends the demo
+                        // Ends the demo after 30 s. RC_DEMO_SECS=<n> lengthens it (whole-lap test runs with RC_BOOT_LEVEL).
+                        static const uint32_t demoMs = [] {
+                            const char *v = std::getenv("RC_DEMO_SECS");
+                            const int secs = v ? std::atoi(v) : 0;
+                            return secs > 0 ? static_cast<uint32_t>(secs) * 1000u : 30000u;
+                        }();
+                        guest_call(sym::TaskSet, kMain + 0x37cu, sym::MainDemoEndTask, 1, demoMs);
                         guest_call(sym::TaskCachedInsert, kMain + 0x37cu);
                         call(sym::MainGameProcess);
                         call(sym::MainGameLevelTerm);

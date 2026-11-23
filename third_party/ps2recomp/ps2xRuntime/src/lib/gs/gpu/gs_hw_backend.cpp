@@ -1455,19 +1455,46 @@ struct GSHwBackend::Impl
     // first GSDrawState field that differs), printed every 300 presents as a share of the draws.
     static bool breakDiagEnabled()
     {
-        static const bool on = [] { const char *v = std::getenv("PS2X_GS_HW_BREAKS"); return v && *v == '1'; }();
+        static const bool on = [] { const char *v = std::getenv("PS2X_GS_HW_BREAKS"); return v && (*v == '1' || *v == '2'); }();
         return on;
     }
     const char *breakWhy = nullptr;
     std::map<std::string, uint64_t> breakCounts;
     uint64_t breakDraws = 0;
     void noteBreak(const char *why) { if (breakDiagEnabled()) breakWhy = why; }
-    void countBreak()
+    // kind: what the ended draw was (PS2X_GS_HW_BREAKS=2 splits the reasons by it), size: its triangles
+    void countBreak(const char *kind = nullptr, uint64_t size = 0)
     {
         if (!breakDiagEnabled())
             return;
-        ++breakCounts[breakWhy ? breakWhy : "other"];
+        std::string key = breakWhy ? breakWhy : "other";
+        if (kind != nullptr && breakDetail())
+        {
+            key += std::string(" <- ") + kind;
+            breakSizes[key] += size;
+        }
+        ++breakCounts[key];
         ++breakDraws;
+    }
+    static bool breakDetail()
+    {
+        static const bool on = [] { const char *v = std::getenv("PS2X_GS_HW_BREAKS"); return v && *v == '2'; }();
+        return on;
+    }
+    std::map<std::string, uint64_t> breakSizes;
+    std::string breakKind;
+    const char *drawKind(const GSDrawState &s, const char *path, int32_t mode = -1)
+    {
+        breakKind = path;
+        if (mode >= 0)
+            breakKind += " m" + std::to_string(mode);
+        const GSPrimType t = s.prim.type;
+        if (mode < 0)
+            breakKind += t == GS_PRIM_SPRITE ? " sprite" : (t == GS_PRIM_LINE || t == GS_PRIM_LINESTRIP) ? " line" : " tri";
+        breakKind += !s.prim.tme ? " untextured" : isIndexed(s.context.tex0.psm) ? " indexed" : " direct";
+        if (s.prim.abe)
+            breakKind += " blended";
+        return breakKind.c_str();
     }
     static const char *stateDiff(const GSDrawState &a, const GSDrawState &b)
     {
@@ -1527,7 +1554,12 @@ struct GSHwBackend::Impl
         std::sort(rows.rbegin(), rows.rend());
         std::string line;
         for (const auto &r : rows)
-            line += " | " + r.second + " " + std::to_string(r.first * 1000 / breakDraws / 10.0).substr(0, 4) + "%";
+        {
+            line += (breakDetail() ? "\n    " : " | ") + r.second + " " + std::to_string(r.first * 1000 / breakDraws / 10.0).substr(0, 4) + "%";
+            if (breakDetail())
+                line += " (" + std::to_string(breakSizes[r.second] / std::max<uint64_t>(r.first, 1)) + " triangles a draw)";
+        }
+        breakSizes.clear();
         std::fprintf(stderr, "[gs-hw-breaks] %llu draws in 300 presents (%.0f a present)%s\n", (unsigned long long)breakDraws,
                      breakDraws / 300.0, line.c_str());
         breakCounts.clear();
@@ -1845,6 +1877,11 @@ struct GSHwBackend::Impl
                 dumpSkipped(s, b, "view");
                 return;
             }
+        if (tri && multipassTry(s, b))
+        {
+            ++stats.draws;
+            return;
+        }
         if (havePending && !sameState(pendingState, s))
         {
             noteBreak(breakDiagEnabled() ? stateDiff(pendingState, s) : nullptr);
@@ -1973,11 +2010,191 @@ struct GSHwBackend::Impl
         ++stats.draws;
     }
 
+    // ---- multipass triangles ---------------------------------------------------------------------------------------
+    // Some VU1 programs draw each triangle in 2-4 passes before the next (the water: base, darkening bump, brightening
+    // bump), so every pass changes the state and each triangle costs 3 draws (level 9: ~5,000 draws a frame, 40 fps).
+    // When consecutive triangles repeat the same positions under a fixed cycle of states, none writing depth, each pass
+    // goes to its own lane and the lanes are drawn in order: one draw per pass. That reorders blending only where two
+    // triangles of the group overlap on screen. PS2X_GS_HW_MULTIPASS=0: off.
+    struct Lane { GSDrawState state; std::vector<HwVertex> verts; };
+    static constexpr uint32_t kMaxLanes = 4u;
+    Lane lanes[kMaxLanes];
+    uint32_t laneCount = 0u, laneCycle = 0u, laneNext = 0u;
+    HwVertex laneTri[3];
+    static bool multipassEnabled()
+    {
+        static const bool on = [] { const char *v = std::getenv("PS2X_GS_HW_MULTIPASS"); return !(v && *v == '0'); }();
+        return on;
+    }
+    bool multipassEligible(const GSDrawState &s, const GSDrawState &first)
+    {
+        const GSContext &c = s.context;
+        if (!c.zbuf.zmask || s.prim.type != GS_PRIM_TRIANGLE)
+            return false;
+        if (std::memcmp(&c.frame, &first.context.frame, sizeof(c.frame)) != 0 || std::memcmp(&c.zbuf, &first.context.zbuf, sizeof(c.zbuf)) != 0)
+            return false;
+        if (s.prim.tme)
+        {
+            if (findReinterpretSource(c.tex0.tbp0, c.tex0.psm) != nullptr)
+                return false;
+            if (!depthAsColorOff() && findDepthReinterpretSource(c.tex0.tbp0, target(c.frame.fbp, c.frame.fbw)) != nullptr)
+                return false;
+        }
+        return true;
+    }
+    static bool samePlace(const HwVertex *a, const HwVertex *b)
+    {
+        for (int i = 0; i < 3; ++i)
+            if (a[i].x != b[i].x || a[i].y != b[i].y || a[i].z != b[i].z)
+                return false;
+        return true;
+    }
+    // The triangle's host vertices, built as addVertex would put them in the pending batch.
+    void hostTriangle(const GSDrawState &s, const GSPrimitiveBatch &b, HwVertex *out)
+    {
+        const size_t at = pending.size();
+        const float zmax = zMaxFor(s.context.zbuf.psm);
+        for (int i = 0; i < 3; ++i)
+        {
+            const GSVertex &v = b.vertices[i];
+            addVertex(s, v, s.prim.fst ? static_cast<float>(v.u) / 16.0f : 0.0f, s.prim.fst ? static_cast<float>(v.v) / 16.0f : 0.0f, zmax);
+        }
+        std::copy(pending.begin() + at, pending.end(), out);
+        pending.resize(at);
+    }
+    void addToLane(uint32_t lane, const HwVertex *tri)
+    {
+        lanes[lane].verts.insert(lanes[lane].verts.end(), tri, tri + 3);
+        std::copy(tri, tri + 3, laneTri);
+    }
+    // True when the triangle went into a lane. Otherwise any lanes are drawn and the caller goes on as usual.
+    bool multipassTry(const GSDrawState &s, const GSPrimitiveBatch &b)
+    {
+        if (!multipassEnabled())
+            return false;
+        if (laneCount == 0u)
+        {
+            // start: the pending batch is one triangle, and this one has the same place under another state
+            if (!havePending || pending.size() != 3u || sameState(pendingState, s) || pendingState.prim.type != GS_PRIM_TRIANGLE ||
+                !multipassEligible(pendingState, pendingState) || !multipassEligible(s, pendingState))
+                return false;
+            HwVertex tri[3];
+            hostTriangle(s, b, tri);
+            if (!samePlace(pending.data(), tri))
+                return false;
+            lanes[0].state = pendingState;
+            lanes[0].verts.assign(pending.begin(), pending.end());
+            lanes[1].state = s;
+            lanes[1].verts.clear();
+            addToLane(1, tri);
+            pending.clear(); // havePending stays set: flushPending then draws the lanes
+            laneCount = 2u;
+            laneCycle = 0u;
+            return true;
+        }
+        HwVertex tri[3];
+        hostTriangle(s, b, tri);
+        if (laneCycle == 0u)
+        {
+            // still learning the cycle: back to the first state closes it, a new state at the same place adds a lane
+            if (sameState(s, lanes[0].state))
+            {
+                laneCycle = laneCount;
+                addToLane(0, tri);
+                laneNext = 1u % laneCycle;
+                return true;
+            }
+            bool known = false;
+            for (uint32_t i = 0; i < laneCount; ++i)
+                known = known || sameState(s, lanes[i].state);
+            if (!known && laneCount < kMaxLanes && samePlace(laneTri, tri) && multipassEligible(s, lanes[0].state))
+            {
+                lanes[laneCount].state = s;
+                lanes[laneCount].verts.clear();
+                addToLane(laneCount, tri);
+                ++laneCount;
+                return true;
+            }
+        }
+        else if (sameState(s, lanes[laneNext].state) && (laneNext == 0u || samePlace(laneTri, tri)) &&
+                 lanes[0].verts.size() < 3u * 65536u)
+        {
+            addToLane(laneNext, tri);
+            laneNext = (laneNext + 1u) % laneCycle;
+            return true;
+        }
+        noteBreak("multipass group ended");
+        flushPending();
+        return false;
+    }
+    // PS2X_GS_HW_MULTIPASS=3 (test): counts the pixels covered by more than one triangle of a group (where the
+    // reordering can change the result) against all the pixels the groups cover, printed every 300 presents.
+    uint64_t overlapPixels = 0, coveredPixels = 0, overlapGroups = 0;
+    std::vector<uint8_t> coverage;
+    void measureOverlap(const std::vector<HwVertex> &v)
+    {
+        constexpr int W = 1024, H = 1024;
+        coverage.assign(static_cast<size_t>(W) * H, 0u);
+        for (size_t t = 0; t + 2 < v.size(); t += 3)
+        {
+            const HwVertex &a = v[t], &b = v[t + 1], &c = v[t + 2];
+            const float area = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+            if (area == 0.0f)
+                continue;
+            const int x0 = std::max(0, static_cast<int>(std::floor(std::min({a.x, b.x, c.x})))), x1 = std::min(W - 1, static_cast<int>(std::ceil(std::max({a.x, b.x, c.x}))));
+            const int y0 = std::max(0, static_cast<int>(std::floor(std::min({a.y, b.y, c.y})))), y1 = std::min(H - 1, static_cast<int>(std::ceil(std::max({a.y, b.y, c.y}))));
+            for (int y = y0; y <= y1; ++y)
+                for (int x = x0; x <= x1; ++x)
+                {
+                    const float px = x + 0.5f, py = y + 0.5f;
+                    const float w0 = (b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x);
+                    const float w1 = (c.x - b.x) * (py - b.y) - (c.y - b.y) * (px - b.x);
+                    const float w2 = (a.x - c.x) * (py - c.y) - (a.y - c.y) * (px - c.x);
+                    const bool in = area > 0 ? (w0 >= 0 && w1 >= 0 && w2 >= 0) : (w0 <= 0 && w1 <= 0 && w2 <= 0);
+                    if (!in)
+                        continue;
+                    uint8_t &n = coverage[static_cast<size_t>(y) * W + x];
+                    if (n == 1u)
+                        ++overlapPixels;
+                    if (n == 0u)
+                        ++coveredPixels;
+                    if (n < 2u)
+                        ++n;
+                }
+        }
+        if (++overlapGroups % 3000u == 0u)
+            std::fprintf(stderr, "[gs-hw-multipass] %llu groups: %llu pixels covered, %llu covered twice or more (%.3f%%)\n",
+                         (unsigned long long)overlapGroups, (unsigned long long)coveredPixels, (unsigned long long)overlapPixels,
+                         coveredPixels ? 100.0 * overlapPixels / coveredPixels : 0.0);
+    }
+    void flushLanes()
+    {
+        static const bool measure = [] { const char *v = std::getenv("PS2X_GS_HW_MULTIPASS"); return v && *v == '3'; }();
+        if (measure && laneCount != 0u)
+            measureOverlap(lanes[0].verts);
+        const uint32_t count = laneCount;
+        laneCount = 0u;
+        laneCycle = 0u;
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            if (lanes[i].verts.empty())
+                continue;
+            if (breakDiagEnabled())
+                countBreak(drawKind(lanes[i].state, "multipass lane"), lanes[i].verts.size() / 3u);
+            if (ensure())
+                draw(lanes[i].state, lanes[i].verts);
+            lanes[i].verts.clear();
+        }
+        breakWhy = nullptr;
+    }
+
     void flushPending()
     {
         flushTrack();
         ++batchSerial; // the next sprite starts a new batch: no seam with the previous one
         flushShuffle();
+        if (laneCount != 0u)
+            flushLanes();
         if (!havePending || pending.empty())
         {
             havePending = false;
@@ -1986,7 +2203,10 @@ struct GSHwBackend::Impl
             return;
         }
         havePending = false;
-        countBreak();
+        if (breakDiagEnabled())
+            countBreak(drawKind(pendingState, "prim"), pending.size() / 3u);
+        else
+            countBreak();
         breakWhy = nullptr;
         if (!ensure())
         {
@@ -2615,7 +2835,10 @@ struct GSHwBackend::Impl
             return;
         GSTrackBatch *batch = trackPending;
         trackPending = nullptr;
-        countBreak();
+        if (breakDiagEnabled())
+            countBreak(drawKind(trackPendingState, trackMultiOk ? "track multi" : "track", trackMode(batch)), batch->triangles);
+        else
+            countBreak();
         if (ensure())
         {
             const GSContext &c = trackPendingState.context;
