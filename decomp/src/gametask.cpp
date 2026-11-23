@@ -24,6 +24,7 @@ ptr32<_sVfx_Object> VfxAddNew(ptr32<_sObject> pPlayerObj, int32 iY, int32 iZ, in
 uint16 VfxShortestLastDistRendered(ptr32<_sObject> pObj);                  // visfx.cpp
 void AIRespawnFurther(ptr32<_sObject> pObj, int32 times);                  // ai.cpp
 void OColProcess(tTime);                                                   // ocol.cpp
+void FPhysLibUpdateCarSpheres(ptr32<_sFPhysLibCar> pCar, int32_t bFullUpdate); // physics.cpp
 void CarColColDetCars();                                                   // collision.cpp
 void CameraProcess(int32 time, int32 split);                               // camera.cpp
 int32_t PhysicsMotion();                                                   // physics2.cpp
@@ -188,9 +189,19 @@ struct Cam
     uint8_t prev[0x38]{}; // pos (0xc) .. matrix (0x24 + 0x20)
     uint8_t cur[0x38]{};
 };
+// The drawn fields (offset, bytes) that are blended and, after drawing, put back: nothing else in the block is
+// touched, because the draw itself writes some of it (each wheel's ground material and shadow height).
+constexpr std::pair<uint32_t, uint32_t> kCarFields[] = {
+    {0x8u, 12u}, {0x14u, 12u}, {0x4cu, 36u}, {0x70u, 36u},                         // render position, position, matrices
+    {0xacu, 12u}, {0xacu + 0x48u, 12u}, {0xacu + 0x90u, 12u}, {0xacu + 0xd8u, 12u}, // wheel positions
+    {0x1ecu + 4u, 12u}, {0x1ecu + 0x10u, 12u}, {0x1ecu + 0x28u, 18u}, {0x1ecu + 0x3cu, 18u}, // the integer copy
+};
 Car cars[kMaxObjects];
 Cam cams[2];
 bool blended[kMaxObjects]{}, camBlended[2]{};
+// cars whose ground and shadow pass (GameTaskShadowCalc) ran during a blended draw: it is run again on the real state
+// afterwards, since the physics reads the wheels' ground material from it (grip)
+std::vector<uint32_t> shadowRedo;
 uint32_t carCount = 0;
 int32_t stepTime = 0;
 bool stepped = false, applied = false;
@@ -325,6 +336,25 @@ float jumpLimit()
 
 } // namespace interp
 
+// PS2X_REFRESH_HZ=<n>: vblanks at n Hz while a race (or the demo) runs, so its loop draws up to n frames a second; the
+// race keeps time on its own clock. The front end and other screens step their animations once a frame, so they keep
+// the video mode's rate.
+void RcRefreshRace(bool racing)
+{
+    static const uint32_t hz = [] { const char *v = std::getenv("PS2X_REFRESH_HZ"); return v ? static_cast<uint32_t>(std::atoi(v)) : 0u; }();
+    static uint32_t normal = 0;
+    if (hz < 30u || hz > 500u)
+        return;
+    EeScheduler &scheduler = g_runtime->eeScheduler();
+    if (racing)
+    {
+        normal = static_cast<uint32_t>(scheduler.vblankPeriod().count());
+        scheduler.setVBlankPeriodMicroseconds(1000000u / hz);
+    }
+    else if (normal != 0u)
+        scheduler.setVBlankPeriodMicroseconds(normal);
+}
+
 // Called by the race loop after TaskProcess, before drawing: puts the blended state in place.
 void RcInterpBeginDraw(int32_t time)
 {
@@ -394,8 +424,15 @@ void RcInterpBeginDraw(int32_t time)
     // RC_INTERP_LOG=2: the drawn camera 0 position each frame (frames 3000-3200), to check the motion is even
     static uint64_t drawn = 0;
     if (log && std::getenv("RC_INTERP_LOG")[0] == '2' && ++drawn >= 3000u && drawn < 3200u)
-        std::fprintf(stderr, "[interp-cam] time %d x %d y %d z %d blend %.3f\n", time, at<int32_t>(kCameras + 0x38u),
-                     at<int32_t>(kCameras + 0x3cu), at<int32_t>(kCameras + 0x40u), t);
+    {
+        const uint32_t target = at<uint32_t>(kCameras + 0xacu); // camera 0's car
+        const uint32_t phys = target ? at<uint32_t>(target + 0x20u) : 0u;
+        const uint32_t state = phys ? at<uint32_t>(phys + 0x1e8u) : 0u;
+        std::fprintf(stderr, "[interp-cam] time %d cam %d %d %d car %d %d %d carf %.1f %.1f blend %.3f step %d\n", time,
+                     at<int32_t>(kCameras + 0x38u), at<int32_t>(kCameras + 0x3cu), at<int32_t>(kCameras + 0x40u),
+                     state ? at<int32_t>(state + 4u) : 0, state ? at<int32_t>(state + 8u) : 0, state ? at<int32_t>(state + 12u) : 0,
+                     phys ? static_cast<float>(at<ee_float>(phys + 8u)) : 0.f, phys ? static_cast<float>(at<ee_float>(phys + 16u)) : 0.f, t, stepTime);
+    }
     if (log && ++frames % 600u == 0u)
     {
         std::fprintf(stderr, "[interp] largest step in the last 600 frames: car %.1f, camera %.1f (jump limit %.1f)\n", maxStep, maxCam, jumpLimit());
@@ -415,14 +452,24 @@ void RcInterpEndDraw()
             continue;
         blended[i] = false;
         Car &c = cars[i];
-        std::memcpy(guest_host(c.phys), c.cur, kPhysBytes);
-        if (c.sphereAt != 0u && !c.spheres.empty())
-            std::memcpy(guest_host(c.sphereAt), c.spheres.data(), c.spheres.size());
+        uint8_t *block = static_cast<uint8_t *>(guest_host(c.phys));
+        for (const auto &[offset, bytes] : kCarFields)
+            std::memcpy(block + offset, c.cur + offset, bytes);
+        // a draw recomputes the collision spheres from the drawn state for some cars: then again from the real one,
+        // as the original's draw leaves them
+        if (c.sphereAt != 0u && !c.spheres.empty() && std::memcmp(guest_host(c.sphereAt), c.spheres.data(), c.spheres.size()) != 0)
+            FPhysLibUpdateCarSpheres(ptr32<_sFPhysLibCar>(c.phys), 0);
     }
+    applied = false;
+    for (const uint32_t obj : shadowRedo)
+        GameTaskShadowCalc(ptr32<_sObject>(obj));
+    shadowRedo.clear();
     for (uint32_t k = 0; k < 2; ++k)
         if (camBlended[k])
         {
-            std::memcpy(guest_host(kCameras + k * kCameraBytes + 0xcu), cams[k].cur, sizeof(cams[k].cur));
+            uint8_t *base = static_cast<uint8_t *>(guest_host(kCameras + k * kCameraBytes + 0xcu));
+            std::memcpy(base, cams[k].cur, 12u);                    // pos
+            std::memcpy(base + 0x18u, cams[k].cur + 0x18u, 0x20u); // matrix (camera +0x24)
             camBlended[k] = false;
         }
     applied = false;
@@ -458,6 +505,8 @@ void MetaMorphiseCarSpheres(int32_t time)
 // within 128 of the ground under the middle, or that.
 void GameTaskShadowCalc(ptr32<_sObject> pObject)
 {
+    if (interp::applied)
+        interp::shadowRedo.push_back(pObject.address);
     GuestFrame frame(0x110);
     const uint32_t sp = frame.local<uint8_t>(0).address;
     const uint32_t obj = pObject.address;

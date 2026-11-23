@@ -27,11 +27,7 @@ namespace ps2_syscalls
             gs.smode2 = smode2;
             if (videoMode == 2 || videoMode == 3)
             {
-                // PS2X_REFRESH_HZ=<n> (enhancement): vblanks at n Hz instead of the video mode's 59.94/50, so a game that
-                // waits on vblanks may draw up to n frames a second (its clocks run on EE timers, not vblank counts).
-                static const uint32_t refreshHz = [] { const char *v = std::getenv("PS2X_REFRESH_HZ"); return v ? static_cast<uint32_t>(std::atoi(v)) : 0u; }();
-                runtime->eeScheduler().setVBlankPeriodMicroseconds(refreshHz >= 30u && refreshHz <= 500u ? 1000000u / refreshHz
-                                                                   : videoMode == 3 ? 20000u : 16683u);
+                runtime->eeScheduler().setVBlankPeriodMicroseconds(videoMode == 3 ? 20000u : 16683u);
             }
 
             // Keep CRT1 enabled after the BIOS syscall selects a display mode.

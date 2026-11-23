@@ -17,6 +17,7 @@ namespace rc {
 
 void RcInterpBeginDraw(int32_t time); // gametask.cpp
 void RcInterpEndDraw();
+void RcRefreshRace(bool racing);
 
 
 using namespace mainunit;
@@ -473,6 +474,7 @@ void MainGameProcess()
         else
             guest_call(kRCMusicPlayTrackEdit, guest_call<uint32_t>(kTEditGetSoundTrackNdxForTrack));
     };
+    RcRefreshRace(true); // enhancement: PS2X_REFRESH_HZ applies to the race loop only
     if (status() == 0x10)
     {
         playTune();
@@ -586,6 +588,7 @@ void MainGameProcess()
         call(kRdrEndFrame);
         frames() = frames() + 1;
     } while (status() == 1 || status() == 0x20 || status() == 0x10);
+    RcRefreshRace(false);
     call(kSfxDoSfx);
     if (status() != 2)
         MainScreenGameInit(0);

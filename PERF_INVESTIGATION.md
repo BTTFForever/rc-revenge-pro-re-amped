@@ -395,6 +395,18 @@ frame. Level 1 at 144 Hz: the drawn camera moves an even 11.3 units a frame (sta
 where unblended it moves ~35 every third frame. Window captures of levels 18 and 9 at 144 Hz look right.
 Not yet covered: projectiles and other objects outside the car list, split screen checked only by construction.
 
+**Fixes after the user's first 144 Hz run** (the front end's 3D animations and fly-by camera ran 2.4x fast; in races
+the car juddered "like the physics were glitching"):
+- The front end and other screens step their animations once a frame, so `PS2X_REFRESH_HZ` now applies only while
+  `MainGameProcess` runs (`RcRefreshRace`, which sets the vblank period on entry and puts the video mode's back on exit);
+  the window keeps presenting at n Hz. `replay playtest2` at 144 Hz: 59-60 new pictures a second in the menus, 125-145
+  in the race.
+- The restore after drawing copied the whole physics block back, undoing what the draw itself writes there: each
+  wheel's ground material and shadow height (`GameTaskShadowCalc`), and the physics reads the material for grip. Now
+  only the blended fields are put back; any car whose shadow pass ran during a blended draw has it run again on the
+  real state, and spheres a draw recomputed are recomputed from the real state, so the physics sees what the
+  original's draw would have left.
+
 ## The two renderer routes
 
 **(a) Keep the emulated GS's GL renderer and speed it up PCSX2-style.**
