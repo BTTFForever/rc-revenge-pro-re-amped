@@ -528,3 +528,67 @@ What works and what doesn't:
 - Measurement that works: the OSD (read from window screenshots, `spectacle -b -n -a`), nvidia-smi, and per-thread
   CPU from /proc. The threads are named `CPU Thread`, `GS`, `MTVU`. MangoHud logging to CSV did not write a file.
 - Compared with the recomp: no frame-exact input replay, no level boot, and no per-scene counters beyond the OSD.
+
+## USA vs Europe, 2026-11-24
+
+After Europe's race loop went native (commit dc26ba2: race frame rate and smooth motion now apply in Europe too), both
+versions were run with identical settings and the same targets, one after the other, on the RTX 2060 (PRIME, via
+`tools/play.sh`), nothing else heavy running. Settings file (scratch `XDG_CONFIG_HOME`): `aspect=16:9`,
+`hud=corrected`, `fullscreen=0` (the same 1280x720 window), `scale=4`, `race_fps=144` (and a second set with
+`race_fps=60`), `smooth_motion=1`, `vsync=on`, `vrr=0`; 144 Hz screen. Levels: the attract demo of each
+(`RC_BOOT_LEVEL`, `RC_DEMO_SECS` past the run), 90 s runs measured from 20 to 85 s; menus: `RC_SKIP_INTRO=1`,
+the main menu walked with `PS2X_PAD_LIVE` (start, then a move every 3 s), 60 s runs measured 25-55 s. Per run:
+`PS2X_PRESENT_LOG` (presents and game fields a second), `PS2X_FRAME_TIMES` (each present: new pictures a second
+and the worst 1 s of them, 1% low and worst gap of the presents, late = a present more than 1.5 refresh intervals
+after the previous), `tools/perf_sample.py` (each thread's share of a core), `nvidia-smi` each second (GPU busy,
+clock, power). Game fields are the emulated vblanks (the rate the race loop may draw at); new pictures are the
+distinct frames the game drew. Script and raw files: the session's scratch `cmp/` folder (not kept).
+
+| target | scene | version | presents/s | game fields/s | new pictures/s | worst 1 s | 1% low fps | worst gap ms | late % | EE | VU1 | GS | GIF | process | GPU % | MHz | W |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 144 | menus | USA | 143.9 | 59.8 | 59.9 | 59 | 143 | 9.1 | 0.00 | 0.18 | 0.22 | 0.41 | 0.08 | 0.98 | 39 | 1070 | 29 |
+| 144 | menus | Europe | 143.9 | 49.6 | 50.0 | 49 | 143 | 8.8 | 0.00 | 0.19 | 0.20 | 0.35 | 0.07 | 0.88 | 39 | 959 | 28 |
+| 144 | level 1 | USA | 143.8 | 143.0 | 140.3 | 124 | 143 | 15.3 | 0.02 | 0.33 | 0.37 | 0.55 | 0.11 | 1.45 | 58 | 1866 | 77 |
+| 144 | level 1 | Europe | 143.8 | 143.0 | 137.5 | 78 | 142 | 13.6 | 0.01 | 0.37 | 0.40 | 0.61 | 0.12 | 1.57 | 60 | 1850 | 84 |
+| 144 | level 4 | USA | 142.7 | 142.9 | 113.5 | 63 | 111 | 14.1 | 0.30 | 0.38 | 0.45 | 0.85 | 0.15 | 1.92 | 52 | 1860 | 78 |
+| 144 | level 4 | Europe | 143.0 | 143.0 | 120.0 | 64 | 115 | 16.6 | 0.36 | 0.38 | 0.45 | 0.80 | 0.14 | 1.87 | 53 | 1858 | 80 |
+| 144 | level 9 | USA | 143.4 | 142.9 | 96.0 | 69 | 130 | 18.8 | 0.08 | 0.44 | 0.59 | 0.94 | 0.19 | 2.25 | 74 | 1819 | 80 |
+| 144 | level 9 | Europe | 142.5 | 142.9 | 96.3 | 57 | 107 | 14.6 | 0.48 | 0.44 | 0.58 | 0.93 | 0.17 | 2.22 | 73 | 1800 | 78 |
+| 144 | level 17 | USA | 143.7 | 143.0 | 128.6 | 90 | 140 | 13.5 | 0.04 | 0.38 | 0.46 | 0.82 | 0.15 | 1.89 | 65 | 1794 | 77 |
+| 144 | level 17 | Europe | 143.9 | 143.0 | 132.8 | 90 | 143 | 10.0 | 0.00 | 0.40 | 0.47 | 0.80 | 0.16 | 1.92 | 69 | 1776 | 77 |
+| 144 | level 21 | USA | 142.8 | 141.7 | 109.8 | 67 | 112 | 34.7 | 0.60 | 0.47 | 0.57 | 0.92 | 0.19 | 2.24 | 84 | 1729 | 78 |
+| 144 | level 21 | Europe | 143.5 | 143.0 | 121.0 | 83 | 142 | 18.3 | 0.17 | 0.48 | 0.59 | 0.88 | 0.19 | 2.23 | 84 | 1742 | 78 |
+| 144 | level 23 | USA | 143.6 | 143.0 | 130.6 | 81 | 134 | 10.8 | 0.03 | 0.37 | 0.44 | 0.83 | 0.16 | 1.89 | 56 | 1845 | 79 |
+| 144 | level 23 | Europe | 143.8 | 143.1 | 125.1 | 81 | 142 | 17.5 | 0.05 | 0.39 | 0.47 | 0.88 | 0.17 | 2.00 | 60 | 1829 | 79 |
+| 60 | menus | USA | 60.0 | 58.9 | 59.6 | 55 | 60 | 16.8 | 0.00 | 0.19 | 0.21 | 0.39 | 0.08 | 0.94 | 32 | 949 | 30 |
+| 60 | menus | Europe | 60.0 | 49.0 | 50.0 | 50 | 60 | 16.8 | 0.00 | 0.16 | 0.20 | 0.37 | 0.08 | 0.88 | 31 | 952 | 28 |
+| 60 | level 1 | USA | 60.0 | 59.0 | 60.0 | 59 | 60 | 18.5 | 0.00 | 0.19 | 0.18 | 0.32 | 0.06 | 0.83 | 34 | 928 | 29 |
+| 60 | level 1 | Europe | 60.0 | 59.0 | 59.5 | 52 | 60 | 17.3 | 0.00 | 0.20 | 0.18 | 0.32 | 0.06 | 0.84 | 34 | 957 | 28 |
+| 60 | level 9 | USA | 60.0 | 59.0 | 59.9 | 58 | 60 | 45.4 | 0.03 | 0.23 | 0.31 | 0.45 | 0.10 | 1.17 | 38 | 1560 | 44 |
+| 60 | level 9 | Europe | 60.0 | 59.0 | 59.9 | 58 | 60 | 17.3 | 0.00 | 0.24 | 0.31 | 0.46 | 0.10 | 1.19 | 39 | 1560 | 45 |
+| 60 | level 21 | USA | 60.0 | 59.0 | 58.2 | 45 | 60 | 17.4 | 0.00 | 0.25 | 0.30 | 0.45 | 0.10 | 1.17 | 39 | 1519 | 47 |
+| 60 | level 21 | Europe | 60.0 | 59.0 | 59.3 | 45 | 60 | 19.7 | 0.00 | 0.26 | 0.31 | 0.44 | 0.11 | 1.19 | 39 | 1515 | 47 |
+
+Repeat runs of the two levels with the largest differences (same settings, 144):
+
+| level | version | new pictures/s (run 1 / run 2) | GS thread | GPU % |
+|---|---|---|---|---|
+| 4 | USA | 113.5 / 124.9 | 0.85 / 0.77 | 52 / 56 |
+| 4 | Europe | 120.0 / 114.3 | 0.80 / 0.83 | 53 / 52 |
+| 21 | USA | 109.8 / 116.3 | 0.92 / 0.91 | 84 / 80 |
+| 21 | Europe | 121.0 / 123.2 | 0.88 / 0.90 | 84 / 82 |
+
+**Conclusions.**
+- **No difference from the code.** Per level the two versions use the same CPU per thread (EE, VU1, GS and GIF within
+  about 0.05 of a core), the same GPU load, clock and power. Their new-picture rates differ by up to ~10% either way
+  (level 4 flipped between the two runs), the spread of one attract demo run to the next; level 21 was a little
+  faster in Europe both times (110/116 against 121/123), within that spread or from its demo's own path. The levels'
+  data are the same content (comparing level files: sound identical, texture images ~1.6% of words different, game
+  data mostly the same blocks shifted or with Europe's own pointers), so the versions draw the same work.
+- **Races reach the target in both.** At 144 both run 143 game fields a second; the drawn rate is limited by the GS
+  thread (0.8-0.95 of a core on the heavy levels 9 and 21: ~96-123 new pictures a second) as in the USA sweeps
+  before; light levels (1, 17, 23) draw 125-140. Late presents stay under 0.6% (V-Sync on). At 60 both draw 58-60 a
+  second (worst second 45 on level 21 in both: a heavy stretch of that demo).
+- **PAL matters only in the menus.** Europe's menus run at 50 game frames a second (the PAL video mode) against 60;
+  the window still presents at its rate. The physics step is 20 ms in both versions, so game speed is the same; with
+  races now native in Europe, its races run at the chosen rate like USA's (Europe at 60 is now 60, not 50).
