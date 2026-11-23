@@ -85,6 +85,12 @@ std::string defaultPath()
 
 namespace B = ps2_input_bindings;
 
+// The file's controls_version (0: none, a file from before the Auto device). Version 2 files keep the devices as saved;
+// in older ones the old defaults (player 1 keyboard+pad1, player 2 pad2), which were always written whether chosen or
+// not, become Auto.
+int g_controlsVersion = 0;
+bool g_sawDevice[2] = {false, false};
+
 // A controls line: p1_device=..., p1_key_<control>=..., p1_pad_<control>=... (players 1 and 2).
 bool readControl(const std::string &key, const std::string &value, B::Player players[2])
 {
@@ -95,7 +101,12 @@ bool readControl(const std::string &key, const std::string &value, B::Player pla
     if (rest == "device")
     {
         if (const int d = B::parseDevice(value.c_str()); d >= 0)
+        {
             p.device = d;
+            g_sawDevice[key[1] - '1'] = true;
+        }
+        else
+            std::fprintf(stderr, "[settings] %s=%s: unknown device, Auto\n", key.c_str(), value.c_str());
         return true;
     }
     const bool isKey = rest.rfind("key_", 0) == 0, isPad = rest.rfind("pad_", 0) == 0;
@@ -144,6 +155,8 @@ void readFile(Settings &s)
             s.vsync = vsyncFromText(value);
         else if (key == "vrr")
             s.vrr = number != 0;
+        else if (key == "controls_version")
+            g_controlsVersion = number;
         else if (g_loadPlayers)
             readControl(key, value, g_loadPlayers);
     }
@@ -151,9 +164,12 @@ void readFile(Settings &s)
 
 void writeControls(std::ofstream &out)
 {
-    out << "# Controls (also in Game Options > Controls): per player the device (none, keyboard, pad1-pad4,\n"
-        << "# keyboard+pad1, keyboard+pad2), then each DualShock 2 control's key (raylib names: A, F1, space, left_shift, ...)\n"
-        << "# and gamepad input (SDL names: a, b, x, y, dpup, leftshoulder, start, back, +righttrigger, -leftx, ...); none unbinds\n";
+    out << "# Controls (also in Game Options > Controls): per player the device (auto, keyboard, pad1-pad4, keyboard+pad1,\n"
+        << "# keyboard+pad2, none; auto: player 1 the keyboard and every gamepad player 2 does not use, player 2 the next\n"
+        << "# gamepad; a chosen gamepad that is not connected counts as auto until it is), then each DualShock 2 control's key\n"
+        << "# (raylib names: A, F1, space, left_shift, ...) and gamepad input (SDL names: a, b, x, y, dpup, leftshoulder,\n"
+        << "# start, back, +righttrigger, -leftx, ...); none unbinds\n"
+        << "controls_version=2\n";
     for (int i = 0; i < 2; ++i)
     {
         const B::Player p = B::player(i);
@@ -208,6 +224,17 @@ __attribute__((constructor(101))) void load()
     B::Player players[2] = {B::defaults(0), B::defaults(1)};
     g_loadPlayers = players;
     readFile(s);
+    if (g_controlsVersion < 2)
+    {
+        // An older file: its devices were the old defaults unless changed; those become Auto (a superset of them).
+        const int oldDefault[2] = {B::DeviceKeyboardPad1, B::DevicePad2};
+        for (int i = 0; i < 2; ++i)
+            if (g_sawDevice[i] && players[i].device == oldDefault[i])
+            {
+                players[i].device = B::DeviceAuto;
+                std::fprintf(stderr, "[settings] player %d device: %s (the old default) is now Auto\n", i + 1, B::deviceKey(oldDefault[i]));
+            }
+    }
     const char *v = nullptr;
     if (envSet("RC_ASPECT", v))
         s.aspect = aspectFromText(v);

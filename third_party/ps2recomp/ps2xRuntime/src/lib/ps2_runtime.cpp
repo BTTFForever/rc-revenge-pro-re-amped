@@ -3151,6 +3151,15 @@ void PS2Runtime::run()
             }
             screenshotFields.pop_back();
         }
+        if (std::string shotName; ps2_host_input::takeScreenshotRequest(shotName)) // PS2X_PAD_LIVE "shot <name>"
+        {
+            const char *directory = std::getenv("PS2X_SCREENSHOT_DIR");
+            const auto path = std::filesystem::path(directory && *directory ? directory : ".") / (shotName + ".png");
+            rlDrawRenderBatchActive();
+            const Image screen = LoadImageFromScreen();
+            ExportImage(screen, path.string().c_str());
+            UnloadImage(screen);
+        }
         const auto swapStart = tracingFrames ? PresentClock::now() : presentStart;
         EndDrawing();
         {

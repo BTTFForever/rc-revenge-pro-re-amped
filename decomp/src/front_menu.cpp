@@ -992,12 +992,22 @@ void PollingMemoryCard()
 // Hides the items the UI groups tagged 0x10000208 point at; for the pause menu (flag 1) also the two-player items
 // outside a two-player race, and in a cup the pause menu is the first group's.
 namespace {
-// RC_MENU_DUMP=1 (tool): the front end's menus as the level file builds them, and the first race's pause menu, once each, to stderr.
+// RC_MENU_DUMP=1 or 2 (tool): the front end's menus as the level file builds them, and the first race's pause menu, once each, to stderr.
+// RC_MENU_DUMP=2: each text in all four languages, separated by |.
 std::string menuText(ptr32<sTextGroup> group)
 {
     if (!group || !group->pText[0])
         return "-";
-    return std::string(static_cast<const char *>(guest_host(group->pText[0].address))).substr(0, 40);
+    static const bool all = std::getenv("RC_MENU_DUMP") && std::string(std::getenv("RC_MENU_DUMP")) == "2";
+    std::string out;
+    for (int i = 0; i < (all ? 4 : 1); ++i)
+    {
+        if (i)
+            out += '|';
+        if (group->pText[i])
+            out += std::string(static_cast<const char *>(guest_host(group->pText[i].address))).substr(0, 40);
+    }
+    return out;
 }
 void dumpMenus(ptr32<sUIgroup> pUIGroup, int32_t flag)
 {

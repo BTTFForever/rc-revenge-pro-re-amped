@@ -25,6 +25,7 @@ namespace ps2_host_gamepad
     void setRumble(int slot, uint8_t small, uint8_t large);
 
     // Test aid (PS2X_SDL_VIRTUAL_PADS=<n>): n virtual SDL gamepads, pressed through PS2X_PAD_LIVE lines
-    // "pad<n> <button or +/-axis> <hold ms> <gap ms>". Returns false if the name is unknown.
+    // "pad<n> <button or +/-axis> <hold ms> <gap ms>"; "pad<n> unplug" / "pad<n> plug" disconnect and reconnect it.
+    // Returns false if the name is unknown.
     bool virtualSet(int index, const char *control, bool down);
 }

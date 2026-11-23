@@ -321,15 +321,18 @@ namespace ps2_host_input
         // the pad record (0x4000 cross, 0x1000 triangle, 0x0008 start, 0x0010 up, 0x0040 down, 0x0080 left, 0x0020
         // right). A line "pad<n> <button or +/-axis> <hold ms> <gap ms>" presses a virtual SDL gamepad
         // (PS2X_SDL_VIRTUAL_PADS; SDL's names: a, b, x, y, dpup, start, +righttrigger, -leftx, ...), through the whole
-        // gamepad path. Run from the window loop (sample); the ports' presses are read by padState.
+        // gamepad path. A line "shot <name>" saves the window's next picture as <name>.png in PS2X_SCREENSHOT_DIR.
+        // Run from the window loop (sample); the ports' presses are read by padState.
         std::atomic<uint16_t> g_live[kPadPorts]{};
+        std::mutex g_shotMutex;
+        std::string g_shotName; // a "shot <name>" line: the window loop saves the next picture as <name>.png
 
         void runLiveInput()
         {
             static const char *path = []() -> const char * { const char *v = std::getenv("PS2X_PAD_LIVE"); return v && *v ? v : nullptr; }();
             if (!path)
                 return;
-            struct Press { int target; uint16_t buttons; std::string control; int hold, gap; }; // target: port, or 100 + virtual pad
+            struct Press { int target; uint16_t buttons; std::string control; int hold, gap; }; // target: port, 100 + virtual pad, or -1 a screenshot
             using Clock = std::chrono::steady_clock;
             struct Queue
             {
@@ -366,6 +369,11 @@ namespace ps2_host_input
                         int pad = 0, hold = 100, gap = 100, port = 0;
                         char control[64] = {};
                         unsigned buttons = 0;
+                        if (line.rfind("shot ", 0) == 0) // in port 0's order
+                        {
+                            queues[0].presses.push_back({-1, 0, line.substr(5), 0, 0});
+                            continue;
+                        }
                         if (std::sscanf(line.c_str(), "pad%d %63s %d %d", &pad, control, &hold, &gap) >= 2 && pad >= 1)
                             queues[100 + pad - 1].presses.push_back({100 + pad - 1, 0, control, hold, gap});
                         else if (std::sscanf(line.c_str(), "%x %d %d %d", &buttons, &hold, &gap, &port) >= 1)
@@ -391,6 +399,16 @@ namespace ps2_host_input
                         q.started = now;
                     }
                     const Press &p = q.presses.front();
+                    if (p.target < 0)
+                    {
+                        {
+                            std::lock_guard<std::mutex> lock(g_shotMutex);
+                            g_shotName = p.control;
+                        }
+                        q.presses.pop_front();
+                        q.running = false;
+                        break; // one picture per window frame
+                    }
                     const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(now - q.started).count();
                     const bool held = age < p.hold;
                     if (target >= 100)
@@ -711,6 +729,112 @@ namespace ps2_host_input
             applyBindEnvironment(g_players[0]);
         }
 
+        // ---- What each player reads now (resolved in the window loop: resolvePlayers) ----
+        std::array<B::Active, kPadPorts> g_active;   // g_bindMutex held
+        int g_lastPad[kPadPorts] = {-1, -1};          // the gamepad each player used last
+        int g_p2AutoPad = -1;                          // player 2's Auto gamepad, kept while connected
+        bool g_fallback[kPadPorts] = {false, false};  // logged: a chosen gamepad not connected
+        std::atomic<int64_t> g_menuUntil{0};           // menu mode until (steady clock, ns)
+
+        int lowestSlot(unsigned mask)
+        {
+            for (int i = 0; i < ps2_host_gamepad::kSlots; ++i)
+                if (mask & (1u << i))
+                    return i;
+            return -1;
+        }
+
+        bool padInUse(int slot)
+        {
+            for (int b = 0; b < 15; ++b) // the standard buttons (not the extra inputs some pads report constantly)
+                if (ps2_host_gamepad::button(slot, b))
+                    return true;
+            for (int a = 0; a < 6; ++a)
+                if (std::fabs(ps2_host_gamepad::axis(slot, a)) > 0.5f)
+                    return true;
+            return false;
+        }
+
+        // Explicit choices first (a chosen gamepad that is connected); a player on Auto, or whose chosen gamepad is not
+        // connected, then gets: player 1 the keyboard and the gamepads left over, player 2 the next gamepad after
+        // player 1's (kept while connected).
+        void resolvePlayers() // the window loop
+        {
+            std::lock_guard<std::mutex> lock(g_bindMutex);
+            ensurePlayers();
+            unsigned present = 0;
+            for (int i = 0; i < ps2_host_gamepad::kSlots; ++i)
+                if (ps2_host_gamepad::present(i))
+                    present |= 1u << i;
+            std::array<B::Active, kPadPorts> r{};
+            bool isAuto[kPadPorts]{};
+            unsigned claimed = 0;
+            for (uint32_t i = 0; i < kPadPorts; ++i)
+            {
+                const int d = g_players[i].device;
+                const int slot = B::deviceGamepad(d);
+                const bool missing = slot >= 0 && !(present & (1u << slot));
+                isAuto[i] = d == B::DeviceAuto || missing;
+                r[i].fallback = missing;
+                if (missing != g_fallback[i])
+                {
+                    g_fallback[i] = missing;
+                    std::cerr << "[controls] player " << (i + 1) << ": " << B::deviceName(d)
+                              << (missing ? " is not connected, using Auto until it is" : " connected again, using it") << std::endl;
+                }
+                if (isAuto[i])
+                    continue;
+                r[i].keyboard = B::deviceHasKeyboard(d);
+                if (slot >= 0)
+                    r[i].pads = 1u << slot;
+                claimed |= r[i].pads;
+            }
+            const unsigned free = present & ~claimed;
+            if (isAuto[1])
+            {
+                unsigned others = free;
+                if (isAuto[0])
+                {
+                    // Player 1's own gamepad: the one it used last, else the first; player 2 takes another.
+                    int p1 = g_lastPad[0] >= 0 && (free & (1u << g_lastPad[0])) && g_lastPad[0] != g_p2AutoPad ? g_lastPad[0] : -1;
+                    if (p1 < 0)
+                        p1 = lowestSlot(free & ~(g_p2AutoPad >= 0 ? 1u << g_p2AutoPad : 0u));
+                    if (p1 >= 0)
+                        others &= ~(1u << p1);
+                }
+                if (g_p2AutoPad < 0 || !(others & (1u << g_p2AutoPad)))
+                {
+                    const int was = g_p2AutoPad;
+                    g_p2AutoPad = lowestSlot(others);
+                    if (g_p2AutoPad != was && g_p2AutoPad >= 0)
+                        std::cerr << "[controls] player 2 (Auto): gamepad " << (g_p2AutoPad + 1) << " ("
+                                  << ps2_host_gamepad::name(g_p2AutoPad) << ")" << std::endl;
+                }
+                if (g_p2AutoPad >= 0)
+                    r[1].pads = 1u << g_p2AutoPad;
+            }
+            else
+                g_p2AutoPad = -1;
+            if (isAuto[0])
+            {
+                r[0].keyboard = true;
+                r[0].pads = free & ~r[1].pads;
+            }
+            for (uint32_t i = 0; i < kPadPorts; ++i)
+            {
+                for (int slot = 0; slot < ps2_host_gamepad::kSlots; ++slot)
+                    if ((r[i].pads & (1u << slot)) && slot != g_lastPad[i] && padInUse(slot))
+                        g_lastPad[i] = slot; // whichever is used takes over (rumble)
+                r[i].activePad = g_lastPad[i] >= 0 && (r[i].pads & (1u << g_lastPad[i])) ? g_lastPad[i] : lowestSlot(r[i].pads);
+            }
+            g_active = r;
+        }
+
+        bool menuMode()
+        {
+            return std::chrono::steady_clock::now().time_since_epoch().count() < g_menuUntil.load(std::memory_order_relaxed);
+        }
+
         // How far a source is pressed, 0..1; *analog says it was a trigger or stick (pressure follows it).
         float sourceValue(int source, bool keyboard, int gamepad, bool *analog)
         {
@@ -813,19 +937,61 @@ namespace ps2_host_input
                 finish(B::CaptureTimedOut, 0);
         }
 
+        // Each control's value from the keyboard (if read) and the gamepads in pads, the largest.
+        void accumulate(const B::Player &pl, bool keyboard, unsigned pads, float (&value)[B::ControlCount], bool (&analog)[B::ControlCount])
+        {
+            for (int c = 0; c < B::ControlCount; ++c)
+            {
+                if (keyboard)
+                    value[c] = std::max(value[c], sourceValue(pl.key[c], true, -1, &analog[c]));
+                for (int slot = 0; slot < ps2_host_gamepad::kSlots; ++slot)
+                    if (pads & (1u << slot))
+                        value[c] = std::max(value[c], sourceValue(pl.pad[c], false, slot, &analog[c]));
+            }
+        }
+
+        // Menu mode's extra devices on player 1's port: its bindings, with the defaults for a menu control left unbound.
+        B::Player menuBindings(const B::Player &pl)
+        {
+            static const B::Player defaults = B::defaults(0);
+            B::Player out = pl;
+            for (const int c : {B::Up, B::Down, B::Left, B::Right, B::Cross, B::Circle, B::Triangle, B::Square, B::Start})
+            {
+                if (out.key[c] == 0)
+                    out.key[c] = defaults.key[c];
+                if (out.pad[c] == 0)
+                    out.pad[c] = defaults.pad[c];
+            }
+            return out;
+        }
+
         PadInputState readPort(uint32_t port)
         {
             PadInputState state;
             B::Player pl;
+            B::Active act;
+            unsigned otherPads = 0;
             {
                 std::lock_guard<std::mutex> lock(g_bindMutex);
                 ensurePlayers();
                 pl = g_players[port];
+                act = g_active[port];
+                otherPads = g_active[port ^ 1u].pads;
             }
-            const bool keyboard = B::deviceHasKeyboard(pl.device);
-            const int slot = B::deviceGamepad(pl.device);
-            const int gamepad = slot >= 0 && ps2_host_gamepad::present(slot) ? slot : -1;
-            state.connected = pl.device != B::DeviceNone && (keyboard || gamepad >= 0);
+            bool keyboard = act.keyboard;
+            unsigned pads = act.pads;
+            // Menus: the keyboard and every connected gamepad no player reads drive player 1 too (the game's menus also
+            // take player 2's port).
+            unsigned extraPads = 0;
+            bool extraKeyboard = false;
+            if (port == 0u && menuMode())
+            {
+                for (int slot = 0; slot < ps2_host_gamepad::kSlots; ++slot)
+                    if (ps2_host_gamepad::present(slot) && !((pads | otherPads) & (1u << slot)))
+                        extraPads |= 1u << slot;
+                extraKeyboard = !keyboard;
+            }
+            state.connected = keyboard || pads != 0u || extraKeyboard || extraPads != 0u;
             if (!state.connected)
                 return state;
             state.leftX = kAxisNeutral;
@@ -835,8 +1001,9 @@ namespace ps2_host_input
 
             float value[B::ControlCount]{};
             bool analog[B::ControlCount]{};
-            for (int c = 0; c < B::ControlCount; ++c)
-                value[c] = std::max(sourceValue(pl.key[c], keyboard, -1, &analog[c]), sourceValue(pl.pad[c], false, gamepad, &analog[c]));
+            accumulate(pl, keyboard, pads, value, analog);
+            if (extraKeyboard || extraPads)
+                accumulate(menuBindings(pl), extraKeyboard, extraPads, value, analog);
             for (size_t c = 0; c < kControlButtons.size(); ++c)
                 if (value[c] >= (analog[c] ? 0.2f : 0.5f)) // a trigger or stick counts as a press from a fifth of its travel
                     state.buttons |= kControlButtons[c];
@@ -861,19 +1028,18 @@ namespace ps2_host_input
             return state;
         }
 
-        // The game's motors to the gamepad each port reads; other gamepads still.
+        // The game's motors to the gamepad each port reads (the one it used last); other gamepads still.
         void runRumble()
         {
             uint8_t small[ps2_host_gamepad::kSlots]{}, large[ps2_host_gamepad::kSlots]{};
-            std::array<B::Player, kPadPorts> players;
+            std::array<B::Active, kPadPorts> active;
             {
                 std::lock_guard<std::mutex> lock(g_bindMutex);
-                ensurePlayers();
-                players = g_players;
+                active = g_active;
             }
             for (uint32_t port = 0; port < kPadPorts; ++port)
             {
-                const int slot = B::deviceGamepad(players[port].device);
+                const int slot = active[port].activePad;
                 if (slot < 0)
                     continue;
                 small[slot] = std::max(small[slot], g_motors[port][0].load(std::memory_order_relaxed));
@@ -909,6 +1075,7 @@ namespace ps2_host_input
         sampleMouse();
         ps2_host_gamepad::update();
         runLiveInput();
+        resolvePlayers();
         runCapture();
         runRumble();
         std::array<PadInputState, kPadPorts> state{};
@@ -916,6 +1083,16 @@ namespace ps2_host_input
             state[port] = readPort(port);
         std::lock_guard<std::mutex> lock(g_mutex);
         g_state = state;
+    }
+
+    bool takeScreenshotRequest(std::string &name)
+    {
+        std::lock_guard<std::mutex> lock(g_shotMutex);
+        if (g_shotName.empty())
+            return false;
+        name.swap(g_shotName);
+        g_shotName.clear();
+        return true;
     }
 
     void setMouseStickEnabled(bool enabled)
@@ -1071,9 +1248,9 @@ namespace ps2_input_bindings
         constexpr const char *kControlKeys[ControlCount] = {
             "up", "down", "left", "right", "cross", "circle", "square", "triangle", "l1", "r1", "l2", "r2", "start", "select", "l3", "r3",
             "lstick_left", "lstick_right", "lstick_up", "lstick_down", "rstick_left", "rstick_right", "rstick_up", "rstick_down"};
-        constexpr const char *kDeviceNames[DeviceCount] = {"None", "Keyboard", "Gamepad 1", "Gamepad 2", "Gamepad 3", "Gamepad 4",
-                                                           "Keyboard + Gamepad 1", "Keyboard + Gamepad 2"};
-        constexpr const char *kDeviceKeys[DeviceCount] = {"none", "keyboard", "pad1", "pad2", "pad3", "pad4", "keyboard+pad1", "keyboard+pad2"};
+        constexpr const char *kDeviceNames[DeviceCount] = {"Auto", "Keyboard", "Gamepad 1", "Gamepad 2", "Gamepad 3", "Gamepad 4",
+                                                           "Keyboard + Gamepad 1", "Keyboard + Gamepad 2", "None"};
+        constexpr const char *kDeviceKeys[DeviceCount] = {"auto", "keyboard", "pad1", "pad2", "pad3", "pad4", "keyboard+pad1", "keyboard+pad2", "none"};
 
         struct KeyName { int key; const char *name; const char *label; };
         constexpr KeyName kKeyNames[] = {
@@ -1262,7 +1439,7 @@ namespace ps2_input_bindings
     Player defaults(int player)
     {
         Player p;
-        p.device = player == 0 ? DeviceKeyboardPad1 : DevicePad2;
+        p.device = DeviceAuto;
         const int pad[ControlCount] = {
             padButtonSource(DUp), padButtonSource(DDown), padButtonSource(DLeft), padButtonSource(DRight),
             padButtonSource(South), padButtonSource(East), padButtonSource(West), padButtonSource(North),
@@ -1306,6 +1483,38 @@ namespace ps2_input_bindings
 
     int gamepadCount() { return ps2_host_gamepad::count(); }
     std::string gamepadName(int slot) { return ps2_host_gamepad::name(slot); }
+    bool gamepadPresent(int slot) { return ps2_host_gamepad::present(slot); }
+
+    Active active(int player)
+    {
+        using namespace ps2_host_input;
+        if (player < 0 || player >= static_cast<int>(kPadPorts))
+            return {};
+        std::lock_guard<std::mutex> lock(g_bindMutex);
+        return g_active[static_cast<size_t>(player)];
+    }
+
+    std::string activeName(int player)
+    {
+        const Active a = active(player);
+        std::string out = a.keyboard ? "Keyboard" : "";
+        for (int slot = 0; slot < ps2_host_gamepad::kSlots; ++slot)
+            if (a.pads & (1u << slot))
+            {
+                std::string name = ps2_host_gamepad::name(slot);
+                if (name.empty())
+                    name = "Gamepad " + std::to_string(slot + 1);
+                out += (out.empty() ? "" : " + ") + name;
+            }
+        return out.empty() ? "nothing" : out;
+    }
+
+    void menuFrame()
+    {
+        using namespace ps2_host_input;
+        const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+        g_menuUntil.store(until.time_since_epoch().count(), std::memory_order_relaxed);
+    }
 
     void beginCapture(bool keyboard, int pad, int timeoutMs)
     {

@@ -41,9 +41,16 @@ rate; the physics step is the same 20 ms in both, so game speed is unchanged.
 **Controls**: each player is a virtual DualShock 2 read from the keyboard and/or a gamepad. In **Game Options >
 Controls** (the game's own Controller configuration page, which keeps its button layouts and vibration settings) the
 items **Player 1 PC Controls...** and **Player 2 PC Controls...** were added; in a race, **Pause Menu > Controls** leads
-to the same pages. Each has the player's device (None, Keyboard, Gamepad 1-4, Keyboard + Gamepad 1/2, with the
-connected gamepads' names; defaults: player 1 keyboard + first gamepad, player 2 the second gamepad), **Buttons...** and
-**D-pad and sticks...** pages, and Reset to defaults. To rebind, press left or right on a control, then the new key or
+to the same pages. Each has the player's device (Auto, Keyboard, Gamepad 1-4, Keyboard + Gamepad 1/2, None, with the
+connected gamepads' names; gamepads that are not connected are marked and skipped), **Buttons...** and **D-pad and
+sticks...** pages, and Reset to defaults. **Auto** (the default for both players): player 1 reads the keyboard and every
+connected gamepad player 2 does not use (all of them drive; rumble goes to the one used last), player 2 the next
+gamepad connected after player 1's (kept while it stays connected; with one gamepad, player 2 has none). A chosen
+gamepad that is not connected (at start, or unplugged) counts as Auto until it is back (logged as `[controls]`). In the
+menus (front end and pause menu) the keyboard and every connected gamepad can always navigate, whatever the devices
+are set to (with player 1's bindings, the defaults for any menu control left unbound), so a device setting cannot lock
+you out. Settings files from before Auto (no `controls_version=2` line) keep their devices, except the old defaults
+(player 1 `keyboard+pad1`, player 2 `pad2`, always written whether chosen or not), which become `auto`. To rebind, press left or right on a control, then the new key or
 gamepad button, stick direction or trigger (Escape cancels, Delete clears, after 6 s it gives up; an input another
 control of that player already had moves to that control). Each control shows what it does in the player's chosen
 layout ("Cross - Accelerate"). Gamepads go through SDL3 (its controller database, hot-plugging, rumble for the game's
@@ -53,19 +60,22 @@ which switch off their keyboard-and-mouse "lizard mode"; that needs Steam's udev
 `60-steam-input.rules`), and the game logs it if such a controller is present but its hidraw node is not readable.
 Keyboard defaults for player 1: arrows, F cross, E circle, R square, Space triangle, Q L1, Left Shift R1, Left Ctrl L2,
 Right Shift R2, Enter start, Tab select, WASD left stick; player 2 (when set to the keyboard) IJKL, N, M, B, U, O, P, Y, 7,
-0, 9. Saved in the same settings file (`p1_device=keyboard+pad1`, `p1_key_cross=F`, `p1_pad_cross=a`, ...).
+0, 9. Saved in the same settings file (`p1_device=auto`, `p1_key_cross=F`, `p1_pad_cross=a`, ...).
 `PS2X_GAMEPAD_LOG=1` logs every SDL joystick and gamepad (name, GUID, path, driver, mapping).
 
 For one run, an environment variable overrides the file: `RC_ASPECT=16:9`, `PS2X_GS_HW_SCALE=<n>`,
 `PS2X_FULLSCREEN=1`, `PS2X_REFRESH_HZ=<n>`, `RC_INTERP=0`, `PS2X_VSYNC=off|on|adaptive`, `PS2X_VRR=0|1`,
-`PS2X_PAD1_DEVICE`/`PS2X_PAD2_DEVICE=keyboard|pad1|...|keyboard+pad1`, `PS2X_BIND_<BUTTON>=<key>` (player 1's keyboard),
+`PS2X_PAD1_DEVICE`/`PS2X_PAD2_DEVICE=auto|keyboard|pad1|...|keyboard+pad1|none`, `PS2X_BIND_<BUTTON>=<key>` (player 1's keyboard),
 `PS2X_GAMECONTROLLERDB=<gamecontrollerdb.txt>` (extra SDL mappings).
 `PS2X_PRESENT_LOG=<file>` writes the window's presentation once a second (presents and game fields per second, mean
 and longest gap, swap interval, VRR, monitor rate). `PS2X_PAD_LIVE=<file>` drives a running game from a test: lines
 `<buttons hex> <hold ms> <gap ms> [port]` appended to the file are pressed in order on pad port 0 (or 1, player 2)
 (0x0008 start, 0x4000 cross, 0x1000 triangle, 0x0010/0x0040/0x0080/0x0020 up/down/left/right); with
 `PS2X_SDL_VIRTUAL_PADS=<n>` the game also gets n virtual SDL gamepads, pressed by lines `pad<n> <SDL button or
-+/-axis> <hold ms> <gap ms>` (`pad1 a 100 300`, `pad2 +righttrigger 2000 100`), through the whole gamepad path.
++/-axis> <hold ms> <gap ms>` (`pad1 a 100 300`, `pad2 +righttrigger 2000 100`; `pad3 unplug` and `pad3 plug`
+disconnect and reconnect one), through the whole gamepad path; a line `shot <name>` saves the window's picture as
+`<name>.png` in `PS2X_SCREENSHOT_DIR` (in order with port 0's lines). `RC_MENU_DUMP=2` dumps the menus' texts in all
+four languages.
 `PS2X_RUMBLE_LOG=1` logs the game's motor values and what the virtual gamepads receive. Switches for comparing or bypassing the other enhancements
 (all on by default): `RC_WATER_SHADER=0` (water on the CPU), `PS2X_GS_DIRECT_PRESENT=0` (frames copied through RAM),
 `PS2X_GS_HW_TRACK_MULTITEX=0` and `..._DIRECT=0` (fewer draws), `PS2X_GS_HW_MULTIPASS=0`. `RC_BOOT_LEVEL=<n>` starts

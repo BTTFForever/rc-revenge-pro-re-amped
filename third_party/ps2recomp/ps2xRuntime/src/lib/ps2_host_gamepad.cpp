@@ -45,35 +45,48 @@ namespace ps2_host_gamepad
             return true;
         }
 
+        std::vector<SDL_JoystickID> g_virtualIds;
+
+        // Virtual gamepad i (0-based) attached and opened, in g_virtual[i].
+        bool attachOne(int i)
+        {
+            SDL_VirtualJoystickDesc desc;
+            SDL_INIT_INTERFACE(&desc);
+            desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+            desc.naxes = SDL_GAMEPAD_AXIS_COUNT;
+            desc.nbuttons = SDL_GAMEPAD_BUTTON_DPAD_RIGHT + 1;
+            desc.button_mask = (1u << (SDL_GAMEPAD_BUTTON_DPAD_RIGHT + 1)) - 1u;
+            desc.axis_mask = (1u << SDL_GAMEPAD_AXIS_COUNT) - 1u;
+            desc.name = "RC virtual gamepad";
+            desc.userdata = reinterpret_cast<void *>(static_cast<intptr_t>(i + 1));
+            desc.Rumble = virtualRumble;
+            const SDL_JoystickID id = SDL_AttachVirtualJoystick(&desc);
+            SDL_Joystick *joy = id ? SDL_OpenJoystick(id) : nullptr;
+            if (!joy)
+            {
+                std::fprintf(stderr, "[gamepad] virtual gamepad %d: %s\n", i + 1, SDL_GetError());
+                return false;
+            }
+            // Triggers rest at the axis minimum.
+            SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, -32768);
+            SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, -32768);
+            if (static_cast<int>(g_virtual.size()) <= i)
+            {
+                g_virtual.resize(static_cast<size_t>(i) + 1u, nullptr);
+                g_virtualIds.resize(static_cast<size_t>(i) + 1u, 0);
+            }
+            g_virtual[static_cast<size_t>(i)] = joy;
+            g_virtualIds[static_cast<size_t>(i)] = id;
+            std::fprintf(stderr, "[gamepad] virtual gamepad %d attached (test aid)\n", i + 1);
+            return true;
+        }
+
         void attachVirtual()
         {
             const char *v = std::getenv("PS2X_SDL_VIRTUAL_PADS");
             const int n = v ? std::atoi(v) : 0;
             for (int i = 0; i < n && i < kSlots; ++i)
-            {
-                SDL_VirtualJoystickDesc desc;
-                SDL_INIT_INTERFACE(&desc);
-                desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
-                desc.naxes = SDL_GAMEPAD_AXIS_COUNT;
-                desc.nbuttons = SDL_GAMEPAD_BUTTON_DPAD_RIGHT + 1;
-                desc.button_mask = (1u << (SDL_GAMEPAD_BUTTON_DPAD_RIGHT + 1)) - 1u;
-                desc.axis_mask = (1u << SDL_GAMEPAD_AXIS_COUNT) - 1u;
-                desc.name = "RC virtual gamepad";
-                desc.userdata = reinterpret_cast<void *>(static_cast<intptr_t>(i + 1));
-                desc.Rumble = virtualRumble;
-                const SDL_JoystickID id = SDL_AttachVirtualJoystick(&desc);
-                SDL_Joystick *joy = id ? SDL_OpenJoystick(id) : nullptr;
-                if (!joy)
-                {
-                    std::fprintf(stderr, "[gamepad] virtual gamepad %d: %s\n", i + 1, SDL_GetError());
-                    continue;
-                }
-                // Triggers rest at the axis minimum.
-                SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_LEFT_TRIGGER, -32768);
-                SDL_SetJoystickVirtualAxis(joy, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, -32768);
-                g_virtual.push_back(joy);
-                std::fprintf(stderr, "[gamepad] virtual gamepad %d attached (test aid)\n", i + 1);
-            }
+                attachOne(i);
         }
 
         bool logging()
@@ -382,7 +395,25 @@ namespace ps2_host_gamepad
     {
         if (index < 0 || index >= static_cast<int>(g_virtual.size()) || !control)
             return false;
+        // "unplug" and "plug" (on the press): the virtual gamepad disconnected and connected again.
+        if (std::strcmp(control, "unplug") == 0 || std::strcmp(control, "plug") == 0)
+        {
+            if (!down)
+                return true;
+            SDL_Joystick *&joy = g_virtual[static_cast<size_t>(index)];
+            if (control[0] == 'u' && joy)
+            {
+                SDL_CloseJoystick(joy);
+                SDL_DetachVirtualJoystick(g_virtualIds[static_cast<size_t>(index)]);
+                joy = nullptr;
+                std::fprintf(stderr, "[gamepad] virtual gamepad %d detached (test aid)\n", index + 1);
+                return true;
+            }
+            return control[0] == 'p' && !joy ? attachOne(index) : true;
+        }
         SDL_Joystick *joy = g_virtual[static_cast<size_t>(index)];
+        if (!joy)
+            return false;
         if (control[0] == '+' || control[0] == '-')
         {
             const int a = axisFromKey(control + 1);

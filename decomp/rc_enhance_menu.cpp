@@ -14,7 +14,7 @@
 // contents are copied again from the current menus at every install, since the level data they point into (colour
 // and border sets) is reloaded with each level.
 //
-// A player's page: the device (keyboard, a gamepad or both), Buttons... and D-pad and sticks... (twelve controls each:
+// A player's page: the device (Auto, keyboard, a gamepad or both), Buttons... and D-pad and sticks... (twelve controls each:
 // a page shows about twelve rows, and the menu code's scrolling is not usable for these pages), Reset to defaults.
 // Each control shows what it does in the player's controller layout (the game's own setting) and its key and gamepad
 // input; left or right on it waits for the new key or button (Escape cancels, Delete clears, 6 s gives up; an input
@@ -43,7 +43,7 @@ namespace B = ps2_input_bindings;
 
 constexpr uint32_t kHeaderBytes = 0x80, kItemBytes = 0x18, kVarBytes = 0x1c;
 constexpr uint32_t kDebugMenusTag = 0x10000208u;
-constexpr uint32_t kTextBytes = 96, kDeviceChoicesBytes = 512;
+constexpr uint32_t kTextBytes = 96, kDeviceChoicesBytes = 768;
 
 // ---- Enhancements ----
 struct Choice
@@ -218,38 +218,56 @@ std::string action(int player, int control)
     }
 }
 
-std::string bindingText(const B::Player &p, int control)
+// What a player's controls are read from: the keyboard (player 1 on Auto, or a device with it) and a gamepad (Auto or a
+// device with one).
+bool usesKeyboard(int player, const B::Player &p) { return B::deviceHasKeyboard(p.device) || (p.device == B::DeviceAuto && player == 0) || B::active(player).keyboard; }
+bool usesPad(const B::Player &p) { return p.device == B::DeviceAuto || B::deviceGamepad(p.device) >= 0; }
+
+std::string bindingText(int player, const B::Player &p, int control)
 {
-    const bool keyboard = B::deviceHasKeyboard(p.device), pad = B::deviceGamepad(p.device) >= 0;
     std::string out;
-    if (keyboard)
+    if (usesKeyboard(player, p))
         out = B::sourceName(p.key[control]);
-    if (pad)
+    if (usesPad(p))
         out += (out.empty() ? "" : " / ") + B::sourceName(p.pad[control]);
     return out.empty() ? "-" : out;
 }
 
-std::string deviceChoices()
+std::string shortName(std::string name, size_t max = 24)
 {
+    if (name.size() > max)
+        name.resize(max);
+    return name;
+}
+
+// The device choices: Auto with what it reads now, each gamepad with its name or "not connected" (those are skipped
+// when changing the device; one chosen earlier shows that Auto stands in for it).
+std::string deviceChoices(int player, const B::Player &p)
+{
+    const B::Active a = B::active(player);
     std::string out;
     for (int d = 0; d < B::DeviceCount; ++d)
     {
         if (d)
             out += '*';
         out += B::deviceName(d);
+        if (d == B::DeviceAuto)
+            out += " (" + shortName(B::activeName(player), 40) + ")";
         const int slot = B::deviceGamepad(d);
         if (slot >= 0)
         {
-            std::string name = B::gamepadName(slot);
-            if (name.empty())
-                name = "not connected";
-            if (name.size() > 24)
-                name.resize(24);
-            out += " (" + name + ")";
+            if (B::gamepadPresent(slot))
+                out += " (" + shortName(B::gamepadName(slot)) + ")";
+            else if (d == p.device && a.fallback)
+                out += " (not connected: Auto)";
+            else
+                out += " (not connected)";
         }
     }
     return out;
 }
+
+bool deviceAvailable(int d) { const int slot = B::deviceGamepad(d); return d >= 0 && d < B::DeviceCount && (slot < 0 || B::gamepadPresent(slot)); }
 
 // The player pages' texts from the bindings (and the capture in progress).
 void refreshControlTexts()
@@ -264,7 +282,7 @@ void refreshControlTexts()
             const B::Player &p = players[item.player];
             if (item.role == RoleDevice)
             {
-                setText(item.choices, deviceChoices(), kDeviceChoicesBytes);
+                setText(item.choices, deviceChoices(item.player, p), kDeviceChoicesBytes);
                 if (feedback(d, static_cast<int>(i)) != p.device)
                     feedback(d, static_cast<int>(i)) = d.last[i] = p.device;
             }
@@ -274,7 +292,7 @@ void refreshControlTexts()
                 const std::string act = action(item.player, c);
                 setText(item.text, std::string(B::controlName(c)) + (act.empty() ? "" : " - " + act) + ": %s", kTextBytes);
                 const std::string value =
-                    g.capturePlayer == item.player && g.captureControl == c ? "press a key or button (Esc cancels, Del clears)" : bindingText(p, c);
+                    g.capturePlayer == item.player && g.captureControl == c ? "press a key or button (Esc cancels, Del clears)" : bindingText(item.player, p, c);
                 setText(item.choices, value + "*" + value, kTextBytes * 2u);
             }
         }
@@ -461,8 +479,9 @@ ptr32<sAMenuHeader> controllerConfigPage(ptr32<sAMenuHeader> options)
 void startCapture(int player, int control)
 {
     const B::Player p = B::player(player);
-    const bool keyboard = B::deviceHasKeyboard(p.device);
-    const int pad = B::deviceGamepad(p.device);
+    const B::Active a = B::active(player);
+    const bool keyboard = usesKeyboard(player, p);
+    const int pad = a.activePad; // the gamepad it reads (on Auto, the one used last)
     if (!keyboard && pad < 0)
         return;
     g.capturePlayer = player;
@@ -496,10 +515,10 @@ void finishCapture()
     else if (result == B::CaptureClear)
     {
         // Delete is pressed on the keyboard: it clears the key, or for a gamepad-only player the gamepad input.
-        (B::deviceHasKeyboard(p.device) ? p.key : p.pad)[control] = 0;
+        (usesKeyboard(player, p) ? p.key : p.pad)[control] = 0;
     }
     std::fprintf(stderr, "[controls] player %d %s: %s\n", player + 1, B::controlName(control),
-                 result == B::CaptureCancelled ? "cancelled" : result == B::CaptureTimedOut ? "timed out" : bindingText(p, control).c_str());
+                 result == B::CaptureCancelled ? "cancelled" : result == B::CaptureTimedOut ? "timed out" : bindingText(player, p, control).c_str());
     if (result == B::CaptureKey || result == B::CapturePad || result == B::CaptureClear)
     {
         B::setPlayer(player, p);
@@ -525,12 +544,20 @@ void pollControls()
             if (item.role == RoleDevice)
             {
                 B::Player p = B::player(player);
-                if (v >= 0 && v < B::DeviceCount)
+                // A gamepad that is not connected is skipped (on in the same direction; back to the old choice at the end).
+                int dev = v;
+                const int step = v > p.device ? 1 : -1;
+                while (dev >= 0 && dev < B::DeviceCount && !deviceAvailable(dev))
+                    dev += step;
+                if (dev < 0 || dev >= B::DeviceCount)
+                    dev = p.device;
+                feedback(d, i) = d.last[static_cast<size_t>(i)] = dev;
+                if (dev != p.device)
                 {
-                    p.device = v;
+                    p.device = dev;
                     B::setPlayer(player, p);
                     settings::saveControls();
-                    std::fprintf(stderr, "[controls] player %d device: %s\n", player + 1, B::deviceName(v));
+                    std::fprintf(stderr, "[controls] player %d device: %s\n", player + 1, B::deviceName(dev));
                 }
             }
             else if (item.role == RoleReset)
@@ -659,6 +686,7 @@ void install(ptr32<sUIgroup> pUIGroup)
 // it can be, and saved), or starts a rebind.
 void poll()
 {
+    B::menuFrame(); // menus: the keyboard and every gamepad can drive them, whatever the device settings
     if (!g.made)
         return;
     if (std::getenv("RC_ENHANCE_DEBUG"))

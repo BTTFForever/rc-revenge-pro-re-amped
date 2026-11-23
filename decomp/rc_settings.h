@@ -4,7 +4,8 @@
 // File: $XDG_CONFIG_HOME/rc-revenge-pro/settings.ini (else ~/.config/...), lines of key=value:
 //   aspect=4:3|16:9|16:10|21:9   hud=corrected|stretched   fullscreen=0|1   scale=1..6
 //   race_fps=60|90|120|144|165|240   smooth_motion=0|1   vsync=off|on|adaptive   vrr=0|1
-//   p1_device=keyboard+pad1, p1_key_cross=F, p1_pad_cross=a, ... (players 1 and 2; runtime/ps2_input_bindings.h)
+//   p1_device=auto|keyboard|pad1..pad4|keyboard+pad1|keyboard+pad2|none, p1_key_cross=F, p1_pad_cross=a, ... (players 1
+//   and 2; runtime/ps2_input_bindings.h), controls_version=2 (older files: the old default devices become auto)
 // An environment variable, where one exists, wins over the file for that run (RC_ASPECT / RC_WIDESCREEN,
 // RC_HUD_ANCHOR, PS2X_FULLSCREEN, PS2X_GS_HW_SCALE, PS2X_REFRESH_HZ, RC_INTERP, PS2X_VSYNC, PS2X_VRR,
 // PS2X_PAD1_DEVICE, PS2X_PAD2_DEVICE, PS2X_BIND_<button>), so test scripts keep working.

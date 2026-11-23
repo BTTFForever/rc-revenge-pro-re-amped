@@ -21,10 +21,12 @@ namespace ps2_input_bindings
     const char *controlName(int control);   // "Cross", "Left stick left"
     const char *controlKey(int control);    // settings key: "cross", "lstick_left"
 
-    // What a player reads: none, the keyboard, gamepad N (in connection order), or both.
+    // What a player reads. Auto (the default): player 1 the keyboard and every connected gamepad player 2 does not
+    // use, player 2 the next connected gamepad (the first gamepad connected after player 1's, kept while it stays
+    // connected). A chosen gamepad that is not connected counts as Auto until it is (logged).
     enum Device : int
     {
-        DeviceNone, DeviceKeyboard, DevicePad1, DevicePad2, DevicePad3, DevicePad4, DeviceKeyboardPad1, DeviceKeyboardPad2,
+        DeviceAuto, DeviceKeyboard, DevicePad1, DevicePad2, DevicePad3, DevicePad4, DeviceKeyboardPad1, DeviceKeyboardPad2, DeviceNone,
         DeviceCount
     };
     const char *deviceName(int device);     // "Keyboard + Gamepad 1"
@@ -44,17 +46,35 @@ namespace ps2_input_bindings
 
     struct Player
     {
-        int device = DeviceNone;
+        int device = DeviceAuto;
         int key[ControlCount]{}; // keyboard (or mouse) source per control
         int pad[ControlCount]{}; // gamepad source per control
     };
-    Player defaults(int player); // player 0: keyboard + gamepad 1, player 1: gamepad 2
+    Player defaults(int player); // both Auto
     Player player(int player);
     void setPlayer(int player, const Player &p);
 
     // Gamepads: how many slots are filled and each one's name (empty if none).
     int gamepadCount();
     std::string gamepadName(int slot);
+    bool gamepadPresent(int slot);
+
+    // What a player reads now: its device resolved against the connected gamepads (Auto, or a chosen gamepad that is
+    // not connected: fallback). activePad: the gamepad of the set last used (its rumble goes there), else the first.
+    struct Active
+    {
+        bool keyboard = false;
+        unsigned pads = 0; // a bit per gamepad slot
+        int activePad = -1;
+        bool fallback = false;
+    };
+    Active active(int player);
+    std::string activeName(int player); // "Keyboard + Steam Controller", "nothing"
+
+    // The game is in a menu (called each menu frame; lapses a moment after the calls stop): the keyboard and every
+    // connected gamepad no player reads also drive player 1's port, with player 1's bindings (the defaults for any
+    // menu control left unbound), so a device setting can never lock the menus.
+    void menuFrame();
 
     // Rebinding: the next newly pressed key (when keyboard is true) or button/axis of gamepad slot pad (-1: none).
     // Escape cancels, Delete or Backspace clears; after timeoutMs it gives up. While a capture runs the game sees
