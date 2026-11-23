@@ -18,8 +18,10 @@ layout(std140, binding = 1) uniform TrackDraw
     vec4 gsToClip;     // Set by the backend: target offset x, y, sampling offset, and 1 if depth is inverted.
     float gsDepthRange;
     int shapeMode;     // 0: track, colours are integers. 1: EnvRdr, colours are floats. 2: EnvRdr with its environment map on. 3: skin.
-    vec4 envRows[3];   // VU memory 7..9. Skin: [0] is VU memory 12, subtracted from each blended position.
-    vec4 envSettings;  // VU memory 10: w is the reflection strength.
+                       // 4, 5, 6: water's three passes (Rdr_VUWaterProg, water_shape.cpp).
+    vec4 envRows[3];   // VU memory 7..9. Skin: [0] is VU memory 12, subtracted from each blended position. Water: [0] the ripple
+                       // centre (VU memory 11), [1] the ripple amounts (VU memory 9).
+    vec4 envSettings;  // VU memory 10: w is the reflection strength. Water: the colour of passes 2 and 3 (integers).
     vec4 envBlock;     // The first quadword of this batch's texture block: w scales the reflection strength. Skin: x is the first triangle's quadword address, and the buffer is all of VU memory.
 };
 
@@ -61,16 +63,21 @@ TrdrVertex trdrVertex(int index)
     if (shapeMode == 3)
         position = skinnedPosition(base + 10, corner, position);
     const vec4 stored = quad[base + 7 + corner];
-    ivec4 rawColour = (shapeMode == 0 || shapeMode == 3) ? floatBitsToInt(stored) : ivec4(trunc(stored));
+    const bool water = shapeMode >= 4;
+    ivec4 rawColour = (shapeMode == 0 || shapeMode == 3 || shapeMode == 4) ? floatBitsToInt(stored)
+                      : water ? floatBitsToInt(envSettings) : ivec4(trunc(stored));
 
     TrdrVertex o;
     // The facing test uses the triangle's first corner, before it is transformed.
     const float facing = dot(quad[base + 1].xyz - lightPos.xyz, normal.xyz);
     const int winding = (floatBitsToInt(normal.w) << 16) >> 16;
-    o.keep = shapeMode == 3 || winding != (facing < 0.0 ? 128 : 0) ? 1.0 : 0.0; // Skinned triangles have no facing test.
+    if (water)
+        o.keep = facing < 0.0 ? 1.0 : 0.0; // No winding flag: drawn only when it faces the viewer.
+    else
+        o.keep = shapeMode == 3 || winding != (facing < 0.0 ? 128 : 0) ? 1.0 : 0.0; // Skinned triangles have no facing test.
 
     vec4 view = matrix[0] * position.x + matrix[1] * position.y + matrix[2] * position.z + matrix[3] * position.w;
-    if (shapeMode != 3)
+    if (shapeMode != 3 && !water)
         view.z += quad[base + 4].w; // A depth bias stored in the first corner's texture coordinate w.
     o.viewZ = view.z;
 
@@ -90,6 +97,14 @@ TrdrVertex trdrVertex(int index)
         const float reflectedLength = length(reflected);
         o.st = vec3(reflected.xy * (reflectedLength != 0.0 ? 1.0 / reflectedLength : 0.0) * 0.5 + 0.5, 1.0);
         rawColour = ivec4(ivec3(vec3(min(127.0 * envSettings.w * envBlock.w, 127.0))), 128);
+    }
+    if (shapeMode == 6)
+    {
+        // Water's third pass: the texture coordinates pushed out from a point on the surface, by an amount that doesn't
+        // depend on the distance (the corner's stored position, in x and z).
+        const vec2 away = vec2(envRows[0].x - position.x, envRows[0].z - position.z);
+        const float awayLength = length(away);
+        o.st.xy += away * (awayLength != 0.0 ? 1.0 / awayLength : 0.0) * envRows[1].xy;
     }
     o.stq = o.st * q;
     o.colour = vec4(trunc(vec3(rawColour.rgb) * tint.w + tint.rgb), float(rawColour.a));

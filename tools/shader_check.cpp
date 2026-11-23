@@ -2,7 +2,8 @@
 //
 // Every triangle runs through decomp/shaders/trdr_shape.vert on the GPU and, on its own, through runTrdrShape.
 // Build: g++ -std=c++20 -O2 -I decomp/vu1 tools/shader_check.cpp decomp/vu1/trdr_shape.cpp decomp/vu1/env_shape.cpp decomp/vu1/vu_shape.cpp decomp/vu1/skin_shape.cpp decomp/vu1/water_shape.cpp -lEGL -lOpenGL
-// Usage: shader_check [--env|--skin] <shader> <capture>...   (captures of EnvRdr_VUShapeProg or Rdr_VUSkinProg)
+// Usage: shader_check [--env|--skin|--water] <shader> <capture>...   (captures of EnvRdr_VUShapeProg, Rdr_VUSkinProg or
+// Rdr_VUWaterProg; --water compares each triangle's three passes, shapeMode 4 to 6)
 #define GL_GLEXT_PROTOTYPES
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -61,7 +62,13 @@ GLuint compileShader(const std::string &source)
 int main(int argc, char **argv)
 {
     _mm_setcsr(_mm_getcsr() | 0x6000u); // The VU rounds toward zero.
-    bool envProgram = false, skinProgram = false;
+    bool envProgram = false, skinProgram = false, waterProgram = false;
+    if (argc > 1 && std::strcmp(argv[1], "--water") == 0)
+    {
+        waterProgram = true;
+        --argc;
+        ++argv;
+    }
     if (argc > 1 && std::strcmp(argv[1], "--skin") == 0)
     {
         skinProgram = true;
@@ -160,6 +167,19 @@ int main(int argc, char **argv)
                 std::memcpy(draw + 41, &mode, 4);
                 std::memcpy(draw + 44, quad(12), 16);
             }
+            if (waterProgram) // as track_draw.cpp's sendWaterTriangles
+            {
+                std::memcpy(draw, quad(29), 64);
+                std::memcpy(draw + 16, quad(27), 16);
+                std::memcpy(draw + 20, quad(28), 16);
+                std::memcpy(draw + 24, quad(26), 16);
+                std::memcpy(draw + 28, quad(23), 16);
+                std::memset(draw + 32, 0, 16);
+                draw[35] = 1.0f;
+                std::memcpy(draw + 44, quad(11), 16);
+                std::memcpy(draw + 48, quad(9), 16);
+                std::memcpy(draw + 56, quad(10), 16);
+            }
             draw[36] = 2048.0f, draw[37] = 2048.0f, draw[38] = 320.0f, draw[39] = 240.0f;
             draw[40] = 16777216.0f;
             if (envProgram)
@@ -211,6 +231,13 @@ int main(int argc, char **argv)
                     ++last;
                 const std::vector<Item> items(allItems.begin() + first, allItems.begin() + last);
                 first = last;
+                for (int pass = 0; pass < (waterProgram ? 3 : 1); ++pass)
+                {
+                if (waterProgram)
+                {
+                    const int32_t mode = 4 + pass;
+                    std::memcpy(draw + 41, &mode, 4);
+                }
                 std::memcpy(draw + 60, quad(items[0].headerAt), 16);
                 if (skinProgram)
                     draw[60] = static_cast<float>(items[0].at);
@@ -259,14 +286,34 @@ int main(int argc, char **argv)
                         std::memcpy(single.data() + at * 16 + 8, &one, 2);
                         std::memcpy(single.data() + (at + 4) * 16, memory + items[i].at * 16, 160);
                         std::memset(single.data() + (at + 14) * 16, 0, 16);
-                        (envProgram ? rc::vu1::runEnvShape : rc::vu1::runTrdrShape)(single.data(), registers, 0u, top, kicks);
+                        if (waterProgram)
+                            rc::vu1::runWaterShape(single.data(), registers, 0u, top, kicks, nullptr);
+                        else
+                            (envProgram ? rc::vu1::runEnvShape : rc::vu1::runTrdrShape)(single.data(), registers, 0u, top, kicks);
                     }
 
                     const Output *out = &outputs[i * 3u];
-                    const float nearZ = quad(skinProgram ? 10 : 12)[2];
+                    const float nearZ = quad(skinProgram ? 10 : waterProgram ? 23 : 12)[2];
                     const bool behind = out[0].viewZ < nearZ || out[1].viewZ < nearZ || out[2].viewZ < nearZ;
-                    const int packetsBefore = envProgram || skinProgram ? 1 : 2; // The texture block, and the track program's header.
-                    const int drawn = static_cast<int>(kicks.size()) - packetsBefore;
+                    int packetsBefore = envProgram || skinProgram ? 1 : 2; // The texture block, and the track program's header.
+                    int drawn = static_cast<int>(kicks.size()) - packetsBefore;
+                    if (waterProgram)
+                    {
+                        // One unclipped triangle sends three 160-byte triangle packets (passes 1 to 3) among its state packets
+                        // (20, 0, 0, 17, 14, 0, 20 and a 16-byte flush when the packet buffer wraps); none if it faces away.
+                        std::vector<int> triangleAt;
+                        bool other = false;
+                        for (size_t k = 0; k < kicks.size(); ++k)
+                        {
+                            const size_t bytes = kicks[k].size();
+                            if (bytes == 160u)
+                                triangleAt.push_back(static_cast<int>(k));
+                            else if (bytes != 48u && bytes != 144u && bytes != 16u)
+                                other = true;
+                        }
+                        drawn = triangleAt.empty() && !other ? 0 : triangleAt.size() == 3u && !other ? 1 : 2;
+                        packetsBefore = drawn == 1 ? triangleAt[pass] : 0;
+                    }
 
                     if (out[0].keep == 0.0f)
                     {
@@ -287,7 +334,7 @@ int main(int argc, char **argv)
                         continue;
                     }
                     // A triangle past the guard band goes through the original's clipper even if one piece comes out.
-                    const float *const screen = quad(skinProgram ? 15 : 16);
+                    const float *const screen = quad(skinProgram ? 15 : waterProgram ? 27 : 16);
                     const float guard = screen[3];
                     bool crosses = false;
                     for (int corner = 0; corner < 3; ++corner)
@@ -325,6 +372,7 @@ int main(int argc, char **argv)
                         stats.overColour += colourError > 1.0;
                     }
                 }
+                } // passes
             }
         }
     }

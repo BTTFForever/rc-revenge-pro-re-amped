@@ -418,6 +418,34 @@ the car juddered "like the physics were glitching"):
   blended before the first `SetFrameWindow` (`RcInterpBeginCamera`); `RC_INTERP_LOG=2` shows `rdrCameraG.pos` equal to
   the blended camera every frame.
 
+## As built (2026-11-23): the water on the GPU
+
+**Where the VU thread's time went** (level 9, 4x, 144 Hz, `perf` with call graphs on the VU thread): not emulated VU1
+microcode (the track, EnvRdr and skin programs were already the vertex shader) but the water: its C++ program
+(`ShapeProgram::setupTriangle`, `mulBy`, ...) and copying each pass of each triangle out as a GIF packet
+(`copyGifPacket` from `ShapeProgram::kick`, malloc/free), which the GIF and GS threads then parsed again.
+
+**The change** (`decomp/vu1/track_draw.cpp`, `decomp/shaders/trdr_shape.vert`): `runImage<kShaderWater>` replays the
+water program's GS state packets (VU memory 20, 0, 17, 14) in the order it sends them and, for each texture block,
+sends three batches (all its triangles' first passes, then the second, then the third) that the track shader draws in
+`shapeMode` 4, 5, 6: the water's constants (eleven quadwords further along), no tint, no depth bias, facing without a
+winding flag, passes 2 and 3 in VU memory 10's colour, pass 3's texture coordinates pushed out from VU memory 11 by
+VU memory 9. Pass-major order within a block is the reordering the multipass grouping already made. `RC_WATER_SHADER=0`
+runs the C++ program as before.
+
+**Checked** with `tools/shader_check --water` (new: each triangle's three passes against `runWaterShape`, triangle
+packets found by size among the state packets and the 16-byte wrap flush) on 1,500 captured runs from level 9
+(`RC_TRACK_SHADER=0 RC_VU1_REF=1 RC_VU1_CAPTURE=... RC_VU1_CAPTURE_HASH=E96770E4143D2DA7`): 60,033 triangle passes
+compared, worst x,y 1.0/16 pixel, z 2 GS units, colour exact, texture coordinates 1.7e-5 relative (6 corners over
+1e-5), no facing disagreements; 64,494 cut by the near plane and 393 crossing the guard band left to the GPU's clipper.
+
+| level 9, 4x, 144 Hz | new pictures a second | VU thread | GS thread | GIF thread |
+|---|---|---|---|---|
+| water C++ (`RC_WATER_SHADER=0`) | 105 | 0.79 | 0.58 | 0.30 |
+| water on the GPU | 131 | 0.54 | 0.94 | 0.16 |
+
+The GS thread is now the limit there.
+
 ## The two renderer routes
 
 **(a) Keep the emulated GS's GL renderer and speed it up PCSX2-style.**

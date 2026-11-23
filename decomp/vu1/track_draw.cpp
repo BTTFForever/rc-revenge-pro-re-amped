@@ -121,6 +121,48 @@ void sendTriangles(PS2Memory *memory, const uint8_t *vu, int first, int triangle
     }
 }
 
+// Water (Rdr_VUWaterProg, water_shape.cpp) on the GPU: one texture block's triangles for one of its three passes, as a
+// batch the vertex shader draws in shapeMode 4 + pass. The water program's constants are eleven quadwords further along
+// than the track's (ShapeLayout::constantsOffset), it has no tint and no depth bias, and its per-triangle GIF tag is at
+// quadword 33. Pass 2 and 3 colour every corner with VU memory 10; pass 3 pushes the texture coordinates out from the
+// point in VU memory 11 by the amounts in VU memory 9 (the shader's envRows[0], envRows[1], envSettings).
+void sendWaterTriangles(PS2Memory *memory, const uint8_t *vu, int first, int triangles, int pass)
+{
+    constexpr int kOffset = 11;
+    auto *batch = static_cast<GSTrackBatch *>(std::malloc(offsetof(GSTrackBatch, quads) + static_cast<size_t>(triangles) * 160u));
+    batch->triangles = static_cast<uint32_t>(triangles);
+    batch->quadBytes = 0u;
+    std::memset(batch->draw, 0, sizeof(batch->draw));
+    std::memcpy(batch->draw, vu + (18 + kOffset) * 16, 64);      // the transform
+    std::memcpy(batch->draw + 16, vu + (16 + kOffset) * 16, 16); // screen offset
+    std::memcpy(batch->draw + 20, vu + (17 + kOffset) * 16, 16); // screen scale
+    std::memcpy(batch->draw + 24, vu + (15 + kOffset) * 16, 16); // the facing test's point
+    std::memcpy(batch->draw + 28, vu + (12 + kOffset) * 16, 16); // clip range (z: near plane)
+    batch->draw[35] = 1.0f;                                       // no tint
+    const int32_t shapeMode = 4 + pass;
+    std::memcpy(batch->draw + 41, &shapeMode, 4);
+    std::memcpy(batch->draw + 44, vu + 11 * 16, 16); // ripple centre
+    std::memcpy(batch->draw + 48, vu + 9 * 16, 16);  // ripple amounts
+    std::memcpy(batch->draw + 56, vu + 10 * 16, 16); // pass 2 and 3 colour
+    for (int i = 0; i < triangles * 10; ++i)
+        std::memcpy(batch->quads + i * 4, vu + ((first + i) & 0x3FF) * 16, 16);
+    uint64_t triangleTag;
+    std::memcpy(&triangleTag, vu + 33 * 16, 8);
+    const bool setPrim = ((triangleTag >> 46) & 1u) != 0u;
+    const uint64_t prim = (triangleTag >> 47) & 0x7FFu;
+    const uint64_t pointer = reinterpret_cast<uint64_t>(batch);
+    if (setPrim)
+    {
+        const uint64_t packet[6] = {2u | (1ull << 15) | (1ull << 60), 0xEu, prim, 0x00u, pointer, kGSTrackBatchRegister};
+        sendPacket(memory, reinterpret_cast<const uint8_t *>(packet), sizeof(packet));
+    }
+    else
+    {
+        const uint64_t packet[4] = {1u | (1ull << 15) | (1ull << 60), 0xEu, pointer, kGSTrackBatchRegister};
+        sendPacket(memory, reinterpret_cast<const uint8_t *>(packet), sizeof(packet));
+    }
+}
+
 } // namespace
 
 template <>
@@ -218,6 +260,49 @@ VU1InterpreterAccess::StepResult VU1InterpreterAccess::runImage<kNativeWater>(VU
     return StepResult::Ended;
 }
 
+// The water on the GPU (RC_WATER_SHADER, on with the track shader; RC_WATER_SHADER=0 runs the C++ program above). The
+// original draws each triangle's three passes before the next; here each texture block draws all its triangles' first
+// passes, then the second, then the third, with the same GS state packets between, in the order the original sends
+// them. That changes the result only where two triangles of a block overlap on screen (0.05% of the water's pixels on
+// level 9, PERF_INVESTIGATION.md), as the GS backend's multipass grouping already did.
+constexpr uint64_t kShaderWater = 0x5243574154455231ull; // Not a real image hash: only a template argument.
+
+template <>
+VU1InterpreterAccess::StepResult VU1InterpreterAccess::runImage<kShaderWater>(VU1Interpreter &vu, const Vu1RunArgs &args)
+{
+    if (vu.m_state.pc != 0u || args.memory == nullptr)
+        return runImage<kOriginalWater>(vu, args);
+
+    uint8_t *const memory = args.vuData;
+    kickPacket(args.memory, memory, 20);
+    int reader = static_cast<int>(vu.m_state.top & 0x3FFu);
+    int16_t count = loadCount(memory, reader);
+    while (count > 0)
+    {
+        // The block's texture state goes out through the packet at quadword 0 (quadwords 5 to 8); 13 keeps a copy.
+        std::memcpy(memory + 5 * 16, memory + reader * 16, 64);
+        std::memcpy(memory + 13 * 16, memory + reader * 16, 16);
+        reader += 4;
+        kickPacket(args.memory, memory, 0);
+        sendWaterTriangles(args.memory, memory, reader, count, 0);
+        // Second pass: VU memory 12's texture state, then the packet at 17.
+        std::memcpy(memory + 5 * 16, memory + 12 * 16, 16);
+        kickPacket(args.memory, memory, 0);
+        kickPacket(args.memory, memory, 17);
+        sendWaterTriangles(args.memory, memory, reader, count, 1);
+        // Third pass: the packet at 14.
+        kickPacket(args.memory, memory, 14);
+        sendWaterTriangles(args.memory, memory, reader, count, 2);
+        // Back to the block's own state for the next block's first pass.
+        std::memcpy(memory + 5 * 16, memory + 13 * 16, 16);
+        kickPacket(args.memory, memory, 0);
+        kickPacket(args.memory, memory, 20);
+        reader += count * 10;
+        count = loadCount(memory, reader);
+    }
+    return StepResult::Ended;
+}
+
 template <>
 VU1InterpreterAccess::StepResult VU1InterpreterAccess::runImage<kOriginalSkin>(VU1Interpreter &, const Vu1RunArgs &);
 
@@ -272,7 +357,11 @@ void installTrackDraw()
     registerVu1CompiledProgram(kOriginalTrack, &VU1InterpreterAccess::runImage<kShaderTrack>);
     registerVu1CompiledProgram(kOriginalEnv, &VU1InterpreterAccess::runImage<kShaderEnv>);
     registerVu1CompiledProgram(kOriginalSkin, &VU1InterpreterAccess::runImage<kShaderSkin>);
-    registerVu1CompiledProgram(kOriginalWater, &VU1InterpreterAccess::runImage<kNativeWater>);
+    const char *water = std::getenv("RC_WATER_SHADER");
+    if (water && water[0] == '0')
+        registerVu1CompiledProgram(kOriginalWater, &VU1InterpreterAccess::runImage<kNativeWater>);
+    else
+        registerVu1CompiledProgram(kOriginalWater, &VU1InterpreterAccess::runImage<kShaderWater>);
     std::fprintf(stderr, "[decomp] drawing track geometry with the vertex shader\n");
 }
 
