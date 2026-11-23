@@ -17,6 +17,7 @@ namespace rc {
 
 void RcInterpBeginDraw(int32_t time); // gametask.cpp
 void RcInterpEndDraw();
+void RcInterpBeginCamera(int32_t time);
 void RcRefreshRace(bool racing);
 
 
@@ -495,6 +496,7 @@ void MainGameProcess()
         guest_call(kVertAnimFrameUpdate, time);
         gameTime() = time;
         guest_call(kTaskProcess, time);
+        RcInterpBeginCamera(static_cast<int32_t>(time)); // enhancement: the frame's cameras between physics steps
         SetFrameWindow(0, static_cast<tTime>(gameTime()));
         call(kTBoxProcess);
         call(kRdrParticleProcess);

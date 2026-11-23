@@ -412,6 +412,11 @@ the car juddered "like the physics were glitching"):
   restored after drawing and the draw's two writers are re-run on the real state (the ground/shadow pass and the wheel
   placement, noted when they run during a blended draw). `RC_INTERP_LOG=3` lists the block bytes a draw writes: on
   level 4 at 144 Hz exactly the four wheels' `pos`, `localPos`, ground material and shadow height.
+- Still juddering for the user: the world is drawn with the render camera (`rdrCameraG`) that `LsFrameInit` builds
+  from the frame's first `SetFrameWindow`, straight after `TaskProcess` and before the blend, while the cars used the
+  blended view from the second one. So the track moved in 50 Hz steps under smoothly moving cars. The cameras are now
+  blended before the first `SetFrameWindow` (`RcInterpBeginCamera`); `RC_INTERP_LOG=2` shows `rdrCameraG.pos` equal to
+  the blended camera every frame.
 
 ## The two renderer routes
 

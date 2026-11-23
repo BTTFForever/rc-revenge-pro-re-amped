@@ -208,7 +208,8 @@ std::vector<uint32_t> wheelRedo;
 uint8_t blendedSnap[kMaxObjects][kPhysBytes]; // RC_INTERP_LOG=3: what the draw itself writes to the block
 uint32_t carCount = 0;
 int32_t stepTime = 0;
-bool stepped = false, applied = false;
+bool stepped = false, applied = false, camApplied = false;
+float maxCamStep = 0.0f;
 
 bool enabled()
 {
@@ -370,6 +371,9 @@ void logDrawn(int32_t time, float t)
     const uint32_t target = at<uint32_t>(kCameras + 0xacu);
     const uint32_t phys = target ? at<uint32_t>(target + 0x20u) : 0u;
     const uint32_t state = phys ? at<uint32_t>(phys + 0x1e8u) : 0u;
+    const uint32_t rdr = sym::rdrCameraG;
+    std::fprintf(stderr, "[interp-rdr] %.1f %.1f %.1f\n", static_cast<float>(at<ee_float>(rdr + 0xbcu)),
+                 static_cast<float>(at<ee_float>(rdr + 0xc0u)), static_cast<float>(at<ee_float>(rdr + 0xc4u)));
     std::fprintf(stderr, "[interp-cam] time %d cam %d %d %d car %d %d %d mat %d %d %d blend %.3f step %d\n", time,
                  at<int32_t>(kCameras + 0x38u), at<int32_t>(kCameras + 0x3cu), at<int32_t>(kCameras + 0x40u),
                  state ? at<int32_t>(state + 4u) : 0, state ? at<int32_t>(state + 8u) : 0, state ? at<int32_t>(state + 12u) : 0,
@@ -384,6 +388,43 @@ void RcInterpNoteWheelPlacement(uint32_t phys)
         interp::wheelRedo.push_back(phys);
 }
 
+namespace interp {
+float blendFactor(int32_t time)
+{
+    const int32_t step = std::max<int32_t>(at<int32_t>(kTimeStep), 1);
+    return std::clamp(static_cast<float>(time - stepTime) / static_cast<float>(step), 0.0f, 1.0f);
+}
+} // namespace interp
+
+// Called by the race loop straight after TaskProcess, before the frame's first 3D window is set up: the cameras are
+// blended first, so the world (drawn with the render camera built from that set-up) and the cars use the same view.
+void RcInterpBeginCamera(int32_t time)
+{
+    using namespace interp;
+    camApplied = false;
+    if (!enabled() || !stepped)
+        return;
+    const float t = blendFactor(time);
+    static const bool log = std::getenv("RC_INTERP_LOG") != nullptr;
+    for (uint32_t k = 0; k < 2; ++k)
+    {
+        Cam &cam = cams[k];
+        const uint32_t base = kCameras + k * kCameraBytes + 0xcu;
+        std::memcpy(cam.cur, guest_host(base), sizeof(cam.cur));
+        camBlended[k] = false;
+        const float camMoved = distanceInts(cam.prev, cam.cur, 0x24u - 0xcu + 0x14u);
+        if (log && k == 0u)
+            maxCamStep = std::max(maxCamStep, camMoved);
+        if (!cam.havePrev || camMoved > jumpLimit() / 256.0f) // the camera's units are whole world units
+            continue;
+        blendInts(base, cam.prev, cam.cur, 0u, 3, t);                  // pos
+        blendShortMatrix(base, cam.prev, cam.cur, 0x24u - 0xcu, t);    // matrix
+        blendInts(base, cam.prev, cam.cur, 0x24u - 0xcu + 0x14u, 3, t); // matrix translation
+        camBlended[k] = true;
+        camApplied = true;
+    }
+}
+
 // Called by the race loop after TaskProcess, before drawing: puts the blended state in place.
 void RcInterpBeginDraw(int32_t time)
 {
@@ -394,10 +435,9 @@ void RcInterpBeginDraw(int32_t time)
         logDrawn(time, 0.0f);
         return;
     }
-    const int32_t step = std::max<int32_t>(at<int32_t>(kTimeStep), 1);
-    const float t = std::clamp(static_cast<float>(time - stepTime) / static_cast<float>(step), 0.0f, 1.0f);
+    const float t = blendFactor(time);
     static const bool log = std::getenv("RC_INTERP_LOG") != nullptr;
-    static float maxStep = 0.0f, maxCam = 0.0f;
+    static float maxStep = 0.0f;
     static uint32_t frames = 0;
     for (uint32_t i = 0; i < carCount; ++i)
     {
@@ -437,28 +477,11 @@ void RcInterpBeginDraw(int32_t time)
         blended[i] = true;
         std::memcpy(blendedSnap[i], guest_host(p), kPhysBytes);
     }
-    for (uint32_t k = 0; k < 2; ++k)
-    {
-        Cam &cam = cams[k];
-        const uint32_t base = kCameras + k * kCameraBytes + 0xcu;
-        std::memcpy(cam.cur, guest_host(base), sizeof(cam.cur));
-        camBlended[k] = false;
-        const float camMoved = distanceInts(cam.prev, cam.cur, 0x24u - 0xcu + 0x14u);
-        if (log && k == 0u)
-            maxCam = std::max(maxCam, camMoved);
-        if (!cam.havePrev || camMoved > jumpLimit() / 256.0f) // the camera's units are whole world units
-            continue;
-        blendInts(base, cam.prev, cam.cur, 0u, 3, t);                  // pos
-        blendShortMatrix(base, cam.prev, cam.cur, 0x24u - 0xcu, t);    // matrix
-        blendInts(base, cam.prev, cam.cur, 0x24u - 0xcu + 0x14u, 3, t); // matrix translation
-        camBlended[k] = true;
-        applied = true;
-    }
     logDrawn(time, t);
     if (log && ++frames % 600u == 0u)
     {
-        std::fprintf(stderr, "[interp] largest step in the last 600 frames: car %.1f, camera %.1f (jump limit %.1f)\n", maxStep, maxCam, jumpLimit());
-        maxStep = maxCam = 0.0f;
+        std::fprintf(stderr, "[interp] largest step in the last 600 frames: car %.1f, camera %.1f (jump limit %.1f)\n", maxStep, maxCamStep, jumpLimit());
+        maxStep = maxCamStep = 0.0f;
     }
 }
 
@@ -466,7 +489,7 @@ void RcInterpBeginDraw(int32_t time)
 void RcInterpEndDraw()
 {
     using namespace interp;
-    if (!applied)
+    if (!applied && !camApplied)
         return;
     for (uint32_t i = 0; i < carCount; ++i)
     {
@@ -506,6 +529,7 @@ void RcInterpEndDraw()
             camBlended[k] = false;
         }
     applied = false;
+    camApplied = false;
 }
 
 void GameTaskProcess(ptr32<void>, tTime time)
