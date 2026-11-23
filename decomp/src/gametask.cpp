@@ -9,6 +9,12 @@
 #include "physics_fuzz.h"
 #include "weapon.h"
 
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <cstring>
+#include <vector>
+
 namespace rc {
 
 bool_ AColDownCast(ptr32<_sColCellVecPSX> pPos, ptr32<_sColCellVecPSX> pPoi, ptr32<_sColNormalPSX> pNormal,
@@ -154,8 +160,277 @@ void GameTaskSpecialPhysicsCases()
     }
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Enhancement: drawing between physics steps (RC_INTERP, on by default; RC_INTERP=0 draws the latest step as the
+// original does). The physics runs in fixed 20 ms steps (50 Hz) and the race loop draws once a loop with the latest
+// step, so at 60 fps one picture in five repeats the cars and camera, and at higher refresh rates (PS2X_REFRESH_HZ)
+// most do. Each step keeps the cars' and cameras' drawn state from before it; each frame then draws them blended
+// between that and the current state by how far the frame's time is into the step (one step behind, so always between
+// two real states) and puts the current state back before anything else runs. The simulation never sees a blend.
+
+namespace interp {
+
+constexpr uint32_t kPhysBytes = 0x23cu, kSphereBytes = 0x190u, kMaxObjects = 32u, kCameraBytes = 0x5b8u;
+constexpr uint32_t kCameras = sym::cameraVarG;
+
+struct Car
+{
+    uint32_t obj = 0, phys = 0;
+    bool havePrev = false;
+    uint8_t prev[kPhysBytes]{};
+    uint8_t cur[kPhysBytes]{};
+    std::vector<uint8_t> spheres;
+    uint32_t sphereAt = 0;
+};
+struct Cam
+{
+    bool havePrev = false;
+    uint8_t prev[0x38]{}; // pos (0xc) .. matrix (0x24 + 0x20)
+    uint8_t cur[0x38]{};
+};
+Car cars[kMaxObjects];
+Cam cams[2];
+bool blended[kMaxObjects]{}, camBlended[2]{};
+uint32_t carCount = 0;
+int32_t stepTime = 0;
+bool stepped = false, applied = false;
+
+bool enabled()
+{
+    static const bool on = [] { const char *v = std::getenv("RC_INTERP"); return !(v && *v == '0'); }();
+    return on;
+}
+
+// Before a physics step: what is drawn now becomes the previous state.
+void stepBegin()
+{
+    if (!enabled())
+        return;
+    const uint32_t count = std::min<uint32_t>(at<uint32_t>(kNoObjects), kMaxObjects);
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        Car &c = cars[i];
+        const uint32_t obj = objectAt(static_cast<int32_t>(i));
+        const uint32_t phys = obj ? at<uint32_t>(obj + 0x20u) : 0u;
+        const bool same = c.obj == obj && c.phys == phys;
+        c.obj = obj;
+        c.phys = phys;
+        c.havePrev = same && phys != 0u && at<uint32_t>(phys + 0x1e8u) != 0u;
+        if (phys != 0u)
+            std::memcpy(c.prev, guest_host(phys), kPhysBytes);
+    }
+    for (uint32_t i = count; i < carCount; ++i)
+        cars[i] = Car{};
+    carCount = count;
+    for (uint32_t k = 0; k < 2; ++k)
+    {
+        std::memcpy(cams[k].prev, guest_host(kCameras + k * kCameraBytes + 0xcu), sizeof(cams[k].prev));
+        cams[k].havePrev = true;
+    }
+}
+
+void stepEnd(int32_t time)
+{
+    stepTime = time;
+    stepped = true;
+}
+
+template <typename T>
+T get(const uint8_t *block, uint32_t offset)
+{
+    T v;
+    std::memcpy(&v, block + offset, sizeof(T));
+    return v;
+}
+
+float lerp(float a, float b, float t) { return a + (b - a) * t; }
+
+void blendFloats(uint32_t address, const uint8_t *prev, const uint8_t *cur, uint32_t offset, uint32_t count, float t)
+{
+    for (uint32_t k = 0; k < count; ++k)
+        at<ee_float>(address + offset + 4u * k) = ee_float(lerp(get<float>(prev, offset + 4u * k), get<float>(cur, offset + 4u * k), t));
+}
+void blendInts(uint32_t address, const uint8_t *prev, const uint8_t *cur, uint32_t offset, uint32_t count, float t)
+{
+    for (uint32_t k = 0; k < count; ++k)
+    {
+        const int32_t a = get<int32_t>(prev, offset + 4u * k), b = get<int32_t>(cur, offset + 4u * k);
+        at<int32_t>(address + offset + 4u * k) = a + static_cast<int32_t>(std::lround(static_cast<double>(b - a) * t));
+    }
+}
+// A 3x3 rotation: blended per element, each row then scaled back to the current row's length.
+void blendFloatMatrix(uint32_t address, const uint8_t *prev, const uint8_t *cur, uint32_t offset, float t)
+{
+    for (uint32_t r = 0; r < 3; ++r)
+    {
+        float v[3], len = 0.0f, want = 0.0f;
+        for (uint32_t c = 0; c < 3; ++c)
+        {
+            const float b = get<float>(cur, offset + 12u * r + 4u * c);
+            v[c] = lerp(get<float>(prev, offset + 12u * r + 4u * c), b, t);
+            len += v[c] * v[c];
+            want += b * b;
+        }
+        const float scale = len > 1e-12f ? std::sqrt(want / len) : 1.0f;
+        for (uint32_t c = 0; c < 3; ++c)
+            at<ee_float>(address + offset + 12u * r + 4u * c) = ee_float(v[c] * scale);
+    }
+}
+void blendShortMatrix(uint32_t address, const uint8_t *prev, const uint8_t *cur, uint32_t offset, float t)
+{
+    for (uint32_t r = 0; r < 3; ++r)
+    {
+        float v[3], len = 0.0f, want = 0.0f;
+        for (uint32_t c = 0; c < 3; ++c)
+        {
+            const float b = get<int16_t>(cur, offset + 6u * r + 2u * c);
+            v[c] = lerp(get<int16_t>(prev, offset + 6u * r + 2u * c), b, t);
+            len += v[c] * v[c];
+            want += b * b;
+        }
+        const float scale = len > 1e-6f ? std::sqrt(want / len) : 1.0f;
+        for (uint32_t c = 0; c < 3; ++c)
+            at<int16_t>(address + offset + 6u * r + 2u * c) =
+                static_cast<int16_t>(std::clamp<long>(std::lround(v[c] * scale), -32768, 32767));
+    }
+}
+float distance(const uint8_t *a, const uint8_t *b, uint32_t offset)
+{
+    float d = 0.0f;
+    for (uint32_t k = 0; k < 3; ++k)
+    {
+        const float x = get<float>(a, offset + 4u * k) - get<float>(b, offset + 4u * k);
+        d += x * x;
+    }
+    return std::sqrt(d);
+}
+float distanceInts(const uint8_t *a, const uint8_t *b, uint32_t offset)
+{
+    double d = 0.0;
+    for (uint32_t k = 0; k < 3; ++k)
+    {
+        const double x = static_cast<double>(get<int32_t>(a, offset + 4u * k)) - get<int32_t>(b, offset + 4u * k);
+        d += x * x;
+    }
+    return static_cast<float>(std::sqrt(d));
+}
+
+// A step that moves a car or camera further than this (a respawn, a camera cut) is drawn without blending. In the
+// physics' units (world units x 256); RC_INTERP_JUMP overrides it.
+float jumpLimit()
+{
+    static const float limit = [] { const char *v = std::getenv("RC_INTERP_JUMP"); return v ? static_cast<float>(std::atof(v)) : 65536.0f; }();
+    return limit;
+}
+
+} // namespace interp
+
+// Called by the race loop after TaskProcess, before drawing: puts the blended state in place.
+void RcInterpBeginDraw(int32_t time)
+{
+    using namespace interp;
+    applied = false;
+    if (!enabled() || !stepped)
+        return;
+    const int32_t step = std::max<int32_t>(at<int32_t>(kTimeStep), 1);
+    const float t = std::clamp(static_cast<float>(time - stepTime) / static_cast<float>(step), 0.0f, 1.0f);
+    static const bool log = std::getenv("RC_INTERP_LOG") != nullptr;
+    static float maxStep = 0.0f, maxCam = 0.0f;
+    static uint32_t frames = 0;
+    for (uint32_t i = 0; i < carCount; ++i)
+    {
+        Car &c = cars[i];
+        if (!c.havePrev || c.phys == 0u || at<uint32_t>(c.obj + 0x20u) != c.phys || at<uint32_t>(c.phys + 0x1e8u) == 0u)
+            continue;
+        std::memcpy(c.cur, guest_host(c.phys), kPhysBytes);
+        const float moved = distance(c.prev, c.cur, 0x14u);
+        if (log)
+            maxStep = std::max(maxStep, moved);
+        if (moved > jumpLimit())
+            continue;
+        // the collision spheres: a draw may recompute them from the blended state, so they are put back as well
+        const int32_t spheres = get<int8_t>(c.cur, 0x1ccu);
+        c.sphereAt = get<uint32_t>(c.cur, 0x1e0u);
+        c.spheres.clear();
+        if (c.sphereAt != 0u && spheres > 0 && spheres <= 16)
+        {
+            c.spheres.resize(static_cast<size_t>(spheres) * kSphereBytes);
+            std::memcpy(c.spheres.data(), guest_host(c.sphereAt), c.spheres.size());
+        }
+        const uint32_t p = c.phys;
+        blendFloats(p, c.prev, c.cur, 0x8u, 3, t);  // renderPos
+        blendFloats(p, c.prev, c.cur, 0x14u, 3, t); // pos
+        blendFloatMatrix(p, c.prev, c.cur, 0x4cu, t);
+        blendFloatMatrix(p, c.prev, c.cur, 0x70u, t);
+        for (uint32_t w = 0; w < 4; ++w)
+            blendFloats(p, c.prev, c.cur, 0xacu + w * 0x48u, 3, t); // the wheel's position
+        if (get<uint32_t>(c.cur, 0x1e8u) == p + 0x1ecu && get<uint32_t>(c.prev, 0x1e8u) == p + 0x1ecu)
+        {
+            blendInts(p, c.prev, c.cur, 0x1ecu + 4u, 3, t);    // integer renderPos
+            blendInts(p, c.prev, c.cur, 0x1ecu + 0x10u, 3, t); // integer pos
+            blendShortMatrix(p, c.prev, c.cur, 0x1ecu + 0x28u, t);
+            blendShortMatrix(p, c.prev, c.cur, 0x1ecu + 0x3cu, t);
+        }
+        applied = true;
+        blended[i] = true;
+    }
+    for (uint32_t k = 0; k < 2; ++k)
+    {
+        Cam &cam = cams[k];
+        const uint32_t base = kCameras + k * kCameraBytes + 0xcu;
+        std::memcpy(cam.cur, guest_host(base), sizeof(cam.cur));
+        camBlended[k] = false;
+        const float camMoved = distanceInts(cam.prev, cam.cur, 0x24u - 0xcu + 0x14u);
+        if (log && k == 0u)
+            maxCam = std::max(maxCam, camMoved);
+        if (!cam.havePrev || camMoved > jumpLimit() / 256.0f) // the camera's units are whole world units
+            continue;
+        blendInts(base, cam.prev, cam.cur, 0u, 3, t);                  // pos
+        blendShortMatrix(base, cam.prev, cam.cur, 0x24u - 0xcu, t);    // matrix
+        blendInts(base, cam.prev, cam.cur, 0x24u - 0xcu + 0x14u, 3, t); // matrix translation
+        camBlended[k] = true;
+        applied = true;
+    }
+    // RC_INTERP_LOG=2: the drawn camera 0 position each frame (frames 3000-3200), to check the motion is even
+    static uint64_t drawn = 0;
+    if (log && std::getenv("RC_INTERP_LOG")[0] == '2' && ++drawn >= 3000u && drawn < 3200u)
+        std::fprintf(stderr, "[interp-cam] time %d x %d y %d z %d blend %.3f\n", time, at<int32_t>(kCameras + 0x38u),
+                     at<int32_t>(kCameras + 0x3cu), at<int32_t>(kCameras + 0x40u), t);
+    if (log && ++frames % 600u == 0u)
+    {
+        std::fprintf(stderr, "[interp] largest step in the last 600 frames: car %.1f, camera %.1f (jump limit %.1f)\n", maxStep, maxCam, jumpLimit());
+        maxStep = maxCam = 0.0f;
+    }
+}
+
+// Called after drawing: the current state goes back exactly as the physics left it.
+void RcInterpEndDraw()
+{
+    using namespace interp;
+    if (!applied)
+        return;
+    for (uint32_t i = 0; i < carCount; ++i)
+    {
+        if (!blended[i])
+            continue;
+        blended[i] = false;
+        Car &c = cars[i];
+        std::memcpy(guest_host(c.phys), c.cur, kPhysBytes);
+        if (c.sphereAt != 0u && !c.spheres.empty())
+            std::memcpy(guest_host(c.sphereAt), c.spheres.data(), c.spheres.size());
+    }
+    for (uint32_t k = 0; k < 2; ++k)
+        if (camBlended[k])
+        {
+            std::memcpy(guest_host(kCameras + k * kCameraBytes + 0xcu), cams[k].cur, sizeof(cams[k].cur));
+            camBlended[k] = false;
+        }
+    applied = false;
+}
+
 void GameTaskProcess(ptr32<void>, tTime time)
 {
+    interp::stepBegin();
     GameTaskSpecialPhysicsCases();
     PhysicsMotion();
     GameTaskUpdateCarOcols();
@@ -168,6 +443,7 @@ void GameTaskProcess(ptr32<void>, tTime time)
     if (at<int32_t>(kCameraMode) != 1) // CAMERA_MODE_FRONT_END
         CameraProcess(time, at<uint8_t>(kMainVars + 0x368u));
     at<int32_t>(kTask + 4u) = time + at<int32_t>(kTimeStep);
+    interp::stepEnd(time);
     guest_call(weapon::kTaskCachedInsert, kTask); // a tail call
 }
 

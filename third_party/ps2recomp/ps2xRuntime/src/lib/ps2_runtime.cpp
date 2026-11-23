@@ -978,7 +978,12 @@ bool PS2Runtime::initialize(const char *title)
             std::cerr << "Failed to bind runtime core subsystems" << std::endl;
             return false;
         }
-        SetTargetFPS(60);
+        // PS2X_REFRESH_HZ=<n>: the window presents up to n frames a second (with the vblank rate, Syscalls/System.cpp)
+        {
+            const char *refresh = std::getenv("PS2X_REFRESH_HZ");
+            const int hz = refresh ? std::atoi(refresh) : 0;
+            SetTargetFPS(hz >= 30 && hz <= 500 ? hz : 60);
+        }
         // RC: the frame record (ps2_capture_hooks.h) observes this runtime from here on.
         if (const ps2x::capture::Hooks *capture = ps2x::capture::g_hooks; capture && capture->attach)
             capture->attach(this);

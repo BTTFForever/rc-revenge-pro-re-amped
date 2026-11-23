@@ -15,6 +15,10 @@ RC_VERSION_VARIANT(printf) // Europe also stores $f12-$f18
 
 namespace rc {
 
+void RcInterpBeginDraw(int32_t time); // gametask.cpp
+void RcInterpEndDraw();
+
+
 using namespace mainunit;
 
 namespace {
@@ -498,6 +502,7 @@ void MainGameProcess()
         guest_call(kGfxP2Tex, at<uint32_t>(at<uint32_t>((sym::visFxVarG + 0x6cu)) + 0x60u));
         call(kGfxP2RenderDmaSend);
         call(kAIDoRaceOrder);
+        RcInterpBeginDraw(static_cast<int32_t>(time)); // enhancement: cars and cameras drawn between physics steps
         guest_call(kMemset, temp, 0, 0xc);
         {
             const uint32_t t = gameTime();
@@ -551,6 +556,7 @@ void MainGameProcess()
             call(kApplyDefaultState);
         }
         call(kObjectResetAllTint);
+        RcInterpEndDraw();
         SetFrameWindow(2, static_cast<tTime>(gameTime()));
         guest_call(kObjectSfxDoAll, splitScreen(), gameTime());
         guest_call(kRevSfxUpdateAmbient, splitScreen());
