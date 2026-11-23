@@ -1,3 +1,4 @@
+#include "../../ps2_host_input.h"
 #include "Common.h"
 #include "Pad.h"
 
@@ -694,8 +695,15 @@ namespace ps2_stubs
 
     void scePadSetActDirect(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
-        (void)rdram;
         (void)runtime;
+        // RC: the motors (with the usual alignment: byte 0 the small motor, on/off; byte 1 the large one, 0-255) to the
+        // port's gamepad.
+        const uint32_t port = getRegU32(ctx, 4), data = getRegU32(ctx, 6);
+        if (port < 2u && data != 0u && rdram)
+        {
+            const uint8_t *act = rdram + (data & 0x01FFFFFFu);
+            ps2_host_input::setPadVibration(port, act[0], act[1]);
+        }
         setReturnS32(ctx, 1);
     }
 

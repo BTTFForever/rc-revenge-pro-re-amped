@@ -2,6 +2,8 @@
 #include "runtime/ps2_input_options.h"
 #include "ps2_host_backend.h"
 #include "ps2_host_platform.h"
+#include "ps2_host_gamepad.h"
+#include "runtime/ps2_input_bindings.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -14,6 +16,7 @@
 #include <iostream>
 #include <mutex>
 #include <deque>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -59,16 +62,6 @@ namespace ps2_host_input
             return delta;
         }
         float hostFrameTime() { return platform() ? ps2_host_platform::g_frameSeconds.load(std::memory_order_relaxed) : GetFrameTime(); }
-        bool hostGamepadAvailable(int gamepad) { return platform() ? platform()->gamepadAvailable(gamepad) : IsGamepadAvailable(gamepad); }
-        bool hostGamepadButtonDown(int gamepad, int button)
-        {
-            return platform() ? platform()->gamepadButtonDown(gamepad, button) : IsGamepadButtonDown(gamepad, button);
-        }
-        float hostGamepadAxis(int gamepad, int axis)
-        {
-            return platform() ? platform()->gamepadAxis(gamepad, axis) : GetGamepadAxisMovement(gamepad, axis);
-        }
-
         enum class BindingKind
         {
             None,
@@ -84,31 +77,17 @@ namespace ps2_host_input
             int code;
         };
 
-        struct ButtonBinding
-        {
-            uint16_t button;
-            int gamepadButton;
-            const char *setting;
-            HostBinding defaultBinding;
-        };
-
-        constexpr std::array<ButtonBinding, 16> kButtons{{
-            {PadButton::Up, GAMEPAD_BUTTON_LEFT_FACE_UP, "PS2X_BIND_UP", {BindingKind::Keyboard, KEY_UP}},
-            {PadButton::Down, GAMEPAD_BUTTON_LEFT_FACE_DOWN, "PS2X_BIND_DOWN", {BindingKind::Keyboard, KEY_DOWN}},
-            {PadButton::Left, GAMEPAD_BUTTON_LEFT_FACE_LEFT, "PS2X_BIND_LEFT", {BindingKind::Keyboard, KEY_LEFT}},
-            {PadButton::Right, GAMEPAD_BUTTON_LEFT_FACE_RIGHT, "PS2X_BIND_RIGHT", {BindingKind::Keyboard, KEY_RIGHT}},
-            {PadButton::Cross, GAMEPAD_BUTTON_RIGHT_FACE_DOWN, "PS2X_BIND_CROSS", {BindingKind::Keyboard, KEY_F}},
-            {PadButton::Circle, GAMEPAD_BUTTON_RIGHT_FACE_RIGHT, "PS2X_BIND_CIRCLE", {BindingKind::Mouse, MOUSE_BUTTON_RIGHT}},
-            {PadButton::Square, GAMEPAD_BUTTON_RIGHT_FACE_LEFT, "PS2X_BIND_SQUARE", {BindingKind::Mouse, MOUSE_BUTTON_LEFT}},
-            {PadButton::Triangle, GAMEPAD_BUTTON_RIGHT_FACE_UP, "PS2X_BIND_TRIANGLE", {BindingKind::Keyboard, KEY_SPACE}},
-            {PadButton::L1, GAMEPAD_BUTTON_LEFT_TRIGGER_1, "PS2X_BIND_L1", {BindingKind::Keyboard, KEY_Q}},
-            {PadButton::R1, GAMEPAD_BUTTON_RIGHT_TRIGGER_1, "PS2X_BIND_R1", {BindingKind::Keyboard, KEY_LEFT_SHIFT}},
-            {PadButton::L2, GAMEPAD_BUTTON_LEFT_TRIGGER_2, "PS2X_BIND_L2", {BindingKind::Keyboard, KEY_LEFT_CONTROL}},
-            {PadButton::R2, GAMEPAD_BUTTON_RIGHT_TRIGGER_2, "PS2X_BIND_R2", {BindingKind::Keyboard, KEY_RIGHT_SHIFT}},
-            {PadButton::Start, GAMEPAD_BUTTON_MIDDLE_RIGHT, "PS2X_BIND_START", {BindingKind::Keyboard, KEY_ENTER}},
-            {PadButton::Select, GAMEPAD_BUTTON_MIDDLE_LEFT, "PS2X_BIND_SELECT", {BindingKind::Keyboard, KEY_TAB}},
-            {PadButton::L3, GAMEPAD_BUTTON_LEFT_THUMB, "PS2X_BIND_L3", {BindingKind::Keyboard, KEY_H}},
-            {PadButton::R3, GAMEPAD_BUTTON_RIGHT_THUMB, "PS2X_BIND_R3", {BindingKind::Keyboard, KEY_G}},
+        // The DualShock 2's buttons in ps2_input_bindings::Control order.
+        constexpr std::array<uint16_t, 16> kControlButtons{{
+            PadButton::Up, PadButton::Down, PadButton::Left, PadButton::Right, PadButton::Cross, PadButton::Circle,
+            PadButton::Square, PadButton::Triangle, PadButton::L1, PadButton::R1, PadButton::L2, PadButton::R2,
+            PadButton::Start, PadButton::Select, PadButton::L3, PadButton::R3,
+        }};
+        // PS2X_BIND_<control> (player 1's keyboard, for one run), in Control order.
+        constexpr std::array<const char *, 16> kBindEnv{{
+            "PS2X_BIND_UP", "PS2X_BIND_DOWN", "PS2X_BIND_LEFT", "PS2X_BIND_RIGHT", "PS2X_BIND_CROSS", "PS2X_BIND_CIRCLE",
+            "PS2X_BIND_SQUARE", "PS2X_BIND_TRIANGLE", "PS2X_BIND_L1", "PS2X_BIND_R1", "PS2X_BIND_L2", "PS2X_BIND_R2",
+            "PS2X_BIND_START", "PS2X_BIND_SELECT", "PS2X_BIND_L3", "PS2X_BIND_R3",
         }};
 
         constexpr std::array<std::pair<std::string_view, HostBinding>, 24> kNamedBindings{{
@@ -168,23 +147,6 @@ namespace ps2_host_input
                     return HostBinding{BindingKind::Keyboard, static_cast<int>(KEY_F1 + number - 1)};
             }
             return std::nullopt;
-        }
-
-        std::array<HostBinding, kButtons.size()> loadBindings()
-        {
-            std::array<HostBinding, kButtons.size()> bindings{};
-            for (size_t i = 0; i < kButtons.size(); ++i)
-            {
-                bindings[i] = kButtons[i].defaultBinding;
-                if (const char *value = std::getenv(kButtons[i].setting))
-                {
-                    if (const auto parsed = parseBinding(value))
-                        bindings[i] = *parsed;
-                    else
-                        std::cerr << "[input] invalid " << kButtons[i].setting << "='" << value << "', using default" << std::endl;
-                }
-            }
-            return bindings;
         }
 
         constexpr std::array<std::pair<PadPressure, uint16_t>, static_cast<size_t>(PadPressure::Count)> kPressureButtons{{
@@ -354,23 +316,31 @@ namespace ps2_host_input
         }
 
         // PS2X_PAD_LIVE=<file>: presses appended to the file while the game runs (a test driving a running game; no
-        // window focus or key injection needed). Each line is "<buttons hex> <hold ms> <gap ms>", run in order, held
-        // on top of the host's own input. Buttons as in the pad record (0x4000 cross, 0x1000 triangle, 0x0008 start,
-        // 0x0010 up, 0x0040 down, 0x0080 left, 0x0020 right).
-        uint16_t liveButtons()
+        // window focus or key injection needed), run in order. A line "<buttons hex> <hold ms> <gap ms> [port]" holds
+        // those buttons on pad port 0 (or the port given: 1 is player 2) on top of the host's own input; buttons as in
+        // the pad record (0x4000 cross, 0x1000 triangle, 0x0008 start, 0x0010 up, 0x0040 down, 0x0080 left, 0x0020
+        // right). A line "pad<n> <button or +/-axis> <hold ms> <gap ms>" presses a virtual SDL gamepad
+        // (PS2X_SDL_VIRTUAL_PADS; SDL's names: a, b, x, y, dpup, start, +righttrigger, -leftx, ...), through the whole
+        // gamepad path. Run from the window loop (sample); the ports' presses are read by padState.
+        std::atomic<uint16_t> g_live[kPadPorts]{};
+
+        void runLiveInput()
         {
             static const char *path = []() -> const char * { const char *v = std::getenv("PS2X_PAD_LIVE"); return v && *v ? v : nullptr; }();
             if (!path)
-                return 0u;
-            struct Press { uint16_t buttons; int hold, gap; };
+                return;
+            struct Press { int target; uint16_t buttons; std::string control; int hold, gap; }; // target: port, or 100 + virtual pad
             using Clock = std::chrono::steady_clock;
-            static std::mutex mutex;
+            struct Queue
+            {
+                std::deque<Press> presses;
+                Clock::time_point started{};
+                bool running = false, virtualDown = false;
+            };
             static long offset = 0;
             static std::string partial;
-            static std::deque<Press> queue;
-            static Clock::time_point started{}, lastRead{};
-            static bool running = false;
-            std::lock_guard<std::mutex> lock(mutex);
+            static std::map<int, Queue> queues; // each port and virtual pad runs its own lines, at the same time as the others
+            static Clock::time_point lastRead{};
             const auto now = Clock::now();
             if (now - lastRead > std::chrono::milliseconds(20))
             {
@@ -391,31 +361,55 @@ namespace ps2_host_input
                     size_t eol;
                     while ((eol = partial.find('\n')) != std::string::npos)
                     {
-                        unsigned buttons = 0;
-                        int hold = 100, gap = 100;
-                        if (std::sscanf(partial.substr(0, eol).c_str(), "%x %d %d", &buttons, &hold, &gap) >= 1)
-                            queue.push_back({static_cast<uint16_t>(buttons), hold, gap});
+                        const std::string line = partial.substr(0, eol);
                         partial.erase(0, eol + 1);
+                        int pad = 0, hold = 100, gap = 100, port = 0;
+                        char control[64] = {};
+                        unsigned buttons = 0;
+                        if (std::sscanf(line.c_str(), "pad%d %63s %d %d", &pad, control, &hold, &gap) >= 2 && pad >= 1)
+                            queues[100 + pad - 1].presses.push_back({100 + pad - 1, 0, control, hold, gap});
+                        else if (std::sscanf(line.c_str(), "%x %d %d %d", &buttons, &hold, &gap, &port) >= 1)
+                            queues[port == 1 ? 1 : 0].presses.push_back({port == 1 ? 1 : 0, static_cast<uint16_t>(buttons), {}, hold, gap});
                     }
                 }
             }
-            while (!queue.empty())
+            struct Publish
             {
-                if (!running)
+                uint16_t out[kPadPorts]{};
+                ~Publish()
                 {
-                    running = true;
-                    started = now;
+                    for (uint32_t i = 0; i < kPadPorts; ++i)
+                        g_live[i].store(out[i], std::memory_order_relaxed);
                 }
-                const Press &p = queue.front();
-                const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(now - started).count();
-                if (age < p.hold)
-                    return p.buttons;
-                if (age < p.hold + p.gap)
-                    return 0u;
-                queue.pop_front();
-                running = false;
-            }
-            return 0u;
+            } publish;
+            for (auto &[target, q] : queues)
+                while (!q.presses.empty())
+                {
+                    if (!q.running)
+                    {
+                        q.running = true;
+                        q.started = now;
+                    }
+                    const Press &p = q.presses.front();
+                    const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(now - q.started).count();
+                    const bool held = age < p.hold;
+                    if (target >= 100)
+                    {
+                        if (held != q.virtualDown)
+                        {
+                            q.virtualDown = held;
+                            if (!ps2_host_gamepad::virtualSet(target - 100, p.control.c_str(), held))
+                                std::cerr << "[input] live: no virtual gamepad " << (target - 99) << " or control '" << p.control << "'" << std::endl;
+                        }
+                    }
+                    else if (held)
+                        publish.out[target] = p.buttons;
+                    if (age < p.hold + p.gap)
+                        break;
+                    q.presses.pop_front();
+                    q.running = false;
+                    q.virtualDown = false;
+                }
         }
 
         // PS2X_PAD_RECORD=<file> writes port 0's input as it changes; PS2X_PAD_REPLAY=<file> plays such a file back instead
@@ -686,13 +680,152 @@ namespace ps2_host_input
                 state.pressure[static_cast<size_t>(pressure)] = (state.buttons & button) != 0u ? 0xFFu : 0x00u;
         }
 
+        // ---- The players' bindings (runtime/ps2_input_bindings.h) ----
+        namespace B = ps2_input_bindings;
+        std::mutex g_bindMutex;
+        std::array<B::Player, kPadPorts> g_players;
+        bool g_playersSet = false;
+        std::atomic<uint8_t> g_motors[kPadPorts][2]{}; // the game's small and large motor per port
+
+        // Player 1's keyboard from PS2X_BIND_* (one run), over what it had.
+        void applyBindEnvironment(B::Player &p)
+        {
+            for (size_t i = 0; i < kBindEnv.size(); ++i)
+                if (const char *value = std::getenv(kBindEnv[i]); value && *value)
+                {
+                    const int source = B::parseKeySource(value);
+                    if (source >= 0)
+                        p.key[i] = source;
+                    else
+                        std::cerr << "[input] invalid " << kBindEnv[i] << "='" << value << "', ignored" << std::endl;
+                }
+        }
+
+        void ensurePlayers() // g_bindMutex held
+        {
+            if (g_playersSet)
+                return;
+            g_playersSet = true;
+            for (uint32_t i = 0; i < kPadPorts; ++i)
+                g_players[i] = B::defaults(static_cast<int>(i));
+            applyBindEnvironment(g_players[0]);
+        }
+
+        // How far a source is pressed, 0..1; *analog says it was a trigger or stick (pressure follows it).
+        float sourceValue(int source, bool keyboard, int gamepad, bool *analog)
+        {
+            const int kind = source & 0xF0000, code = source & 0xFFFF;
+            switch (kind)
+            {
+            case B::kKey: return keyboard && hostKeyDown(code) ? 1.0f : 0.0f;
+            case B::kMouse: return keyboard && isHostBindingDown({BindingKind::Mouse, code}) ? 1.0f : 0.0f;
+            case B::kAnyShift: return keyboard && isHostBindingDown({BindingKind::Shift, 0}) ? 1.0f : 0.0f;
+            case B::kAnyControl: return keyboard && isHostBindingDown({BindingKind::Control, 0}) ? 1.0f : 0.0f;
+            case B::kPadButton: return gamepad >= 0 && ps2_host_gamepad::button(gamepad, code) ? 1.0f : 0.0f;
+            case B::kPadAxis:
+            {
+                if (gamepad < 0)
+                    return 0.0f;
+                const float v = ps2_host_gamepad::axis(gamepad, code >> 1) * ((code & 1) ? -1.0f : 1.0f);
+                if (analog && v > 0.0f)
+                    *analog = true;
+                return std::clamp(v, 0.0f, 1.0f);
+            }
+            default: return 0.0f;
+            }
+        }
+
+        // ---- Rebinding: the next new press ----
+        struct Capture
+        {
+            bool active = false, fresh = false, keyboard = false;
+            int pad = -1, result = B::CaptureWaiting, source = 0;
+            std::chrono::steady_clock::time_point deadline{}, releaseUntil{};
+            std::array<bool, 32> buttonArmed{};
+            std::array<bool, 8> axisArmed{};
+        };
+        std::mutex g_captureMutex;
+        Capture g_capture;
+        std::atomic<bool> g_suppress{false}; // the game sees released pads (a capture, and a moment after)
+
+        void runCapture() // the window loop
+        {
+            std::lock_guard<std::mutex> lock(g_captureMutex);
+            Capture &c = g_capture;
+            const auto now = std::chrono::steady_clock::now();
+            if (!c.active)
+            {
+                g_suppress.store(now < c.releaseUntil, std::memory_order_relaxed);
+                return;
+            }
+            g_suppress.store(true, std::memory_order_relaxed);
+            const auto finish = [&](int result, int source)
+            {
+                c.active = false;
+                c.result = result;
+                c.source = source;
+                c.releaseUntil = now + std::chrono::milliseconds(300); // the press that bound it is not seen by the game
+            };
+            const bool padOk = c.pad >= 0 && ps2_host_gamepad::present(c.pad);
+            if (c.fresh)
+            {
+                // Only presses that start after this: held buttons and deflected axes count once released.
+                c.fresh = false;
+                for (int b = 0; b < 32; ++b)
+                    c.buttonArmed[b] = !(padOk && ps2_host_gamepad::button(c.pad, b));
+                for (int a = 0; a < 6; ++a)
+                    c.axisArmed[a] = !(padOk && std::fabs(ps2_host_gamepad::axis(c.pad, a)) > 0.3f);
+                return;
+            }
+            // Escape and Delete work for a gamepad-only player too.
+            if (hostKeyPressed(KEY_ESCAPE))
+                return finish(B::CaptureCancelled, 0);
+            if (hostKeyPressed(KEY_DELETE) || hostKeyPressed(KEY_BACKSPACE))
+                return finish(B::CaptureClear, 0);
+            if (c.keyboard)
+            {
+                for (int k = 32; k <= 348; ++k)
+                    if (k != KEY_F11 && hostKeyPressed(k)) // F11 stays the fullscreen key
+                        return finish(B::CaptureKey, B::kKey | k);
+            }
+            if (padOk)
+            {
+                // The standard buttons, misc1 (share/capture) and the four paddles; not the touchpad click or the
+                // misc2-6 inputs some pads report constantly (a Steam Controller's capacitive grips and pads).
+                for (int b = 0; b < 20; ++b)
+                {
+                    const bool down = ps2_host_gamepad::button(c.pad, b);
+                    if (down && c.buttonArmed[b])
+                        return finish(B::CapturePad, B::kPadButton | b);
+                    if (!down)
+                        c.buttonArmed[b] = true;
+                }
+                for (int a = 0; a < 6; ++a)
+                {
+                    const float v = ps2_host_gamepad::axis(c.pad, a);
+                    if (c.axisArmed[a] && std::fabs(v) > 0.6f)
+                        return finish(B::CapturePad, B::kPadAxis | a << 1 | (v < 0.0f ? 1 : 0));
+                    if (std::fabs(v) < 0.3f)
+                        c.axisArmed[a] = true;
+                }
+            }
+            if (now > c.deadline)
+                finish(B::CaptureTimedOut, 0);
+        }
+
         PadInputState readPort(uint32_t port)
         {
             PadInputState state;
-            const int gamepad = static_cast<int>(port);
-            const bool gamepadAvailable = hostGamepadAvailable(gamepad);
-            const bool keyboard = port == 0u;
-            state.connected = gamepadAvailable || keyboard;
+            B::Player pl;
+            {
+                std::lock_guard<std::mutex> lock(g_bindMutex);
+                ensurePlayers();
+                pl = g_players[port];
+            }
+            const bool keyboard = B::deviceHasKeyboard(pl.device);
+            const int slot = B::deviceGamepad(pl.device);
+            const int gamepad = slot >= 0 && ps2_host_gamepad::present(slot) ? slot : -1;
+            state.connected = pl.device != B::DeviceNone && (keyboard || gamepad >= 0);
             if (!state.connected)
                 return state;
             state.leftX = kAxisNeutral;
@@ -700,41 +833,54 @@ namespace ps2_host_input
             state.rightX = kAxisNeutral;
             state.rightY = kAxisNeutral;
 
-            static const auto hostBindings = loadBindings();
-            for (size_t i = 0; i < kButtons.size(); ++i)
-            {
-                const ButtonBinding &binding = kButtons[i];
-                const bool padDown = gamepadAvailable && hostGamepadButtonDown(gamepad, binding.gamepadButton);
-                const bool keyDown = keyboard && isHostBindingDown(hostBindings[i]);
-                if (padDown || keyDown)
-                    state.buttons |= binding.button;
-            }
-            if (gamepadAvailable)
-            {
-                state.leftX = axisToByte(hostGamepadAxis(gamepad, GAMEPAD_AXIS_LEFT_X));
-                state.leftY = axisToByte(hostGamepadAxis(gamepad, GAMEPAD_AXIS_LEFT_Y));
-                const uint32_t invert = rightStickInvert();
-                const float rightX = hostGamepadAxis(gamepad, GAMEPAD_AXIS_RIGHT_X);
-                const float rightY = hostGamepadAxis(gamepad, GAMEPAD_AXIS_RIGHT_Y);
-                state.rightX = axisToByte((invert & kInvertRightX) != 0u ? -rightX : rightX);
-                state.rightY = axisToByte((invert & kInvertRightY) != 0u ? -rightY : rightY);
-            }
-            if (keyboard)
-            {
-                if (const uint8_t x = keyAxis(KEY_A, KEY_D); x != 0x80u)
-                    state.leftX = x;
-                if (const uint8_t y = keyAxis(KEY_W, KEY_S); y != 0x80u)
-                    state.leftY = y;
-                if (g_mouseMoved && g_mouseStickEnabled.load(std::memory_order_relaxed))
-                {
-                    const uint32_t invert = rightStickInvert();
-                    state.rightX = axisToByte((invert & kInvertRightX) != 0u ? -g_mouseRightX : g_mouseRightX);
-                    state.rightY = axisToByte((invert & kInvertRightY) != 0u ? -g_mouseRightY : g_mouseRightY);
-                }
-            }
-
+            float value[B::ControlCount]{};
+            bool analog[B::ControlCount]{};
+            for (int c = 0; c < B::ControlCount; ++c)
+                value[c] = std::max(sourceValue(pl.key[c], keyboard, -1, &analog[c]), sourceValue(pl.pad[c], false, gamepad, &analog[c]));
+            for (size_t c = 0; c < kControlButtons.size(); ++c)
+                if (value[c] >= (analog[c] ? 0.2f : 0.5f)) // a trigger or stick counts as a press from a fifth of its travel
+                    state.buttons |= kControlButtons[c];
             applyPressure(state);
+            // An analog source gives its pressure (a pressure-sensitive button on a trigger).
+            for (const auto &[pressure, button] : kPressureButtons)
+                for (size_t c = 0; c < kControlButtons.size(); ++c)
+                    if (kControlButtons[c] == button && analog[c] && (state.buttons & button) != 0u)
+                        state.pressure[static_cast<size_t>(pressure)] = static_cast<uint8_t>(std::lround(std::clamp(value[c], 0.0f, 1.0f) * 255.0f));
+            const auto stick = [&](int negative, int positive) { return value[positive] - value[negative]; };
+            state.leftX = axisToByte(stick(B::LeftStickLeft, B::LeftStickRight));
+            state.leftY = axisToByte(stick(B::LeftStickUp, B::LeftStickDown));
+            const uint32_t invert = rightStickInvert();
+            const float rightX = stick(B::RightStickLeft, B::RightStickRight), rightY = stick(B::RightStickUp, B::RightStickDown);
+            state.rightX = axisToByte((invert & kInvertRightX) != 0u ? -rightX : rightX);
+            state.rightY = axisToByte((invert & kInvertRightY) != 0u ? -rightY : rightY);
+            if (keyboard && port == 0u && g_mouseMoved && g_mouseStickEnabled.load(std::memory_order_relaxed))
+            {
+                state.rightX = axisToByte((invert & kInvertRightX) != 0u ? -g_mouseRightX : g_mouseRightX);
+                state.rightY = axisToByte((invert & kInvertRightY) != 0u ? -g_mouseRightY : g_mouseRightY);
+            }
             return state;
+        }
+
+        // The game's motors to the gamepad each port reads; other gamepads still.
+        void runRumble()
+        {
+            uint8_t small[ps2_host_gamepad::kSlots]{}, large[ps2_host_gamepad::kSlots]{};
+            std::array<B::Player, kPadPorts> players;
+            {
+                std::lock_guard<std::mutex> lock(g_bindMutex);
+                ensurePlayers();
+                players = g_players;
+            }
+            for (uint32_t port = 0; port < kPadPorts; ++port)
+            {
+                const int slot = B::deviceGamepad(players[port].device);
+                if (slot < 0)
+                    continue;
+                small[slot] = std::max(small[slot], g_motors[port][0].load(std::memory_order_relaxed));
+                large[slot] = std::max(large[slot], g_motors[port][1].load(std::memory_order_relaxed));
+            }
+            for (int slot = 0; slot < ps2_host_gamepad::kSlots; ++slot)
+                ps2_host_gamepad::setRumble(slot, small[slot], large[slot]);
         }
     }
 
@@ -761,6 +907,10 @@ namespace ps2_host_input
     void sample()
     {
         sampleMouse();
+        ps2_host_gamepad::update();
+        runLiveInput();
+        runCapture();
+        runRumble();
         std::array<PadInputState, kPadPorts> state{};
         for (uint32_t port = 0; port < kPadPorts; ++port)
             state[port] = readPort(port);
@@ -812,6 +962,28 @@ namespace ps2_host_input
             std::lock_guard<std::mutex> lock(g_mutex);
             state = g_state[port];
         }
+        if (g_suppress.load(std::memory_order_relaxed)) // rebinding: the game sees the pad released
+        {
+            const bool connected = state.connected;
+            state = PadInputState{};
+            state.connected = connected;
+            state.leftX = state.leftY = state.rightX = state.rightY = kAxisNeutral;
+        }
+        const auto addLive = [&]
+        {
+            if (const uint16_t live = g_live[port].load(std::memory_order_relaxed); live != 0u)
+            {
+                if (!state.connected)
+                {
+                    state.connected = true;
+                    state.leftX = state.leftY = state.rightX = state.rightY = kAxisNeutral;
+                }
+                state.buttons |= live;
+                applyPressure(state);
+            }
+        };
+        if (port != 0u)
+            addLive();
         if (port == 0u)
         {
             const std::atomic<uint64_t> *counter = g_fieldCounter.load();
@@ -865,16 +1037,312 @@ namespace ps2_host_input
                 state.rightY = current.axes[3];
                 applyPressure(state);
             }
-            // after a replay, which sets the whole state
-            if (const uint16_t live = liveButtons(); live != 0u)
-            {
-                state.connected = true;
-                state.buttons |= live;
-                applyPressure(state);
-            }
 
+            addLive(); // after a replay, which sets the whole state
             recordPad(frame, static_cast<uint16_t>(state.buttons), {state.leftX, state.leftY, state.rightX, state.rightY});
         }
         return state;
+    }
+}
+
+namespace ps2_host_input
+{
+    void setPadVibration(uint32_t port, uint8_t small, uint8_t large)
+    {
+        if (port >= kPadPorts)
+            return;
+        const uint8_t oldSmall = g_motors[port][0].exchange(small, std::memory_order_relaxed);
+        const uint8_t oldLarge = g_motors[port][1].exchange(large, std::memory_order_relaxed);
+        const bool changed = oldSmall != small || oldLarge != large;
+        static const bool log = std::getenv("PS2X_RUMBLE_LOG") != nullptr;
+        if (log && changed)
+            std::cerr << "[input] port " << port << " motors small " << int(small) << " large " << int(large) << std::endl;
+    }
+}
+
+namespace ps2_input_bindings
+{
+    namespace
+    {
+        constexpr const char *kControlNames[ControlCount] = {
+            "Up", "Down", "Left", "Right", "Cross", "Circle", "Square", "Triangle", "L1", "R1", "L2", "R2", "Start", "Select", "L3", "R3",
+            "Left stick left", "Left stick right", "Left stick up", "Left stick down",
+            "Right stick left", "Right stick right", "Right stick up", "Right stick down"};
+        constexpr const char *kControlKeys[ControlCount] = {
+            "up", "down", "left", "right", "cross", "circle", "square", "triangle", "l1", "r1", "l2", "r2", "start", "select", "l3", "r3",
+            "lstick_left", "lstick_right", "lstick_up", "lstick_down", "rstick_left", "rstick_right", "rstick_up", "rstick_down"};
+        constexpr const char *kDeviceNames[DeviceCount] = {"None", "Keyboard", "Gamepad 1", "Gamepad 2", "Gamepad 3", "Gamepad 4",
+                                                           "Keyboard + Gamepad 1", "Keyboard + Gamepad 2"};
+        constexpr const char *kDeviceKeys[DeviceCount] = {"none", "keyboard", "pad1", "pad2", "pad3", "pad4", "keyboard+pad1", "keyboard+pad2"};
+
+        struct KeyName { int key; const char *name; const char *label; };
+        constexpr KeyName kKeyNames[] = {
+            {KEY_SPACE, "space", "Space"}, {KEY_APOSTROPHE, "apostrophe", "'"}, {KEY_COMMA, "comma", ","}, {KEY_MINUS, "minus", "-"},
+            {KEY_PERIOD, "period", "."}, {KEY_SLASH, "slash", "/"}, {KEY_SEMICOLON, "semicolon", ";"}, {KEY_EQUAL, "equal", "="},
+            {KEY_LEFT_BRACKET, "left_bracket", "["}, {KEY_BACKSLASH, "backslash", "\\"}, {KEY_RIGHT_BRACKET, "right_bracket", "]"},
+            {KEY_GRAVE, "grave", "`"}, {KEY_ESCAPE, "escape", "Esc"}, {KEY_ENTER, "enter", "Enter"}, {KEY_TAB, "tab", "Tab"},
+            {KEY_BACKSPACE, "backspace", "Backspace"}, {KEY_INSERT, "insert", "Insert"}, {KEY_DELETE, "delete", "Delete"},
+            {KEY_RIGHT, "right", "Right"}, {KEY_LEFT, "left", "Left"}, {KEY_DOWN, "down", "Down"}, {KEY_UP, "up", "Up"},
+            {KEY_PAGE_UP, "page_up", "Page Up"}, {KEY_PAGE_DOWN, "page_down", "Page Down"}, {KEY_HOME, "home", "Home"}, {KEY_END, "end", "End"},
+            {KEY_CAPS_LOCK, "caps_lock", "Caps Lock"}, {KEY_SCROLL_LOCK, "scroll_lock", "Scroll Lock"}, {KEY_NUM_LOCK, "num_lock", "Num Lock"},
+            {KEY_PRINT_SCREEN, "print_screen", "Print Screen"}, {KEY_PAUSE, "pause", "Pause"},
+            {KEY_KP_DECIMAL, "kp_decimal", "Num ."}, {KEY_KP_DIVIDE, "kp_divide", "Num /"}, {KEY_KP_MULTIPLY, "kp_multiply", "Num *"},
+            {KEY_KP_SUBTRACT, "kp_subtract", "Num -"}, {KEY_KP_ADD, "kp_add", "Num +"}, {KEY_KP_ENTER, "kp_enter", "Num Enter"}, {KEY_KP_EQUAL, "kp_equal", "Num ="},
+            {KEY_LEFT_SHIFT, "left_shift", "Left Shift"}, {KEY_LEFT_CONTROL, "left_ctrl", "Left Ctrl"}, {KEY_LEFT_ALT, "left_alt", "Left Alt"},
+            {KEY_LEFT_SUPER, "left_super", "Left Super"}, {KEY_RIGHT_SHIFT, "right_shift", "Right Shift"}, {KEY_RIGHT_CONTROL, "right_ctrl", "Right Ctrl"},
+            {KEY_RIGHT_ALT, "right_alt", "Right Alt"}, {KEY_RIGHT_SUPER, "right_super", "Right Super"}, {KEY_KB_MENU, "menu", "Menu"},
+        };
+
+        std::string lower(std::string_view text)
+        {
+            std::string out(text);
+            for (char &ch : out)
+                ch = ch == ' ' || ch == '-' ? '_' : static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            return out;
+        }
+
+        int padButtonSource(int b) { return kPadButton | b; }
+        int padAxisSource(int a, bool negative) { return kPadAxis | a << 1 | (negative ? 1 : 0); }
+        // SDL's gamepad enums (fixed by its ABI), so the defaults do not need SDL's headers.
+        enum { South, East, West, North, Back, Guide, StartB, LeftStick, RightStick, LeftShoulder, RightShoulder, DUp, DDown, DLeft, DRight };
+        enum { LeftX, LeftY, RightX, RightY, LeftTrigger, RightTrigger };
+    } // namespace
+
+    const char *controlName(int c) { return c >= 0 && c < ControlCount ? kControlNames[c] : "?"; }
+    const char *controlKey(int c) { return c >= 0 && c < ControlCount ? kControlKeys[c] : "?"; }
+    const char *deviceName(int d) { return d >= 0 && d < DeviceCount ? kDeviceNames[d] : "?"; }
+    const char *deviceKey(int d) { return d >= 0 && d < DeviceCount ? kDeviceKeys[d] : "none"; }
+    int parseDevice(const char *text)
+    {
+        const std::string t = lower(text ? text : "");
+        for (int d = 0; d < DeviceCount; ++d)
+            if (t == kDeviceKeys[d])
+                return d;
+        return -1;
+    }
+    int deviceGamepad(int d)
+    {
+        switch (d)
+        {
+        case DevicePad1: case DeviceKeyboardPad1: return 0;
+        case DevicePad2: case DeviceKeyboardPad2: return 1;
+        case DevicePad3: return 2;
+        case DevicePad4: return 3;
+        default: return -1;
+        }
+    }
+
+    std::string sourceName(int s)
+    {
+        const int kind = s & 0xF0000, code = s & 0xFFFF;
+        switch (kind)
+        {
+        case kKey:
+            if (code >= KEY_A && code <= KEY_Z)
+                return std::string(1, static_cast<char>('A' + code - KEY_A));
+            if (code >= KEY_ZERO && code <= KEY_NINE)
+                return std::string(1, static_cast<char>('0' + code - KEY_ZERO));
+            if (code >= KEY_F1 && code <= KEY_F12)
+                return "F" + std::to_string(code - KEY_F1 + 1);
+            if (code >= KEY_KP_0 && code <= KEY_KP_9)
+                return "Num " + std::to_string(code - KEY_KP_0);
+            for (const KeyName &k : kKeyNames)
+                if (k.key == code)
+                    return k.label;
+            return "Key " + std::to_string(code);
+        case kMouse: return code == MOUSE_BUTTON_LEFT ? "Mouse Left" : code == MOUSE_BUTTON_RIGHT ? "Mouse Right" : "Mouse Middle";
+        case kAnyShift: return "Shift";
+        case kAnyControl: return "Ctrl";
+        case kPadButton: return "Pad " + ps2_host_gamepad::buttonLabel(code);
+        case kPadAxis:
+        {
+            const int a = code >> 1;
+            const bool neg = code & 1;
+            switch (a)
+            {
+            case LeftTrigger: return "Pad LT";
+            case RightTrigger: return "Pad RT";
+            case LeftX: return neg ? "Pad LS Left" : "Pad LS Right";
+            case LeftY: return neg ? "Pad LS Up" : "Pad LS Down";
+            case RightX: return neg ? "Pad RS Left" : "Pad RS Right";
+            case RightY: return neg ? "Pad RS Up" : "Pad RS Down";
+            default: return "Pad axis";
+            }
+        }
+        default: return "None";
+        }
+    }
+
+    std::string sourceKey(int s)
+    {
+        const int kind = s & 0xF0000, code = s & 0xFFFF;
+        switch (kind)
+        {
+        case kKey:
+            if (code >= KEY_A && code <= KEY_Z)
+                return std::string(1, static_cast<char>('A' + code - KEY_A));
+            if (code >= KEY_ZERO && code <= KEY_NINE)
+                return std::string(1, static_cast<char>('0' + code - KEY_ZERO));
+            if (code >= KEY_F1 && code <= KEY_F12)
+                return "F" + std::to_string(code - KEY_F1 + 1);
+            if (code >= KEY_KP_0 && code <= KEY_KP_9)
+                return "kp_" + std::to_string(code - KEY_KP_0);
+            for (const KeyName &k : kKeyNames)
+                if (k.key == code)
+                    return k.name;
+            return "key" + std::to_string(code);
+        case kMouse: return code == MOUSE_BUTTON_LEFT ? "mouse_left" : code == MOUSE_BUTTON_RIGHT ? "mouse_right" : "mouse_middle";
+        case kAnyShift: return "shift";
+        case kAnyControl: return "ctrl";
+        case kPadButton:
+        {
+            const char *k = ps2_host_gamepad::buttonKey(code);
+            return k ? k : "button" + std::to_string(code);
+        }
+        case kPadAxis:
+        {
+            const char *k = ps2_host_gamepad::axisKey(code >> 1);
+            return std::string((code & 1) ? "-" : "+") + (k ? k : "axis" + std::to_string(code >> 1));
+        }
+        default: return "none";
+        }
+    }
+
+    int parseKeySource(const char *text)
+    {
+        if (!text)
+            return -1;
+        const std::string t = lower(text);
+        if (t.empty() || t == "none")
+            return 0;
+        if (t.size() == 1u && t[0] >= 'a' && t[0] <= 'z')
+            return kKey | (KEY_A + t[0] - 'a');
+        if (t.size() == 1u && t[0] >= '0' && t[0] <= '9')
+            return kKey | (KEY_ZERO + t[0] - '0');
+        if (t.size() >= 2u && t[0] == 'f' && std::isdigit(static_cast<unsigned char>(t[1])))
+        {
+            const int n = std::atoi(t.c_str() + 1);
+            if (n >= 1 && n <= 12)
+                return kKey | (KEY_F1 + n - 1);
+        }
+        if (t.rfind("kp_", 0) == 0 && t.size() == 4u && std::isdigit(static_cast<unsigned char>(t[3])))
+            return kKey | (KEY_KP_0 + t[3] - '0');
+        if (t.rfind("key", 0) == 0 && t.size() > 3u && std::isdigit(static_cast<unsigned char>(t[3])))
+            return kKey | std::atoi(t.c_str() + 3);
+        for (const KeyName &k : kKeyNames)
+            if (t == k.name)
+                return kKey | k.key;
+        // The names PS2X_BIND_* took before.
+        if (t == "left_control") return kKey | KEY_LEFT_CONTROL;
+        if (t == "right_control") return kKey | KEY_RIGHT_CONTROL;
+        if (t == "shift") return kAnyShift;
+        if (t == "ctrl" || t == "control") return kAnyControl;
+        if (t == "mouse_left" || t == "lmb") return kMouse | MOUSE_BUTTON_LEFT;
+        if (t == "mouse_right" || t == "rmb") return kMouse | MOUSE_BUTTON_RIGHT;
+        if (t == "mouse_middle") return kMouse | MOUSE_BUTTON_MIDDLE;
+        return -1;
+    }
+
+    int parsePadSource(const char *text)
+    {
+        if (!text)
+            return -1;
+        const std::string t = lower(text);
+        if (t.empty() || t == "none")
+            return 0;
+        if (t[0] == '+' || t[0] == '-')
+        {
+            const int a = ps2_host_gamepad::axisFromKey(t.c_str() + 1);
+            return a >= 0 ? padAxisSource(a, t[0] == '-') : -1;
+        }
+        const int b = ps2_host_gamepad::buttonFromKey(t.c_str());
+        return b >= 0 ? padButtonSource(b) : -1;
+    }
+
+    Player defaults(int player)
+    {
+        Player p;
+        p.device = player == 0 ? DeviceKeyboardPad1 : DevicePad2;
+        const int pad[ControlCount] = {
+            padButtonSource(DUp), padButtonSource(DDown), padButtonSource(DLeft), padButtonSource(DRight),
+            padButtonSource(South), padButtonSource(East), padButtonSource(West), padButtonSource(North),
+            padButtonSource(LeftShoulder), padButtonSource(RightShoulder), padAxisSource(LeftTrigger, false), padAxisSource(RightTrigger, false),
+            padButtonSource(StartB), padButtonSource(Back), padButtonSource(LeftStick), padButtonSource(RightStick),
+            padAxisSource(LeftX, true), padAxisSource(LeftX, false), padAxisSource(LeftY, true), padAxisSource(LeftY, false),
+            padAxisSource(RightX, true), padAxisSource(RightX, false), padAxisSource(RightY, true), padAxisSource(RightY, false)};
+        std::copy(std::begin(pad), std::end(pad), p.pad);
+        // Keyboard: player 1 as the runtime always had it (WASD the left stick); player 2 a second block, if chosen.
+        static constexpr int kP1[ControlCount] = {KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_F, KEY_E, KEY_R, KEY_SPACE, KEY_Q, KEY_LEFT_SHIFT,
+                                                  KEY_LEFT_CONTROL, KEY_RIGHT_SHIFT, KEY_ENTER, KEY_TAB, KEY_H, KEY_G,
+                                                  KEY_A, KEY_D, KEY_W, KEY_S, 0, 0, 0, 0};
+        static constexpr int kP2[ControlCount] = {KEY_I, KEY_K, KEY_J, KEY_L, KEY_N, KEY_M, KEY_B, KEY_U, KEY_O, KEY_P,
+                                                  KEY_Y, KEY_SEVEN, KEY_ZERO, KEY_NINE, 0, 0,
+                                                  0, 0, 0, 0, 0, 0, 0, 0};
+        const int *keys = player == 0 ? kP1 : kP2;
+        for (int c = 0; c < ControlCount; ++c)
+            p.key[c] = keys[c] ? (kKey | keys[c]) : 0;
+        return p;
+    }
+
+    Player player(int player)
+    {
+        using namespace ps2_host_input;
+        if (player < 0 || player >= static_cast<int>(kPadPorts))
+            return {};
+        std::lock_guard<std::mutex> lock(g_bindMutex);
+        ensurePlayers();
+        return g_players[static_cast<size_t>(player)];
+    }
+
+    void setPlayer(int player, const Player &p)
+    {
+        using namespace ps2_host_input;
+        if (player < 0 || player >= static_cast<int>(kPadPorts))
+            return;
+        std::lock_guard<std::mutex> lock(g_bindMutex);
+        ensurePlayers();
+        g_players[static_cast<size_t>(player)] = p;
+    }
+
+    int gamepadCount() { return ps2_host_gamepad::count(); }
+    std::string gamepadName(int slot) { return ps2_host_gamepad::name(slot); }
+
+    void beginCapture(bool keyboard, int pad, int timeoutMs)
+    {
+        using namespace ps2_host_input;
+        std::lock_guard<std::mutex> lock(g_captureMutex);
+        g_capture.active = true;
+        g_capture.fresh = true;
+        g_capture.keyboard = keyboard;
+        g_capture.pad = pad;
+        g_capture.result = CaptureWaiting;
+        g_capture.source = 0;
+        g_capture.deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+        g_suppress.store(true, std::memory_order_relaxed);
+    }
+
+    int captureResult(int *source)
+    {
+        using namespace ps2_host_input;
+        std::lock_guard<std::mutex> lock(g_captureMutex);
+        if (g_capture.active)
+            return CaptureWaiting;
+        if (source)
+            *source = g_capture.source;
+        const int r = g_capture.result;
+        g_capture.result = CaptureWaiting;
+        return r;
+    }
+
+    void cancelCapture()
+    {
+        using namespace ps2_host_input;
+        std::lock_guard<std::mutex> lock(g_captureMutex);
+        if (g_capture.active)
+        {
+            g_capture.active = false;
+            g_capture.result = CaptureWaiting;
+            g_capture.releaseUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+        }
     }
 }

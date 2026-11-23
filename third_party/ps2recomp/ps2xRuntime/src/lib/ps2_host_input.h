@@ -15,4 +15,6 @@ namespace ps2_host_input
     void sample();
     void releaseMouse();
     [[nodiscard]] ps2x::iop::PadInputState padState(uint32_t port);
+    // The game's DualShock 2 motors on a port (from the emulated pad or libpad's actuator call): to its gamepad.
+    void setPadVibration(uint32_t port, uint8_t small, uint8_t large);
 }

@@ -87,6 +87,7 @@ public:
     bool sendSifCommand(uint32_t commandId, const void *packet, size_t packetSize) override;
 
     bool readPad(uint32_t port, ps2x::iop::PadInputState &state) override;
+    void padVibration(uint32_t port, uint8_t smallMotor, uint8_t largeMotor) override;
 
     void log(ps2x::iop::LogLevel level, std::string_view message) override;
 

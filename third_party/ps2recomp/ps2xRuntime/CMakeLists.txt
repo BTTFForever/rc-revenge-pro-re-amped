@@ -399,6 +399,7 @@ add_library(ps2_runtime STATIC
     src/lib/ps2_memory.cpp
     src/lib/ps2_pad.cpp
     src/lib/ps2_host_input.cpp
+    src/lib/ps2_host_gamepad.cpp
     src/lib/ps2_rom_device.cpp
     src/lib/ps2_vfs.cpp
     src/lib/ps2_cd_image.cpp
@@ -521,6 +522,17 @@ target_include_directories(ps2_runtime PUBLIC
 )
 
 target_link_libraries(ps2_runtime PUBLIC ps2_host_backend ffmpeg ps2_iop)
+# RC: gamepads through SDL3 (ps2_host_gamepad.cpp), next to the raylib window; without SDL3, keyboard only.
+if(NOT TARGET SDL3::SDL3)
+    find_package(SDL3 CONFIG QUIET COMPONENTS SDL3-shared)
+endif()
+if(TARGET SDL3::SDL3)
+    target_link_libraries(ps2_runtime PRIVATE SDL3::SDL3)
+    target_compile_definitions(ps2_runtime PRIVATE PS2X_HAS_SDL3=1)
+else()
+    message(STATUS "ps2_runtime: no SDL3, gamepads unavailable")
+    target_compile_definitions(ps2_runtime PRIVATE PS2X_HAS_SDL3=0)
+endif()
 target_link_libraries(ps2EntryRunner
     PRIVATE
     ps2_runtime

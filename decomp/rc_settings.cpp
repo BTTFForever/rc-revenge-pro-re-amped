@@ -2,6 +2,7 @@
 #include "rc_settings.h"
 
 #include "runtime/ps2_display_options.h"
+#include "runtime/ps2_input_bindings.h"
 
 #include <algorithm>
 #include <atomic>
@@ -82,6 +83,40 @@ std::string defaultPath()
     return base + "/rc-revenge-pro/settings.ini";
 }
 
+namespace B = ps2_input_bindings;
+
+// A controls line: p1_device=..., p1_key_<control>=..., p1_pad_<control>=... (players 1 and 2).
+bool readControl(const std::string &key, const std::string &value, B::Player players[2])
+{
+    if (key.size() < 4 || key[0] != 'p' || (key[1] != '1' && key[1] != '2') || key[2] != '_')
+        return false;
+    B::Player &p = players[key[1] - '1'];
+    const std::string rest = key.substr(3);
+    if (rest == "device")
+    {
+        if (const int d = B::parseDevice(value.c_str()); d >= 0)
+            p.device = d;
+        return true;
+    }
+    const bool isKey = rest.rfind("key_", 0) == 0, isPad = rest.rfind("pad_", 0) == 0;
+    if (!isKey && !isPad)
+        return false;
+    const std::string control = rest.substr(4);
+    for (int c = 0; c < B::ControlCount; ++c)
+        if (control == B::controlKey(c))
+        {
+            const int source = isKey ? B::parseKeySource(value.c_str()) : B::parsePadSource(value.c_str());
+            if (source >= 0)
+                (isKey ? p.key : p.pad)[c] = source;
+            else
+                std::fprintf(stderr, "[settings] %s=%s: unknown, kept the default\n", key.c_str(), value.c_str());
+            return true;
+        }
+    return false;
+}
+
+B::Player *g_loadPlayers = nullptr; // during load() only (it runs before this file's dynamic initialisers)
+
 void readFile(Settings &s)
 {
     std::ifstream in(g_path);
@@ -109,6 +144,24 @@ void readFile(Settings &s)
             s.vsync = vsyncFromText(value);
         else if (key == "vrr")
             s.vrr = number != 0;
+        else if (g_loadPlayers)
+            readControl(key, value, g_loadPlayers);
+    }
+}
+
+void writeControls(std::ofstream &out)
+{
+    out << "# Controls (also in Game Options > Controls): per player the device (none, keyboard, pad1-pad4,\n"
+        << "# keyboard+pad1, keyboard+pad2), then each DualShock 2 control's key (raylib names: A, F1, space, left_shift, ...)\n"
+        << "# and gamepad input (SDL names: a, b, x, y, dpup, leftshoulder, start, back, +righttrigger, -leftx, ...); none unbinds\n";
+    for (int i = 0; i < 2; ++i)
+    {
+        const B::Player p = B::player(i);
+        out << "p" << i + 1 << "_device=" << B::deviceKey(p.device) << "\n";
+        for (int c = 0; c < B::ControlCount; ++c)
+            out << "p" << i + 1 << "_key_" << B::controlKey(c) << "=" << B::sourceKey(p.key[c]) << "\n";
+        for (int c = 0; c < B::ControlCount; ++c)
+            out << "p" << i + 1 << "_pad_" << B::controlKey(c) << "=" << B::sourceKey(p.pad[c]) << "\n";
     }
 }
 
@@ -131,6 +184,7 @@ void writeFile(const Settings &s)
         << "smooth_motion=" << (s.smoothMotion ? 1 : 0) << "\n"
         << "vsync=" << kVsyncNames[s.vsync] << "\n"
         << "vrr=" << (s.vrr ? 1 : 0) << "\n";
+    writeControls(out);
 }
 
 // The presentation follows the aspect; the window loop takes requests from the game thread.
@@ -151,6 +205,8 @@ __attribute__((constructor(101))) void load()
 {
     g_path = defaultPath();
     Settings s;
+    B::Player players[2] = {B::defaults(0), B::defaults(1)};
+    g_loadPlayers = players;
     readFile(s);
     const char *v = nullptr;
     if (envSet("RC_ASPECT", v))
@@ -171,6 +227,23 @@ __attribute__((constructor(101))) void load()
         s.vsync = vsyncFromText(v);
     if (envSet("PS2X_VRR", v))
         s.vrr = *v != '0';
+    // Controls: the file's, then PS2X_PAD1_DEVICE / PS2X_PAD2_DEVICE and PS2X_BIND_<button> (player 1's keyboard).
+    for (int i = 0; i < 2; ++i)
+        if (envSet(i == 0 ? "PS2X_PAD1_DEVICE" : "PS2X_PAD2_DEVICE", v))
+        {
+            if (const int d = B::parseDevice(v); d >= 0)
+                g_loadPlayers[i].device = d;
+            else
+                std::fprintf(stderr, "[settings] unknown device %s\n", v);
+        }
+    static const char *const kBind[16] = {"UP", "DOWN", "LEFT", "RIGHT", "CROSS", "CIRCLE", "SQUARE", "TRIANGLE", "L1", "R1", "L2", "R2", "START", "SELECT", "L3", "R3"};
+    for (int c = 0; c < 16; ++c)
+        if (envSet(("PS2X_BIND_" + std::string(kBind[c])).c_str(), v))
+            if (const int source = B::parseKeySource(v); source >= 0)
+                g_loadPlayers[0].key[c] = source;
+    for (int i = 0; i < 2; ++i)
+        B::setPlayer(i, g_loadPlayers[i]);
+    g_loadPlayers = nullptr;
     // NVIDIA's driver allows G-SYNC/VRR for the window only when told so before the GL context is made (it matters
     // when the NVIDIA GPU drives the screen; with PRIME offload the compositor's GPU does). Set either way: harmless.
     setenv("__GL_GSYNC_ALLOWED", "1", 0);
@@ -220,5 +293,11 @@ int raceRefreshHz()
     return hz;
 }
 const char *filePath() { return g_path.c_str(); }
+
+void saveControls()
+{
+    std::lock_guard<std::mutex> lock(g_mutex);
+    writeFile(g_settings);
+}
 
 } // namespace rc::settings

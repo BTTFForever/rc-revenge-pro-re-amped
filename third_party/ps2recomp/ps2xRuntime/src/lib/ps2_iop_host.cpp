@@ -581,6 +581,12 @@ bool PS2IopHostAdapter::readPad(uint32_t port, ps2x::iop::PadInputState &state)
     return state.connected;
 }
 
+// RC: the emulated DualShock 2's motors, to the gamepad that port reads.
+void PS2IopHostAdapter::padVibration(uint32_t port, uint8_t smallMotor, uint8_t largeMotor)
+{
+    ps2_host_input::setPadVibration(port, smallMotor, largeMotor);
+}
+
 void PS2IopHostAdapter::log(ps2x::iop::LogLevel level, std::string_view message)
 {
     const char *prefix = "[ps2xIOP]";
