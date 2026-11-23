@@ -1076,7 +1076,7 @@ results: `RENDERER_3D_DESIGN.md` section 20.
   results screens, more two-player (`RENDERER_3D_DESIGN.md` 20.7).
 
 ### Level testing (2026-11-09)
-`RC_BOOT_LEVEL=<n> tools/play.sh` skips the intro and menus and loops the attract-mode demo on level n. `RC_SKIP_INTRO=1` skips only the legal screen, movie and Dolby screen and starts in the front end (for menu tests: `PS2X_PAD_REPLAY=<file>` plays a pad script of `epoch frame buttons axes` lines). `tools/level_sweep.sh <first> <last> <seconds> [VAR=value ...]` prints each level's frame rate.
+`RC_BOOT_LEVEL=<n> tools/play.sh` skips the intro and menus and loops the attract-mode demo on level n. `RC_SKIP_INTRO=1` skips only the legal screen, movie and Dolby screen and starts in the front end (for menu tests: `PS2X_PAD_REPLAY=<file>` plays a pad script of `epoch frame buttons axes` lines). `tools/level_sweep.sh <first> <last> <seconds> [VAR=value ...]` prints each level's frame rate. The demo ends after 30 s; `RC_DEMO_SECS=<n>` lengthens it, and `tools/track_sweep.sh` runs whole-lap demos of every level (see PERF_INVESTIGATION.md).
 Sweep of levels 1-24 on the God of War renderer at 3x: 1, 3, 4, 10, 15, 16 and 22 hold about 55-60 fps; 6, 8, 9, 12, 17, 18 and 24 ran about 25-35 fps before the blend and palette fixes. On level 18 the default renderer reaches 35-43 fps with VU1 87% busy at 14.5 ms per field, so those levels are limited by VU1 on both renderers. About half the VU time is one block of program C3952C0FAEB52EAD; its cost is spread evenly over its instructions.
 
 ## Other projects consulted

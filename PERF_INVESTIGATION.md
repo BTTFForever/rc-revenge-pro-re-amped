@@ -298,6 +298,44 @@ The jungle track select (scratchpad walk `jungle.pad`, field 1600) matches the s
 smoke, and the dancing natives (skinned, so on the new path) are drawn correctly. Not tested: Europe, two-player, the
 Track Editor.
 
+## As built (2026-11-23): whole-lap track sweep, the water drawn three passes per triangle
+
+**Finding the slow spots.** The attract demo ends after 30 s (`MainDemoEndTask`, `decomp/src/main.cpp`), so a
+`RC_BOOT_LEVEL` run repeated each track's opening. `RC_DEMO_SECS=<n>` lengthens it; `tools/track_sweep.sh` runs every
+level's demo for 130 s (a lap) at 3x with frame times, `[gs-hw]` stats and per-thread CPU every second, and
+`tools/track_sweep_table.py` makes the table. The demo is all AI (no human player); it follows the racing line, so
+shortcuts, crashes and split screen are not covered, and it is not deterministic between runs.
+
+**First sweep** (USA, after the AKLM fix): levels 9 (32 s under 55 fps, worst 40), 21 (16 s, worst 47), 17 (9 s,
+worst 48) and 23 (4 s, worst 53), each with the GS thread at 96-99% of a core in the dips. No frames over 50 ms.
+
+**The cause.** `PS2X_GS_HW_BREAKS=2` (new: each reason split by what the ended draw was, with triangles a draw) on
+level 9: 78% of draws were single triangles of plain primitives, in a repeating cycle of three states at the same
+position: a CT32 texture with ALPHA 0x09 (Cs + Cd*As, As = 127), a T4 bump texture subtracted (0x62, FIX 0x15) and
+added (0x68), Z test on and Z writes off. That is the water VU1 program (`Rdr_Water`, `gRdr_WaterEndShapeData`)
+drawing every triangle in three passes: up to ~5,400 GL draws a frame.
+
+**The fix** (`gs_hw_backend.cpp`, multipass lanes): when a one-triangle batch is followed by the same triangle (same
+host positions) under another state, with no depth writes, the same FRAME/ZBUF and no texture read from a render
+target, each state of the cycle (2-4) gets a lane; the following triangles fill the lanes in cycle order while the
+positions repeat, and anything else (or any flush) draws the lanes in order, one draw per pass. This reorders the
+blend only where two triangles of one group overlap: `PS2X_GS_HW_MULTIPASS=3` measures it, 0.04-0.05% of the pixels
+the groups cover on level 9 (shared edges included, the test counts them twice), and there the base pass keeps
+127/128 of what is below, so the bump term changes by under 1%. `PS2X_GS_HW_MULTIPASS=0` restores the old path.
+The front end (`replay playtest2`) never forms a group.
+
+| level (3x, 130 s demo, 15-140 s) | <55 fps seconds before / after | worst second before / after | GS thread mean / peak before | after |
+|---|---|---|---|---|
+| 9 | 32 / 0 | 40 / 56 | 0.75 / 0.99 | 0.50 / 0.75 |
+| 21 | 16 / 0 | 47 / 59 | 0.70 / 0.98 | 0.48 / 0.70 |
+| 17 | 9 / 0 | 48 / 59 | 0.63 / 0.98 | 0.39 / 0.52 |
+| 23 | 4 / 0 | 53 / 57 | 0.68 / 0.98 | 0.43 / 0.55 |
+
+All 24 levels after: median 60, no second under 55, worst seconds 56-60. Level 9's GL draws: 3,400-5,400 a frame to
+660-800 (the table's "maxPrim/f" counts GS primitives, which grouping does not change). What still splits level 9's
+draws: skinned blocks with direct-colour textures (track mode 3, 4 triangles a draw) and blocks of track modes 1 and
+2, not yet on the multi-texture path. Not tested: Europe (built only), two-player, the Track Editor.
+
 ## The two renderer routes
 
 **(a) Keep the emulated GS's GL renderer and speed it up PCSX2-style.**
