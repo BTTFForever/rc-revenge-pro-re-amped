@@ -94,6 +94,26 @@ namespace ps2_host_display
     {
         headless = enabled;
     }
+
+    int initialWidth = 0, initialHeight = 0;
+    std::atomic<int> fullscreenRequest{-1}; // -1 none, 0 window, 1 fullscreen
+    std::atomic<int> targetFpsRequest{0};
+
+    void setInitialWindowSize(int width, int height)
+    {
+        initialWidth = width;
+        initialHeight = height;
+    }
+
+    void requestFullscreen(bool fullscreen)
+    {
+        fullscreenRequest.store(fullscreen ? 1 : 0, std::memory_order_release);
+    }
+
+    void requestTargetFps(int fps)
+    {
+        targetFpsRequest.store(fps, std::memory_order_release);
+    }
 }
 
 #define ELF_MAGIC 0x464C457F // "\x7FELF" in little endian
@@ -954,10 +974,14 @@ bool PS2Runtime::initialize(const char *title)
             SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_WINDOW_ALWAYS_RUN);
             if (ps2_host_display::headless)
                 SetConfigFlags(FLAG_WINDOW_HIDDEN);
-            InitWindow(HOST_WINDOW_WIDTH, HOST_WINDOW_HEIGHT, title);
+            InitWindow(ps2_host_display::initialWidth > 0 ? ps2_host_display::initialWidth : HOST_WINDOW_WIDTH,
+                       ps2_host_display::initialHeight > 0 ? ps2_host_display::initialHeight : HOST_WINDOW_HEIGHT, title);
             if (ps2_host_display::startMaximized && !ps2_host_display::headless)
                 MaximizeWindow();
             SetExitKey(KEY_NULL);
+            // PS2X_FULLSCREEN=1 (or the settings file): fullscreen over the whole monitor at its current mode.
+            if (const char *v = std::getenv("PS2X_FULLSCREEN"); v && *v == '1' && !ps2_host_display::headless)
+                ps2_host_display::requestFullscreen(true);
         }
         if (ps2_host_display::headless)
         {
@@ -3003,15 +3027,33 @@ void PS2Runtime::run()
             lastSwap = now;
         }
 #if !defined(PLATFORM_VITA)
-        if (IsKeyPressed(KEY_F11))
+        // Fullscreen: requested by the settings (Game Options > Enhancements) or F11. True fullscreen on the current
+        // monitor at its current mode (no mode switch, over the desktop's panels); the picture keeps its aspect.
         {
-            ps2_host_input::releaseMouse();
-            const bool leavingFullscreen = IsWindowState(FLAG_BORDERLESS_WINDOWED_MODE);
-            if (!leavingFullscreen)
-                restoreMaximized = IsWindowMaximized();
-            ToggleBorderlessWindowed();
-            if (leavingFullscreen && restoreMaximized)
-                MaximizeWindow();
+            int want = ps2_host_display::fullscreenRequest.exchange(-1, std::memory_order_acq_rel);
+            if (IsKeyPressed(KEY_F11))
+                want = IsWindowFullscreen() ? 0 : 1;
+            if (want >= 0 && (want == 1) != IsWindowFullscreen())
+            {
+                ps2_host_input::releaseMouse();
+                if (want == 1)
+                {
+                    restoreMaximized = IsWindowMaximized();
+                    const int monitor = GetCurrentMonitor();
+                    SetWindowSize(GetMonitorWidth(monitor), GetMonitorHeight(monitor));
+                    ToggleFullscreen();
+                }
+                else
+                {
+                    ToggleFullscreen();
+                    SetWindowSize(ps2_host_display::initialWidth > 0 ? ps2_host_display::initialWidth : HOST_WINDOW_WIDTH,
+                                  ps2_host_display::initialHeight > 0 ? ps2_host_display::initialHeight : HOST_WINDOW_HEIGHT);
+                    if (restoreMaximized)
+                        MaximizeWindow();
+                }
+            }
+            if (const int fps = ps2_host_display::targetFpsRequest.exchange(0, std::memory_order_acq_rel); fps > 0)
+                SetTargetFPS(fps);
         }
 #endif
         ps2_host_input::sample();

@@ -22,6 +22,10 @@ RC_VERSION_VARIANT(ScreenAdjust)
 RC_VERSION_VARIANT(PathPilotEndCallbackHOP)
 RC_VERSION_VARIANT(FEStartPos)
 
+namespace rc::enhance {
+void poll(); // rc_enhance_menu.cpp
+}
+
 namespace rc {
 
 using namespace front;
@@ -237,6 +241,7 @@ void FrontEndProcess()
         guest_call<void>(sym::CameraProcess, time, 0);
         m.time = time;
         guest_call<void>(sym::TaskProcess, time);
+        enhance::poll(); // enhanced recomp: Game Options > Enhancements
         guest_call<void>(sym::AnimUpdateAnims);
         guest_call<void>(sym::GfxTex_Update);
         if (const ptr32<sAMenuHeader> pMenu = menuSystem().pActiveMenu; pMenu && (pMenu->evenMoreFlags & 2u) != 0)

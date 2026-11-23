@@ -1,0 +1,43 @@
+// The enhanced recomp's settings (README "Enhanced recomp"): kept in a settings file, changed in the game's own
+// Game Options > Enhancements menu (rc_enhance_menu.cpp) and read live by the code they affect.
+//
+// File: $XDG_CONFIG_HOME/rc-revenge-pro/settings.ini (else ~/.config/...), lines of key=value:
+//   aspect=4:3|16:9|16:10|21:9   hud=corrected|stretched   fullscreen=0|1   scale=1..6
+//   race_fps=60|90|120|144|165|240   smooth_motion=0|1
+// An environment variable, where one exists, wins over the file for that run (RC_ASPECT / RC_WIDESCREEN,
+// RC_HUD_ANCHOR, PS2X_FULLSCREEN, PS2X_GS_HW_SCALE, PS2X_REFRESH_HZ, RC_INTERP), so test scripts keep working.
+#pragma once
+
+#include <cstdint>
+
+namespace rc::settings {
+
+enum Aspect : int { Aspect4x3 = 0, Aspect16x9, Aspect16x10, Aspect21x9, AspectCount };
+inline constexpr int kRaceFps[] = {60, 90, 120, 144, 165, 240};
+inline constexpr int kRaceFpsCount = 6;
+
+struct Settings
+{
+    int aspect = Aspect4x3;
+    bool hudCorrected = true; // HUD corners pinned and menus pillarboxed in widescreen (else stretched)
+    bool fullscreen = false;
+    int scale = 2;            // internal resolution (applies at the next start)
+    int raceFps = 0;          // index into kRaceFps
+    bool smoothMotion = true; // cars and cameras drawn between physics steps
+};
+
+const Settings &get();
+void set(const Settings &s); // applies what can change live, then saves the file
+
+// What the code reads.
+float aspectRatio();                      // presented aspect: 4/3, 16/9, ...
+inline bool widescreen() { return get().aspect != Aspect4x3; }
+float hscale();                           // (4/3) / aspect: the projection's x scale
+inline bool hudAnchor() { return widescreen() && get().hudCorrected; }
+inline bool uiPillarbox() { return widescreen() && get().hudCorrected; }
+inline bool smoothMotion() { return get().smoothMotion; }
+int raceRefreshHz();                      // races' frame rate (60: the original)
+
+const char *filePath();
+
+} // namespace rc::settings

@@ -17,29 +17,28 @@ supported.
 
 ## Enhanced recomp: playing with the enhancements (`main`)
 
-Run through `tools/play.sh` as below (on a hybrid-graphics laptop it uses the discrete NVIDIA GPU). Recommended:
+Run `tools/play.sh` (on a hybrid-graphics laptop it uses the discrete NVIDIA GPU) and set things up in the game:
+**Game Options > Enhancements**. Changes apply at once (resolution at the next start) and are saved to
+`~/.config/rc-revenge-pro/settings.ini`:
 
-```sh
-PS2X_GS_HW_SCALE=4 RC_VU1_REF=0 tools/play.sh                     # 4x resolution, 60 fps
-PS2X_GS_HW_SCALE=4 RC_VU1_REF=0 PS2X_REFRESH_HZ=144 tools/play.sh # races at up to 144 fps (match your screen)
-```
-
-| Setting | Default | What it does |
+| Setting | Choices | What it does |
 |---|---|---|
-| `PS2X_GS_HW_SCALE=<n>` | 1 | Internal resolution multiplier (3 or 4 is 1080p-1440p class). |
-| `PS2X_REFRESH_HZ=<n>` | off | Races run at up to n frames a second; menus keep the original rate. The game's speed is unchanged. |
-| `RC_INTERP=0` | on | Cars, wheels and the camera are drawn between the game's 50 Hz physics steps, so motion is even at any frame rate (also at 60). The simulation itself is untouched. |
-| `RC_WATER_SHADER=0` | on | Water drawn by the GPU instead of the CPU. |
-| `PS2X_GS_DIRECT_PRESENT=0` | on (Linux) | Frames go to the window as shared GPU textures instead of a copy through RAM. |
-| `PS2X_GS_HW_TRACK_MULTITEX=0`, `..._DIRECT=0` | on | Scenery and animated models with different textures drawn together (far fewer draw calls). |
-| `PS2X_GS_HW_MULTIPASS=0` | on | Multi-pass effects drawn pass by pass. |
+| Aspect ratio | 4:3, 16:9, 16:10, 21:9 | Hor+ widescreen: the 3D view widens, nothing is stretched |
+| HUD and menus | Corrected, Stretched | In widescreen: HUD pinned to the screen's corners and menus kept in shape (pillarboxed), or the original layout stretched |
+| Display | Window, Fullscreen | True fullscreen on the current monitor (F11 toggles too) |
+| Resolution (restart) | 1x to 6x | Internal resolution (3x-4x for 1080p-1440p) |
+| Race frame rate | 60, 90, 120, 144, 165, 240 | Races run up to this rate (match your screen); menus keep the original rate; game speed unchanged |
+| Smooth motion | On, Off | Cars, wheels and camera drawn between the game's 50 Hz physics steps: even motion at any frame rate (also at 60) |
 
-The `=0` forms switch an enhancement off, for comparison or if something looks wrong. `RC_BOOT_LEVEL=<n>` starts the
-attract demo on level n, `RC_DEMO_SECS=<n>` lengthens it, and `tools/track_sweep.sh` measures every track's frame
-rate over a lap. `PERF_INVESTIGATION.md` records each change, how it was checked and what it gained.
+The same Game Options menu also shows the developers' **Debug Menus**, left hidden on the disc. Apart from Mirror
+Mode (the game's normal mirrored tracks), its items are not connected to anything in the released game.
 
-**No game data is included or distributed.** You need your own legal copy of the game disc, PAL or NTSC. The setup
-script reads everything it needs from your disc image.
+For one run, an environment variable overrides the file: `RC_ASPECT=16:9`, `PS2X_GS_HW_SCALE=<n>`,
+`PS2X_FULLSCREEN=1`, `PS2X_REFRESH_HZ=<n>`, `RC_INTERP=0`. Switches for comparing or bypassing the other enhancements
+(all on by default): `RC_WATER_SHADER=0` (water on the CPU), `PS2X_GS_DIRECT_PRESENT=0` (frames copied through RAM),
+`PS2X_GS_HW_TRACK_MULTITEX=0` and `..._DIRECT=0` (fewer draws), `PS2X_GS_HW_MULTIPASS=0`. `RC_BOOT_LEVEL=<n>` starts
+the attract demo on level n, `RC_DEMO_SECS=<n>` lengthens it, `tools/track_sweep.sh` measures every track's frame rate
+over a lap. `PERF_INVESTIGATION.md` records each change, how it was checked and what it gained.
 
 ## How it works
 

@@ -2,6 +2,8 @@
 // as two triangles each, with one colour (RectRender) or one per corner (RectRenderGouraud). The first packet sets
 // the primitive type and the blending, then each corner is a colour and a position under one GIF tag.
 
+#include "rc_settings.h" // enhanced recomp: widescreen
+#include "rc_widescreen.h"
 #include "ee_math.h"
 
 namespace rc {
@@ -60,6 +62,7 @@ void corner(uint64_t colourLow, uint64_t colourHigh, int32_t x, int32_t y, ee_fl
 
 void RectRender(ptr32<_sRect> pRect, f32 otz)
 {
+    const rc::widescreen::AnchorScope uiScope(rc::gfx::AnchorCentre, rc::widescreen::AnchorScope::Ui); // widescreen: menus and 2D pillarboxed
     _sRect &rect = *pRect;
     const uint32_t flags = rect.flags;
     uint64_t blend = 0;
@@ -110,6 +113,7 @@ void RectRender(ptr32<_sRect> pRect, f32 otz)
 
 void RectRenderGouraud(ptr32<_sGRect> pGRect, f32 otz)
 {
+    const rc::widescreen::AnchorScope uiScope(rc::gfx::AnchorCentre, rc::widescreen::AnchorScope::Ui); // widescreen: menus and 2D pillarboxed
     _sGRect &rect = *pGRect;
     const uint32_t flags = rect.flags;
     bool testAlpha = false, add = false; // Ghidra's bVar8 (flag 2) and bVar9 (flag 4, without flag 2)

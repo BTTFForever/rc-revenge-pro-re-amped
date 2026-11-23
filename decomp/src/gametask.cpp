@@ -8,6 +8,7 @@
 
 #include "physics_fuzz.h"
 #include "weapon.h"
+#include "rc_settings.h"
 
 #include <algorithm>
 #include <cmath>
@@ -213,8 +214,7 @@ float maxCamStep = 0.0f;
 
 bool enabled()
 {
-    static const bool on = [] { const char *v = std::getenv("RC_INTERP"); return !(v && *v == '0'); }();
-    return on;
+    return settings::smoothMotion(); // Game Options > Enhancements, the settings file or RC_INTERP
 }
 
 // Before a physics step: what is drawn now becomes the previous state.
@@ -341,23 +341,26 @@ float jumpLimit()
 
 } // namespace interp
 
-// PS2X_REFRESH_HZ=<n>: vblanks at n Hz while a race (or the demo) runs, so its loop draws up to n frames a second; the
+// The race frame rate (settings: Game Options > Enhancements, race_fps, PS2X_REFRESH_HZ): vblanks at n Hz while a race (or the demo) runs, so its loop draws up to n frames a second; the
 // race keeps time on its own clock. The front end and other screens step their animations once a frame, so they keep
 // the video mode's rate.
 void RcRefreshRace(bool racing)
 {
-    static const uint32_t hz = [] { const char *v = std::getenv("PS2X_REFRESH_HZ"); return v ? static_cast<uint32_t>(std::atoi(v)) : 0u; }();
     static uint32_t normal = 0;
-    if (hz < 30u || hz > 500u)
-        return;
     EeScheduler &scheduler = g_runtime->eeScheduler();
     if (racing)
     {
+        const uint32_t hz = static_cast<uint32_t>(settings::raceRefreshHz()); // Game Options > Enhancements
+        if (hz <= 60u)
+            return;
         normal = static_cast<uint32_t>(scheduler.vblankPeriod().count());
         scheduler.setVBlankPeriodMicroseconds(1000000u / hz);
     }
     else if (normal != 0u)
+    {
         scheduler.setVBlankPeriodMicroseconds(normal);
+        normal = 0;
+    }
 }
 
 namespace interp {

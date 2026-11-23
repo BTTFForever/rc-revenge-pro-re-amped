@@ -12,6 +12,9 @@
 #include "front_fuzz.h"
 
 #include <optional>
+#include <string>
+#include <cstdio>
+#include <cstdlib>
 
 RC_VERSION_VARIANT(ParseSelectionTags)
 RC_VERSION_VARIANT(BuildKeyDefinitions)
@@ -19,6 +22,10 @@ RC_VERSION_VARIANT(ProcessRewardMessage)
 RC_VERSION_VARIANT(DisplayRCRevengeBanner)
 
 namespace rc {
+
+namespace enhance {
+void install(ptr32<sUIgroup> pUIGroup); // rc_enhance_menu.cpp
+}
 
 using namespace front;
 
@@ -984,8 +991,49 @@ void PollingMemoryCard()
 
 // Hides the items the UI groups tagged 0x10000208 point at; for the pause menu (flag 1) also the two-player items
 // outside a two-player race, and in a cup the pause menu is the first group's.
+namespace {
+// RC_MENU_DUMP=1 (tool): the front end's menus as the level file builds them, once, to stderr.
+std::string menuText(ptr32<sTextGroup> group)
+{
+    if (!group || !group->pText[0])
+        return "-";
+    return std::string(static_cast<const char *>(guest_host(group->pText[0].address))).substr(0, 40);
+}
+void dumpMenus(ptr32<sUIgroup> pUIGroup)
+{
+    static bool done = false;
+    if (done || !std::getenv("RC_MENU_DUMP"))
+        return;
+    done = true;
+    int n = 0;
+    for (ptr32<sUIgroup> g = pUIGroup; g->pSourceHeader.address != 0xffffffffu && n < 200; g = g + 1, ++n)
+    {
+        const ptr32<sAMenuHeader> h = g->pSourceHeader;
+        std::fprintf(stderr, "[menu] group %d src %08x dest %08x tag %08x view %08x linkPos %d linkType %u\n", n, h.address,
+                     g->pDestHeader.address, g->selectionTag, g->viewPosTag, g->linkPos, g->linkType);
+        if (!h)
+            continue;
+        std::fprintf(stderr, "[menu]   header %08x \"%s\" flags %04x more %04x even %04x items %u xywh %d %d %u %u colour %08x border %08x ui %08x\n",
+                     h.address, menuText(h->pTitleText).c_str(), h->flags, h->moreFlags, h->evenMoreFlags, h->menuItems, h->x, h->y, h->width,
+                     h->height, h->pColourSet.address, h->pBorderSet.address, h->pUIgroup.address);
+        int k = 0;
+        for (ptr32<sMenuItemStd> p = h->pMenuStart; p && k < 40; p = p->pNext, ++k)
+        {
+            std::fprintf(stderr, "[menu]     item %08x \"%s\" tag %08x flags %04x linkType %u status %02x link %08x var %08x", p.address,
+                         menuText(p->pTextGroup).c_str(), p->selectionTag, p->flags, p->linkType, p->statusFlags, p->pLinkMenu.address,
+                         p->pMenuVar.address);
+            if (const ptr32<sMenuItemVar> v = p->pMenuVar)
+                std::fprintf(stderr, " [var tag %08x value %d min %d max %d flags %04x feedback %08x choices \"%s\"]", v->tagMVar, v->value,
+                             v->minValue, v->maxValue, v->flags, v->pFeedbackVar.address, menuText(v->pTextGroup).c_str());
+            std::fprintf(stderr, "\n");
+        }
+    }
+}
+} // namespace
+
 void MenuInitScan(ptr32<sUIgroup> pUIGroup, int32_t flag)
 {
+    dumpMenus(pUIGroup);
     GuestFrame frame(0x70);
     for (ptr32<sUIgroup> g = pUIGroup; g->pSourceHeader.address != 0xffffffffu; g = g + 1)
         if (g->selectionTag == 0x10000208u)
@@ -993,6 +1041,7 @@ void MenuInitScan(ptr32<sUIgroup> pUIGroup, int32_t flag)
             const ptr32<sMenuItemStd> p = AMenuGetMIT(g->pSourceHeader, g->linkPos);
             p->flags = static_cast<uint16>(p->flags | 0x60u);
         }
+    enhance::install(pUIGroup); // enhanced recomp: Game Options > Enhancements, and Debug Menus shown
     const int32_t cup = fe().cup;
     if (flag != 1)
         return;

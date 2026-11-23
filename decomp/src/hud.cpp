@@ -6,6 +6,8 @@
 //
 // Written from the instructions (Ghidra's C was used for the sprite functions' vertex order, checked against them).
 
+#include "rc_settings.h" // enhanced recomp: widescreen
+#include "rc_widescreen.h"
 #include "hud_fuzz.h"
 #include "weapon.h"
 
@@ -256,6 +258,7 @@ void HudTopLeft(ptr32<_sObject>, int8, int8)
 // A sprite at (fX, fY): width doubled, height to 127, at the far depth.
 void HudSprite(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb)
 {
+    const rc::widescreen::AnchorScope uiScope(rc::gfx::AnchorCentre, rc::widescreen::AnchorScope::Ui); // widescreen: menus and 2D pillarboxed
     RC_DIVERT_IF_CHANGED(HudSprite, pSpr, fX, fY, rgb);
     const uint32_t width = (static_cast<uint32_t>(pSpr->width) << 1) & 0xffu, height = pSpr->height & 0x7fu;
     const ee_float x = fX + ee_float(1728.0f), y = fY + ee_float(1928.0f);
@@ -268,6 +271,7 @@ void HudSprite(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb)
 // As HudSprite, extending to the left (the mirrored map).
 void HudSpriteMirror(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb)
 {
+    const rc::widescreen::AnchorScope uiScope(rc::gfx::AnchorCentre, rc::widescreen::AnchorScope::Ui); // widescreen: menus and 2D pillarboxed
     RC_DIVERT_IF_CHANGED(HudSpriteMirror, pSpr, fX, fY, rgb);
     const uint32_t width = (static_cast<uint32_t>(pSpr->width) << 1) & 0xffu, height = pSpr->height & 0x7fu;
     const ee_float x = fX + ee_float(1728.0f), y = fY + ee_float(1928.0f);
@@ -280,6 +284,7 @@ void HudSpriteMirror(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb)
 // A sprite at full width and half height, at a depth.
 void HudSpriteHI(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb, ee_float otz)
 {
+    const rc::widescreen::AnchorScope uiScope(rc::gfx::AnchorCentre, rc::widescreen::AnchorScope::Ui); // widescreen: menus and 2D pillarboxed
     RC_DIVERT_IF_CHANGED(HudSpriteHI, pSpr, fX, fY, rgb, otz);
     const uint32_t height = pSpr->height, width = pSpr->width;
     const ee_float x = fX + ee_float(1728.0f);
@@ -295,6 +300,7 @@ void HudSpriteHI(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb, ee_
 // The corner vectors' z and w lanes are never set (stale stack): the rotation matrix's zeros multiply them.
 void HudRotSpriteHI(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb, ee_float otz, ee_float ang)
 {
+    const rc::widescreen::AnchorScope uiScope(rc::gfx::AnchorCentre, rc::widescreen::AnchorScope::Ui); // widescreen: menus and 2D pillarboxed
     RC_DIVERT_IF_CHANGED(HudRotSpriteHI, pSpr, fX, fY, rgb, otz, ang);
     GuestFrame frame(0x160);
     const uint32_t sp = frame.local<uint8_t>(0).address;
@@ -337,6 +343,7 @@ void HudRotSpriteHI(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb, 
 // The wrong-way cross: a diamond of the level's cross texture about (iX, iY), half-height iD.
 void HudWrongWayX(int32 iX, int32 iY, int32 iD)
 {
+    const rc::widescreen::AnchorScope uiScope(rc::gfx::AnchorCentre, rc::widescreen::AnchorScope::Ui); // widescreen: menus and 2D pillarboxed
     RC_DIVERT_IF_CHANGED(HudWrongWayX, iX, iY, iD);
     const int32_t x = iX + 0x6c0, y = iY + 0x788;
     GfxP2_TexFX(ptr32<_sGfxTexture>(at<uint32_t>(hudRes() + 0xd0u)), 0);
@@ -348,6 +355,7 @@ void HudWrongWayX(int32 iX, int32 iY, int32 iD)
 // The "lost" sign: the level's lost texture over (iX, iY) +- (2 iD, iD).
 void HudLost(int32 iX, int32 iY, int32 iD)
 {
+    const rc::widescreen::AnchorScope uiScope(rc::gfx::AnchorCentre, rc::widescreen::AnchorScope::Ui); // widescreen: menus and 2D pillarboxed
     RC_DIVERT_IF_CHANGED(HudLost, iX, iY, iD);
     const int32_t x = iX + 0x6c0, y = iY + 0x788;
     GfxP2_TexFX(ptr32<_sGfxTexture>(at<uint32_t>(hudRes() + 0xd8u)), 0x20);
@@ -360,6 +368,7 @@ void HudLost(int32 iX, int32 iY, int32 iD)
 // position and the frame count.
 void HudMenuBorder(ptr32<_sSprite> pSpr, int32 iCX, int32 iCY, int32 arg3)
 {
+    const rc::widescreen::AnchorScope uiScope(rc::gfx::AnchorCentre, rc::widescreen::AnchorScope::Ui); // widescreen: menus and 2D pillarboxed
     RC_DIVERT_IF_CHANGED(HudMenuBorder, pSpr, iCX, iCY, arg3);
     GuestFrame frame(0xd0);
     const uint32_t sp = frame.local<uint8_t>(0).address;
@@ -410,6 +419,7 @@ void HudTopRight(ptr32<_sObject> pObj, int8 arg1, int8 player)
     RC_DIVERT_IF_CHANGED(HudTopRight, pObj, arg1, player);
     // Side tag: this element's sprites and text in the 2D packet.
     const rc::gfx::HudTag hud{rc::gfx::HudTopRight, rc::gfx::AnchorTopRight, {}};
+    const rc::widescreen::AnchorScope anchorScope(hud.anchor); // widescreen: HUD corners anchored
     const rc::gfx::Span2D span(rc::gfx::DrawKey{rc::gfx::DrawHud, pObj.address, rc::gfx::HudTopRight, static_cast<uint32_t>(player)}, &hud);
     const uint32_t car = pObj.address;
     const int32_t down = player == 0 ? 0 : 0x70;
@@ -480,6 +490,7 @@ void HudBottomRight(ptr32<_sObject> pObj, int8 size, int8 player)
     RC_DIVERT_IF_CHANGED(HudBottomRight, pObj, size, player);
     // Side tag: this element's sprites and text in the 2D packet.
     const rc::gfx::HudTag hud{rc::gfx::HudBottomRight, rc::gfx::AnchorBottomRight, {}};
+    const rc::widescreen::AnchorScope anchorScope(hud.anchor); // widescreen: HUD corners anchored
     const rc::gfx::Span2D span(rc::gfx::DrawKey{rc::gfx::DrawHud, pObj.address, rc::gfx::HudBottomRight, static_cast<uint32_t>(player)}, &hud);
     const uint32_t res = hudRes();
     int32_t y = slide() + 0x98;
@@ -528,6 +539,7 @@ void HudBottomLeft(ptr32<_sObject> arg0, int8 size, int8 player)
     RC_DIVERT_IF_CHANGED(HudBottomLeft, arg0, size, player);
     // Side tag: this element's sprites and text in the 2D packet.
     const rc::gfx::HudTag hud{rc::gfx::HudBottomLeft, rc::gfx::AnchorBottomLeft, {}};
+    const rc::widescreen::AnchorScope anchorScope(hud.anchor); // widescreen: HUD corners anchored
     const rc::gfx::Span2D span(rc::gfx::DrawKey{rc::gfx::DrawHud, arg0.address, rc::gfx::HudBottomLeft, static_cast<uint32_t>(player)}, &hud);
     const uint32_t res = hudRes();
     const int32_t dx = at<int32_t>(kAINode + 0x1cu) - at<int32_t>(kAINode + 0x14u);
@@ -591,6 +603,7 @@ void HudMiddle(ptr32<_sObject> pObj, int8 size, int8 arg2)
     RC_DIVERT_IF_CHANGED(HudMiddle, pObj, size, arg2);
     // Side tag: this element's sprites and text in the 2D packet.
     const rc::gfx::HudTag hud{rc::gfx::HudMiddle, rc::gfx::AnchorCentre, {}};
+    const rc::widescreen::AnchorScope anchorScope(hud.anchor); // widescreen: HUD corners anchored
     const rc::gfx::Span2D span(rc::gfx::DrawKey{rc::gfx::DrawHud, pObj.address, rc::gfx::HudMiddle, static_cast<uint32_t>(arg2)}, &hud);
     const uint32_t car = pObj.address;
     const uint32_t res = hudRes();
@@ -668,6 +681,7 @@ void HudPanel(ptr32<_sObject> pObj, int8 player)
     RC_DIVERT_IF_CHANGED(HudPanel, pObj, player);
     // Side tag: this element's sprites and text in the 2D packet.
     const rc::gfx::HudTag hud{rc::gfx::HudPanel, rc::gfx::AnchorStretch, {}};
+    const rc::widescreen::AnchorScope anchorScope(hud.anchor); // widescreen: HUD corners anchored
     const rc::gfx::Span2D span(rc::gfx::DrawKey{rc::gfx::DrawHud, pObj.address, rc::gfx::HudPanel, static_cast<uint32_t>(player)}, &hud);
     const uint32_t res = hudRes();
     {

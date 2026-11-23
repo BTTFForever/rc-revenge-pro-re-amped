@@ -2,6 +2,8 @@
 // pickup, rocket and ready-steady-go effects. Same layout as visfx4.cpp: an effect is a `_sVfx_Object` whose own data
 // starts at +0x40 with the ring header (mask, count, head, tail) and the particles from +0x44 (or later).
 
+#include "rc_settings.h" // enhanced recomp: widescreen
+#include "rc_widescreen.h"
 #include "ai_fuzz.h"
 #include "ee_math.h"
 #include "vifpk.h"
@@ -91,7 +93,7 @@ void VfxSetupCameraMatrix()
     depth = depth * ee_itof(at<int32_t>(sym::gGfxP2)); // gGfxP2.wd
     depth = depth * half;
     const ee_float depthY = depth * ee_float(at<float>(sym::lit4_3277ac));
-    at<float>(s + 0x1b0) = depth;
+    at<float>(s + 0x1b0) = rc::settings::widescreen() ? depth * ee_float(rc::settings::hscale()) : depth; // widescreen: Hor+
     at<float>(s + 0x1b4) = depthY;
     // ps2CameraMatrix at +0x120 (the PSX matrix's 4.12 shorts as floats, row by row, w lanes zero), the translation at
     // +0x160, and the matrix's transpose at +0x170.

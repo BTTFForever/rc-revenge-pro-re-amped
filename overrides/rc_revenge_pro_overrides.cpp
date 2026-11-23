@@ -6,6 +6,7 @@
 // numbers that cannot satisfy those reads. Here we report each file's real
 // position on the disc and serve all reads from the ISO, as the hardware does.
 
+#include "../decomp/rc_widescreen.h"
 #include "game_overrides.h"
 #include "ps2_recompiled_functions.h"
 #include "ps2_runtime.h"
@@ -752,6 +753,7 @@ namespace
         rc::vu1::installChecks();
         rc::vu1::installTrackDraw();
         rc::installDecomp(runtime);
+        rc::widescreen::installScopeWrappers(runtime); // Europe's recompiled HUD/2D functions
         PS2Runtime::IoPaths paths = PS2Runtime::getIoPaths();
         const std::filesystem::path isoPath = paths.elfDirectory.parent_path() / kIsoName;
         if (!indexIso(isoPath))

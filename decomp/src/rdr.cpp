@@ -5,6 +5,8 @@
 // such as a block of graphics chip register writes or a microprogram upload. gRdr.pDmaTag holds two chains of 1000
 // tags, one per frame, swapped each frame.
 
+#include "rc_settings.h" // enhanced recomp: widescreen
+#include "rc_widescreen.h"
 #include "display_fuzz.h"
 #include "ee_math.h"
 #include "vifpk.h"
@@ -132,10 +134,14 @@ void Rdr_SetupCamera(ptr32<_sRdrCamera> pCamera, tAngle viewAngle)
     cam.dValY = halfD * aspect;
     cam.dValX = scaledD * half;
     cam.dVal = scaledD * half;
+    // Widescreen (rc_settings): Hor+, the x projection scaled by (4/3)/aspect and the side planes widened.
+    const ee_float sideHalf = rc::settings::widescreen() ? ee_float(rc::widescreen::widenHalfAngle(static_cast<float>(x))) : x;
+    if (rc::settings::widescreen())
+        cam.dValX = cam.dValX * ee_float(rc::settings::hscale());
 
     // Right and left: the X axis turned about Y (only two terms of the middle row are used).
     {
-        const ee_float s = ee_sinf(x), c = ee_cosf(x);
+        const ee_float s = ee_sinf(sideHalf), c = ee_cosf(sideHalf);
         const ee_float m[9] = {c, zero, -s, zero, one, zero, s, zero, c};
         ee_float v[3] = {one, zero, zero};
         cam.normRight.x = v[0] * m[0] + v[1] * m[3] + v[2] * s;
