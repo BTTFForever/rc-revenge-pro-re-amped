@@ -12,6 +12,11 @@
 #include <cstdlib>
 
 RC_VERSION_VARIANT(printf) // Europe also stores $f12-$f18
+// Europe's MainGameProcess is 8 bytes longer only from code generation: the end-of-frame "timer resumed" block stores
+// iDrawDownG = 1 on each path instead of in one delay slot (same effect) and an alignment nop moved. The native race
+// loop (and with it the race frame rate and smooth motion hooks) runs in both versions; its callees that differ in
+// Europe (SetFrameWindow, MainScreenGameInit, CheckPads) divert to Europe's own functions.
+RC_VERSION_VARIANT(MainGameProcess)
 
 namespace rc {
 
@@ -461,7 +466,6 @@ void MainGameLevelInit()
 
 void MainGameProcess()
 {
-    RC_DIVERT_IF_CHANGED(MainGameProcess);
     GuestFrame frame(0xf0);
     const uint32_t temp = frame.local<uint8_t>(0x40).address;
     frames() = 0;

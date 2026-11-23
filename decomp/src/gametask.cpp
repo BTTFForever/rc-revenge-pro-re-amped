@@ -374,11 +374,24 @@ void RcRefreshRace(bool racing)
     if (racing)
     {
         const uint32_t hz = static_cast<uint32_t>(settings::raceRefreshHz()); // Game Options > Enhancements
-        if (hz <= 60u)
+        const uint32_t normal = g_normalPeriod != 0u ? g_normalPeriod : static_cast<uint32_t>(scheduler.vblankPeriod().count());
+        if (hz == 0u || 1000000u / hz >= normal) // not faster than the video mode (60 on NTSC, 50 on PAL)
+        {
+            if (g_normalPeriod != 0u)
+            {
+                scheduler.setVBlankPeriodMicroseconds(g_normalPeriod);
+                g_normalPeriod = 0;
+            }
             return;
-        if (g_normalPeriod == 0u)
-            g_normalPeriod = static_cast<uint32_t>(scheduler.vblankPeriod().count());
+        }
+        g_normalPeriod = normal;
         scheduler.setVBlankPeriodMicroseconds(1000000u / hz);
+        static bool logged = false;
+        if (!logged && std::getenv("RC_INTERP_LOG"))
+        {
+            logged = true;
+            std::fprintf(stderr, "[race-fps] vblank %u us -> %u us, physics step %d ms\n", normal, 1000000u / hz, at<int32_t>(kTimeStep));
+        }
     }
     else if (g_normalPeriod != 0u)
     {
@@ -392,13 +405,7 @@ void RcRefreshRaceUpdate()
 {
     if (!g_racing)
         return;
-    if (settings::raceRefreshHz() > 60)
-        RcRefreshRace(true);
-    else
-    {
-        RcRefreshRace(false);
-        g_racing = true;
-    }
+    RcRefreshRace(true); // faster than the video mode, or back to it
 }
 
 namespace interp {

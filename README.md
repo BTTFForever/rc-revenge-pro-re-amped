@@ -35,8 +35,8 @@ at once, mid-race too (resolution at the next start), and are saved to `~/.confi
 The same Game Options menu also shows the developers' **Debug Menus**, left hidden on the disc. Apart from Mirror
 Mode (the game's normal mirrored tracks), its items are not connected to anything in the released game.
 
-Europe: the race loop is still the recompiled original there, so race frame rate and smooth motion apply to the USA
-version only (Europe races run at 50); the other settings work in both.
+All settings work in both versions. In Europe (PAL, 50 Hz video) the menus keep 50 and races run at the chosen
+rate; the physics step is the same 20 ms in both, so game speed is unchanged.
 
 For one run, an environment variable overrides the file: `RC_ASPECT=16:9`, `PS2X_GS_HW_SCALE=<n>`,
 `PS2X_FULLSCREEN=1`, `PS2X_REFRESH_HZ=<n>`, `RC_INTERP=0`, `PS2X_VSYNC=off|on|adaptive`, `PS2X_VRR=0|1`.
