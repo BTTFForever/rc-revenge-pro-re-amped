@@ -226,7 +226,9 @@ namespace
     // The game's heap keeps its full size: taking even 1 MB from it ran the heaviest demo levels out of
     // memory, and the failed allocations corrupted the effects list into an endless loop.
     // The runtime's own allocations use about 5 KB, so they fit in the gap after the ELF image.
-    constexpr uint32_t kGuestHeapLimit = 0x00500000u;
+    // The top 32 KB of that gap is the enhancement's block for the car tables sized beyond the PS2's 8
+    // (decomp/rc_cars.h, kGuestBase), so the runtime's allocations stop below it.
+    constexpr uint32_t kGuestHeapLimit = 0x004F8000u;
     // 128 KB main stack in the PS2 kernel's low memory, above the runtime's fixed pools (which end at 0x74000).
     constexpr uint32_t kMainStackTop = 0x000FFD60u;
     constexpr uint32_t kGuestHeapStart = sym::image_end; // End of the ELF image.
@@ -260,9 +262,11 @@ namespace
         word(kMain + 0x0u, 0x10u);
         rdram[kMain + 0x349u] = 0u;
         rdram[kMain + 0x34Au] = static_cast<uint8_t>(bootLevel());
-        rdram[kMain + 0x368u] = 0u; // not split screen
+        rdram[kMain + 0x368u] = std::getenv("RC_BOOT_SPLIT") ? 1u : 0u; // not split screen (RC_BOOT_SPLIT=1: the split-screen demo)
         rdram[kMain + 0x369u] = 0u;
-        rdram[kMain + 0x36Au] = 8u; // cars
+        // cars; RC_BOOT_CARS=<n> (2..12) for the car limits' tests (decomp/rc_cars.h)
+        const char *bootCars = std::getenv("RC_BOOT_CARS");
+        rdram[kMain + 0x36Au] = bootCars ? static_cast<uint8_t>(std::clamp(std::atoi(bootCars), 2, 12)) : 8u;
         std::memcpy(rdram + (sym::mainVarG + 0x1c0u), "TEST", 5u);
         ctx->pc = getRegU32(ctx, 31);
     }

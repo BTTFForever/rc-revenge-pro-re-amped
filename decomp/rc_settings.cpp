@@ -78,6 +78,8 @@ int splitFromText(const std::string &text)
     return text == "vertical" || text == "v" || text == "1" ? SplitVertical : SplitHorizontal;
 }
 
+int carsFromNumber(int n) { return n <= 0 ? 0 : std::clamp(n, 2, 12); }
+
 int promptsFromText(const std::string &text)
 {
     for (int i = 0; i < PromptsCount; ++i)
@@ -190,6 +192,10 @@ void readFile(Settings &s)
             s.prompts = promptsFromText(value);
         else if (key == "split")
             s.split = splitFromText(value);
+        else if (key == "cars_single")
+            s.carsSingle = carsFromNumber(number);
+        else if (key == "cars_multi")
+            s.carsMulti = carsFromNumber(number);
         else if (key == "controls_version")
             g_controlsVersion = number;
         else if (g_loadPlayers)
@@ -238,7 +244,10 @@ void writeFile(const Settings &s)
         << "hud_scale=" << kUiScales[s.hudScale] << "\n"
         << "menu_scale=" << kUiScales[s.menuScale] << "\n"
         << "button_prompts=" << kPromptNames[s.prompts] << "\n"
-        << "split=" << kSplitNames[s.split] << "\n";
+        << "split=" << kSplitNames[s.split] << "\n"
+        << "# Cars in a race (Game Setup > Number of Cars, up to 12): single player, two players; 0 = the memory card's\n"
+        << "cars_single=" << s.carsSingle << "\n"
+        << "cars_multi=" << s.carsMulti << "\n";
     writeControls(out);
 }
 
@@ -289,6 +298,10 @@ __attribute__((constructor(101))) void load()
         s.prompts = promptsFromText(v);
     if (envSet("RC_SPLIT", v))
         s.split = splitFromText(v);
+    if (envSet("RC_CARS_SINGLE", v))
+        s.carsSingle = carsFromNumber(std::atoi(v));
+    if (envSet("RC_CARS_MULTI", v))
+        s.carsMulti = carsFromNumber(std::atoi(v));
     if (envSet("PS2X_FULLSCREEN", v))
         s.fullscreen = *v != '0';
     if (envSet("PS2X_GS_HW_SCALE", v))
@@ -332,9 +345,9 @@ __attribute__((constructor(101))) void load()
     if (s.aspect != Aspect4x3)
         ps2_host_display::setInitialWindowSize(static_cast<int>(720 * kAspects[s.aspect] + 0.5f), 720);
     applyLive(s, s, true);
-    std::fprintf(stderr, "[settings] %s: aspect %s, hud %s, fullscreen %d, scale %d, race fps %d, smooth motion %d, vsync %s, vrr %d, hud scale %d%%, menu scale %d%%, prompts %s, split %s\n", g_path.c_str(),
+    std::fprintf(stderr, "[settings] %s: aspect %s, hud %s, fullscreen %d, scale %d, race fps %d, smooth motion %d, vsync %s, vrr %d, hud scale %d%%, menu scale %d%%, prompts %s, split %s, cars %d/%d\n", g_path.c_str(),
                  kAspectNames[s.aspect], s.hudCorrected ? "corrected" : "stretched", s.fullscreen, s.scale, kRaceFps[s.raceFps], s.smoothMotion,
-                 kVsyncNames[s.vsync], s.vrr, kUiScales[s.hudScale], kUiScales[s.menuScale], kPromptNames[s.prompts], kSplitNames[s.split]);
+                 kVsyncNames[s.vsync], s.vrr, kUiScales[s.hudScale], kUiScales[s.menuScale], kPromptNames[s.prompts], kSplitNames[s.split], s.carsSingle, s.carsMulti);
 }
 
 } // namespace

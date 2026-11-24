@@ -3,6 +3,7 @@
 #pragma once
 
 #include "ee_math.h"
+#include "../rc_cars.h"
 
 namespace rc {
 
@@ -103,7 +104,7 @@ constexpr uint32_t kWeaponProcessAddr = sym::WeaponProcess;
 
 // Globals.
 constexpr uint32_t kObjectList = sym::objectVarG, kWeaponVars = sym::weaponVarG, kCameras = sym::cameraVarG, kGameTimer = (sym::mainVarG + 0x10u);
-constexpr uint32_t kRaceOrder = (sym::aiVarG + 0x4u), kRaceOrderStride = 12u;
+constexpr uint32_t kRaceOrder = cars::kRaceOrder /* enhancement: aiVarG.raceOrder moved for more than 8 cars (rc_cars.h) */, kRaceOrderStride = 12u;
 constexpr uint32_t kTypeFirstBoat = 0x14u; // OBJECT_TYPE_BADDRC_BOAT: types below are cars
 
 template <typename T>

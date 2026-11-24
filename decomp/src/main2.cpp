@@ -4,8 +4,10 @@
 #include "main.h"
 #include "main_fuzz.h"
 #include "../rc_widescreen.h"
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include "../rc_cars.h"
 
 // Europe variant: CheckPads stores pauseReasonG in another order (the same body).
 RC_VERSION_VARIANT(CheckPads)
@@ -109,7 +111,7 @@ int32_t BuildResults(int32_t flag)
                     {
                         k = 0;
                         const uint32_t n = glen(sp);
-                        at<uint8_t>(sp + n - 1u) = static_cast<uint8_t>(at<uint8_t>(kRacePoints + static_cast<uint32_t>(i)) + 0x30);
+                        at<uint8_t>(sp + n - 1u) = static_cast<uint8_t>(cars::racePoints(i) + 0x30); // enhancement: 0 from 9th
                     }
                 }
             }
@@ -200,18 +202,22 @@ int32_t BuildRanking(int32_t flag)
     uint32_t item = firstLine(kRankingMenu);
     at<int32_t>(sp + 0x30) = flag;
     at<uint32_t>(sp + 0x38) = 0; // change
-    const int32_t n = carCount();
+    const int32_t n = std::min(carCount(), cars::kMaxCars);
+    // Enhancement: the lines in a host array; the original's frame has room for 8 (pMenuItems[8] at +0, then the points
+    // text at +0x20), so a 9th car's line overwrote the points text, the flag and the change word.
+    uint32_t lines[cars::kMaxCars] = {};
     for (int32_t k = 0; k < n; ++k)
     {
-        at<uint32_t>(sp + 4u * static_cast<uint32_t>(k)) = item;
+        lines[k] = item;
+        if (k < 8)
+            at<uint32_t>(sp + 4u * static_cast<uint32_t>(k)) = item;
         item = at<uint32_t>(item + 8u);
     }
     SortRanking();
     for (int32_t i = n - 1; i >= 0 && at<uint32_t>(sp + 0x38) != 1; --i)
     {
-        const uint32_t slot = sp + 4u * static_cast<uint32_t>(i);
-        markPlayer(at<uint32_t>(slot), orderCar(i));
-        const uint32_t text = menuText(at<uint32_t>(slot));
+        markPlayer(lines[i], orderCar(i));
+        const uint32_t text = menuText(lines[i]);
         const uint32_t name = guest_call<uint32_t>(kGetCarText, at<uint32_t>(at<uint32_t>(orderCar(i) + 0xcu) + 4u));
         at<uint32_t>(sp + 0x34) = name;
         const uint32_t points = orderAt(i) + 6u;
@@ -455,7 +461,7 @@ uint32_t pauseMenuStep(uint32_t pm)
     case 4:
         for (int32_t i = 0; i < total; ++i)
             at<uint8_t>(orderAt(i) + 7u) =
-                static_cast<uint8_t>(at<uint8_t>(orderAt(i) + 6u) + at<uint8_t>(kRacePoints + static_cast<uint32_t>(i)));
+                static_cast<uint8_t>(at<uint8_t>(orderAt(i) + 6u) + cars::racePoints(i)); // enhancement: 0 from 9th
         pmWord(0x174) = pmWord(0x174) + 1;
         break;
     case 5:
@@ -499,7 +505,7 @@ void MainSetCarsRemoveDuplicates()
 {
     const int32_t n = carCount();
     int32_t p1Skip = -1, p2Skip = -1;
-    const auto cupCar = [](int32_t i) { return at<uint32_t>(kMain + 0x178u + 4u * static_cast<uint32_t>(i)); };
+    const auto cupCar = [](int32_t i) { return at<uint32_t>(cars::kCupCarList + 4u * static_cast<uint32_t>(i)); }; // enhancement: moved (rc_cars.h)
     if (noHuman() != 0)
     {
         const uint32_t p1 = at<uint8_t>(kMain + 0x3dfu);
@@ -541,7 +547,7 @@ void MainSetCars(eCarSet carSet)
                 return;
             if (cup() == 0)
             {
-                const uint32_t list = kMain + 0x178u;
+                const uint32_t list = cars::kCupCarList; // enhancement: mainVarG.cupCarList moved (rc_cars.h)
                 for (int32_t i = 0; i < 8; ++i)
                 {
                     const int32_t r = guest_call<int32_t>(kRand);
@@ -560,6 +566,7 @@ void MainSetCars(eCarSet carSet)
                         }
                 }
             }
+            cars::fillCupList(carCount()); // enhancement: more than 8 cars (rc_cars.h)
         }
         else if (set == 0)
         {
@@ -682,8 +689,8 @@ void SaveChampionshipPoints()
     for (int32_t i = 0; i < n; ++i)
     {
         const uint8_t points = at<uint8_t>(orderAt(i) + 6u);
-        at<uint32_t>(kMain + 0x198u + 4u * static_cast<uint32_t>(i)) = carType(orderCar(i));
-        at<uint8_t>(kMain + 0x1b8u + static_cast<uint32_t>(i)) = points;
+        at<uint32_t>(cars::kChampCars + 4u * static_cast<uint32_t>(i)) = carType(orderCar(i)); // enhancement: mainVarG.champPoints moved
+        at<uint8_t>(cars::kChampPoints + static_cast<uint32_t>(i)) = points;
     }
     for (uint32_t i = 0; i < at<uint32_t>(kObjectList + 0x170u); ++i)
         if (at<uint8_t>(orderCar(static_cast<int32_t>(i)) + 0x44u) == 0)
@@ -759,7 +766,7 @@ void ClearChampionshipPoints()
 {
     const int32_t n = carCount();
     for (int32_t i = 0; i < n; ++i)
-        at<uint8_t>(kMain + 0x1b8u + static_cast<uint32_t>(i)) = 0;
+        at<uint8_t>(cars::kChampPoints + static_cast<uint32_t>(i)) = 0;
 }
 
 // Gives each car back the cup points kept for its type.
@@ -770,10 +777,10 @@ void SetChampionshipPoints()
     {
         const uint32_t car = orderCar(i);
         for (int32_t j = 0; j < n; ++j)
-            if (carType(car) == at<uint32_t>(kMain + 0x198u + 4u * static_cast<uint32_t>(j)))
+            if (carType(car) == at<uint32_t>(cars::kChampCars + 4u * static_cast<uint32_t>(j)))
             {
                 at<uint8_t>(orderAt(i) + 7u) = 0;
-                at<uint8_t>(orderAt(i) + 6u) = at<uint8_t>(kMain + 0x1b8u + static_cast<uint32_t>(j));
+                at<uint8_t>(orderAt(i) + 6u) = at<uint8_t>(cars::kChampPoints + static_cast<uint32_t>(j));
             }
     }
 }

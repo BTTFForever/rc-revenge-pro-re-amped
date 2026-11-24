@@ -6,10 +6,11 @@
 //   race_fps=60|90|120|144|165|240   smooth_motion=0|1   vsync=off|on|adaptive   vrr=0|1
 //   hud_scale=50..100   menu_scale=50..100 (percent, steps of 10)   button_prompts=ps2|match|off
 //   split=horizontal|vertical (two-player races: player 1 above player 2, or left and right; rc_split.h)
+//   cars_single=0|2..12, cars_multi=0|2..12 (cars in a race, Game Setup's Number of Cars; 0: the memory card's; rc_cars.h)
 //   p1_device=auto|keyboard|pad1..pad4|keyboard+pad1|keyboard+pad2|none, p1_key_cross=F, p1_pad_cross=a, ... (players 1
 //   and 2; runtime/ps2_input_bindings.h), controls_version=2 (older files: the old default devices become auto)
 // An environment variable, where one exists, wins over the file for that run (RC_ASPECT / RC_WIDESCREEN,
-// RC_HUD_ANCHOR, RC_HUD_SCALE, RC_MENU_SCALE, RC_BUTTON_PROMPTS, RC_SPLIT, PS2X_FULLSCREEN, PS2X_GS_HW_SCALE, PS2X_REFRESH_HZ, RC_INTERP, PS2X_VSYNC, PS2X_VRR,
+// RC_HUD_ANCHOR, RC_HUD_SCALE, RC_MENU_SCALE, RC_BUTTON_PROMPTS, RC_SPLIT, RC_CARS_SINGLE, RC_CARS_MULTI, PS2X_FULLSCREEN, PS2X_GS_HW_SCALE, PS2X_REFRESH_HZ, RC_INTERP, PS2X_VSYNC, PS2X_VRR,
 // PS2X_PAD1_DEVICE, PS2X_PAD2_DEVICE, PS2X_BIND_<button>), so test scripts keep working.
 #pragma once
 
@@ -43,6 +44,8 @@ struct Settings
     int menuScale = 0;        // index into kUiScales: the menus (front end, pause menu, results)
     int prompts = PromptsPs2; // button prompts
     int split = SplitHorizontal; // two-player split screen
+    int carsSingle = 0;       // cars in a single-player race, 2..12 (rc_cars.h); 0: the game's own (memory card) count
+    int carsMulti = 0;        // cars in a two-player race, 2..12; 0: the game's own
 };
 
 const Settings &get();

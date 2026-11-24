@@ -10,6 +10,7 @@
 #include "ee_math.h"
 
 #include "rc_decomp.h"
+#include "../rc_cars.h"
 
 // Europe variant: AINodeGetReSpawnNode differs only in register use and instruction order (the same body;
 // tools/asm_listing.py NAME --diff).
@@ -135,6 +136,10 @@ uint8 InputPressureHit(uint8 key)
 namespace {
 
 const uint32_t kFarAway = 0x10000000; // Starting best distance squared for the nearest-node searches.
+
+// Enhancement: the race order lives in rc_cars.h's block (up to kMaxCars cars), not aiVarG.raceOrder[8].
+template <typename I>
+_sRaceOrder &raceOrderAt(I i) { return *static_cast<_sRaceOrder *>(guest_host(cars::kRaceOrderEntry(static_cast<int>(i)))); }
 
 // The car's position in 16-bit units, left in svGlob as the original does.
 SVECTOR &carPosition(const _sObject &obj)
@@ -1302,12 +1307,12 @@ void AISetupCars()
         carAI.pNearestObjBehind = nullptr;
         obj.iBestLapTime = 0x10000000;
         carAI.sStuckOnNodeCount = 0x6e;
-        ai.raceOrder[index].pObject = pObj;
+        raceOrderAt(index).pObject = pObj;
         carAI.iTimeFinishedRace = 0;
         carAI.sAIStateCount = 0;
         carAI.iSlowSpeedAccum = 0;
         carAI.pStuckOnNode = nullptr;
-        ai.raceOrder[index].modelType = 0;
+        raceOrderAt(index).modelType = 0;
         AIUpdateObjectNode(pObj);
     }
     ai.player2CameIn = 0;
@@ -2064,13 +2069,13 @@ void AIDoRaceOrder()
     mainClass &main = G(mainVarG);
     for (int32_t i = static_cast<int32_t>(objects.noObjects) - 1; 0 < i; --i)
     {
-        _sObject &later = *ai.raceOrder[i].pObject;
-        _sObject &earlier = *ai.raceOrder[i - 1].pObject;
+        _sObject &later = *raceOrderAt(i).pObject;
+        _sObject &earlier = *raceOrderAt(i - 1).pObject;
         if (later.carAI.iTimeFinishedRace == 0 && earlier.carAI.iTimeFinishedRace == 0 &&
             earlier.carAI.iTotalRacedDist < later.carAI.iTotalRacedDist)
         {
-            std::swap(ai.raceOrder[i - 1], ai.raceOrder[i]);
-            ai.raceOrder[i].pObject->iRacePos = static_cast<int16>(i);
+            std::swap(raceOrderAt(i - 1), raceOrderAt(i));
+            raceOrderAt(i).pObject->iRacePos = static_cast<int16>(i);
         }
     }
 
@@ -2084,7 +2089,7 @@ void AIDoRaceOrder()
         {
             for (uint32_t u = 0; u < objects.noObjects; ++u)
             {
-                const uint8 type = ai.raceOrder[u].pObject->playerType;
+                const uint8 type = raceOrderAt(u).pObject->playerType;
                 if (type == 0)
                     ai.player1CameIn = static_cast<uint16>(u + 1);
                 else if (type == 1)
@@ -2099,10 +2104,10 @@ void AIDoRaceOrder()
         }
     }
 
-    ai.raceOrder[0].pObject->carAI.bOvertaking = 0;
+    raceOrderAt(0).pObject->carAI.bOvertaking = 0;
     for (uint32_t u = 0; u < objects.noObjects; ++u)
     {
-        _sRaceOrder &entry = ai.raceOrder[u];
+        _sRaceOrder &entry = raceOrderAt(u);
         _sObject &obj = *entry.pObject;
         _sCar_AI &carAI = obj.carAI;
         if (carAI.iTimeFinishedRace == 0 && 0 <= carAI.iLapsCompleted)
@@ -2117,18 +2122,18 @@ void AIDoRaceOrder()
             carAI.pNearestObjInFront = nullptr;
         else
         {
-            carAI.pNearestObjInFront = ai.raceOrder[u - 1].pObject;
-            carAI.distNearestCarInFront = gap(ai.raceOrder[u - 1].pObject->carAI.iTotalRacedDist, carAI.iTotalRacedDist);
+            carAI.pNearestObjInFront = raceOrderAt(u - 1).pObject;
+            carAI.distNearestCarInFront = gap(raceOrderAt(u - 1).pObject->carAI.iTotalRacedDist, carAI.iTotalRacedDist);
         }
         if (u < objects.noObjects - 1)
         {
-            carAI.pNearestObjBehind = ai.raceOrder[u + 1].pObject;
-            carAI.distNearestCarBehind = gap(ai.raceOrder[u + 1].pObject->carAI.iTotalRacedDist, carAI.iTotalRacedDist);
+            carAI.pNearestObjBehind = raceOrderAt(u + 1).pObject;
+            carAI.distNearestCarBehind = gap(raceOrderAt(u + 1).pObject->carAI.iTotalRacedDist, carAI.iTotalRacedDist);
         }
         else
             carAI.pNearestObjBehind = nullptr;
         if (u != 0 && carAI.distNearestCarInFront < 0x5dc)
-            carAI.bOvertaking = static_cast<uint8>(ai.raceOrder[u - 1].pObject->carAI.bOvertaking ^ 1);
+            carAI.bOvertaking = static_cast<uint8>(raceOrderAt(u - 1).pObject->carAI.bOvertaking ^ 1);
         entry.modelType = static_cast<uint8>(obj.pDef->type);
         entry.playerType = obj.playerType;
         if (obj.pRendObj->pRendObjHead == obj.pDef->pRendObjHeadAlt)

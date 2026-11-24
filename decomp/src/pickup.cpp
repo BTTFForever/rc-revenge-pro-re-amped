@@ -9,6 +9,7 @@
 
 #include "pickup_fuzz.h"
 #include "weapon.h"
+#include "../rc_cars.h"
 
 namespace rc {
 
@@ -31,7 +32,7 @@ constexpr uint32_t kRendObj = kPickupVars + 0x58u, kAngles = kPickupVars + 0x68u
 constexpr uint32_t kMainVars = sym::mainVarG, kMainTime = kMainVars + 0x1cu, kMainLevel = kMainVars + 0x34au;
 constexpr uint32_t kMainPauseMenu = kMainVars + 0x366u, kMainPickupsOnOff = kMainVars + 0x3a8u;
 constexpr uint32_t kVisMask0 = (sym::visVarG + 0x8u), kVisMask1 = (sym::visVarG + 0xcu);
-constexpr uint32_t kCameraPtr = (sym::cameraVarG + 0xb70u), kObjectList = sym::objectVarG, kNoObjects = (sym::objectVarG + 0x170u), kRaceOrder = (sym::aiVarG + 0x4u);
+constexpr uint32_t kCameraPtr = (sym::cameraVarG + 0xb70u), kObjectList = sym::objectVarG, kNoObjects = (sym::objectVarG + 0x170u), kRaceOrder = cars::kRaceOrder /* enhancement: aiVarG.raceOrder moved for more than 8 cars (rc_cars.h) */;
 constexpr uint32_t kLevelPtr = sym::pLvlG;
 constexpr uint32_t kPickupProcess = sym::PickupProcess, kPrintf = sym::printf, kNotOverGround = (sym::sec_rodata + 0x15d0u);
 
@@ -267,6 +268,8 @@ int32 PickupGiveWeapon(ptr32<_sPickup> pPickup, int32 playerType, int32 position
         else if (row != 0)
             row = ee_divu((row + 1u) * 8u, objects) - 1u;
     }
+    else if (objects > 8) // enhancement (rc_cars.h): more than 8 cars, the 8 rows spread over the places the same way
+        row = row == objects - 1 ? 7u : ee_divu(row * 8u, objects);
     const uint16_t type = at<uint16_t>(pPickup.address + 0xaau);
     if (type != 0)
         return type;

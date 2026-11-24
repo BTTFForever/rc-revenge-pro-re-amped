@@ -2,6 +2,7 @@
 #pragma once
 
 #include "rc_decomp.h"
+#include "../rc_cars.h"
 
 #include <cstring>
 
@@ -45,7 +46,7 @@ template <typename T>
 T &at(uint32_t address) { return *static_cast<T *>(guest_host(address)); }
 
 // Globals.
-constexpr uint32_t kMain = sym::mainVarG, kFrontEnd = sym::frontEndVarG, kAi = sym::aiVarG, kRaceOrder = (sym::aiVarG + 0x4u), kCarList = sym::carListVarG;
+constexpr uint32_t kMain = sym::mainVarG, kFrontEnd = sym::frontEndVarG, kAi = sym::aiVarG, kRaceOrder = cars::kRaceOrder /* enhancement: aiVarG.raceOrder moved for more than 8 cars (rc_cars.h) */, kCarList = sym::carListVarG;
 constexpr uint32_t kCamera = sym::cameraVarG, kMusic = sym::rcmusicVarG, kRevSfx = sym::revSfxVarG, kObjectList = sym::objectVarG;
 constexpr uint32_t kResultTrigger = (sym::visFxVarG + 0x2730u), kRacePoints = sym::racePointsG, kPauseLinks = sym::links_600, kRacePointsText = (sym::sec_sdata + 0x300u);
 constexpr uint32_t kResultsMenu = sym::pResultsMenuG, kRankingMenu = sym::pRankingMenuG, kPauseOptions = sym::pXContMenuG, kPauseOptions2 = sym::pXContMenuPlusG;

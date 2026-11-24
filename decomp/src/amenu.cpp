@@ -9,6 +9,7 @@
 #include "rc_widescreen.h" // enhanced recomp: menu scale
 #include "amenu.h"
 #include "amenu_fuzz.h"
+#include "../rc_cars.h"
 
 // Europe variants (the PAL screen and the text offsets; NOTES.md "Europe version"): GetNewMenuFiddleFactor (the
 // other four offsets, plus 3), AMenuSnapsize, AMenuRectClipEnd, AMenuDrawScreenBox (a 256-line screen), AMenuDrawRect
@@ -499,8 +500,8 @@ void AMenuEntrySettingsMVAR(ptr32<sAMenuHeader> pHeader)
             at<int32_t>(kSfxVolG) = at<int32_t>(kSfxUserVol);
             break;
         case 0x10000289u: set(at<int32_t>((sym::sfxVarG + 0x8u))); break; // sfxVarG + 8
-        case 0x1000028du: set(at<int32_t>(kFrontEnd + 0x190u)); break;
-        case 0x1000028eu: set(at<int32_t>(kFrontEnd + 0x194u)); break;
+        case 0x1000028du:
+        case 0x1000028eu: cars::entrySettings(p.address); break; // enhancement: up to 12 cars, the settings' counts (rc_cars.h)
         default: break;
         }
     }

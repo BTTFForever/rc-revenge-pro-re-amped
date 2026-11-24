@@ -8,6 +8,7 @@
 
 #include "physics_fuzz.h"
 #include "weapon.h"
+#include "../rc_cars.h"
 
 namespace rc {
 
@@ -26,7 +27,7 @@ using weapon::at;
 
 constexpr uint32_t kTBoxVars = sym::tBoxVarG, kFns = kTBoxVars + 4u, kScratch = sym::scratchPadG, kLsParent = sym::lsVarG;
 constexpr uint32_t kCameras = sym::cameraVarG, kCameraSize = 0x5b8u, kMainVars = sym::mainVarG, kObjectList = sym::objectVarG;
-constexpr uint32_t kRaceOrder = (sym::aiVarG + 0x4u), kRevSfx = sym::revSfxVarG, kReadySteadyGo = (sym::hudVarG + 0x70u), kLevelPtr = sym::pLvlG;
+constexpr uint32_t kRaceOrder = cars::kRaceOrder /* enhancement: aiVarG.raceOrder moved for more than 8 cars (rc_cars.h) */, kRevSfx = sym::revSfxVarG, kReadySteadyGo = (sym::hudVarG + 0x70u), kLevelPtr = sym::pLvlG;
 constexpr uint32_t kSfxSetReverbDepth = sym::SfxSetReverbDepth, kRevSfxTrigger = sym::RevSfxTrigger;
 
 uint32_t boxData(uint32_t box) { return box + 0x16u + at<uint16_t>(box + 0x16u); }
@@ -283,7 +284,9 @@ void TBoxProcess()
     for (uint32_t i = 0; i < at<uint32_t>(kObjectList + 0x170u); ++i)
     {
         const uint32_t obj = at<uint32_t>(kRaceOrder + i * 12u);
-        const uint32_t mask = at<uint32_t>(obj) | (0x10000u << (i & 31u));
+        // Bits 16-23: the car's place (the top byte is the cameras'). Enhancement (rc_cars.h): from 9th on a car takes 8th's bit;
+        // its own (bit 24 and up) made the trigger boxes take it for a camera (the race camera stuck at a trackside view).
+        const uint32_t mask = at<uint32_t>(obj) | (0x10000u << (i < 8u ? i : 7u));
         for (uint32_t off = 0x1fcu; off <= 0x218u; off += 4u)
             at<uint32_t>(obj + off) = 0;
         for (uint32_t k = 0; k < 3; ++k)

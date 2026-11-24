@@ -15,6 +15,7 @@
 #include <string>
 #include <cstdio>
 #include <cstdlib>
+#include "../rc_cars.h"
 
 RC_VERSION_VARIANT(ParseSelectionTags)
 RC_VERSION_VARIANT(BuildKeyDefinitions)
@@ -220,7 +221,7 @@ int32_t ParseSelectionTags()
         uint32_t a1 = sym::mainVarG;
         for (int32_t i = 0; i < 8; ++i)
         {
-            m.cupCarList[i] = tagToCar(feLevel()->pCups[f.cup - 1]->cars[i], a1);
+            at<uint32_t>(cars::kCupCarList + 4u * static_cast<uint32_t>(i)) = static_cast<uint32_t>(tagToCar(feLevel()->pCups[f.cup - 1]->cars[i], a1)); // enhancement: moved (rc_cars.h)
             a1 = (sym::mainVarG + 0x8000u) & 0xffff0000u; // set again after the call (lui)
         }
         f.pCupSelectMenu = menuSystem().pLastActiveMenu;
@@ -324,7 +325,7 @@ int32_t ParseSelectionTags()
         break;
     case Code::Arcade:
         m.noHuman = 1;
-        m.noAI = 7;
+        m.noAI = static_cast<uint8>(cars::cupCount() - 1); // enhancement: more than 8 with a bigger single race count (rc_cars.h)
         m.iNumberOfLaps = 3;
         m.pickupsOnOff = f.gameStateData.gameConfig.pickupsOnOff;
         f.gameStateData.gameConfig.trackDirHints = 0;
@@ -334,7 +335,7 @@ int32_t ParseSelectionTags()
         break;
     case Code::SingleRace:
         m.noHuman = 1;
-        m.noAI = static_cast<uint8>(f.gameStateData.gameConfig.singleCarCount - 1);
+        m.noAI = static_cast<uint8>(cars::singleCount(f.gameStateData.gameConfig.singleCarCount) - 1);
         m.iNumberOfLaps = f.gameStateData.gameConfig.iNumberOfLaps;
         m.pickupsOnOff = f.gameStateData.gameConfig.pickupsOnOff;
         m.splitScreen = 0;
@@ -351,7 +352,7 @@ int32_t ParseSelectionTags()
     case Code::TwoPlayer:
         m.splitScreen = 1;
         m.noHuman = 2;
-        m.noAI = static_cast<uint8>(f.gameStateData.gameConfig.multiCarCount - 2);
+        m.noAI = static_cast<uint8>(cars::multiCount(f.gameStateData.gameConfig.multiCarCount) - 2);
         m.iNumberOfLaps = f.gameStateData.gameConfig.iNumberOfLaps;
         m.pickupsOnOff = f.gameStateData.gameConfig.pickupsOnOff;
         m.raceType = ms.executeCode;
@@ -377,8 +378,8 @@ int32_t ParseSelectionTags()
         sFrontGameConfig &c = f.gameStateData.gameConfig;
         c.iNumberOfLaps = itemValue(pMenu, 0);
         c.pickupsOnOff = itemValue(menuSystem().pLastActiveMenu, 1);
-        c.singleCarCount = itemValue(menuSystem().pLastActiveMenu, 2);
-        c.multiCarCount = itemValue(menuSystem().pLastActiveMenu, 3);
+        // Enhancement: counts above the PS2's kept in the settings, the memory card's copy within its ranges (rc_cars.h).
+        cars::chosen(itemValue(menuSystem().pLastActiveMenu, 2), itemValue(menuSystem().pLastActiveMenu, 3), c.singleCarCount, c.multiCarCount);
         break;
     }
     case Code::SfxMode:

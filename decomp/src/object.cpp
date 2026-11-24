@@ -10,6 +10,8 @@
 #include "object_fuzz.h"
 
 #include "rc_decomp.h"
+#include "../rc_cars.h"
+#include <cstdlib>
 
 // Europe variant: ObjectInitRendObj differs only in register use and instruction order (the same body;
 // tools/asm_listing.py NAME --diff).
@@ -461,6 +463,8 @@ void ObjectCreateCars(tTime time)
     const int32_t count = G(playerVarG).noPlayers + G(aiVarG).noAIPlayers;
     const auto boatLevel = []() { const uint32_t l = G(mainVarG).level % 12u; return l == 5 || l == 0 || l == 8; };
     const auto carAt = [](int32_t i) { return kCarList + static_cast<uint32_t>(i) * 12u; };
+    // pStartData; enhancement: with more than 8 cars, a copy with rows added behind along the route (rc_cars.h)
+    const uint32_t grid = cars::startGrid(count);
     for (int32_t i = 0; i < count; ++i)
     {
         ptr32<_sObjectDef> def;
@@ -478,7 +482,7 @@ void ObjectCreateCars(tTime time)
         def->angles.head = 0;
         def->pos.x = x + i * 0x7d;
         def->angles.roll = 0;
-        const uint32_t start = at<uint32_t>(G(pLvlG).address + 0x30u); // pStartData
+        const uint32_t start = grid;
         if (start != 0)
         {
             const uint32_t place = start + static_cast<uint32_t>(count - (i + 1)) * 8u;
@@ -490,6 +494,8 @@ void ObjectCreateCars(tTime time)
             const int32_t dz = static_cast<int16_t>(at<uint16_t>(b + 4u) - at<uint16_t>(a + 4u));
             const int32_t dx = static_cast<int16_t>(at<uint16_t>(b) - at<uint16_t>(a));
             def->angles.head = static_cast<angle>((static_cast<int32_t>(ArcTan(dz, dx)) + 0x8000) >> 4);
+            if (int16_t heading; cars::addedPlaceHeading(count - (i + 1), heading))
+                def->angles.head = static_cast<angle>(heading); // an added place: along the route there
         }
         const ptr32<_sObject> o = ObjectCreate(def, time, i);
         if (at<int32_t>(carAt(i) + 8u) != 0) // altRendObj
@@ -500,7 +506,9 @@ void ObjectCreateCars(tTime time)
         }
         if (i < static_cast<int32_t>(G(mainVarG).noHuman))
         {
-            at<uint32_t>(o->pTask.address + 8u) = kPlayerControl;
+            // RC_TEST_AUTOPILOT=1 (a test aid, NOTES.md "Car limits"): the players' cars drive themselves, as the computer's do.
+            static const bool autopilot = [] { const char *v = std::getenv("RC_TEST_AUTOPILOT"); return v && *v == '1'; }();
+            at<uint32_t>(o->pTask.address + 8u) = autopilot ? kAIControl : kPlayerControl;
             at<ptr32<_sObject>>(sym::playerVarG + 8u + static_cast<uint32_t>(i) * 0x38u) = o; // playerVarG.player[i].pObject
             o->playerType = static_cast<uint8>(i);
         }

@@ -7,6 +7,7 @@
 #include "ee_math.h"
 #include "vifpk.h"
 #include "visfx.h"
+#include "../rc_cars.h"
 
 namespace rc {
 
@@ -493,7 +494,9 @@ void Vfx2Renderer_FinishPosition(ptr32<_sVfx_Object> mem)
     if (!(VfxHasCarBeenRendered(ptr32<_sObject>(car)) < 0x157c))
         return;
     at<uint8_t>(vfx::sprite() + spr::kFlipX) = 1;
-    at<uint32_t>(vfx::sprite() + spr::kTexture) = at<uint32_t>(at<uint32_t>(table + 0x24 + at<uint32_t>(m + 0x1a4) * 4));
+    // Enhancement (rc_cars.h): from 9th on there is no number in the level's set; only the dust is drawn.
+    const uint32_t number = cars::placeSprite(table, static_cast<int32_t>(at<uint32_t>(m + 0x1a4)));
+    at<uint32_t>(vfx::sprite() + spr::kTexture) = number != 0 ? at<uint32_t>(number) : 0u;
     if (at<uint16_t>(m + 0x10) < 0x417)
     {
         guest_call(kTimerGet, ptr32<uint8>(kGameTimer));
@@ -542,7 +545,8 @@ void Vfx2Renderer_FinishPosition(ptr32<_sVfx_Object> mem)
             at<uint16_t>(where + axis) = static_cast<uint16_t>(at<uint16_t>(where + axis) + at<uint16_t>(above + axis));
     }
     spritePos(ee_itof(sh16(where)), ee_itof(sh16(where + 2)), ee_itof(sh16(where + 4)));
-    VfxPS2SpriteRotated3D(ee_float(0.0f));
+    if (number != 0)
+        VfxPS2SpriteRotated3D(ee_float(0.0f));
     at<uint32_t>(vfx::sprite() + spr::kTexture) = vfx::vfxTexture(0xe);
     int32_t red, green, blue;
     switch (at<int32_t>(m + 0x1a4))

@@ -203,7 +203,7 @@ constexpr std::pair<uint32_t, uint32_t> kCarFields[] = {
     {0xacu, 12u}, {0xacu + 0x48u, 12u}, {0xacu + 0x90u, 12u}, {0xacu + 0xd8u, 12u}, // wheel positions
     {0x1ecu + 4u, 12u}, {0x1ecu + 0x10u, 12u}, {0x1ecu + 0x28u, 18u}, {0x1ecu + 0x3cu, 18u}, // the integer copy
 };
-Car cars[kMaxObjects];
+Car interpCars[kMaxObjects];
 Cam cams[2];
 bool blended[kMaxObjects]{}, camBlended[2]{};
 // cars whose ground and shadow pass (GameTaskShadowCalc) ran during a blended draw: it is run again on the real state
@@ -235,7 +235,7 @@ bool enabled()
 void forget()
 {
     stepped = false;
-    for (Car &c : cars)
+    for (Car &c : interpCars)
         c.havePrev = false;
     for (Cam &c : cams)
         c.havePrev = false;
@@ -249,7 +249,7 @@ void stepBegin()
     const uint32_t count = std::min<uint32_t>(at<uint32_t>(kNoObjects), kMaxObjects);
     for (uint32_t i = 0; i < count; ++i)
     {
-        Car &c = cars[i];
+        Car &c = interpCars[i];
         const uint32_t obj = objectAt(static_cast<int32_t>(i));
         const uint32_t phys = obj ? at<uint32_t>(obj + 0x20u) : 0u;
         const bool same = c.obj == obj && c.phys == phys;
@@ -260,7 +260,7 @@ void stepBegin()
             std::memcpy(c.prev, guest_host(phys), kPhysBytes);
     }
     for (uint32_t i = count; i < carCount; ++i)
-        cars[i] = Car{};
+        interpCars[i] = Car{};
     carCount = count;
     for (uint32_t k = 0; k < 2; ++k)
     {
@@ -468,7 +468,7 @@ void RcInterpBeginDraw(int32_t time)
     static uint32_t frames = 0;
     for (uint32_t i = 0; i < carCount; ++i)
     {
-        Car &c = cars[i];
+        Car &c = interpCars[i];
         if (!c.havePrev || c.phys == 0u || at<uint32_t>(c.obj + 0x20u) != c.phys || at<uint32_t>(c.phys + 0x1e8u) == 0u)
             continue;
         std::memcpy(c.cur, guest_host(c.phys), kPhysBytes);
@@ -523,7 +523,7 @@ void RcInterpEndDraw()
         if (!blended[i])
             continue;
         blended[i] = false;
-        Car &c = cars[i];
+        Car &c = interpCars[i];
         uint8_t *block = static_cast<uint8_t *>(guest_host(c.phys));
         static const bool check = [] { const char *v = std::getenv("RC_INTERP_LOG"); return v && *v == '3'; }();
         if (check)

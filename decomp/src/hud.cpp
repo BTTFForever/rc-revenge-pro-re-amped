@@ -11,8 +11,12 @@
 #include "hud_fuzz.h"
 #include "weapon.h"
 
+#include <algorithm>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <optional>
+#include "../rc_cars.h"
 
 // Europe variants (NOTES.md "Europe version"): the PAL screen is 256 lines, so the 2D origin's y is 0x780 instead of
 // 0x788 (HudSprite*, HudWrongWayX, HudLost, HudMenuBorder; kScreenTop), and the panel's layout moves: HudCreate (the
@@ -41,6 +45,8 @@ void ResTypeUnSetConstructDaemon(ptr32<char> pType);                            
 void FontSet(ptr32<font> pFont);                                                           // font.cpp
 void FontSetColour(uint8 red, uint8 green, uint8 blue);                                    // font.cpp
 ptr32<char> FontPrint(int16 x, int16 y, ptr32<char> pString);                              // font.cpp
+uint32 FontLength(ptr32<char> pString);                                                       // font.cpp
+int32_t FontPrintFX(int16 x, int16 y, ptr32<char> pString, uint16 fx, uint16 fxValue);         // font.cpp
 void FontCentre(int16 y, ptr32<char> pString);                                             // font.cpp
 void GfxP2_TexFX(ptr32<_sGfxTexture> pTex, u32 attrib);                                    // rdr.cpp
 void GfxP2_ZWriteEnable();                                                                 // rdr.cpp
@@ -166,6 +172,26 @@ void quad(uint64_t a, uint64_t b, uint64_t c, uint64_t d, Colour col, uint64_t z
 void print(int32_t x, int32_t y, uint32_t text)
 {
     FontPrint(static_cast<int16>(x), static_cast<int16>(y), ptr32<char>(text));
+}
+
+// Enhancement (rc_cars.h): a place from 9th on, which has no number sprite in the level's set (1 to 8), in the race font
+// scaled up to the sprites' size and right-aligned to where the "8" ends.
+void hudPlaceText(uint32_t res, int32_t place, int32_t x, int32_t y)
+{
+    GuestFrame frame(0x20);
+    const uint32_t text = frame.local<uint8_t>(0).address;
+    char number[8];
+    std::snprintf(number, sizeof number, "%d", place + 1);
+    std::memcpy(guest_host(text), number, std::strlen(number) + 1);
+    const uint32_t eight = at<uint32_t>(res + 0x24u + 7u * 4u);
+    const int32_t width = eight != 0 ? static_cast<int32_t>((static_cast<uint32_t>(at<uint8_t>(eight + 6u)) << 1) & 0xffu) : 24;
+    const int32_t height = eight != 0 ? static_cast<int32_t>(at<uint8_t>(eight + 7u) & 0x7fu) : 28;
+    const int32_t charHeight = std::max<int32_t>(1, G(fontVarG).pFont->chHeight);
+    // The font's characters are drawn at half their height in these (field) lines, the sprites at full height.
+    const uint32_t scale = static_cast<uint32_t>(std::clamp(height * 0x200 / charHeight, 0x100, 0x800));
+    const int32_t length = static_cast<int32_t>(FontLength(ptr32<char>(text)) * scale >> 8);
+    FontPrintFX(static_cast<int16>(x + width - length), static_cast<int16>(y + (height - charHeight * static_cast<int32_t>(scale) / 0x200) / 2),
+                ptr32<char>(text), 5, static_cast<uint16>(scale));
 }
 
 void formatTime(uint32_t buffer, int32_t lapTime)
@@ -455,8 +481,10 @@ void HudTopRight(ptr32<_sObject> pObj, int8 arg1, int8 player)
                 at<uint16_t>(car + 0x13eu) = at<uint16_t>(car + 0x13cu);
             const int32_t position = at<int32_t>(car + 0xe8u) != 0 ? at<int16_t>(car + 0x13cu) : at<int16_t>(car + 0x13eu);
             lift = 0;
-            HudSprite(ptr32<_sSprite>(at<uint32_t>(res + 0x24u + static_cast<uint32_t>(position) * 4u)),
-                      ee_itof(slide() + (RC_VERSION_EU ? 0x230 : 0x228)), ee_itof(down - (slide() - 8)), 0x2808080);
+            if (const uint32_t sprite = cars::placeSprite(res, position))
+                HudSprite(ptr32<_sSprite>(sprite), ee_itof(slide() + (RC_VERSION_EU ? 0x230 : 0x228)), ee_itof(down - (slide() - 8)), 0x2808080);
+            else
+                hudPlaceText(res, position, slide() + (RC_VERSION_EU ? 0x230 : 0x228), down - (slide() - 8)); // enhancement: 9th and on
             laps = at<int16_t>(car + 0x104u);
         }
         const auto row = [&](int32_t offset, uint32_t text)

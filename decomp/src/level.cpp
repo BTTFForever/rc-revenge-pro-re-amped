@@ -10,6 +10,7 @@
 #include "weapon.h"
 
 #include "rc_decomp.h"
+#include <cstdio>
 
 // Europe variant: LevelLoadGameLevel differs only in register use and instruction order (the same body;
 // tools/asm_listing.py NAME --diff).
@@ -178,6 +179,12 @@ static void levelLoadBody(int32_t levelNum)
     const uint32_t levelNo = at<uint8_t>(kMainVars + 0x34au);
     const uint32_t left = guest_call<uint32_t>(kMemGetFree);
     guest_call(kPrintf, kGpuBuffers, size, levelNo, left);
+    // Enhancement: what a level leaves free, for the car limits (NOTES.md "Car limits"): the game's heap after the load
+    // and the render buffers (half of what is left, at most 0x32000 bytes: less memory, smaller buffers), and the top of
+    // the GS memory the textures took (0x400000 is the end; the game only reports going past it).
+    std::fprintf(stderr, "[level] %u loaded (%u cars): heap free 0x%x (largest 0x%x) after render buffers 0x%x, GS textures to 0x%x\n",
+                 levelNo, static_cast<unsigned>(at<uint8_t>(sym::mainVarG + 0x369u) + at<uint8_t>(sym::mainVarG + 0x36au)), left,
+                 guest_call<uint32_t>(sym::MemGetLargestFree), size, texTop);
 }
 
 void LevelLoad(int32_t levelNum)

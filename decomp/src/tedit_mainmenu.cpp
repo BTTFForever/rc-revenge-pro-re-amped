@@ -4,6 +4,7 @@
 
 #include "tedit.h"
 #include "tedit_fuzz.h"
+#include "../rc_cars.h"
 
 namespace rc {
 
@@ -248,7 +249,7 @@ bool mainMenuCode(uint32_t code)
         {
             at<uint32_t>(main + 0x34cu) = 0x100001fcu;
             at<uint8_t>(main + 0x369u) = 1;
-            at<uint8_t>(main + 0x36au) = static_cast<uint8_t>(at<uint8_t>(front + 0x190u) - 1u);
+            at<uint8_t>(main + 0x36au) = static_cast<uint8_t>(cars::singleCount(at<uint8_t>(front + 0x190u)) - 1); // enhancement: rc_cars.h
             at<uint32_t>(main + 0x3b4u) = at<uint32_t>(front + 0x18cu);
             at<uint32_t>(main + 0x3a8u) = at<uint32_t>(front + 0x188u);
             at<uint8_t>(main + 0x368u) = 0;
@@ -269,7 +270,7 @@ bool mainMenuCode(uint32_t code)
             at<uint32_t>(main + 0x34cu) = 0x10000200u;
             at<uint8_t>(main + 0x368u) = 1;
             at<uint8_t>(main + 0x369u) = 2;
-            at<uint8_t>(main + 0x36au) = static_cast<uint8_t>(at<uint8_t>(front + 0x194u) - 2u);
+            at<uint8_t>(main + 0x36au) = static_cast<uint8_t>(cars::multiCount(at<uint8_t>(front + 0x194u)) - 2); // enhancement: rc_cars.h
             at<uint32_t>(main + 0x3b4u) = at<uint32_t>(front + 0x18cu);
             at<uint32_t>(main + 0x3a8u) = at<uint32_t>(front + 0x188u);
             return false;

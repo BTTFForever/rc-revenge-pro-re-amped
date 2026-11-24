@@ -13,6 +13,7 @@
 #include "../rc_front_interp.h"
 #include "../rc_split.h"
 #include <cstdlib>
+#include "../rc_cars.h"
 
 RC_VERSION_VARIANT(printf) // Europe also stores $f12-$f18
 // Europe's MainGameProcess is 8 bytes longer only from code generation: the end-of-frame "timer resumed" block stores
@@ -464,6 +465,7 @@ void MainGameLevelInit()
         call(kVfx2TSFXLvlInit);
         PauseMenuScan();
         guest_call(kMenuInitScan, at<uint32_t>(at<uint32_t>(kLevel) + 0x44u), 1);
+        cars::extendResultMenus(); // enhancement: lines for 9th and on (rc_cars.h)
         BuildResults(0);
         const uint32_t cupNo = cup();
         at<uint32_t>(kMain + 0x174u) = 0;

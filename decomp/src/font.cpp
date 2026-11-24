@@ -286,7 +286,8 @@ void FontCentre(int16 y, ptr32<char> pString)
     FontPrint(static_cast<int16>(x), y, pString);
 }
 
-// As FontPrint without line breaks, scaled (fx 1: width, 2: height by fxValue/256), raised (3) or shortened (4).
+// As FontPrint without line breaks, scaled (fx 1: width, 2: height by fxValue/256; 5, an enhancement: both), raised (3)
+// or shortened (4).
 // In the fixed-width font a space, and a "}" sequence after its own advance, move on a character width.
 int32_t FontPrintFX(int16 x, int16 y, ptr32<char> pString, uint16 fx, uint16 fxValue)
 {
@@ -308,6 +309,10 @@ int32_t FontPrintFX(int16 x, int16 y, ptr32<char> pString, uint16 fx, uint16 fxV
         raise = static_cast<int16_t>(fxValue);
         break;
     case 4: shorten = static_cast<int16_t>(fxValue); break;
+    case 5: // enhancement: both scaled (rc_cars.h's places from 9th on, drawn as the position sprites' big numbers)
+        p.xScale = fxValue;
+        p.yScale = fxValue;
+        break;
     default: break;
     }
     p.red = G(fontVarG).r;
