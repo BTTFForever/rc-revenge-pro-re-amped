@@ -38,6 +38,8 @@ start), and are saved to `~/.config/rc-revenge-pro/settings.ini`:
 | Smooth motion | On, Off | Cars, wheels and camera drawn between the game's 50 Hz physics steps: even motion at any frame rate (also at 60). In the menus (above 60/50 Hz): the fly-by camera, the turntable and podium cars and the animated scenery drawn between the menus' 60 Hz ticks (the 2D menus themselves step at 60, as on the PS2). Off: the menus keep the original rate |
 | V-Sync | Off, On, Adaptive | The window's swap interval. Adaptive (late frames tear instead of waiting) needs `GLX_EXT_swap_control_tear` from the X server; under XWayland with PRIME offload it is not offered, so it acts as On |
 | Variable refresh | Off, On | For a VRR (FreeSync/G-SYNC/Adaptive Sync) screen: each new picture is shown when it is ready, races (and with Smooth motion the menus) capped 3 below the screen's rate (141 on 144 Hz); with Smooth motion off the menus show at the game's 50/60 Hz without judder. The desktop must allow VRR for the window (KDE: Display Configuration, Adaptive sync "Always", or fullscreen with "Automatic") |
+| HUD scale | 1.0x to 0.5x | The race HUD smaller, each part shrunk toward its own corner or edge (position and laps top right, speedometer bottom right, map bottom left, the weapon and the wrong-way sign toward the edge nearest them; in split screen toward its own half's corners). For big high-resolution screens. Saved as `hud_scale` (100 to 50) |
+| Menu scale | 1.0x to 0.5x | The menus smaller (front end, pause menu, results), toward the screen's centre, their key hints toward the bottom. Saved as `menu_scale` |
 
 Game Options (and the pause menu's Game Options) also shows the developers' **Debug Menus**, left hidden on the disc. Apart from Mirror
 Mode (the game's normal mirrored tracks), its items are not connected to anything in the released game.
@@ -71,7 +73,7 @@ Right Shift R2, Enter start, Tab select, WASD left stick; player 2 (when set to 
 0, 9. Saved in the same settings file (`p1_device=auto`, `p1_key_cross=F`, `p1_pad_cross=a`, ...).
 `PS2X_GAMEPAD_LOG=1` logs every SDL joystick and gamepad (name, GUID, path, driver, mapping).
 
-For one run, an environment variable overrides the file: `RC_ASPECT=16:9`, `PS2X_GS_HW_SCALE=<n>`,
+For one run, an environment variable overrides the file: `RC_ASPECT=16:9`, `RC_HUD_SCALE=<50..100>`, `RC_MENU_SCALE=<50..100>`, `PS2X_GS_HW_SCALE=<n>`,
 `PS2X_FULLSCREEN=1`, `PS2X_REFRESH_HZ=<n>`, `RC_INTERP=0`, `PS2X_VSYNC=off|on|adaptive`, `PS2X_VRR=0|1`,
 `PS2X_PAD1_DEVICE`/`PS2X_PAD2_DEVICE=auto|keyboard|pad1|...|keyboard+pad1|none`, `PS2X_BIND_<BUTTON>=<key>` (player 1's keyboard),
 `PS2X_GAMECONTROLLERDB=<gamecontrollerdb.txt>` (extra SDL mappings).

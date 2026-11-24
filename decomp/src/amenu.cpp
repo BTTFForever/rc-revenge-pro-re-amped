@@ -6,6 +6,7 @@
 // Written from the instructions (Ghidra's C as a first reading, checked against them). The original inlines
 // AMenuGetMIT's walk, unrolled eight times, wherever it needs the selected item: amenu::item is that walk.
 
+#include "rc_widescreen.h" // enhanced recomp: menu scale
 #include "amenu.h"
 #include "amenu_fuzz.h"
 
@@ -784,8 +785,10 @@ void AMenuRectClipStart(ptr32<sAMenuHeader> pHeader, int32_t yOffset, int32_t cl
         return;
     const sAMenuHeader &h = *pHeader;
     const int32_t scrollLines = G(scrollLinesG);
-    GfxP2_Scissor(h.x, h.y + yOffset + scrollLines - h.spare, h.x + h.width,
-                  h.y + h.height - yOffset - (scrollLines + 8) + clipExtraHeight);
+    int32_t x1 = h.x, y1 = h.y + yOffset + scrollLines - h.spare, x2 = h.x + h.width;
+    int32_t y2 = h.y + h.height - yOffset - (scrollLines + 8) + clipExtraHeight;
+    widescreen::menuScissor(x1, y1, x2, y2); // enhanced recomp: the clip follows the menu's scale
+    GfxP2_Scissor(x1, y1, x2, y2);
 }
 
 void AMenuRectClipEnd(ptr32<sAMenuHeader> arg0, int32_t arg1)

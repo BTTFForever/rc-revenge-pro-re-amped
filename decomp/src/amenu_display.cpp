@@ -6,6 +6,7 @@
 // An item's text depends on its variable: none (plain text), a choice ("*"-separated list, shown in the text's %s or
 // on a second line), a number, a slider, or a tabbed line.
 
+#include "rc_widescreen.h" // enhanced recomp: menu scale
 #include "amenu.h"
 #include "amenu_fuzz.h"
 
@@ -805,6 +806,7 @@ void AMenuDisplayOptions(ptr32<sAMenuHeader> pHeader)
     inst.changeY = 0xf;
     SetTextOffsetFiddleFactor(pInstHeader, RC_VERSION_EU ? 4 : -4);
     menuSystem().screenAdjust = 0;
+    const widescreen::MenuRowScope bottom(1); // enhanced recomp: the menu scale keeps the hints at the bottom
     AMenuDisplayAll(pInstHeader);
 }
 

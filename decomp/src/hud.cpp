@@ -11,6 +11,8 @@
 #include "hud_fuzz.h"
 #include "weapon.h"
 
+#include <optional>
+
 // Europe variants (NOTES.md "Europe version"): the PAL screen is 256 lines, so the 2D origin's y is 0x780 instead of
 // 0x788 (HudSprite*, HudWrongWayX, HudLost, HudMenuBorder; kScreenTop), and the panel's layout moves: HudCreate (the
 // second player's weapon 0xe8 down instead of 200), HudTopRight (the second player's panel 0x80 lower instead of
@@ -622,7 +624,9 @@ void HudMiddle(ptr32<_sObject> pObj, int8 size, int8 arg2)
 {
     // Side tag: this element's sprites and text in the 2D packet.
     const rc::gfx::HudTag hud{rc::gfx::HudMiddle, rc::gfx::AnchorCentre, {}};
-    const rc::widescreen::AnchorScope anchorScope(hud.anchor); // widescreen: HUD corners anchored
+    // Widescreen about the centre; the HUD scale moves the signs and the weapon each toward the edge nearest it (the
+    // weapon sits top centre in one-player, at the left of each half in split screen).
+    std::optional<rc::widescreen::AnchorScope> weaponScope;
     const rc::gfx::Span2D span(rc::gfx::DrawKey{rc::gfx::DrawHud, pObj.address, rc::gfx::HudMiddle, static_cast<uint32_t>(arg2)}, &hud);
     const uint32_t car = pObj.address;
     const uint32_t res = hudRes();
@@ -632,6 +636,8 @@ void HudMiddle(ptr32<_sObject> pObj, int8 size, int8 arg2)
     {
         GuestFrame frame(0x90);
         FontSetColour(0x64, 0x64, 0x64);
+        {
+        const rc::widescreen::AnchorScope signScope(rc::widescreen::AnchorScope::kAuto);
         if (at<int32_t>(car + 0xf0u) >= 0x3b7 && (at<uint8_t>(kHudFlash) & 8) != 0)
         {
             if (size == 2)
@@ -645,6 +651,7 @@ void HudMiddle(ptr32<_sObject> pObj, int8 size, int8 arg2)
                 HudLost(0x140, at<int32_t>(kMainWhichSplit) != 0 ? (RC_VERSION_EU ? 0xb0 : 0xa8) : 0x30, 0x10);
             else
                 HudLost(0x140, 0x48, 0x18);
+        }
         }
         const uint32_t splat = kHud + 0x7cu + static_cast<uint32_t>(at<int32_t>(kMainWhichSplit)) * 4u;
         if (at<int8_t>(car + 0x194u) == 0)
@@ -661,6 +668,7 @@ void HudMiddle(ptr32<_sObject> pObj, int8 size, int8 arg2)
         const int32_t py = at<int32_t>(kHud + 0x8cu + which), px = at<int32_t>(kHud + 0x84u + which);
         rgb = static_cast<uint32_t>(at<int32_t>(kHud + 0x7cu + which)) * 0x10101u | 0x80000000u;
         guest_call(kSprintf, kBuff, (sym::sec_sdata + 0x218u), static_cast<int32_t>(at<int8_t>(car + 0x194u))); // "%d"
+        weaponScope.emplace(rc::widescreen::AnchorScope::kAuto);
         print(px + 0xd, py + (RC_VERSION_EU ? 4 : 0xc), kBuff);
         fx = ee_itof(px - 0x20);
         fy = ee_itof(py - 0x10);

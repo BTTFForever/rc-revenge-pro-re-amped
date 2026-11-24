@@ -69,6 +69,26 @@ int vsyncFromText(const std::string &text)
     return VsyncOff;
 }
 
+constexpr const char *kPromptNames[PromptsCount] = {"ps2", "match", "off"};
+
+int promptsFromText(const std::string &text)
+{
+    for (int i = 0; i < PromptsCount; ++i)
+        if (text == kPromptNames[i])
+            return i;
+    return PromptsPs2;
+}
+
+// A percentage to the nearest scale step.
+int uiScaleIndex(int percent)
+{
+    int best = 0;
+    for (int i = 1; i < kUiScaleCount; ++i)
+        if (std::abs(kUiScales[i] - percent) < std::abs(kUiScales[best] - percent))
+            best = i;
+    return best;
+}
+
 int swapInterval(int vsync) { return vsync == VsyncAdaptive ? -1 : vsync == VsyncOn ? 1 : 0; }
 
 std::string defaultPath()
@@ -155,6 +175,12 @@ void readFile(Settings &s)
             s.vsync = vsyncFromText(value);
         else if (key == "vrr")
             s.vrr = number != 0;
+        else if (key == "hud_scale")
+            s.hudScale = uiScaleIndex(number);
+        else if (key == "menu_scale")
+            s.menuScale = uiScaleIndex(number);
+        else if (key == "button_prompts")
+            s.prompts = promptsFromText(value);
         else if (key == "controls_version")
             g_controlsVersion = number;
         else if (g_loadPlayers)
@@ -199,7 +225,10 @@ void writeFile(const Settings &s)
         << "race_fps=" << kRaceFps[s.raceFps] << "\n"
         << "smooth_motion=" << (s.smoothMotion ? 1 : 0) << "\n"
         << "vsync=" << kVsyncNames[s.vsync] << "\n"
-        << "vrr=" << (s.vrr ? 1 : 0) << "\n";
+        << "vrr=" << (s.vrr ? 1 : 0) << "\n"
+        << "hud_scale=" << kUiScales[s.hudScale] << "\n"
+        << "menu_scale=" << kUiScales[s.menuScale] << "\n"
+        << "button_prompts=" << kPromptNames[s.prompts] << "\n";
     writeControls(out);
 }
 
@@ -242,6 +271,12 @@ __attribute__((constructor(101))) void load()
         s.aspect = *v == '0' ? Aspect4x3 : Aspect16x9;
     if (envSet("RC_HUD_ANCHOR", v))
         s.hudCorrected = *v != '0';
+    if (envSet("RC_HUD_SCALE", v))
+        s.hudScale = uiScaleIndex(std::atoi(v));
+    if (envSet("RC_MENU_SCALE", v))
+        s.menuScale = uiScaleIndex(std::atoi(v));
+    if (envSet("RC_BUTTON_PROMPTS", v))
+        s.prompts = promptsFromText(v);
     if (envSet("PS2X_FULLSCREEN", v))
         s.fullscreen = *v != '0';
     if (envSet("PS2X_GS_HW_SCALE", v))
@@ -285,9 +320,9 @@ __attribute__((constructor(101))) void load()
     if (s.aspect != Aspect4x3)
         ps2_host_display::setInitialWindowSize(static_cast<int>(720 * kAspects[s.aspect] + 0.5f), 720);
     applyLive(s, s, true);
-    std::fprintf(stderr, "[settings] %s: aspect %s, hud %s, fullscreen %d, scale %d, race fps %d, smooth motion %d, vsync %s, vrr %d\n", g_path.c_str(),
+    std::fprintf(stderr, "[settings] %s: aspect %s, hud %s, fullscreen %d, scale %d, race fps %d, smooth motion %d, vsync %s, vrr %d, hud scale %d%%, menu scale %d%%, prompts %s\n", g_path.c_str(),
                  kAspectNames[s.aspect], s.hudCorrected ? "corrected" : "stretched", s.fullscreen, s.scale, kRaceFps[s.raceFps], s.smoothMotion,
-                 kVsyncNames[s.vsync], s.vrr);
+                 kVsyncNames[s.vsync], s.vrr, kUiScales[s.hudScale], kUiScales[s.menuScale], kPromptNames[s.prompts]);
 }
 
 } // namespace

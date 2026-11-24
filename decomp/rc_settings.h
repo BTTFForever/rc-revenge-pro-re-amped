@@ -4,10 +4,11 @@
 // File: $XDG_CONFIG_HOME/rc-revenge-pro/settings.ini (else ~/.config/...), lines of key=value:
 //   aspect=4:3|16:9|16:10|21:9   hud=corrected|stretched   fullscreen=0|1   scale=1..6
 //   race_fps=60|90|120|144|165|240   smooth_motion=0|1   vsync=off|on|adaptive   vrr=0|1
+//   hud_scale=50..100   menu_scale=50..100 (percent, steps of 10)   button_prompts=ps2|match|off
 //   p1_device=auto|keyboard|pad1..pad4|keyboard+pad1|keyboard+pad2|none, p1_key_cross=F, p1_pad_cross=a, ... (players 1
 //   and 2; runtime/ps2_input_bindings.h), controls_version=2 (older files: the old default devices become auto)
 // An environment variable, where one exists, wins over the file for that run (RC_ASPECT / RC_WIDESCREEN,
-// RC_HUD_ANCHOR, PS2X_FULLSCREEN, PS2X_GS_HW_SCALE, PS2X_REFRESH_HZ, RC_INTERP, PS2X_VSYNC, PS2X_VRR,
+// RC_HUD_ANCHOR, RC_HUD_SCALE, RC_MENU_SCALE, RC_BUTTON_PROMPTS, PS2X_FULLSCREEN, PS2X_GS_HW_SCALE, PS2X_REFRESH_HZ, RC_INTERP, PS2X_VSYNC, PS2X_VRR,
 // PS2X_PAD1_DEVICE, PS2X_PAD2_DEVICE, PS2X_BIND_<button>), so test scripts keep working.
 #pragma once
 
@@ -19,6 +20,11 @@ enum Vsync : int { VsyncOff = 0, VsyncOn, VsyncAdaptive };
 enum Aspect : int { Aspect4x3 = 0, Aspect16x9, Aspect16x10, Aspect21x9, AspectCount };
 inline constexpr int kRaceFps[] = {60, 90, 120, 144, 165, 240};
 inline constexpr int kRaceFpsCount = 6;
+// HUD and menu scale steps (percent): the 2D shrunk toward its anchors, for big high-resolution screens.
+inline constexpr int kUiScales[] = {100, 90, 80, 70, 60, 50};
+inline constexpr int kUiScaleCount = 6;
+// Button prompts in the menus' texts: the PS2's glyphs, what the controls are bound to, or none.
+enum Prompts : int { PromptsPs2 = 0, PromptsMatch, PromptsOff, PromptsCount };
 
 struct Settings
 {
@@ -30,6 +36,9 @@ struct Settings
     bool smoothMotion = true; // cars and cameras drawn between physics steps
     int vsync = VsyncOff;     // the window's swap interval
     bool vrr = false;         // variable refresh: each new picture presented when it is ready, races capped below the screen's rate
+    int hudScale = 0;         // index into kUiScales: the race HUD
+    int menuScale = 0;        // index into kUiScales: the menus (front end, pause menu, results)
+    int prompts = PromptsPs2; // button prompts
 };
 
 const Settings &get();
@@ -42,6 +51,9 @@ float hscale();                           // (4/3) / aspect: the projection's x 
 inline bool hudAnchor() { return widescreen() && get().hudCorrected; }
 inline bool uiPillarbox() { return widescreen() && get().hudCorrected; }
 inline bool smoothMotion() { return get().smoothMotion; }
+inline float hudScale() { return static_cast<float>(kUiScales[get().hudScale]) / 100.0f; }
+inline float menuScale() { return static_cast<float>(kUiScales[get().menuScale]) / 100.0f; }
+inline int prompts() { return get().prompts; }
 int raceRefreshHz();                      // races' frame rate (60: the original); with VRR, below the screen's rate
 
 const char *filePath();

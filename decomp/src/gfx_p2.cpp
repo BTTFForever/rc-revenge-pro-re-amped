@@ -2,6 +2,7 @@
 // texture uploads (the rest of the file, the packet builders, is in rdr.cpp). The SDK's GS, DMA and device libraries
 // stay guest calls.
 
+#include "rc_widescreen.h" // enhanced recomp: HUD and menu scale
 #include "display_fuzz.h"
 #include "../rc_frame_tick.h"
 
@@ -113,6 +114,7 @@ void GfxP2_Term()
 // the one to fill and, if the full one holds more than five quadwords, sends it to the GIF channel.
 void GfxP2_RenderDmaSendActual()
 {
+    rc::widescreen::packetSending(); // enhanced recomp: an open HUD/menu scale scope's vertices placed first
     GuestFrame frame(0x20);
     sGfxP2 &gfx = G(gGfxP2);
     const uint32_t full = gfx.pDmaBuff.address;
@@ -137,6 +139,7 @@ void GfxP2_RenderDmaSendActual()
     }
     gfx.buffIdx = 0;
     gfx.gifTagIdx = -1;
+    rc::widescreen::packetSent();
 }
 
 namespace {

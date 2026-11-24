@@ -1257,6 +1257,36 @@ Every one of the 101 functions in `changed_functions.txt` now has a native regis
 - The e7202e8 wrappers (`widescreen::installScopeWrappers`, the recompiled Europe HUD/2D functions wrapped in anchor scopes) are gone: the natives' own scopes now do it in both versions.
 
 
+### HUD and menu scale (2026-11-24)
+Settings `hud_scale` and `menu_scale` (1.0x to 0.5x in steps of 0.1, Display page; `RC_HUD_SCALE`, `RC_MENU_SCALE` in
+percent). Built on the widescreen anchor scopes (`rc_widescreen.cpp`), which now apply an affine map to x and y of
+every vertex a scope wrote to the 2D packet: the widescreen x scale about the element's anchor, then the HUD or menu
+scale about a point in the region it belongs to.
+- HUD (the `Hud` scopes of `HudTopRight`, `HudBottomRight`, `HudBottomLeft`): toward the anchor's corner. `HudMiddle`
+  now has two scopes with the new `AnchorScope::kAuto` (the wrong-way/lost signs; the weapon count and icon), which pick
+  the nearest edge in thirds of the screen (the weapon sits top centre in one-player, at the left of each half in split
+  screen; the PS2 drew player 2's lower down, so it shrinks toward that half's bottom left).
+- Split screen: the region is the half the element's box is in; one across the line between them (the map) scales
+  toward the line. The halves meet at line 0x70 from the frame's top in USA (0x80 in Europe; the 3D scissors in
+  `MainScreenGameInit`), and the frame's top is the menus' 2D origin y 0x780 in both versions (the HUD's origin is 0x788
+  in USA, 8 lines lower), so the centre is GS y 0x7f8 in USA and 0x800 in Europe. Widescreen correction stays off for a
+  split-screen HUD, as before; the scale applies there too.
+- Menus (the `Ui` scopes: sprites, rectangles, lines, glyphs) toward the screen's centre; the key-hint line
+  (`AMenuDisplayOptions`, `MenuRowScope`) toward the bottom; the race's other 2D outside the pause menu (`RaceMenuScope`)
+  takes the HUD scale. A menu's clip rectangle (`AMenuRectClipStart`) is moved the same way (`menuScissor`), so scrolled
+  lists still clip to their box. Wide bars (620+ pixels across) keep their width; full-screen backgrounds and fades are
+  left alone, as for widescreen.
+- Nothing outside the screen as drawn is moved (box wholly left, right, above or below the frame): the front end draws
+  its build string "0.13R-NTSC" (USA; `VersionDisplay`, every front-end frame) above the top edge, and `HudPanel` prints a
+  "." at (-100, -100) to set up the font; scaled toward the centre they came into view.
+- A packet sent while a scope is open (`GfxP2_RenderDmaSendActual`) has the scope's vertices so far placed first
+  (`packetSending`), and the scope continues in the next buffer (`packetSent`).
+- Checked by in-process shots (`PS2X_PAD_LIVE` walks, own sandboxes and settings files): USA and Europe single-player race
+  and pause menu and Game Options at 1.0x and 0.5x (16:9, and USA 4:3), two-player race and pause menu at 1.0x and 0.5x
+  in both versions (each half's position, laps and speed in its own half's corners, the map at the line), the front end's
+  main menu, Options, Display, Audio, cup select and vehicle select at 0.5x; text is readable at 0.5x at the default 2x
+  internal resolution in a 1280x720 window.
+
 ## Where to resume (2026-11-12)
 
 **Renderer (2026-11-22): P1 step 8 batch 4 (live 3D) is built** ("Live 3D" above; `RENDERER_3D_DESIGN.md` 20;

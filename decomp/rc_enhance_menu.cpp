@@ -3,8 +3,9 @@
 //
 // Front end: Game Options > Screen Adjust (the PS2's picture position, not needed on a PC) becomes Display (the
 // screen settings: aspect ratio, HUD and menus, screen mode, resolution, frame rate, smooth motion, V-Sync,
-// variable refresh); the game's own Controller configuration page (Game Options > Controls) gets "Player 1 PC
-// Controls..." and "Player 2 PC Controls...". The developers' hidden "Debug Menus" item is shown.
+// variable refresh, HUD scale, menu scale); the game's own Controller configuration page (Game
+// Options > Controls) gets "Player 1 PC Controls..." and "Player 2 PC Controls...". The developers' hidden "Debug
+// Menus" item is shown.
 //
 // Pause menu (a race's, and a cup's, which shares its items): the race's own items (Resume, Restart, Quit / Quit
 // Championship, Show Track Directions), then "Game Options", which mirrors the front end's: Audio Setup (the pause
@@ -72,6 +73,8 @@ constexpr Choice kChoices[] = {
     {"Smooth motion: %s", "Off*On", 2},
     {"V-Sync: %s", "Off*On*Adaptive", 3},
     {"Variable refresh: %s", "Off*On", 2},
+    {"HUD scale: %s", "1.0x*0.9x*0.8x*0.7x*0.6x*0.5x", 6},
+    {"Menu scale: %s", "1.0x*0.9x*0.8x*0.7x*0.6x*0.5x", 6},
 };
 constexpr int kEnhanceCount = static_cast<int>(sizeof(kChoices) / sizeof(kChoices[0]));
 
@@ -86,7 +89,10 @@ int value(const settings::Settings &s, int i)
     case 4: return s.raceFps;
     case 5: return s.smoothMotion ? 1 : 0;
     case 6: return s.vsync;
-    default: return s.vrr ? 1 : 0;
+    case 7: return s.vrr ? 1 : 0;
+    case 8: return s.hudScale;
+    case 9: return s.menuScale;
+    default: return s.prompts;
     }
 }
 
@@ -101,7 +107,10 @@ void apply(settings::Settings &s, int i, int v)
     case 4: s.raceFps = v; break;
     case 5: s.smoothMotion = v != 0; break;
     case 6: s.vsync = v; break;
-    default: s.vrr = v != 0; break;
+    case 7: s.vrr = v != 0; break;
+    case 8: s.hudScale = v; break;
+    case 9: s.menuScale = v; break;
+    default: s.prompts = v; break;
     }
 }
 
