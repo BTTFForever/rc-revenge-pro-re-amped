@@ -3,6 +3,7 @@
 
 #include "main.h"
 #include "main_fuzz.h"
+#include "../rc_widescreen.h"
 #include <cstdio>
 #include <cstdlib>
 
@@ -484,6 +485,7 @@ uint32_t pauseMenuStep(uint32_t pm)
 
 void PauseMenuProcess(ptr32<mainClass> pMainVar)
 {
+    const widescreen::RaceMenuScope menus; // widescreen: these menus pillarboxed in split screen too
     const uint32_t options = pauseMenuStep(pMainVar.address);
     if (options != 0)
         guest_call(kAMenuDisplayOptions, at<uint32_t>(options));

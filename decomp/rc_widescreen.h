@@ -37,6 +37,15 @@ private:
     int32_t m_tag = -1, m_start = 0;
 };
 
+// The race's full-screen menus (PauseMenuProcess: the pause menu and its pages, the results, the cup ranking, the
+// confirm boxes) are drawn inside this: pillarboxed in a split-screen race too, where the rest of the 2D (each half's
+// HUD) keeps the original layout.
+struct RaceMenuScope
+{
+    RaceMenuScope();
+    ~RaceMenuScope();
+};
+
 // Wraps the recompiled HUD/2D functions whose natives this version does not register (Europe) in the same scopes.
 void installScopeWrappers(::PS2Runtime &runtime);
 

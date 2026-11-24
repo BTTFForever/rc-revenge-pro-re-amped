@@ -99,7 +99,11 @@ struct Walker
 
 namespace {
 int g_scopeDepth = 0; // active or blocking anchor scopes open
+int g_raceMenu = 0;   // RaceMenuScopes open
 }
+
+RaceMenuScope::RaceMenuScope() { ++g_raceMenu; }
+RaceMenuScope::~RaceMenuScope() { --g_raceMenu; }
 
 AnchorScope::AnchorScope(uint32_t anchor, Kind kind) : m_kind(kind)
 {
@@ -107,11 +111,13 @@ AnchorScope::AnchorScope(uint32_t anchor, Kind kind) : m_kind(kind)
         return;
     if (!(kind == Hud ? settings::hudAnchor() : settings::uiPillarbox()))
         return;
-    // Not in a split-screen race (mainVarG.splitScreen, +0x368): each half's HUD keeps the original layout. The byte is
-    // already set in the front end once two players are chosen, where the menus (the two-player vehicle select) are
-    // pillarboxed like any other; so it only counts for the HUD, and for the menus while a race runs (status not 0:
-    // the front end's loop runs with status 0).
-    if (at<uint8_t>(sym::mainVarG + 0x368u) != 0 && (kind == Hud || static_cast<uint32_t>(G(mainVarG).status) != 0u))
+    // Not in a split-screen race (mainVarG.splitScreen, +0x368): each half's HUD keeps the original layout, its
+    // sprites and text included (drawn through the Ui paths). The byte is already set in the front end once two players
+    // are chosen, where the menus (the two-player vehicle select) are pillarboxed like any other; so it counts for the
+    // HUD, and for the 2D drawn while a race runs (status not 0: the front end's loop runs with status 0) except the
+    // race's full-screen menus (RaceMenuScope).
+    if (at<uint8_t>(sym::mainVarG + 0x368u) != 0 &&
+        (kind == Hud || (static_cast<uint32_t>(G(mainVarG).status) != 0u && g_raceMenu == 0)))
         return;
     m_anchorX = anchorX(anchor);
     if (m_anchorX == 0)
