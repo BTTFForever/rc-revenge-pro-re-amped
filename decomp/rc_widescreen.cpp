@@ -107,7 +107,11 @@ AnchorScope::AnchorScope(uint32_t anchor, Kind kind) : m_kind(kind)
         return;
     if (!(kind == Hud ? settings::hudAnchor() : settings::uiPillarbox()))
         return;
-    if (at<uint8_t>(sym::mainVarG + 0x368u) != 0) // not in split screen
+    // Not in a split-screen race (mainVarG.splitScreen, +0x368): each half's HUD keeps the original layout. The byte is
+    // already set in the front end once two players are chosen, where the menus (the two-player vehicle select) are
+    // pillarboxed like any other; so it only counts for the HUD, and for the menus while a race runs (status not 0:
+    // the front end's loop runs with status 0).
+    if (at<uint8_t>(sym::mainVarG + 0x368u) != 0 && (kind == Hud || static_cast<uint32_t>(G(mainVarG).status) != 0u))
         return;
     m_anchorX = anchorX(anchor);
     if (m_anchorX == 0)
