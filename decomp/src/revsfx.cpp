@@ -15,6 +15,10 @@
 #include "rc_decomp.h"
 #include "sfx_fuzz.h"
 
+// Europe variant: RevSfxUpdateAmbient differs only in register use and instruction order (the same body;
+// tools/asm_listing.py NAME --diff).
+RC_VERSION_VARIANT(RevSfxUpdateAmbient)
+
 namespace rc {
 
 // sfx.cpp
@@ -281,7 +285,6 @@ void RevSfxInit()
 
 void RevSfxUpdateAmbient(int32 split)
 {
-    RC_DIVERT_IF_CHANGED(RevSfxUpdateAmbient, split);
     GuestFrame frame(0xc0);
     revsfxClass &r = rev();
     int32_t pitch = 0x100, ambientVol = 0x100;

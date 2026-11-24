@@ -9,6 +9,12 @@
 
 #include <cstring>
 
+#include "rc_decomp.h"
+
+// Europe variant: SvfConstructDaemon differs only in register use and instruction order (the same body;
+// tools/asm_listing.py NAME --diff).
+RC_VERSION_VARIANT(SvfConstructDaemon)
+
 namespace rc {
 
 void ResTypeSetConstructDaemon(ptr32<char> pType, uint32 constructDaemon, int16 options); // res.cpp
@@ -270,7 +276,6 @@ void SvfRenderPoints() {}
 // The table's vectors are stored at four times their scale.
 void SvfConstructDaemon(ptr32<memHandle> pHandle)
 {
-    RC_DIVERT_IF_CHANGED(SvfConstructDaemon, pHandle);
     const uint32_t header = mem<uint32_t>(pHandle.address);
     const uint16_t count = mem<uint16_t>(header);
     G(svfVarG).pSvf = ptr32<svfHeader>(header);

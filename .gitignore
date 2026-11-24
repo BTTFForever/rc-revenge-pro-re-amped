@@ -16,6 +16,7 @@
 /decomp/generated/eu/*
 !/decomp/generated/eu/changed_functions.txt
 !/decomp/generated/eu/lit4_map.txt
+!/decomp/generated/eu/variant_status.txt
 # Memory cards, shader caches, run output
 /mc0/
 /mc1/

@@ -9,6 +9,12 @@
 #include "object.h"
 #include "object_fuzz.h"
 
+#include "rc_decomp.h"
+
+// Europe variant: ObjectInitRendObj differs only in register use and instruction order (the same body;
+// tools/asm_listing.py NAME --diff).
+RC_VERSION_VARIANT(ObjectInitRendObj)
+
 namespace rc {
 
 using namespace object;
@@ -276,7 +282,6 @@ void ObjectInitTBoxMask(ptr32<_sObject> pObject, ptr32<_sObjectDef>)
 
 void ObjectInitRendObj(ptr32<_sObject> pObject, ptr32<_sObjectDef> pDef, tTime arg2)
 {
-    RC_DIVERT_IF_CHANGED(ObjectInitRendObj, pObject, pDef, arg2);
     at<uint32_t>(pObject.address + 8u) = 0x80000000u; // target tint 0, 0, 0, brightness 0x80
     const ptr32<_sRendObj> r = pObject->pRendObj;
     at<uint32_t>(pObject.address + 4u) = 0x80000000u;

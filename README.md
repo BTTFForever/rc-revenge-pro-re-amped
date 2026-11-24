@@ -107,7 +107,8 @@ over a lap. `PERF_INVESTIGATION.md` records each change, how it was checked and 
    - **live shadow comparisons** (`RC_SHADOW=1`): while the game runs, sampled calls are run both ways and compared.
 4. **USA and Europe from one source.** The native code never writes a raw address. It names symbols, and per-version
    headers generated from each executable give their addresses. Functions that differ between the two releases have
-   both variants in one body under `#if RC_VERSION_EU`.
+   both variants in one body under `#if RC_VERSION_EU`. Every function that differs (101) runs native in both builds, so fixes and enhancements reach
+   both releases (`tools/variant_status.py`).
 
 ## Status
 

@@ -17,6 +17,12 @@
 #include <cstring>
 #include <vector>
 
+#include "rc_decomp.h"
+
+// Europe variant: GameTaskSpecialPhysicsCases differs only in register use and instruction order (the same body;
+// tools/asm_listing.py NAME --diff).
+RC_VERSION_VARIANT(GameTaskSpecialPhysicsCases)
+
 namespace rc {
 
 bool_ AColDownCast(ptr32<_sColCellVecPSX> pPos, ptr32<_sColCellVecPSX> pPoi, ptr32<_sColNormalPSX> pNormal,
@@ -126,7 +132,6 @@ void GameTaskUpdateCarOcols()
 // cars get a boost, shorter the further back they start. Then the hold flags are cleared again.
 void GameTaskSpecialPhysicsCases()
 {
-    RC_DIVERT_IF_CHANGED(GameTaskSpecialPhysicsCases);
     const int32_t rsg = at<int32_t>(kReadySteadyGo);
     if (rsg != 0 || at<int32_t>(kResultTrigger) != 0)
     {

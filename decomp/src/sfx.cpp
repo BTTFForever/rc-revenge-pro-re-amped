@@ -20,6 +20,10 @@
 #include "rc_decomp.h"
 #include "sfx_fuzz.h"
 
+// Europe variant: SfxDoSfx differs only in register use and instruction order (the same body;
+// tools/asm_listing.py NAME --diff).
+RC_VERSION_VARIANT(SfxDoSfx)
+
 namespace rc {
 
 ptr32<void> ResReadAlloc(); // res.cpp
@@ -267,7 +271,6 @@ int32 SfxTransEffect(ptr32<void> pVagPtr, ptr32<void> pImgPtr, uint32 resId)
 
 void SfxDoSfx()
 {
-    RC_DIVERT_IF_CHANGED(SfxDoSfx);
     sfxClass &s = sfx();
     if (s.bInitOk == 0)
         return;

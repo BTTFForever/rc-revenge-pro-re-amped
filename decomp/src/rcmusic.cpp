@@ -20,6 +20,10 @@
 #include "rc_decomp.h"
 #include "stream_fuzz.h"
 
+// Europe variant: RCMusicFadeControl differs only in register use and instruction order (the same body;
+// tools/asm_listing.py NAME --diff).
+RC_VERSION_VARIANT(RCMusicFadeControl)
+
 namespace rc {
 
 uint16 RandomGetNDRange(uint16 lower, uint16 upper); // math_core.cpp
@@ -238,7 +242,6 @@ void RCMusicChain(int32 secondXA, int8 fadeRate)
 
 void RCMusicFadeControl()
 {
-    RC_DIVERT_IF_CHANGED(RCMusicFadeControl);
     GuestFrame frame(0x30);
     rcmusicClass &r = music();
     const int32_t fade = r.fade;

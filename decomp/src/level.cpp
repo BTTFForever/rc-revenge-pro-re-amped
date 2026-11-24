@@ -9,6 +9,12 @@
 #include "physics_fuzz.h"
 #include "weapon.h"
 
+#include "rc_decomp.h"
+
+// Europe variant: LevelLoadGameLevel differs only in register use and instruction order (the same body;
+// tools/asm_listing.py NAME --diff).
+RC_VERSION_VARIANT(LevelLoadGameLevel)
+
 namespace rc {
 
 void TBoxSetupClass(); // tbox.cpp
@@ -228,7 +234,6 @@ void LevelLoadTrackEditor()
 
 void LevelLoadGameLevel(int32_t levelNum)
 {
-    RC_DIVERT_IF_CHANGED(LevelLoadGameLevel, levelNum);
     GuestFrame frame(0x20);
     guest_call(kFMSetCacheMode, 0);
     guest_call(kPrintf, kBBLoadStarted);

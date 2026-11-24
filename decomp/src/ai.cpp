@@ -9,6 +9,12 @@
 #include "ai_fuzz.h"
 #include "ee_math.h"
 
+#include "rc_decomp.h"
+
+// Europe variant: AINodeGetReSpawnNode differs only in register use and instruction order (the same body;
+// tools/asm_listing.py NAME --diff).
+RC_VERSION_VARIANT(AINodeGetReSpawnNode)
+
 namespace rc {
 
 angle ArcTan(int32 x, int32 y);
@@ -324,7 +330,6 @@ int32 AINodeDistanceAlong(ptr32<_sObject> pObj)
 // nearest node it can drive on, else the first node.
 ptr32<_sAINode> AINodeGetReSpawnNode(ptr32<_sObject> pObj)
 {
-    RC_DIVERT_IF_CHANGED(AINodeGetReSpawnNode, pObj);
     const sAINodeClass &ai = G(aiNodeVarG);
     if (!ai.pNode)
         return nullptr;

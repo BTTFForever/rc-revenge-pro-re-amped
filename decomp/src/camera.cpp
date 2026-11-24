@@ -7,6 +7,12 @@
 #include "ee_math.h"
 #include "camera_fuzz.h"
 
+#include "rc_decomp.h"
+
+// Europe variant: CameraFree differs only in register use and instruction order (the same body;
+// tools/asm_listing.py NAME --diff).
+RC_VERSION_VARIANT(CameraFree)
+
 #define F(value) ::rc::ee_float(value##f)
 
 namespace rc {
@@ -870,7 +876,6 @@ void CameraSpin(ptr32<_sCamera> pCamera)
 // The debug fly camera: the right stick and the d-pad turn it (faster the longer a key is held), the other keys move it.
 void CameraFree(ptr32<_sCamera> pCamera)
 {
-    RC_DIVERT_IF_CHANGED(CameraFree, pCamera);
     GuestFrame frame(0x80);
     _sCamera &camera = *pCamera;
     vec32_ &direction = *frame.local<vec32_>(0);

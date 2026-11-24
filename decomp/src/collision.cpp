@@ -12,6 +12,14 @@
 
 #include <algorithm>
 
+#include "rc_decomp.h"
+
+// Europe variants: CarColColDetCars, TColComputeCellResidency, TColMakePolyList differ only in register use and instruction order (the same body;
+// tools/asm_listing.py NAME --diff).
+RC_VERSION_VARIANT(CarColColDetCars)
+RC_VERSION_VARIANT(TColComputeCellResidency)
+RC_VERSION_VARIANT(TColMakePolyList)
+
 #define F(value) ::rc::ee_float(value##f)
 
 namespace rc {
@@ -846,7 +854,6 @@ void CarColCheckScifiTriggers()
 // car's dead flags start as "skip" for a car its physics marks as not colliding (flags bit 1).
 void CarColColDetCars()
 {
-    RC_DIVERT_IF_CHANGED(CarColColDetCars);
     _sCarColClass &carCol = G(carColG);
     const sObjectClass &objects = G(objectVarG);
     G(oldSp) = 0;
@@ -1137,7 +1144,6 @@ void TColTerm()
 // extents in X and Z. The debug data gives this an int result, but it returns nothing meaningful.
 void TColMakePolyList()
 {
-    RC_DIVERT_IF_CHANGED(TColMakePolyList);
     SVECTOR &minExt = G(minExtG), &maxExt = G(maxExtG);
     minExt.vx = minExt.vy = minExt.vz = 0x7FFF;
     maxExt.vx = maxExt.vy = maxExt.vz = -0x7FFF;
@@ -1266,7 +1272,6 @@ void TColBuildGrid()
 // Works out which cells each poly touches and writes every cell's two id lists.
 void TColComputeCellResidency()
 {
-    RC_DIVERT_IF_CHANGED(TColComputeCellResidency);
     _sColGridPSX &grid = G(gridG);
     const _sTcol &tcol = G(tcolG);
     auto &cellLists = G(pCellPolyIdsG);
