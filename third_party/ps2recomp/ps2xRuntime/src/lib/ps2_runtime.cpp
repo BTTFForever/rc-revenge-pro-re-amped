@@ -21,6 +21,7 @@
 #include "ps2_host_backend.h"
 #include "ps2_iop_host.h"
 #include "ps2_host_input.h"
+#include "ps2_host_gamepad.h"
 #include "ps2_host_platform.h"
 #include "ps2_capture_hooks.h"
 #include "ps2x/iop/iop_subsystem.h"
@@ -2893,7 +2894,7 @@ static void runHostPlatformLoop(PS2Runtime &runtime, const ps2_host_platform::Ho
             ps2x::savestate::requestQuickLoad();
         if (const ps2x::capture::Hooks *hooks = ps2x::capture::g_hooks; hooks && hooks->hotkey && platform.keyPressed(KEY_F10))
             hooks->hotkey(); // RC frame record (batch 4)
-        if (!open)
+        if (!open || ps2_host_input::liveQuit())
         {
             RUNTIME_LOG("[run] window close requested, breaking out of loop");
             runtime.requestStop();
@@ -3229,7 +3230,7 @@ void PS2Runtime::run()
         if (const ps2x::capture::Hooks *hooks = ps2x::capture::g_hooks; hooks && hooks->hotkey && IsKeyPressed(KEY_F10))
             hooks->hotkey(); // RC frame record (batch 4)
 
-        if (WindowShouldClose())
+        if (WindowShouldClose() || ps2_host_input::liveQuit())
         {
             RUNTIME_LOG("[run] window close requested, breaking out of loop");
             requestStop();
@@ -3252,6 +3253,7 @@ void PS2Runtime::run()
         UnloadTexture(frameTex);
     GSSharedPresent::ShutdownHost();
     ps2_host_input::releaseMouse();
+    ps2_host_gamepad::shutdown(); // a Steam Controller's lizard mode back on before the window (and SDL) goes
     if (platform)
         platform->close();
     else

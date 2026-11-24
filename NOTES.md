@@ -1404,6 +1404,47 @@ Checked (own sandboxes, `XDG_CONFIG_HOME` settings with the user's values, `PS2X
 pause by pad, two downs to Quit Race, pad A + key Enter: before, the race resumed; after, the confirmation opened;
 Europe, player 2 pausing and choosing with keys 0, K, N: confirmation opened.
 
+### Steam Controller (2026) lizard mode off while the game has it (2026-11-24)
+The user's 2026 Steam Controller (28de:1303, Bluetooth, SDL's HIDAPI driver on /dev/hidraw1) kept typing Enter, arrows
+and Escape (and moving the mouse with the right trackpad) all through a session with the game holding it (Europe
+`session.log` with `PS2X_GAMEPAD_LOG=1`). SDL 3.4.20's driver for it (`SDL_hidapi_steam_triton.c`, unchanged on SDL's
+main) only sends `ID_SET_SETTINGS_VALUES` { `SETTING_LIZARD_MODE` = off } every 3 s and nothing when it closes ("the
+watchdog" turns it back on); there is no hint for it (`SDL_HINT_JOYSTICK_HIDAPI_STEAM` only enables the drivers). Its
+driver for the 2015 controller does the whole job (on open `ID_CLEAR_DIGITAL_MAPPINGS`, `ID_LOAD_DEFAULT_SETTINGS`,
+trackpads to none; on close the default mappings and settings). Linux's hid-steam (it binds 1302-1305, `STEAM_QUIRK_IBEX`)
+turns the 2026 model's lizard mode off with `ID_CLEAR_DIGITAL_MAPPINGS` (0x81) plus `SETTING_LIZARD_MODE` 0 (and its
+Steam watchdog off), on with `ID_SET_DEFAULT_DIGITAL_MAPPINGS` (0x85) plus `ID_LOAD_DEFAULT_SETTINGS` (0x8e), feature
+report id 1; and it turns it on itself when the last program holding the hidraw node closes it (`steam_client_ll_close` ->
+`steam_register` -> `steam_set_lizard_mode(lizard_mode)`), so a crash or a kill leaves no controller without its
+keyboard. So the keys come from the digital mappings, which SDL's 2026 driver never clears.
+- `ps2_host_gamepad`: for 28de:1302-1305 the game sends hid-steam's two lizard-off reports through
+  `SDL_SendGamepadEffect` (the driver passes any 64-byte buffer on as a feature report) when the gamepad is opened and
+  every 3 s (the watchdog stays on, as SDL leaves it, so nothing depends on the game ending cleanly), and the two
+  lizard-on reports before it closes the gamepad (still connected) and at the game's end (`ps2_host_gamepad::shutdown`,
+  called where the window loop ends; `main` leaves by `_Exit`, so no atexit). Logged once each way
+  (`[gamepad] slot 1: Steam Controller lizard mode off (...)` / `on again`), refusals once. `PS2X_STEAM_LIZARD=1` leaves
+  the controller alone. The 2015 controller and the Deck: SDL's drivers already do it (the game now closes its gamepads
+  at the end, so SDL's 2015 driver restores lizard mode then too).
+- Not done: ignoring the controller's own keyboard device in the game's key input. raylib (GLFW) gives no source
+  device for a key, and on Wayland (the user's session) all keyboards of a seat arrive as one, under SDL too; only
+  reading the evdev node beside the window system would tell, which is not clean. With the reports above the keys
+  should not come at all.
+- Test aids: `PS2X_SDL_VIRTUAL_PAD_TYPE=steam` gives the virtual pads 28de:1303 and logs each effect they receive;
+  a `PS2X_PAD_LIVE` line `quit` ends the game as the window's close button does. Checked (Europe, own sandbox): the
+  virtual Steam pad got `01 81 00` and `01 87 03 09 00 00` at open and every 3 s, nothing while unplugged, the pair again
+  when plugged back, and `01 85 00`, `01 8e 00` at `quit` (exit 0). Not checked on the hardware (not connected while
+  this was done): the hand test is in AGENT_USAGE.
+
+### Pause menu: the prompts follow the player who paused (2026-11-24)
+When player 2 pauses a two-player race (`mainVarG.pauser` 2, +0x364, while `pauseMenu` +0x366 is 1), only player 2's
+input picks there, so `rc_prompts::promptPlayer` now answers player 2 and the key hints show player 2's device and
+bindings (keyboard: U Back, N Select, I/K Move; before: player 1's Space / F / arrows or A). The quit confirmation's
+place: its menu header has flags 0x1825 (centred across and down, `AMenuSnapsize`), moreFlags 0, drawn inside
+`PauseMenuProcess`'s `RaceMenuScope`, so the side-by-side HUD mapping never moves it; in-process shots of both versions,
+vertical and horizontal, player 1 or 2 pausing (keys and a virtual pad, window scale 1 and 3), show it centred on the
+screen every frame from opening to the front end. A box in the left half was not reproduced; a screenshot of it (and
+which item and device led there) would be needed.
+
 ## Where to resume (2026-11-12)
 
 **Renderer (2026-11-22): P1 step 8 batch 4 (live 3D) is built** ("Live 3D" above; `RENDERER_3D_DESIGN.md` 20;

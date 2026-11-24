@@ -40,7 +40,7 @@ start), and are saved to `~/.config/rc-revenge-pro/settings.ini`:
 | Variable refresh | Off, On | For a VRR (FreeSync/G-SYNC/Adaptive Sync) screen: each new picture is shown when it is ready, races (and with Smooth motion the menus) capped 3 below the screen's rate (141 on 144 Hz); with Smooth motion off the menus show at the game's 50/60 Hz without judder. The desktop must allow VRR for the window (KDE: Display Configuration, Adaptive sync "Always", or fullscreen with "Automatic") |
 | HUD scale | 1.0x to 0.5x | The race HUD smaller, each part shrunk toward its own corner or edge (position and laps top right, speedometer bottom right, map bottom left, the weapon and the wrong-way sign toward the edge nearest them; in split screen toward its own half's corners). For big high-resolution screens. Saved as `hud_scale` (100 to 50) |
 | Menu scale | 1.0x to 0.5x | The menus smaller (front end, pause menu, results), toward the screen's centre, their key hints toward the bottom. Saved as `menu_scale` |
-| Button prompts | PS2, Match controls, Off | The button pictures and button names in the menus (the key hints "Back", "Select", the controller layout pages' "R1 button" and "left analog stick", the Track Editor help's "L2 button" and "START menu"): the PS2's; what the control is bound to on the device you used last (a PlayStation-style gamepad keeps the PS2 shapes and L1/R2 names, other gamepads show A/B/X/Y in their colours or RB, LT, Start, the keyboard the key's name; the arrows and the stick wording stay while they are on the d-pad and sticks or the arrow keys; player 2's bindings on player 2's layout page); or Off: no key-hint line, and the buttons named by place in each language ("bottom button", "right trigger button", "the pause menu"). Saved as `button_prompts` (ps2, match, off) |
+| Button prompts | PS2, Match controls, Off | The button pictures and button names in the menus (the key hints "Back", "Select", the controller layout pages' "R1 button" and "left analog stick", the Track Editor help's "L2 button" and "START menu"): the PS2's; what the control is bound to on the device you used last (a PlayStation-style gamepad keeps the PS2 shapes and L1/R2 names, other gamepads show A/B/X/Y in their colours or RB, LT, Start, the keyboard the key's name; the arrows and the stick wording stay while they are on the d-pad and sticks or the arrow keys; player 2's bindings on player 2's layout page and in the race's pause menu when player 2 paused); or Off: no key-hint line, and the buttons named by place in each language ("bottom button", "right trigger button", "the pause menu"). Saved as `button_prompts` (ps2, match, off) |
 | Split screen | Horizontal, Vertical | Two-player races: player 1 above player 2 (the PS2's), or player 1 on the left half and player 2 on the right. Side by side, each half's view is zoomed out a little (its horizontal view narrower and its vertical view taller by the same factor, about 0.7 in 4:3 and 0.8 in 16:9; nothing stretched), each player's position, laps and speed at the screen's outer edge (player 1's HUD mirrored), the weapons at the inner edges and the map at the bottom of the line between the halves. Changes apply mid-race too. Saved as `split` (horizontal, vertical); `RC_SPLIT` overrides it |
 
 Game Options (and the pause menu's Game Options) also shows the developers' **Debug Menus**, left hidden on the disc. Apart from Mirror
@@ -70,6 +70,9 @@ vibration, sticks analog; a button bound to a trigger is pressure-sensitive, as 
 and handbrake). Valve controllers (Steam Controller 2015 and 2026, Steam Deck) are opened through SDL's HIDAPI drivers,
 which switch off their keyboard-and-mouse "lizard mode"; that needs Steam's udev rules (the `steam-devices` package,
 `60-steam-input.rules`), and the game logs it if such a controller is present but its hidraw node is not readable.
+For the 2026 Steam Controller (wired, Bluetooth or its puck) SDL's own reports leave its keys on, so the game sends the
+ones Linux's hid-steam uses while it has the controller (`[gamepad] slot 1: Steam Controller lizard mode off`) and turns
+lizard mode back on when it closes or the game ends (`... lizard mode on again`); `PS2X_STEAM_LIZARD=1` leaves it alone.
 Keyboard defaults for player 1: arrows, F cross, E circle, R square, Space triangle, Q L1, Left Shift R1, Left Ctrl L2,
 Right Shift R2, Enter start, Tab select, WASD left stick; player 2 (when set to the keyboard) IJKL, N, M, B, U, O, P, Y, 7,
 0, 9. Saved in the same settings file (`p1_device=auto`, `p1_key_cross=F`, `p1_pad_cross=a`, ...).
@@ -89,7 +92,9 @@ and longest gap, swap interval, VRR, monitor rate). `PS2X_PAD_LIVE=<file>` drive
 +/-axis> <hold ms> <gap ms>` (`pad1 a 100 300`, `pad2 +righttrigger 2000 100`; `pad3 unplug` and `pad3 plug`
 disconnect and reconnect one; `key <name> <hold ms> <gap ms>`, a settings-file key name, holds a key inside the game
 only, nothing reaches the desktop), through the whole gamepad path (`PS2X_SDL_VIRTUAL_PAD_TYPE=ps4|xbox` gives them a DualShock 4's
-or an Xbox 360 controller's ids, so SDL labels their buttons that way; `RC_PROMPTS_LOG=1` logs what each button prompt shows); a line `shot <name>` saves the window's picture as
+or an Xbox 360 controller's ids, so SDL labels their buttons that way; `steam` a 2026 Steam Controller's, and logs the feature
+reports sent to it; `RC_PROMPTS_LOG=1` logs what each button prompt shows); a line `quit` ends the game as the window's close
+button does; a line `shot <name>` saves the window's picture as
 `<name>.png` in `PS2X_SCREENSHOT_DIR` (in order with port 0's lines). `RC_MENU_DUMP=2` dumps the menus' texts in all
 four languages.
 `PS2X_RUMBLE_LOG=1` logs the game's motor values and what the virtual gamepads receive. Switches for comparing or bypassing the other enhancements

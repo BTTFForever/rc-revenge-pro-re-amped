@@ -111,10 +111,13 @@ Piece ps2(int key) { Piece p; p.art = ArtPs2; p.ps2 = key; return p; }
 Piece capPiece(const std::string &t) { Piece p; p.art = ArtCap; p.text = t; return p; }
 Piece textPiece(const std::string &t) { Piece p; p.art = ArtText; p.text = t; return p; }
 
-// The player whose bindings the prompts show: player 2 on the game's "Define Player 2 Controls" page, else player 1
-// (the menus run on player 1's port).
+// The player whose bindings the prompts show: player 2 on the game's "Define Player 2 Controls" page and in the race's
+// pause menu when player 2 paused (mainVarG.pauser 2 while pauseMenu is up: only that player's pad picks there), else
+// player 1 (the menus run on player 1's port).
 int promptPlayer()
 {
+    if (at<uint16_t>(sym::mainVarG + 0x366u) == 1 && at<int16_t>(sym::mainVarG + 0x364u) == 2)
+        return 1;
     const ptr32<sMenuSystem> ms = G(pMenuSystemG);
     if (!ms)
         return 0;

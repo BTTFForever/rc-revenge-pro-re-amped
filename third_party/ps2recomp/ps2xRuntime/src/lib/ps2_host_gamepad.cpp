@@ -11,6 +11,7 @@
 #include <vector>
 #include <dirent.h>
 #include <fstream>
+#include <initializer_list>
 #include <unistd.h>
 
 #if PS2X_HAS_SDL3
@@ -32,6 +33,9 @@ namespace ps2_host_gamepad
             uint64_t rumbleSent = 0;      // SDL_GetTicks of the last send
             uint32_t loggedButtons = 0;   // PS2X_GAMEPAD_LOG: the buttons and axes last logged
             int loggedAxes[SDL_GAMEPAD_AXIS_COUNT]{};
+            bool lizardOff = false;       // a 2026 Steam Controller whose lizard mode this game turned off
+            bool lizardWarned = false;    // its refusal logged once
+            uint64_t lizardSent = 0;      // SDL_GetTicks of the last lizard-off reports
         };
         std::array<Slot, kSlots> g_slots;
         std::atomic<uint16_t> g_rumble[kSlots]{}; // requested: small << 8 | large
@@ -47,6 +51,16 @@ namespace ps2_host_gamepad
         }
 
         std::vector<SDL_JoystickID> g_virtualIds;
+
+        // A virtual pad's effect (PS2X_SDL_VIRTUAL_PAD_TYPE=steam: the Steam Controller's feature reports): logged.
+        bool SDLCALL virtualEffect(void *userdata, const void *data, int size)
+        {
+            const auto *b = static_cast<const uint8_t *>(data);
+            std::fprintf(stderr, "[gamepad] virtual pad %d effect (%d bytes): %02x %02x %02x %02x %02x %02x\n",
+                         static_cast<int>(reinterpret_cast<intptr_t>(userdata)), size, b[0], size > 1 ? b[1] : 0, size > 2 ? b[2] : 0,
+                         size > 3 ? b[3] : 0, size > 4 ? b[4] : 0, size > 5 ? b[5] : 0);
+            return true;
+        }
 
         // Virtual gamepad i (0-based) attached and opened, in g_virtual[i].
         bool attachOne(int i)
@@ -73,9 +87,15 @@ namespace ps2_host_gamepad
                     desc.vendor_id = 0x045e;
                     desc.product_id = 0x028e;
                 }
+                else if (std::strcmp(t, "steam") == 0) // the 2026 Steam Controller over Bluetooth (its lizard-mode reports)
+                {
+                    desc.vendor_id = 0x28de;
+                    desc.product_id = 0x1303;
+                }
             }
             desc.userdata = reinterpret_cast<void *>(static_cast<intptr_t>(i + 1));
             desc.Rumble = virtualRumble;
+            desc.SendEffect = virtualEffect;
             const SDL_JoystickID id = SDL_AttachVirtualJoystick(&desc);
             SDL_Joystick *joy = id ? SDL_OpenJoystick(id) : nullptr;
             if (!joy)
@@ -146,6 +166,75 @@ namespace ps2_host_gamepad
             }
             closedir(dir);
 #endif
+        }
+
+        // Lizard mode: a Valve controller with no game reading it types keys and moves the mouse (A Enter, B Escape,
+        // d-pad arrows, right trackpad the mouse) through its own keyboard-and-mouse interface ("Steam Ctrl (BT)" and
+        // the like). SDL's driver for the 2015 Steam Controller (wired, dongle, Bluetooth) turns it off when it opens one
+        // (ID_CLEAR_DIGITAL_MAPPINGS, trackpads to none) and back on when it closes it. Its driver for the 2026 one
+        // (SDL_hidapi_steam_triton.c, 3.4.20 and SDL's main) only sends SETTING_LIZARD_MODE = off every 3 s, and the
+        // keys keep coming (seen: 28de:1303 over Bluetooth typed Enter, arrows and Escape all through a session). Linux's
+        // hid-steam turns that model's lizard mode off with ID_CLEAR_DIGITAL_MAPPINGS plus SETTING_LIZARD_MODE 0, and on
+        // with ID_SET_DEFAULT_DIGITAL_MAPPINGS plus ID_LOAD_DEFAULT_SETTINGS: the same reports go through SDL here
+        // (SDL_SendGamepadEffect hands a 64-byte buffer, report id 1, to the controller as a feature report). Off when
+        // it is opened and again every 3 s; on when it is closed or the game ends. If the game dies, hid-steam turns it
+        // on again when the last program holding its hidraw node lets go. PS2X_STEAM_LIZARD=1 leaves it alone.
+        bool isSteamController2026(Uint16 vendor, Uint16 product)
+        {
+            // 1302 wired, 1303 Bluetooth, 1304 / 1305 its wireless pucks (SDL's controller_list.h, Linux's hid-steam).
+            return vendor == 0x28de && product >= 0x1302 && product <= 0x1305;
+        }
+
+        bool steamFeature(SDL_Gamepad *pad, std::initializer_list<uint8_t> cmd)
+        {
+            uint8_t buffer[64] = {1}; // report id 1 (REPORT_ID_FEATURES_CONTROLLER), then type, length, payload
+            size_t i = 1;
+            for (uint8_t b : cmd)
+                buffer[i++] = b;
+            return SDL_SendGamepadEffect(pad, buffer, sizeof(buffer));
+        }
+
+        void steamLizard(Slot &s, int slot, bool on)
+        {
+            const uint64_t start = SDL_GetTicksNS();
+            bool ok;
+            if (on)
+                ok = steamFeature(s.pad, {0x85, 0}) &  // ID_SET_DEFAULT_DIGITAL_MAPPINGS: Enter, Escape, arrows back
+                     steamFeature(s.pad, {0x8e, 0});   // ID_LOAD_DEFAULT_SETTINGS: lizard mode and the mouse back
+            else
+                ok = steamFeature(s.pad, {0x81, 0}) &          // ID_CLEAR_DIGITAL_MAPPINGS: no keys
+                     steamFeature(s.pad, {0x87, 3, 9, 0, 0});  // ID_SET_SETTINGS_VALUES: SETTING_LIZARD_MODE (9) = off
+            const double ms = static_cast<double>(SDL_GetTicksNS() - start) / 1e6;
+            const bool first = !on && !s.lizardOff;
+            if (!ok && (on || !s.lizardWarned))
+            {
+                std::fprintf(stderr, "[gamepad] slot %d: Steam Controller lizard mode %s: the controller refused the reports (%s)\n", slot + 1,
+                             on ? "on" : "off", SDL_GetError());
+                s.lizardWarned = true;
+            }
+            else if (ok && (on || first))
+                std::fprintf(stderr, "[gamepad] slot %d: Steam Controller lizard mode %s (%s, 2 feature reports accepted in %.1f ms)\n", slot + 1,
+                             on ? "on again" : "off", on ? "its keyboard and mouse back" : "no keys or mouse from it while the game has it",
+                             ms);
+            s.lizardOff = !on && (ok || s.lizardOff);
+            s.lizardSent = SDL_GetTicks();
+        }
+
+        void steamLizardUpdate(Slot &s, int slot)
+        {
+            static const bool keep = [] { const char *v = std::getenv("PS2X_STEAM_LIZARD"); return v && *v == '1'; }();
+            if (keep || !s.pad || !isSteamController2026(SDL_GetGamepadVendor(s.pad), SDL_GetGamepadProduct(s.pad)))
+                return;
+            if (s.lizardSent == 0 || SDL_GetTicks() - s.lizardSent >= 3000)
+                steamLizard(s, slot, false);
+        }
+
+        // Before a gamepad is closed: lizard mode back on if this game turned it off (and the controller is still there).
+        void steamLizardRestore(Slot &s, int slot)
+        {
+            if (s.lizardOff && SDL_GamepadConnected(s.pad))
+                steamLizard(s, slot, true);
+            s.lizardOff = false;
         }
 
         void logGamepad(SDL_Gamepad *pad, int slot)
@@ -235,6 +324,7 @@ namespace ps2_host_gamepad
                 if (g_slots[i].pad && g_slots[i].id == id)
                 {
                     std::fprintf(stderr, "[gamepad] gamepad %d disconnected: %s\n", i + 1, g_slots[i].name.c_str());
+                    steamLizardRestore(g_slots[i], i);
                     SDL_CloseGamepad(g_slots[i].pad);
                     g_slots[i] = Slot{};
                 }
@@ -310,6 +400,8 @@ namespace ps2_host_gamepad
         for (int k = 0; k < n; ++k)
             open(ids[k]);
         SDL_free(ids);
+        for (int i = 0; i < kSlots; ++i)
+            steamLizardUpdate(g_slots[i], i);
         if (logging())
             for (int i = 0; i < kSlots; ++i)
                 if (Slot &sl = g_slots[i]; sl.pad)
@@ -338,6 +430,19 @@ namespace ps2_host_gamepad
                     }
                 }
         applyRumble();
+    }
+
+    void shutdown()
+    {
+        if (!g_initialised || g_failed)
+            return;
+        for (int i = 0; i < kSlots; ++i)
+            if (g_slots[i].pad)
+            {
+                steamLizardRestore(g_slots[i], i);
+                SDL_CloseGamepad(g_slots[i].pad); // SDL's 2015 Steam Controller driver restores its lizard mode here
+                g_slots[i] = Slot{};
+            }
     }
 
     bool present(int slot) { return slot >= 0 && slot < kSlots && g_slots[slot].pad; }
@@ -452,6 +557,7 @@ namespace ps2_host_gamepad
     }
 #else
     void update() {}
+    void shutdown() {}
     bool present(int) { return false; }
     bool button(int, int) { return false; }
     float axis(int, int) { return 0.0f; }

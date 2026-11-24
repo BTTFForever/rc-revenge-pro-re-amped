@@ -328,11 +328,13 @@ namespace ps2_host_input
         // the pad record (0x4000 cross, 0x1000 triangle, 0x0008 start, 0x0010 up, 0x0040 down, 0x0080 left, 0x0020
         // right). A line "pad<n> <button or +/-axis> <hold ms> <gap ms>" presses a virtual SDL gamepad
         // (PS2X_SDL_VIRTUAL_PADS; SDL's names: a, b, x, y, dpup, start, +righttrigger, -leftx, ...), through the whole
-        // gamepad path. A line "shot <name>" saves the window's next picture as <name>.png in PS2X_SCREENSHOT_DIR.
+        // gamepad path. A line "shot <name>" saves the window's next picture as <name>.png in PS2X_SCREENSHOT_DIR; a
+        // line "quit" ends the game as the window's close button does.
         // Run from the window loop (sample); the ports' presses are read by padState.
         std::atomic<uint16_t> g_live[kPadPorts]{};
         std::mutex g_shotMutex;
         std::string g_shotName; // a "shot <name>" line: the window loop saves the next picture as <name>.png
+        std::atomic<bool> g_liveQuit{false}; // a "quit" line
 
         void runLiveInput()
         {
@@ -377,6 +379,11 @@ namespace ps2_host_input
                         int pad = 0, hold = 100, gap = 100, port = 0;
                         char control[64] = {};
                         unsigned buttons = 0;
+                        if (line == "quit")
+                        {
+                            g_liveQuit.store(true);
+                            continue;
+                        }
                         if (line.rfind("shot ", 0) == 0) // in port 0's order
                         {
                             queues[0].presses.push_back({-1, 0, line.substr(5), 0, 0});
@@ -1161,6 +1168,8 @@ namespace ps2_host_input
         input.y *= mouseSensitivity() * mouseVerticalSensitivity() * ((invert & kInvertRightY) != 0u ? -1.0f : 1.0f);
         return input;
     }
+
+    bool liveQuit() { return g_liveQuit.load(); }
 
     void releaseMouse()
     {

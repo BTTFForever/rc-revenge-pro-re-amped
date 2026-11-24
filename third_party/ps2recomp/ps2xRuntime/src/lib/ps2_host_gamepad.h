@@ -11,6 +11,7 @@ namespace ps2_host_gamepad
     constexpr int kSlots = 4;
 
     void update();                  // pumps SDL: hotplug, state, rumble, the test aids' virtual gamepads
+    void shutdown();                // closes the gamepads (a Steam Controller's lizard mode back on); at the game's end
     bool present(int slot);
     bool button(int slot, int sdlButton);
     float axis(int slot, int sdlAxis); // sticks -1..1, triggers 0..1
