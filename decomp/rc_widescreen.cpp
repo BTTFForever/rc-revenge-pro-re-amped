@@ -2,6 +2,7 @@
 #include "rc_decomp.h"
 #include "rc_settings.h"
 #include "rc_widescreen.h"
+#include "rc_split.h"
 
 #include <algorithm>
 #include <cmath>
@@ -125,6 +126,90 @@ void compose(float &k, float &b, float h, float w, float s, float a)
     b = s * w * (1.0f - h) + a * (1.0f - s);
 }
 
+// Vertical split screen (rc_split.h): an element of a half's HUD, measured in w, moved from the PS2's top or bottom
+// half to the left or right half and then scaled (hs widescreen, s HUD) toward its new anchor. Player 1's half (the top
+// one) is mirrored into the left half: what sat at its right edge goes to the screen's left edge, what sat at its left
+// edge to the line between the halves, so both players' panels and speeds are at the screen's outer edges. The map
+// (one element across the line between the PS2's halves) goes to the bottom of the line between the new halves. Each
+// element keeps its distance from the edge it was anchored to; the race's other 2D (Ui) keeps its place relative to
+// its half's centre.
+void sideBySideMap(Walker &w, bool hud, int half, uint32_t anchor, float hs, float s)
+{
+    const int32_t top = kCentreY - kHalfLines, bottom = kCentreY + kHalfLines, gap = 2 << 4;
+    const int32_t midX = (w.minX + w.maxX) / 2, midY = (w.minY + w.maxY) / 2;
+    // The map (HudBottomLeft, drawn once, across the PS2's line; also while it slides in).
+    const bool across = hud && anchor == 9;
+    // Player 1's half on the PS2: the HUD's by the player it is drawn for (a panel sliding in at the start crosses the
+    // line), other 2D by where it is.
+    const bool first = half >= 0 ? half == 0 : midY < kCentreY;
+    // Player 2's HUD: in USA 8 lines higher in its half than player 1's in its own (the HUD's origin is 8 lines below
+    // the frame's top, player 2's panel 0x70 lines below that, the halves meet 0x78 down); Europe's 0x80 is the half.
+    constexpr int32_t kSecondLift = RC_VERSION_EU ? 0 : 8 << 4;
+    const int32_t srcTop = first ? top : kCentreY - kSecondLift, srcBottom = first ? kCentreY : bottom - kSecondLift;
+    const int32_t left = first ? kLeftX : kCentreX + gap, right = first ? kCentreX - gap : kRightX;
+    float dx, dy, ax, ay;
+    if (across)
+    {
+        // The map: centred on the line, its bottom 8 lines above the screen's.
+        dx = static_cast<float>(kCentreX - midX);
+        dy = static_cast<float>(bottom - (8 << 4) - w.maxY);
+        ax = static_cast<float>(kCentreX);
+        ay = static_cast<float>(bottom);
+    }
+    else
+    {
+        int col = 0, row = 0;
+        if (hud)
+        {
+            const int32_t x = anchorX(anchor);
+            col = x == kLeftX ? -1 : x == kRightX ? 1 : 0;
+            row = anchorRow(anchor);
+            if (anchor == kAuto)
+            {
+                const int32_t third = (kRightX - kLeftX) / 3, rowThird = (srcBottom - srcTop) / 3;
+                col = midX < kLeftX + third ? -1 : midX > kRightX - third ? 1 : 0;
+                row = midY < srcTop + rowThird ? -1 : midY > srcBottom - rowThird ? 1 : 0;
+                // The weapon (at an edge; the PS2 put player 2's in the lower part of its half): at the top, by the
+                // line between the halves, for both players.
+                if (col != 0)
+                    row = -1;
+            }
+        }
+        const int32_t g = col < 0 ? w.minX - kLeftX : kRightX - w.maxX; // the distance from its edge
+        const int target = first ? -col : col;
+        if (col == 0)
+        {
+            ax = static_cast<float>(left + right) * 0.5f;
+            dx = ax - static_cast<float>(kCentreX);
+        }
+        else if (target < 0)
+        {
+            ax = static_cast<float>(left);
+            dx = static_cast<float>(left + g - w.minX);
+        }
+        else
+        {
+            ax = static_cast<float>(right);
+            dx = static_cast<float>(right - g - w.maxX);
+        }
+        const float srcRow = row < 0 ? static_cast<float>(srcTop) : row > 0 ? static_cast<float>(srcBottom) : static_cast<float>(srcTop + srcBottom) * 0.5f;
+        ay = row < 0 ? static_cast<float>(top) : row > 0 ? static_cast<float>(bottom) : static_cast<float>(top + bottom) * 0.5f;
+        dy = ay - srcRow;
+        if (hud && anchor == kAuto && col != 0)
+        {
+            // The weapon box's place for each player (hudVarG.iPickupY: player 1's 0x1c, player 2's 200, Europe 0xe8):
+            // player 2's goes up to player 1's height.
+            const int32_t y1 = at<int32_t>(sym::hudVarG + 0x8cu), y2 = at<int32_t>(sym::hudVarG + 0x90u);
+            dy = first ? 0.0f : static_cast<float>((y1 - y2) << 4);
+        }
+    }
+    // x' = ax + (x + dx - ax) hs s, y' = ay + (y + dy - ay) s
+    w.kx = hs * s;
+    w.bx = ax * (1.0f - w.kx) + dx * w.kx;
+    w.ky = s;
+    w.by = ay * (1.0f - s) + dy * s;
+}
+
 } // namespace
 
 RaceMenuScope::RaceMenuScope() { ++g_raceMenu; }
@@ -142,21 +227,26 @@ AnchorScope::AnchorScope(uint32_t anchor, Kind kind) : m_kind(kind), m_anchor(an
     // the 2D drawn while a race runs except the race's full-screen menus (RaceMenuScope). The HUD and menu scales apply
     // in split screen too, each half's HUD toward its own half's edges.
     const bool split = splitScreen();
+    // Side by side (rc_split.h), the halves' HUD is moved, and the widescreen correction applies again.
+    const bool sideBySide = split && split::raceSideBySide();
     if (kind == Hud)
     {
-        m_widescreen = settings::hudAnchor() && !split;
+        m_widescreen = settings::hudAnchor() && (!split || sideBySide);
         m_scale = settings::hudScale();
         m_split = split;
+        m_sideBySide = sideBySide;
+        m_half = at<int32_t>(sym::mainVarG + 0x378u) != 0 ? 1 : 0; // iWhichSplitScreen
     }
     else
     {
         const bool race = raceNonMenu();
-        m_widescreen = settings::uiPillarbox() && !(split && race);
+        m_widescreen = settings::uiPillarbox() && (!(split && race) || sideBySide);
         m_scale = race ? settings::hudScale() : settings::menuScale();
         m_split = split && race;
+        m_sideBySide = sideBySide && race;
         m_menuRow = race ? 0 : g_menuRow;
     }
-    if (!m_widescreen && m_scale >= 1.0f)
+    if (!m_widescreen && m_scale >= 1.0f && !m_sideBySide)
         return;
     if (anchorX(anchor) == 0)
         return;
@@ -200,6 +290,12 @@ void AnchorScope::apply()
     const float hs = m_widescreen ? settings::hscale() : 1.0f;
     // A bar across the whole screen (the split screen's divider, say) keeps its width; only the widescreen scale.
     const float s = m_kind == Ui && wide ? 1.0f : m_scale;
+    if (m_sideBySide)
+    {
+        sideBySideMap(w, m_kind == Hud, m_half, m_anchor, hs, s);
+        walk();
+        return;
+    }
     if (hs >= 1.0f && s >= 1.0f)
         return;
     const int32_t wsAnchor = anchorX(m_anchor);

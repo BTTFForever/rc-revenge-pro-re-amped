@@ -1323,6 +1323,45 @@ key-hint boxes, centring and wrapping fit.
   vendor and product, so SDL types and labels them that way; `RC_PROMPTS_LOG=1` logs each key hint string and what each
   picture became.
 
+### Vertical split screen (2026-11-24)
+Setting `split` = horizontal | vertical (Display page "Split screen", `RC_SPLIT`; `rc_split.h/.cpp`). Vertical: player 1
+on the left half, player 2 on the right, in both versions, live (also from the pause menu's Display page).
+- How the PS2 splits: both halves use the full screen's projection; `LsFrameInit` and the alpha camera move the centre
+  by `vertDrawOffset` (-/+56, Europe 64), `RdrPolyInitCamera` writes the y centre by `gRdrPolyPlayer` (USA 1992 / 2104, Europe 1984 / 2112),
+  `SetFrameWindow` sets the scissor (lines 3-0x6f / 0x70-0xed, Europe 0x7f / 0x80) and an unused `gRdrPolyOffset`. Every
+  shape packet carries the GS x centre one word before the y centre (track/alpha/water `writeShapeCamera` base+0x20,
+  `Rdr_VUShape` 0x150, skin 0x100, `RdrPolyInitCamera` 0x110); the templates hold 2048, the ring entries keep what was
+  written last, so the x centre is now always written (`split::centreX()`: 2048, or 2048 -/+ 160 for a half).
+- Side by side: scissors x 3-0x13d and 0x142-0x27d (a 4-pixel black gap; the PS2 has no divider graphic, only its
+  3-pixel border), no vertical offset, x centres 160 pixels left and right of the screen's.
+- Projection (`Rdr_SetupCamera`, the alpha camera, `VfxSetupCameraMatrix`): each half's dValX and dValY times
+  zoom = sqrt((aspect / 2) / (4/3)) (at most 1; 0.71 at 4:3, 0.82 at 16:9, 0.94 at 21:9), dValX also times the
+  widescreen hscale. The half's horizontal view narrows by that factor and its vertical one widens by its inverse (as
+  tangents), so the loss is shared, pixels stay square, and the car sits a little above the half's lower third. Keeping
+  the PS2's scale would have cut the horizontal view in half (a slot); matching the 4:3 horizontal view would make the
+  vertical view 1.4-2x taller (fish-eye). The camera's side planes are set to the half's edges and its top/bottom
+  planes widened (`split::halfAngles`); the cell view cone (`View3dInitViewconeReject`, built from window 0 for both
+  halves, cached by window and D) is widened the same way (`split::viewCone`), and rebuilt when the setting changes
+  (`split::frameWindow` clears `init3dVarG.winStore`). The camera itself (the PS2's split-screen look-at scale) is
+  unchanged.
+- The ready-steady-go sprite: the PS2 draws it once, through player 2's camera, with a full-screen scissor; side by
+  side it is drawn in each half with that half's scissor (`VfxRenderer_ReadySteadyGo`). The pickup flying to the weapon
+  box aims at the box's new place (`VfxRenderer_SpinPickup`).
+- HUD (`rc_widescreen.cpp` `sideBySideMap`, in the anchor scopes): each element is measured, assigned to the player
+  it is drawn for (`mainVarG.iWhichSplitScreen`: player 2's panel crosses into the top half while it slides in at the
+  start; other race 2D by where it is), and moved keeping its distance from the edge it is anchored to: player 2's top-right panel and speed to the
+  right half's corners, player 1's mirrored (the panel and the speed at the screen's left edge), both weapons (the
+  `kAuto` element at an edge) at the top by the line between the halves (player 2's raised to player 1's height,
+  `hudVarG` +0x8c/+0x90), the wrong-way and lost signs to their half's centre column, the map (the element across the
+  PS2's line) centred on the new line, its bottom 8 lines above the screen's. In USA player 2's HUD sits 8 lines higher in
+  its half than player 1's (HUD origin 0x788, panel 0x70 down, halves meeting at 0x78), corrected. Then the widescreen
+  correction (on again side by side: the halves are narrow) and the HUD scale toward the new corner. The pause menu,
+  results and cup ranking (`RaceMenuScope`) and the two-player vehicle select (front end, status 0) are not affected.
+- Test aid: `RC_HUD_TEST=1` gives every player three of a weapon and shows player 2 going the wrong way (`HudMiddle`),
+  so screenshots show the whole HUD. `RC_SPLIT_LOG=1` logs the mode and zoom when a split race starts or the setting
+  changes.
+- Not changed: sound panning (the PS2 mixes both players' sounds the same way), the follow camera.
+
 ## Where to resume (2026-11-12)
 
 **Renderer (2026-11-22): P1 step 8 batch 4 (live 3D) is built** ("Live 3D" above; `RENDERER_3D_DESIGN.md` 20;

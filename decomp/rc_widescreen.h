@@ -13,6 +13,10 @@
 // HUD and menu scale (rc_settings.h hudScale, menuScale): the same scopes also shrink x and y, the HUD's elements toward
 // their anchor's edge or corner (in split screen, of their own half), the menus (and the race's other 2D: the HUD
 // scale) toward the centre. Menus' clip rectangles follow (menuScissor).
+//
+// Vertical split screen (rc_split.h): the same scopes move each half's HUD from the PS2's top or bottom half to the
+// left or right half (player 1's mirrored to the left edge, the map to the bottom of the line between the halves),
+// then apply the widescreen correction (kept on there) and the HUD scale toward the new corner.
 #pragma once
 
 #include <cstdint>
@@ -40,8 +44,9 @@ private:
     friend void packetSending();
     friend void packetSent();
     void apply(); // the vertices written since the scope opened (or since the packet was last sent)
-    bool m_on = false, m_counted = false, m_widescreen = false, m_split = false;
+    bool m_on = false, m_counted = false, m_widescreen = false, m_split = false, m_sideBySide = false;
     int m_menuRow = 0;
+    int m_half = -1; // side by side: the half the HUD is drawn for (mainVarG.iWhichSplitScreen), -1 for the Ui
     Kind m_kind = Hud;
     float m_scale = 1.0f; // HUD or menu scale
     uint32_t m_anchor = 0, m_buffer = 0;

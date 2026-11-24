@@ -11,6 +11,7 @@
 #include "hud_fuzz.h"
 #include "weapon.h"
 
+#include <cstdlib>
 #include <optional>
 
 // Europe variants (NOTES.md "Europe version"): the PAL screen is 256 lines, so the 2D origin's y is 0x780 instead of
@@ -630,6 +631,17 @@ void HudMiddle(ptr32<_sObject> pObj, int8 size, int8 arg2)
     const rc::gfx::Span2D span(rc::gfx::DrawKey{rc::gfx::DrawHud, pObj.address, rc::gfx::HudMiddle, static_cast<uint32_t>(arg2)}, &hud);
     const uint32_t car = pObj.address;
     const uint32_t res = hudRes();
+    // Test aid (RC_HUD_TEST=1): every player holds three of a weapon (by its half) and player 2 is shown going the
+    // wrong way, so screenshots show the whole HUD.
+    static const bool hudTest = [] { const char *v = std::getenv("RC_HUD_TEST"); return v && *v == '1'; }();
+    if (hudTest)
+    {
+        at<int8_t>(car + 0x194u) = 3;
+        at<int8_t>(car + 0x195u) = static_cast<int8_t>(4 + at<int32_t>(kMainWhichSplit));
+        at<int8_t>(car + 0x1afu) = 0;
+        if (at<int32_t>(kMainWhichSplit) != 0)
+            at<int32_t>(car + 0xf0u) = 0x400;
+    }
     uint32_t sprite;
     ee_float fx, fy, otz;
     uint32_t rgb;
