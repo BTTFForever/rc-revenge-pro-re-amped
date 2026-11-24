@@ -80,24 +80,26 @@ uint8_t guestByte(uint32_t address)
     return *static_cast<const uint8_t *>(guest_host(address));
 }
 
-// Enhanced recomp (rc_prompts.h): the "}<key>" at address is a picture the button prompts draw instead of the PS2's (its
-// key, else -1).
+// Enhanced recomp (rc_prompts.h): the "}<code>" at address (the code's address) is drawn by the button prompts: its
+// code, else -1. Codes '0'-'7' are the PS2 key pictures (with the menus' picture function), 0xe0 and up button names.
 int32_t promptKey(uint32_t address)
 {
     const uint8_t c = guestByte(address);
-    if (c < '0' || c > '7' || G(pGfxFnG).address != sym::AMenuDisplayPsxKey || !rc::prompts::replaces(c - '0'))
+    if (c >= 0xe0)
+        return c;
+    if (c < '0' || c > '7' || G(pGfxFnG).address != sym::AMenuDisplayPsxKey || !rc::prompts::replaces(c))
         return -1;
-    return c - '0';
+    return c;
 }
-// Off: the space after a picture left out goes with it (address: the picture's code).
-bool dropSpace(uint32_t address) { const int32_t key = promptKey(address); return key >= 0 && rc::prompts::dropsSpace(key) && guestByte(address + 1) == ' '; }
-
+// A picture left out: the space after it goes with it (address: the code's).
+bool dropSpace(uint32_t address) { const int32_t key = promptKey(address); return key >= 0 && rc::prompts::dropsSpace(static_cast<uint8_t>(key)) && guestByte(address + 1) == ' '; }
 
 } // namespace
 
 // The width of the longest line of a string, in pixels.
 uint32 FontLength(ptr32<char> pString)
 {
+    rc::prompts::rewrite(pString.address); // enhanced recomp: button names as the button prompts say
     const ptr32<font> fontPtr = G(fontVarG).pFont;
     const font &f = *fontPtr;
     uint32_t line = 0, longest = 0;
@@ -141,7 +143,7 @@ uint32 FontLength(ptr32<char> pString)
                 // A button icon is 32 wide; a colour change takes no room.
                 const int32_t next = static_cast<int8_t>(ch(1));
                 if (const int32_t key = promptKey(at + 1); key >= 0)
-                    line += static_cast<uint32_t>(rc::prompts::width(key)); // enhanced recomp: button prompts
+                    line += static_cast<uint32_t>(rc::prompts::width(static_cast<uint8_t>(key))); // enhanced recomp: button prompts
                 else if (static_cast<uint32_t>(next - 0x30) < 10u || static_cast<uint32_t>(next - 0x41) < 0x1au)
                     line += 0x20;
                 at += dropSpace(at + 1) ? 3 : 2;
@@ -188,6 +190,7 @@ void FontInit()
 // the end of the string.
 ptr32<char> FontPrint(int16 x, int16 y, ptr32<char> pString)
 {
+    rc::prompts::rewrite(pString.address); // enhanced recomp: button names as the button prompts say
     GuestFrame frame(0xb0);
     // Side tag: this line's glyphs in the 2D packet.
     const rc::gfx::Span2D span(rc::gfx::DrawKey{rc::gfx::DrawFont, pString.address, static_cast<uint16_t>(x), static_cast<uint16_t>(y)});
@@ -287,6 +290,7 @@ void FontCentre(int16 y, ptr32<char> pString)
 // In the fixed-width font a space, and a "}" sequence after its own advance, move on a character width.
 int32_t FontPrintFX(int16 x, int16 y, ptr32<char> pString, uint16 fx, uint16 fxValue)
 {
+    rc::prompts::rewrite(pString.address); // enhanced recomp: button names as the button prompts say
     GuestFrame frame(0xb0);
     const ptr32<font> fontPtr = G(fontVarG).pFont;
     const font &f = *fontPtr;
@@ -391,8 +395,8 @@ int32_t fontSpecial(int16 x, int16 y, ptr32<char> pString, uint64_t savedS0, uin
     if (const int32_t key = promptKey(pString.address); key >= 0)
     {
         // Enhanced recomp: a button prompt drawn as the setting says, at its own width.
-        rc::prompts::draw(x, y, key);
-        pen = static_cast<int16_t>(x + rc::prompts::width(key));
+        rc::prompts::draw(x, y, static_cast<uint8_t>(key));
+        pen = static_cast<int16_t>(x + rc::prompts::width(static_cast<uint8_t>(key)));
         GfxP2_RenderDmaSend();
     }
     else if (static_cast<uint8_t>(c - 0x30) < 10u || static_cast<uint32_t>(c - 0x41) < 0x1au)

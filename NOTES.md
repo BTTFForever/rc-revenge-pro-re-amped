@@ -1312,9 +1312,30 @@ key-hint boxes, centring and wrapping fit.
   round button with the letter in green, red, blue, yellow; any other input (shoulders, Start, triggers, keys) a dark
   key cap with its name (`sourceName` without "Pad "). The arrows stay pictures while both are on the d-pad or the
   arrow keys, else a cap "J/L". An unbound control shows the default the menus fall back to.
-- Off: the key-hint line under a menu is not drawn (`AMenuDisplayOptions`); in other texts (the layout pages) a face
-  button's picture becomes its name in the line's colour ("Cross button", like the page's own "R1 button"), and an
-  arrow is left out with the space after it.
+- Off: the key-hint line under a menu is not drawn (`AMenuDisplayOptions`); in other texts (the layout pages, the Track
+  Editor help) buttons are named by place in the language's pattern, so the sentence still reads: face buttons "left,
+  right, bottom, top" / "de gauche, de droite, du bas, du haut" / "Linke, Rechte, Untere, Obere" / "izquierdo, derecho,
+  inferior, superior" ("bottom button", "Touche du bas", "Untere-Taste", "botón inferior"), shoulders and triggers
+  "left shoulder", "right trigger" (French "gauche haute", "droite basse"; German "Linke-Schulter", "Rechte-Trigger";
+  Spanish "lateral izquierdo", "gatillo derecho"), START "pause" ("the pause menu"); the d-pad and stick wording is
+  neutral already and stays. An arrow picture is left out with the space after it.
+- Button names written as words (2026-11-24, follow-up): the layout pages print each row's right column as its own
+  string ("R2 button", "Touche LÅ", "L2-Taste", "botón L2"; the game writes the 1 of L1/R1 as byte 0xc5, its font's
+  narrow one), and the Track Editor help's prose has "the L2 button", "the LÅ button", "the START button/menu",
+  "the }6 button". `rc_prompts::rewrite`, called at the top of `FontLength`, `FontPrint` and `FontPrintFX` (not in PS2
+  mode), turns these words (L1, LÅ, R1, RÅ, L2, R2, START, as whole words) into "}" and a token byte (0xe0 + its
+  index in a table of the original words) in place, and a whole string (or "/" and the rest) that is one of the
+  layout pages' d-pad and stick phrases (13 in the four languages, in the game's encoding: o-acute is 0xb3) likewise;
+  the string only gets shorter. The font draws a token as the setting says, and in PS2 mode as the original words,
+  so switching back needs no undo. Match: the binding (a PlayStation pad's names L1, R2, Select; other pads RB, LT,
+  Back; keys); a phrase stays words on a gamepad whose d-pad/sticks are on their default inputs, and when nothing is
+  bound (player 2's keyboard has no stick keys), else key caps ("A/D"; English "right analog stick back" is the down
+  key, the other languages name the stick on both rows, so up/down). Pieces of a prompt (a picture, a round A/B/X/Y,
+  a key cap, words in the line's colour) are measured with `FontLength` and printed with `FontPrint` inside the
+  font's own call; a counter stops those nested calls from rewriting. Other places checked for written button
+  names: the pause menu and its pages, the track directions option, the options pages and the Track Editor's menus
+  have none (all their buttons are pictures). The Spanish layout page's handbrake row is garbled in the game's own
+  data ("Botón" left, "RÅ Freno de mano" right); its R1 follows like any other.
 - Drawing: polygons as fans of `RectRender` quads (each draws (v0, v3, v2) and (v0, v1, v2)); the 2D is depth-tested
   (greater), so the rim is drawn at the PS2 pictures' depth and the face at half of it (in front), the letter at 0. The
   label is printed with `FontPrint` from inside the font's own line: the sprite parameters (scratchpad) and the font

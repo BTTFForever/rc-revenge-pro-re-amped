@@ -1,4 +1,5 @@
-// Button prompts (rc_prompts.h): the menus' button pictures as the PS2's, as what the controls are bound to, or none.
+// Button prompts (rc_prompts.h): the menus' button pictures and button names as the PS2's, as what the controls are
+// bound to, or in neutral words.
 #include "rc_prompts.h"
 #include "rc_settings.h"
 #include "runtime/ps2_input_bindings.h"
@@ -8,6 +9,7 @@
 #include <cstdlib>
 #include <set>
 #include <string>
+#include <vector>
 
 namespace rc::prompts {
 
@@ -21,38 +23,93 @@ using namespace rc::amenu;
 // triangle).
 enum Key : int { KeyLeftRight = 0, KeyUpDown, KeyUp, KeyDown, KeySquare, KeyCircle, KeyCross, KeyTriangle, KeyCount };
 
-// What a picture stands for: one control, or two (the arrows' pairs).
-struct Meaning
+// raylib's arrow keys and SDL's d-pad buttons and face buttons.
+constexpr int kKeyRight = 262, kKeyLeft = 263, kKeyDown = 264, kKeyUp = 265;
+constexpr int kPadSouth = 0, kPadUp = 11, kPadDown = 12, kPadLeft = 13, kPadRight = 14;
+
+// Button names the texts spell out, found and turned into "}" + a token code (kTokenBase + its index in g_tokens).
+enum Kind : int { KindL1, KindR1, KindL2, KindR2, KindStart, KindDpad, KindLeftStick, KindRightStick, KindRightStickBack, KindCount };
+struct Token
 {
-    int a, b;
+    std::string original; // the text it stood for, in the game's encoding
+    Kind kind;
 };
-Meaning meaning(int key)
+std::vector<Token> g_tokens;
+constexpr uint8_t kTokenBase = 0xe0;
+constexpr size_t kMaxTokens = 0x1f;
+int g_nested = 0; // printing a prompt's own text: no rewriting
+
+// The game's text encoding (its font's pages): e 0xa9, o (acute) 0xb3, and "1" after L or R is 0xc5.
+struct Phrase
 {
-    switch (key)
-    {
-    case KeyUpDown: return {B::Up, B::Down};
-    case KeyLeftRight: return {B::Left, B::Right};
-    case KeyUp: return {B::Up, -1};
-    case KeyDown: return {B::Down, -1};
-    case KeySquare: return {B::Square, -1};
-    case KeyCircle: return {B::Circle, -1};
-    case KeyCross: return {B::Cross, -1};
-    default: return {B::Triangle, -1};
-    }
+    const char *text;
+    Kind kind;
+};
+const Phrase kPhrases[] = {
+    {"directional buttons", KindDpad}, {"touches directionnelle", KindDpad}, {"Richtungstasten", KindDpad},
+    {"bot\xb3nes de direcci\xb3n", KindDpad},
+    {"left analog stick", KindLeftStick}, {"joystick analogique gauche", KindLeftStick}, {"Linker Analog-Stick", KindLeftStick},
+    {"palanca anal\xb3gica izquierda", KindLeftStick},
+    {"right analog stick back", KindRightStickBack},
+    {"right analog stick", KindRightStick}, {"joystick analogique droit", KindRightStick}, {"Rechter Analog-Stick", KindRightStick},
+    {"palanca anal\xb3gica derecha", KindRightStick},
+};
+struct Word
+{
+    const char *text;
+    Kind kind;
+};
+const Word kWords[] = {{"L1", KindL1}, {"L\xc5", KindL1}, {"R1", KindR1}, {"R\xc5", KindR1}, {"L2", KindL2}, {"R2", KindR2}, {"START", KindStart}};
+
+// Off: neutral words in place of a button's name, per language (English, French, German, Spanish), made to read in
+// each language's pattern: "<word> button", "Touche <word>", "<word>-Taste", "bot\xb3n <word>" (and the Track Editor
+// help's prose: "the L2 button", "the START menu").
+const char *const kNeutral[4][KindStart + 1] = {
+    {"left shoulder", "right shoulder", "left trigger", "right trigger", "pause"},
+    {"gauche haute", "droite haute", "gauche basse", "droite basse", "pause"},
+    {"Linke-Schulter", "Rechte-Schulter", "Linke-Trigger", "Rechte-Trigger", "Pause"},
+    {"lateral izquierdo", "lateral derecho", "gatillo izquierdo", "gatillo derecho", "pausa"},
+};
+// The face buttons by place: square, circle, cross, triangle.
+const char *const kNeutralFace[4][4] = {
+    {"left", "right", "bottom", "top"},
+    {"de gauche", "de droite", "du bas", "du haut"},
+    {"Linke", "Rechte", "Untere", "Obere"},
+    {"izquierdo", "derecho", "inferior", "superior"},
+};
+
+int lang()
+{
+    const int l = language();
+    return l >= 0 && l < 4 ? l : 0;
 }
 
-// raylib's arrow keys and SDL's d-pad buttons.
-constexpr int kKeyRight = 262, kKeyLeft = 263, kKeyDown = 264, kKeyUp = 265;
-constexpr int kPadUp = 11, kPadDown = 12, kPadLeft = 13, kPadRight = 14;
+bool letter(uint8_t c) { return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= 0x80 && c != 0xaa); }
 
-enum Art { ArtPs2, ArtFace, ArtCap, ArtText, ArtNone };
-struct Label
+int tokenIndex(const std::string &original, Kind kind)
+{
+    for (size_t i = 0; i < g_tokens.size(); ++i)
+        if (g_tokens[i].original == original)
+            return static_cast<int>(i);
+    if (g_tokens.size() >= kMaxTokens)
+        return -1;
+    g_tokens.push_back({original, kind});
+    return static_cast<int>(g_tokens.size() - 1);
+}
+
+// What a picture or a token is drawn as: pieces side by side.
+enum Art { ArtPs2, ArtFace, ArtCap, ArtText };
+struct Piece
 {
     Art art = ArtPs2;
-    int ps2 = 0;          // ArtPs2: the sheet's picture
-    char letter = 0;      // ArtFace: A, B, X or Y
-    std::string text;     // ArtCap
+    int ps2 = 0;      // ArtPs2: the sheet's picture
+    char letter = 0;  // ArtFace: A, B, X or Y
+    std::string text; // ArtCap, ArtText
 };
+using Pieces = std::vector<Piece>;
+Piece ps2(int key) { Piece p; p.art = ArtPs2; p.ps2 = key; return p; }
+Piece capPiece(const std::string &t) { Piece p; p.art = ArtCap; p.text = t; return p; }
+Piece textPiece(const std::string &t) { Piece p; p.art = ArtText; p.text = t; return p; }
 
 // The player whose bindings the prompts show: player 2 on the game's "Define Player 2 Controls" page, else player 1
 // (the menus run on player 1's port).
@@ -67,72 +124,162 @@ int promptPlayer()
     return 0;
 }
 
-std::string shortName(int source)
+struct Binding
 {
-    std::string n = B::sourceName(source);
-    if (n.rfind("Pad ", 0) == 0)
-        n = n.substr(4);
-    return n;
+    B::PromptDevice dev;
+    B::Player p, d;
+    bool playstation = false; // the gamepad's face buttons are labelled Cross, Circle, ...
+    // An unbound control: the menus use the default.
+    int source(int control) const
+    {
+        const int s = dev.gamepad ? p.pad[control] : p.key[control];
+        return s ? s : (dev.gamepad ? d.pad[control] : d.key[control]);
+    }
+    bool isDefault(int control) const { return source(control) == (dev.gamepad ? d.pad[control] : d.key[control]); }
+    // A source's name in the device's style: "RB", "LT", "Start" (a PlayStation pad: "R1", "L2", "Select"), "Space".
+    std::string name(int s) const
+    {
+        std::string n = s ? B::sourceName(s) : "-";
+        if (n.rfind("Pad ", 0) == 0)
+            n = n.substr(4);
+        if (playstation)
+        {
+            static const char *const kPs[][2] = {{"LB", "L1"}, {"RB", "R1"}, {"LT", "L2"}, {"RT", "R2"}, {"LS", "L3"}, {"RS", "R3"}, {"Back", "Select"}};
+            for (const auto &m : kPs)
+                if (n == m[0])
+                    return m[1];
+        }
+        return n;
+    }
+};
+
+Binding binding()
+{
+    Binding b;
+    const int player = promptPlayer();
+    b.dev = B::promptDevice(player);
+    b.p = B::player(player);
+    b.d = B::defaults(player);
+    b.playstation = b.dev.gamepad && B::gamepadButtonLabel(b.dev.slot, kPadSouth) == 5;
+    return b;
 }
 
-Label label(int key)
+// One control as bound: a gamepad's face button as it is labelled (PS shapes, or A/B/X/Y), else a key cap.
+Piece control(const Binding &b, int c)
 {
-    if (settings::prompts() == settings::PromptsOff)
+    const int s = b.source(c);
+    if (b.dev.gamepad && (s & 0xF0000) == B::kPadButton)
     {
-        // Off: a face button's picture in a line of text (the controller layout pages: "Accelerate }6 button") reads
-        // as its name, as the page's other lines do ("R1 button"); the arrows go.
-        static const char *const kNames[KeyCount] = {"", "", "", "", "Square", "Circle", "Cross", "Triangle"};
-        Label out;
-        out.art = key >= KeySquare ? ArtText : ArtNone;
-        out.text = kNames[key];
-        return out;
-    }
-    const int player = promptPlayer();
-    const B::PromptDevice dev = B::promptDevice(player);
-    const B::Player p = B::player(player), d = B::defaults(player);
-    const Meaning m = meaning(key);
-    // An unbound control: the menus use the default.
-    const auto source = [&](int control) { const int s = dev.gamepad ? p.pad[control] : p.key[control]; return s ? s : (dev.gamepad ? d.pad[control] : d.key[control]); };
-    Label out;
-    out.ps2 = key;
-    if (m.b >= 0)
-    {
-        // The arrows: the PS2 picture while both are on the d-pad or the arrow keys, else "W/S".
-        const int sa = source(m.a), sb = source(m.b);
-        const auto arrow = [&](int s, int padButton, int keyCode)
-        { return dev.gamepad ? s == (B::kPadButton | padButton) : s == (B::kKey | keyCode); };
-        const bool updown = key == KeyUpDown;
-        if (arrow(sa, updown ? kPadUp : kPadLeft, updown ? kKeyUp : kKeyLeft) && arrow(sb, updown ? kPadDown : kPadRight, updown ? kKeyDown : kKeyRight))
-            return out;
-        out.art = ArtCap;
-        out.text = shortName(sa) + "/" + shortName(sb);
-        return out;
-    }
-    const int s = source(m.a);
-    if (dev.gamepad && (s & 0xF0000) == B::kPadButton)
-    {
-        const int b = s & 0xFFFF;
-        switch (B::gamepadButtonLabel(dev.slot, b))
+        const int button = s & 0xFFFF;
+        Piece p;
+        switch (B::gamepadButtonLabel(b.dev.slot, button))
         {
-        case 1: out.art = ArtFace; out.letter = 'A'; return out;
-        case 2: out.art = ArtFace; out.letter = 'B'; return out;
-        case 3: out.art = ArtFace; out.letter = 'X'; return out;
-        case 4: out.art = ArtFace; out.letter = 'Y'; return out;
-        case 5: out.ps2 = KeyCross; return out;
-        case 6: out.ps2 = KeyCircle; return out;
-        case 7: out.ps2 = KeySquare; return out;
-        case 8: out.ps2 = KeyTriangle; return out;
+        case 1: case 2: case 3: case 4:
+            p.art = ArtFace;
+            p.letter = "ABXY"[B::gamepadButtonLabel(b.dev.slot, button) - 1];
+            return p;
+        case 5: return ps2(KeyCross);
+        case 6: return ps2(KeyCircle);
+        case 7: return ps2(KeySquare);
+        case 8: return ps2(KeyTriangle);
         default: break;
         }
-        if (b == kPadUp || b == kPadDown)
-        {
-            out.ps2 = b == kPadUp ? KeyUp : KeyDown;
-            return out;
-        }
+        if (button == kPadUp || button == kPadDown)
+            return ps2(button == kPadUp ? KeyUp : KeyDown);
     }
-    out.art = ArtCap;
-    out.text = s ? shortName(s) : "-";
-    return out;
+    return capPiece(b.name(s));
+}
+
+// Two controls (a direction's pair): the PS2's arrows while both are on the d-pad or the arrow keys, else "J/L".
+Piece pair(const Binding &b, int c0, int c1, bool upDown)
+{
+    const int s0 = b.source(c0), s1 = b.source(c1);
+    const auto arrow = [&](int s, int padButton, int keyCode) { return b.dev.gamepad ? s == (B::kPadButton | padButton) : s == (B::kKey | keyCode); };
+    if (arrow(s0, upDown ? kPadUp : kPadLeft, upDown ? kKeyUp : kKeyLeft) && arrow(s1, upDown ? kPadDown : kPadRight, upDown ? kKeyDown : kKeyRight))
+        return ps2(upDown ? KeyUpDown : KeyLeftRight);
+    return capPiece(b.name(s0) + "/" + b.name(s1));
+}
+
+Pieces keyPieces(int key)
+{
+    const int mode = settings::prompts();
+    if (mode == settings::PromptsPs2)
+        return {ps2(key)};
+    if (mode == settings::PromptsOff)
+    {
+        // A face button by its place, in the line's colour; the arrows go (with the space after them).
+        if (key >= KeySquare)
+            return {textPiece(kNeutralFace[lang()][key - KeySquare])};
+        return {};
+    }
+    const Binding b = binding();
+    switch (key)
+    {
+    case KeyLeftRight: return {pair(b, B::Left, B::Right, false)};
+    case KeyUpDown: return {pair(b, B::Up, B::Down, true)};
+    case KeyUp: return {control(b, B::Up)};
+    case KeyDown: return {control(b, B::Down)};
+    case KeySquare: return {control(b, B::Square)};
+    case KeyCircle: return {control(b, B::Circle)};
+    case KeyCross: return {control(b, B::Cross)};
+    default: return {control(b, B::Triangle)};
+    }
+}
+
+Pieces tokenPieces(int id)
+{
+    if (id < 0 || id >= static_cast<int>(g_tokens.size()))
+        return {};
+    const Token &t = g_tokens[static_cast<size_t>(id)];
+    const int mode = settings::prompts();
+    const bool phrase = t.kind >= KindDpad;
+    if (mode == settings::PromptsPs2 || (mode == settings::PromptsOff && phrase))
+        return {textPiece(t.original)}; // the d-pad and the sticks are named neutrally already
+    if (mode == settings::PromptsOff)
+        return {textPiece(kNeutral[lang()][t.kind])};
+    const Binding b = binding();
+    // A stick or the d-pad with nothing bound (player 2's keyboard leaves the sticks unbound): the words.
+    const auto unbound = [&](int c0, int c1) { return b.source(c0) == 0 && b.source(c1) == 0; };
+    if ((t.kind == KindDpad && unbound(B::Left, B::Right)) || (t.kind == KindLeftStick && unbound(B::LeftStickLeft, B::LeftStickRight)) ||
+        (t.kind >= KindRightStick && unbound(B::RightStickUp, B::RightStickDown)))
+        return {textPiece(t.original)};
+    switch (t.kind)
+    {
+    case KindL1: return {control(b, B::L1)};
+    case KindR1: return {control(b, B::R1)};
+    case KindL2: return {control(b, B::L2)};
+    case KindR2: return {control(b, B::R2)};
+    case KindStart: return {control(b, B::Start)};
+    case KindDpad:
+        // Steering: a gamepad on its d-pad keeps the words; else the keys.
+        if (b.dev.gamepad && b.isDefault(B::Left) && b.isDefault(B::Right))
+            return {textPiece(t.original)};
+        return {pair(b, B::Left, B::Right, false)};
+    case KindLeftStick:
+        if (b.dev.gamepad && b.isDefault(B::LeftStickLeft) && b.isDefault(B::LeftStickRight))
+            return {textPiece(t.original)};
+        return {capPiece(b.name(b.source(B::LeftStickLeft)) + "/" + b.name(b.source(B::LeftStickRight)))};
+    case KindRightStick:
+    case KindRightStickBack:
+    {
+        if (b.dev.gamepad && b.isDefault(B::RightStickUp) && b.isDefault(B::RightStickDown))
+            return {textPiece(t.original)};
+        // English says which way ("back"); the other languages name the stick for both rows.
+        if (t.kind == KindRightStickBack)
+            return {control(b, B::RightStickDown)};
+        if (t.original == "right analog stick")
+            return {control(b, B::RightStickUp)};
+        return {capPiece(b.name(b.source(B::RightStickUp)) + "/" + b.name(b.source(B::RightStickDown)))};
+    }
+    default: return {};
+    }
+}
+
+Pieces pieces(uint8_t code)
+{
+    if (code >= '0' && code < '0' + KeyCount)
+        return keyPieces(code - '0');
+    return tokenPieces(code - kTokenBase);
 }
 
 uint32_t g_text = 0; // a guest string for a label's text
@@ -226,49 +373,33 @@ bool logging()
     return on;
 }
 
-} // namespace
+constexpr int kFaceWidth = 0x20; // as the PS2's pictures
 
-bool replaces(int key) { return key >= 0 && key < KeyCount && settings::prompts() != settings::PromptsPs2; }
-
-bool dropsSpace(int key) { return label(key).art == ArtNone; }
-
-int width(int key)
+int pieceWidth(const Piece &p)
 {
-    const Label l = label(key);
-    switch (l.art)
+    switch (p.art)
     {
-    case ArtNone: return 0;
-    case ArtText: return textWidth(l.text);
-    case ArtCap: return textWidth(l.text) + 2 * kCapPad + 8;
-    default: return 0x20;
+    case ArtText: return textWidth(p.text);
+    case ArtCap: return textWidth(p.text) + 2 * kCapPad + 8;
+    default: return kFaceWidth;
     }
 }
 
-void draw(int x, int y, int key)
+void drawPiece(int x, int y, const Piece &p)
 {
-    const Label l = label(key);
     // The 2D is depth tested (greater): the rim at the PS2 pictures' depth, the face in front of it (the text, at 0,
     // in front of both).
     const ee_float otz = constant(sym::lit4_3275c4), front = otz * ee_float(0.5f);
-    if (logging())
+    switch (p.art)
     {
-        static std::set<std::string> seen;
-        const std::string line = std::to_string(key) + " -> " + (l.art == ArtPs2 ? "ps2 " + std::to_string(l.ps2) : l.art == ArtFace ? std::string(1, l.letter) : l.art == ArtNone ? "none" : (l.art == ArtCap ? "cap " : "text ") + l.text);
-        if (seen.insert(line).second)
-            std::fprintf(stderr, "[prompts] key %s\n", line.c_str());
-    }
-    switch (l.art)
-    {
-    case ArtNone:
-        return;
     case ArtText:
     {
         const fontClass &font = G(fontVarG);
-        text(x, y, l.text, font.r, font.g, font.b); // in the line's colour
+        text(x, y, p.text, font.r, font.g, font.b); // in the line's colour
         return;
     }
     case ArtPs2:
-        AMenuDisplayPsxKey(x, y, l.ps2);
+        AMenuDisplayPsxKey(x, y, p.ps2);
         return;
     case ArtFace:
     {
@@ -277,20 +408,115 @@ void draw(int x, int y, int key)
         ellipse(cx, cy, 13, 7, 0x707070, otz);
         ellipse(cx, cy, 12, 6, 0x181818, front);
         static const uint8_t kColour[4][3] = {{0x20, 0x70, 0x20}, {0x7f, 0x20, 0x18}, {0x20, 0x48, 0x7f}, {0x7f, 0x68, 0x10}};
-        const int i = l.letter == 'A' ? 0 : l.letter == 'B' ? 1 : l.letter == 'X' ? 2 : 3;
-        const std::string s(1, l.letter);
+        const int i = p.letter == 'A' ? 0 : p.letter == 'B' ? 1 : p.letter == 'X' ? 2 : 3;
+        const std::string s(1, p.letter);
         text(cx - textWidth(s) / 2, y, s, kColour[i][0], kColour[i][1], kColour[i][2]);
         return;
     }
     case ArtCap:
     {
         // A dark key cap with a light rim and the name in white, as the PS2 pictures look.
-        const int w = textWidth(l.text) + 2 * kCapPad;
+        const int w = textWidth(p.text) + 2 * kCapPad;
         cap(x + 1, y - 2, x + 1 + w, y + 13, 3, 0x909090, otz);
         cap(x + 2, y - 1, x + w, y + 12, 2, 0x202020, front);
-        text(x + 1 + kCapPad, y, l.text, 0x7f, 0x7f, 0x7f);
+        text(x + 1 + kCapPad, y, p.text, 0x7f, 0x7f, 0x7f);
         return;
     }
+    }
+}
+
+std::string describe(const Pieces &ps)
+{
+    std::string out;
+    for (const Piece &p : ps)
+        out += (out.empty() ? "" : " + ") + (p.art == ArtPs2 ? "ps2 " + std::to_string(p.ps2) : p.art == ArtFace ? std::string(1, p.letter) : (p.art == ArtCap ? "cap " : "text ") + p.text);
+    return out.empty() ? "none" : out;
+}
+
+} // namespace
+
+bool replaces(uint8_t code)
+{
+    if (code >= kTokenBase)
+        return true;
+    return code >= '0' && code < '0' + KeyCount && settings::prompts() != settings::PromptsPs2;
+}
+
+bool dropsSpace(uint8_t code) { return code < kTokenBase && pieces(code).empty(); }
+
+int width(uint8_t code)
+{
+    ++g_nested;
+    int w = 0;
+    for (const Piece &p : pieces(code))
+        w += pieceWidth(p);
+    --g_nested;
+    return w;
+}
+
+void draw(int x, int y, uint8_t code)
+{
+    ++g_nested;
+    const Pieces ps = pieces(code);
+    if (logging())
+    {
+        static std::set<std::string> seen;
+        const std::string line = (code >= kTokenBase && code - kTokenBase < static_cast<int>(g_tokens.size()) ? "\"" + g_tokens[code - kTokenBase].original + "\"" : std::string("}") + static_cast<char>(code)) + " -> " + describe(ps);
+        if (seen.insert(line).second)
+            std::fprintf(stderr, "[prompts] %s\n", line.c_str());
+    }
+    for (const Piece &p : ps)
+    {
+        drawPiece(x, y, p);
+        x += pieceWidth(p);
+    }
+    --g_nested;
+}
+
+void rewrite(uint32_t address)
+{
+    if (g_nested || !address || settings::prompts() == settings::PromptsPs2 || address >= 0x2000000u)
+        return;
+    char *s = static_cast<char *>(guest_host(address));
+    const size_t n = std::strlen(s);
+    if (n == 0 || n > 400)
+        return;
+    // A whole string (or "/" and the rest) naming the d-pad or a stick: the controller layout pages' right column.
+    {
+        char *at = s[0] == '/' ? s + 1 : s;
+        for (const Phrase &ph : kPhrases)
+            if (std::strcmp(at, ph.text) == 0)
+            {
+                const int id = tokenIndex(ph.text, ph.kind);
+                if (id >= 0)
+                {
+                    at[0] = '}';
+                    at[1] = static_cast<char>(kTokenBase + id);
+                    at[2] = 0;
+                }
+                return;
+            }
+    }
+    // Button names as words: "R2 button", "Touche L1", "L2-Taste", "the START menu".
+    for (size_t i = 0; s[i]; ++i)
+    {
+        if (i > 0 && (letter(static_cast<uint8_t>(s[i - 1])) || s[i - 1] == '}'))
+            continue;
+        for (const Word &w : kWords)
+        {
+            const size_t len = std::strlen(w.text);
+            if (std::strncmp(s + i, w.text, len) != 0 || letter(static_cast<uint8_t>(s[i + len])))
+                continue;
+            const int id = tokenIndex(w.text, w.kind);
+            if (id < 0)
+                return;
+            s[i] = '}';
+            s[i + 1] = static_cast<char>(kTokenBase + id);
+            if (len > 2)
+                std::memmove(s + i + 2, s + i + len, std::strlen(s + i + len) + 1);
+            ++i;
+            break;
+        }
     }
 }
 
