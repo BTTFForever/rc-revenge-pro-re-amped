@@ -191,7 +191,7 @@ void writeFile(const Settings &s)
         std::fprintf(stderr, "[settings] cannot write %s\n", g_path.c_str());
         return;
     }
-    out << "# RC Revenge Pro enhanced recomp settings (also in Game Options > Enhancements)\n"
+    out << "# RC Revenge Pro enhanced recomp settings (also in Game Options > Display and Controls)\n"
         << "aspect=" << kAspectNames[s.aspect] << "\n"
         << "hud=" << (s.hudCorrected ? "corrected" : "stretched") << "\n"
         << "fullscreen=" << (s.fullscreen ? 1 : 0) << "\n"

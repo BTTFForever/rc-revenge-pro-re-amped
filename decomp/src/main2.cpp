@@ -3,6 +3,8 @@
 
 #include "main.h"
 #include "main_fuzz.h"
+#include <cstdio>
+#include <cstdlib>
 
 namespace rc {
 
@@ -353,7 +355,7 @@ uint32_t pauseMenuStep(uint32_t pm)
             at<uint16_t>(kPauseDelay) = 10;
             guest_call(kAMenuProcessAll, at<uint32_t>(at<uint32_t>(kPauseMenu)));
             guest_call(kMenuItemDisabler, at<uint32_t>(at<uint32_t>(kPauseMenu)));
-            enhance::poll(); // enhanced recomp: Pause Menu > Enhancements
+            enhance::poll(); // enhanced recomp: Pause Menu > Game Options pages
             const uint32_t menu0 = at<uint32_t>(at<uint32_t>(kPauseMenu));
             const uint32_t mit = guest_call<uint32_t>(kAMenuGetMIT, menu0, static_cast<int32_t>(at<int8_t>(menu0 + 0x63u)));
             const uint32_t current = at<uint32_t>(mit + 4u);
@@ -373,6 +375,9 @@ uint32_t pauseMenuStep(uint32_t pm)
                     if (at<uint32_t>(kMusic + 0x150u) != 0)
                         at<uint8_t>(kMusic + 0x2bu) = 1;
                 }
+                if (changed && std::getenv("RC_ENHANCE_DEBUG")) // enhanced recomp: the bars moved to Game Options > Audio Setup
+                    std::fprintf(stderr, "[enhance-debug] pause volumes: music %u effects %u\n", at<uint32_t>(kMusic + 0x20u),
+                                 at<uint32_t>(kRevSfx + 0x1144u));
                 guest_call(kRCMusicModifyVolume, 0xf, changed);
                 if (at<uint32_t>(kRevSfx + 0x1144u) != at<uint32_t>(kRevSfx + 0x1148u))
                     guest_call(kRevSfxModifyVolume, changed);

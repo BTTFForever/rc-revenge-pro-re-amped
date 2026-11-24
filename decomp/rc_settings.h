@@ -1,5 +1,5 @@
 // The enhanced recomp's settings (README "Enhanced recomp"): kept in a settings file, changed in the game's own
-// Game Options > Enhancements menu (rc_enhance_menu.cpp) and read live by the code they affect.
+// Game Options > Display page (rc_enhance_menu.cpp) and read live by the code they affect.
 //
 // File: $XDG_CONFIG_HOME/rc-revenge-pro/settings.ini (else ~/.config/...), lines of key=value:
 //   aspect=4:3|16:9|16:10|21:9   hud=corrected|stretched   fullscreen=0|1   scale=1..6

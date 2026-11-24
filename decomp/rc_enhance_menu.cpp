@@ -1,18 +1,28 @@
-// Game Options > Enhancements, the players' PC controls in Game Options > Controls, and the same pages in the Pause
-// Menu: the enhanced recomp's settings (rc_settings.h) and each player's bindings (runtime/ps2_input_bindings.h) as
-// pages of the game's own menus.
+// The enhanced recomp's settings (rc_settings.h) and each player's bindings (runtime/ps2_input_bindings.h) as pages of
+// the game's own menus.
+//
+// Front end: Game Options > Screen Adjust (the PS2's picture position, not needed on a PC) becomes Display (the
+// screen settings: aspect ratio, HUD and menus, screen mode, resolution, race frame rate, smooth motion, V-Sync,
+// variable refresh); the game's own Controller configuration page (Game Options > Controls) gets "Player 1 PC
+// Controls..." and "Player 2 PC Controls...". The developers' hidden "Debug Menus" item is shown.
+//
+// Pause menu (a race's, and a cup's, which shares its items): the race's own items (Resume, Restart, Quit / Quit
+// Championship, Show Track Directions), then "Game Options", which mirrors the front end's: Audio Setup (the pause
+// menu's own volume bars), Display, Controls (the vibration settings and the PC controls pages) and Debug Menus. Not
+// there: Game Setup (laps, weapons, number of cars: set before a race), Sound Mode (applied by the front end only),
+// the controller layouts ("Define Player n Controls": front-end pages), Load/Save Game, Load Track, Credits.
 //
 // The front end's menus come from its level file and are rebuilt each time the front end loads (MenuInitScan); the
-// pause menu comes from each race's level file. After MenuInitScan, install() adds to the menu holding the developers'
-// hidden "Debug Menus" item (the front end's Game Options, or the pause menu; it also shows that item) an
-// "Enhancements" item, and in the pause menu a "Controls" item; in the front end the game's own Controller
-// configuration page gets "Player 1 PC Controls..." and "Player 2 PC Controls...". They link to pages built here in
-// guest memory: copies of a page of that menu system (the front end's "Game options" page, or the pause menu itself,
-// for their look, placement, colours and borders) with choice items and link items copied from its own. The game's
-// menu code draws and runs them: left and right change a choice, which it writes to the item's feedback word; poll()
-// (each front-end frame, each paused race frame) acts on a changed one. Each page's memory is allocated once; its
-// contents are copied again from the current menus at every install, since the level data they point into (colour
-// and border sets) is reloaded with each level.
+// pause menu comes from each race's level file. After MenuInitScan, install() finds the menu holding "Debug Menus"
+// (the front end's Game Options, or the pause menu) and links in pages built here in guest memory: copies of a page of
+// that menu system (the front end's "Game options" page, or the pause menu itself, for their look, placement, colours
+// and borders) with choice items and link items copied from its own; the pause menu's moved items are its own. The
+// game's menu code draws and runs them: left and right change a choice, which it writes to the item's feedback word;
+// poll() (each front-end frame, each paused race frame) acts on a changed one. Each page's memory is allocated once;
+// its contents are copied again from the current menus at every install, since the level data they point into
+// (colour and border sets, the moved items) is reloaded with each level. Names the front end has in its four
+// languages (Game Options, Audio Setup, Controls and their pages' titles) are copied from it for the pause menu;
+// "Display" is Display / Affichage / Anzeige / Pantalla; the settings themselves are in English.
 //
 // A player's page: the device (Auto, keyboard, a gamepad or both), Buttons... and D-pad and sticks... (twelve controls each:
 // a page shows about twelve rows, and the menu code's scrolling is not usable for these pages), Reset to defaults.
@@ -24,6 +34,7 @@
 #include "rc_settings.h"
 #include "runtime/ps2_input_bindings.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -45,7 +56,7 @@ constexpr uint32_t kHeaderBytes = 0x80, kItemBytes = 0x18, kVarBytes = 0x1c;
 constexpr uint32_t kDebugMenusTag = 0x10000208u;
 constexpr uint32_t kTextBytes = 96, kDeviceChoicesBytes = 768;
 
-// ---- Enhancements ----
+// ---- Display ----
 struct Choice
 {
     const char *text;    // with %s for the value
@@ -55,7 +66,7 @@ struct Choice
 constexpr Choice kChoices[] = {
     {"Aspect ratio: %s", "4:3*16:9*16:10*21:9", 4},
     {"HUD and menus: %s", "Corrected*Stretched", 2},
-    {"Display: %s", "Window*Fullscreen", 2},
+    {"Screen mode: %s", "Window*Fullscreen", 2},
     {"Resolution (restart): %s", "1x*2x*3x*4x*5x*6x", 6},
     {"Race frame rate: %s", "60*90*120*144*165*240", 6},
     {"Smooth motion: %s", "Off*On", 2},
@@ -95,10 +106,13 @@ void apply(settings::Settings &s, int i, int v)
 }
 
 // ---- Pages ----
-// A player's page: the device, links to the buttons and the d-pad and sticks (a page each: twelve rows fit a page),
-// reset.
-enum PageId { PageEnhance, PageControls, PagePlayer1, PagePlayer2, PageButtons1, PageButtons2, PageSticks1, PageSticks2, PageCount };
-enum Role { RoleSetting, RoleLink, RoleDevice, RoleControl, RoleReset };
+// Display: the screen settings. Options, Sound: the pause menu's Game Options and its Audio Setup. Controls: the pause
+// menu's (in the front end the game's own Controller configuration page has the player links). A player's page: the
+// device, links to the buttons and the d-pad and sticks (a page each: twelve rows fit a page), reset.
+enum PageId { PageDisplay, PageOptions, PageSound, PageControls, PagePlayer1, PagePlayer2, PageButtons1, PageButtons2, PageSticks1, PageSticks2, PageCount };
+enum Role { RoleSetting, RoleLink, RoleDevice, RoleControl, RoleReset, RoleMoved };
+// The pause menu's items that move into its Game Options pages.
+enum Moved { MovedMusic, MovedSfx, MovedVibration1, MovedVibration2, MovedDebug, MovedCount };
 // The controls of the two control pages, in the order shown.
 constexpr int kButtonsPage[] = {B::Cross, B::Circle, B::Square, B::Triangle, B::L1, B::R1, B::L2, B::R2, B::Start, B::Select, B::L3, B::R3};
 constexpr int kSticksPage[] = {B::Up, B::Down, B::Left, B::Right, B::LeftStickLeft, B::LeftStickRight, B::LeftStickUp, B::LeftStickDown,
@@ -111,7 +125,7 @@ struct Item
     int count = 2;
     int link = -1; // link item: the page it opens
     Role role = RoleSetting;
-    int player = 0, control = 0;
+    int player = 0, control = 0; // a moved item: control is its Moved
 };
 struct PageDef
 {
@@ -126,13 +140,20 @@ struct Instance // one page in one menu system
     uint32_t header = 0;
     std::vector<uint32_t> items, vars;
 };
+// Texts the front end has in four languages, copied for the pause menu.
+enum Copied { CopiedGameOptions, CopiedAudioSetup, CopiedAudioTitle, CopiedControls, CopiedControlsTitle, CopiedCount };
+constexpr uint32_t kCopiedBytes = 64; // per language
 struct Built
 {
     bool made = false;
     PageDef defs[PageCount];
     Instance front[PageCount], pause[PageCount];
-    uint32_t frontLinks[2]{}, pauseLinks[2]{}; // Enhancements and Controls in the menu that holds them
+    uint32_t displayText = 0;                   // "Display" in the four languages
+    uint32_t copied[CopiedCount]{};
+    uint32_t pauseLink = 0;                     // the pause menu's Game Options item
+    uint32_t frontFallbackLink = 0;             // Display after the front end's last item, should Screen Adjust not be found
     uint32_t frontPlayerLinks[2]{};             // the player pages' links in the game's Controller configuration page
+    uint32_t moved[MovedCount]{};               // the pause menu's moved items (this level's)
     // a rebind waiting for its input
     int capturePlayer = -1, captureControl = -1;
 } g;
@@ -156,6 +177,37 @@ uint32_t textGroup(const char *text, uint32_t capacity = 0)
     for (uint32_t i = 0; i < 4; ++i)
         *static_cast<uint32_t *>(guest_host(group + i * 4u)) = group + 16u;
     return group;
+}
+
+// A text group with a string per language (English, French, German, Spanish), each with room for capacity bytes.
+uint32_t textGroup4(const char *const (&text)[4], uint32_t capacity)
+{
+    const uint32_t group = alloc(16u + 4u * capacity);
+    if (group == 0u)
+        return 0u;
+    for (uint32_t i = 0; i < 4; ++i)
+    {
+        const uint32_t at = group + 16u + i * capacity;
+        std::strncpy(static_cast<char *>(guest_host(at)), text[i], capacity - 1u);
+        *static_cast<uint32_t *>(guest_host(group + i * 4u)) = at;
+    }
+    return group;
+}
+
+// Copies a text group of the game's (each language's string) into one made by textGroup4.
+void copyText4(uint32_t group, ptr32<sTextGroup> from, uint32_t capacity)
+{
+    if (group == 0u || !from)
+        return;
+    for (uint32_t i = 0; i < 4; ++i)
+    {
+        const ptr32<char> src = from->pText[i] ? from->pText[i] : from->pText[0];
+        if (!src)
+            continue;
+        char *dst = static_cast<char *>(guest_host(group + 16u + i * capacity));
+        std::strncpy(dst, static_cast<const char *>(guest_host(src.address)), capacity - 1u);
+        dst[capacity - 1u] = 0;
+    }
 }
 
 // Rewrites a text group made with a capacity (only when it changed).
@@ -301,12 +353,29 @@ void refreshControlTexts()
 
 bool makeDefs()
 {
-    PageDef &e = g.defs[PageEnhance];
-    e.title = textGroup("Enhancements");
+    g.displayText = textGroup4({"Display", "Affichage", "Anzeige", "Pantalla"}, 16);
+    const char *const english[CopiedCount] = {"Game Options", "Audio Setup", "Audio options", "Controls", "Controller configuration"};
+    for (int i = 0; i < CopiedCount; ++i)
+        if (!(g.copied[i] = textGroup4({english[i], english[i], english[i], english[i]}, kCopiedBytes)))
+            return false;
+    PageDef &e = g.defs[PageDisplay];
+    e.title = g.displayText;
     for (const Choice &c : kChoices)
         e.items.push_back({textGroup(c.text), textGroup(c.choices), c.count, -1});
+    PageDef &o = g.defs[PageOptions];
+    o.title = g.copied[CopiedGameOptions];
+    o.items.push_back({g.copied[CopiedAudioSetup], 0, 0, PageSound});
+    o.items.push_back({g.displayText, 0, 0, PageDisplay});
+    o.items.push_back({g.copied[CopiedControls], 0, 0, PageControls});
+    o.items.push_back({1, 0, 0, -1, RoleMoved, 0, MovedDebug});
+    PageDef &snd = g.defs[PageSound];
+    snd.title = g.copied[CopiedAudioTitle];
+    snd.items.push_back({1, 0, 0, -1, RoleMoved, 0, MovedMusic});
+    snd.items.push_back({1, 0, 0, -1, RoleMoved, 0, MovedSfx});
     PageDef &c = g.defs[PageControls];
-    c.title = textGroup("Controls");
+    c.title = g.copied[CopiedControlsTitle];
+    c.items.push_back({1, 0, 0, -1, RoleMoved, 0, MovedVibration1});
+    c.items.push_back({1, 0, 0, -1, RoleMoved, 0, MovedVibration2});
     c.items.push_back({textGroup("Player 1 PC Controls..."), 0, 0, PagePlayer1});
     c.items.push_back({textGroup("Player 2 PC Controls..."), 0, 0, PagePlayer2});
     for (int player = 0; player < 2; ++player)
@@ -331,7 +400,7 @@ bool makeDefs()
         if (!d.title)
             return false;
         for (const Item &item : d.items)
-            if (!item.text || (item.link < 0 && !item.choices))
+            if (!item.text || (item.link < 0 && item.role != RoleMoved && !item.choices))
                 return false;
         d.feedback = alloc(static_cast<uint32_t>(d.items.size()) * 4u);
         d.last.assign(d.items.size(), 0);
@@ -354,9 +423,12 @@ bool allocate(Instance &inst, const PageDef &d)
         return false;
     for (size_t i = 0; i < d.items.size(); ++i)
     {
-        inst.items.push_back(alloc(kItemBytes));
-        inst.vars.push_back(d.items[i].link < 0 ? alloc(kVarBytes) : 0u);
-        if (!inst.items.back() || (d.items[i].link < 0 && !inst.vars.back()))
+        const bool choice = d.items[i].link < 0 && d.items[i].role != RoleMoved;
+        inst.items.push_back(choice || d.items[i].link >= 0 ? alloc(kItemBytes) : 0u);
+        inst.vars.push_back(choice ? alloc(kVarBytes) : 0u);
+        if ((choice || d.items[i].link >= 0) && !inst.items.back())
+            return false;
+        if (choice && !inst.vars.back())
             return false;
     }
     inst.made = true;
@@ -412,16 +484,21 @@ void fill(Instance (&set)[PageCount], int id, ptr32<sAMenuHeader> modelPage, ptr
     h->rowSelect = 0;
     h->width = 0;
     h->height = 0;
-    const int count = static_cast<int>(d.items.size());
-    h->menuItems = static_cast<uint8>(count);
-    for (int i = 0; i < count; ++i)
+    // The items in order (a moved item this level does not have is left out), then chained.
+    std::vector<uint32_t> list;
+    for (size_t i = 0; i < d.items.size(); ++i)
     {
         const Item &it = d.items[i];
-        const ptr32<sMenuItemStd> next = i + 1 < count ? ptr32<sMenuItemStd>(inst.items[i + 1]) : nullptr;
+        if (it.role == RoleMoved)
+        {
+            if (const uint32_t at = g.moved[it.control])
+                list.push_back(at);
+            continue;
+        }
+        list.push_back(inst.items[i]);
         if (it.link >= 0)
         {
             makeLink(inst.items[i], linkItem, it.text, set[it.link].header);
-            ptr32<sMenuItemStd>(inst.items[i])->pNext = next;
             continue;
         }
         std::memcpy(guest_host(inst.items[i]), guest_host(choiceItem.address), kItemBytes);
@@ -430,7 +507,6 @@ void fill(Instance (&set)[PageCount], int id, ptr32<sAMenuHeader> modelPage, ptr
         ptr32<sMenuItemVar> var(inst.vars[i]);
         item->pTextGroup = ptr32<sTextGroup>(it.text);
         item->pMenuVar = var;
-        item->pNext = next;
         item->pLinkMenu = nullptr;
         item->selectionTag = 0;
         item->flags = 0;
@@ -441,9 +517,12 @@ void fill(Instance (&set)[PageCount], int id, ptr32<sAMenuHeader> modelPage, ptr
         var->maxValue = it.count - 1;
         var->flags = 0; // a list of choices
         var->pFeedbackVar = ptr32<int32>(d.feedback + static_cast<uint32_t>(i) * 4u);
-        var->value = feedback(d, i);
+        var->value = feedback(d, static_cast<int>(i));
     }
-    h->pMenuStart = ptr32<sMenuItemStd>(inst.items[0]);
+    for (size_t i = 0; i < list.size(); ++i)
+        ptr32<sMenuItemStd>(list[i])->pNext = i + 1 < list.size() ? ptr32<sMenuItemStd>(list[i + 1]) : nullptr;
+    h->menuItems = static_cast<uint8>(list.size());
+    h->pMenuStart = list.empty() ? nullptr : ptr32<sMenuItemStd>(list[0]);
 }
 
 // The first two-choice item of a page (the front end's "Weapon pick-ups", the pause menu's "Show Track Directions").
@@ -573,9 +652,80 @@ void pollControls()
     refreshControlTexts();
 }
 
+
+// The front end's texts the pause menu reuses (in four languages): Game Options (the main menu's item that opens the
+// menu), Audio Setup and its page's title, Controls and the Controller configuration page's title.
+void copyFrontTexts(ptr32<sUIgroup> pUIGroup, ptr32<sAMenuHeader> options, ptr32<sAMenuHeader> config)
+{
+    for (ptr32<sUIgroup> grp = pUIGroup; grp->pSourceHeader.address != 0xffffffffu; grp = grp + 1)
+        if (const ptr32<sAMenuHeader> h = grp->pSourceHeader)
+            for (ptr32<sMenuItemStd> p = h->pMenuStart; p; p = p->pNext)
+                if (p->pLinkMenu == options)
+                    copyText4(g.copied[CopiedGameOptions], p->pTextGroup, kCopiedBytes);
+    for (ptr32<sMenuItemStd> p = options->pMenuStart; p; p = p->pNext)
+    {
+        const ptr32<sAMenuHeader> page = p->pLinkMenu;
+        if (!page || page.address >= 0x2000000u)
+            continue;
+        if (config && page == config)
+        {
+            copyText4(g.copied[CopiedControls], p->pTextGroup, kCopiedBytes);
+            copyText4(g.copied[CopiedControlsTitle], page->pTitleText, kCopiedBytes);
+        }
+        for (ptr32<sMenuItemStd> q = page->pMenuStart; q; q = q->pNext)
+            if (q->pMenuVar && q->pMenuVar->tagMVar == 0x1000001f) // the music volume: Audio options
+            {
+                copyText4(g.copied[CopiedAudioSetup], p->pTextGroup, kCopiedBytes);
+                copyText4(g.copied[CopiedAudioTitle], page->pTitleText, kCopiedBytes);
+                break;
+            }
+    }
+}
+
+// Which of the pause menu's items moves into its Game Options pages (-1: stays).
+int movedKind(ptr32<sMenuItemStd> p)
+{
+    if (p->pMenuVar && p->pMenuVar->tagMVar == 0x1000001f)
+        return MovedMusic;
+    if (p->pMenuVar && p->pMenuVar->tagMVar == 0x10000026)
+        return MovedSfx;
+    switch (p->selectionTag)
+    {
+    case 0x1000028bu: return MovedVibration1;
+    case 0x10000078u: return MovedVibration2;
+    case kDebugMenusTag: return MovedDebug;
+    default: return -1;
+    }
+}
+
+// A pause menu: its moved items taken out (the first menu's kept for the pages: the cup menu has its own copies of the
+// same settings), Game Options appended.
+void shortenPauseMenu(ptr32<sAMenuHeader> h, bool keep)
+{
+    std::vector<uint32_t> list;
+    for (ptr32<sMenuItemStd> p = h->pMenuStart; p; p = p->pNext)
+    {
+        if (p.address == g.pauseLink)
+            continue;
+        const int kind = movedKind(p);
+        if (kind < 0)
+            list.push_back(p.address);
+        else if (keep && !g.moved[kind])
+            g.moved[kind] = p.address;
+    }
+    list.push_back(g.pauseLink);
+    for (size_t i = 0; i < list.size(); ++i)
+        ptr32<sMenuItemStd>(list[i])->pNext = i + 1 < list.size() ? ptr32<sMenuItemStd>(list[i + 1]) : nullptr;
+    h->pMenuStart = ptr32<sMenuItemStd>(list[0]);
+    h->menuItems = static_cast<uint8>(list.size());
+    if (h->selection >= static_cast<int8>(list.size()))
+        h->selection = 0;
+}
+
 } // namespace
 
-// After MenuInitScan has hidden the debug item: show it, and add Enhancements and Controls after the menu's last item.
+// After MenuInitScan has hidden the debug item (and, in the pause menu, the two-player items outside a two-player
+// race): show it, and link in the pages.
 void install(ptr32<sUIgroup> pUIGroup)
 {
     ptr32<sAMenuHeader> menu = nullptr;
@@ -599,13 +749,13 @@ void install(ptr32<sUIgroup> pUIGroup)
     }
     if (!g.made && !makeDefs())
     {
-        std::fprintf(stderr, "[enhance] could not build the Enhancements menu (guest memory)\n");
+        std::fprintf(stderr, "[enhance] could not build the settings pages (guest memory)\n");
         return;
     }
     // What the pages show comes from the settings (the file may have been changed elsewhere).
     {
         const settings::Settings now = settings::get();
-        PageDef &e = g.defs[PageEnhance];
+        PageDef &e = g.defs[PageDisplay];
         for (int i = 0; i < kEnhanceCount; ++i)
             feedback(e, i) = e.last[i] = value(now, i);
         refreshControlTexts();
@@ -615,71 +765,98 @@ void install(ptr32<sUIgroup> pUIGroup)
     const ptr32<sMenuItemStd> first = menu->pMenuStart;
     const bool front = first && first->pLinkMenu;
     Instance(&set)[PageCount] = front ? g.front : g.pause;
-    uint32_t(&links)[2] = front ? g.frontLinks : g.pauseLinks;
     const ptr32<sAMenuHeader> model = front ? ptr32<sAMenuHeader>(first->pLinkMenu) : menu;
     const ptr32<sMenuItemStd> choiceItem = twoChoiceItem(model);
-    const ptr32<sMenuItemStd> linkItem = front ? first : debugItem;
     if (!choiceItem)
         return;
+    // A link item of this menu system to copy (the pause menu's Debug Menus moves, so a copy is taken first).
+    static uint32_t linkModel = 0;
+    if (!linkModel && !(linkModel = alloc(kItemBytes)))
+        return;
+    std::memcpy(guest_host(linkModel), guest_host((front ? first : debugItem).address), kItemBytes);
+    const ptr32<sMenuItemStd> linkItem(linkModel);
     for (int id = 0; id < PageCount; ++id)
         if (!set[id].made && !allocate(set[id], g.defs[id]))
         {
-            std::fprintf(stderr, "[enhance] could not build the Enhancements menu (guest memory)\n");
+            std::fprintf(stderr, "[enhance] could not build the settings pages (guest memory)\n");
             return;
         }
-    if ((!links[0] && !(links[0] = alloc(kItemBytes))) || (!links[1] && !(links[1] = alloc(kItemBytes))))
+    if (front)
+    {
+        const ptr32<sAMenuHeader> config = controllerConfigPage(menu);
+        copyFrontTexts(pUIGroup, menu, config);
+        // The players' pages from the game's own Controller configuration page (two items after its vibration
+        // settings); should that page not be found, from a Controls page of ours.
+        const ptr32<sAMenuHeader> playersFrom = config ? config : ptr32<sAMenuHeader>(set[PageControls].header);
+        std::fill(std::begin(g.moved), std::end(g.moved), 0u);
+        fill(set, PageDisplay, model, choiceItem, linkItem, menu);
+        fill(set, PageControls, model, choiceItem, linkItem, menu);
+        for (int player = 0; player < 2; ++player)
+        {
+            fill(set, PagePlayer1 + player, model, choiceItem, linkItem, playersFrom);
+            const ptr32<sAMenuHeader> back(set[PagePlayer1 + player].header);
+            fill(set, PageButtons1 + player, model, choiceItem, linkItem, back);
+            fill(set, PageSticks1 + player, model, choiceItem, linkItem, back);
+        }
+        if (config)
+        {
+            for (int i = 0; i < 2; ++i)
+                if (!g.frontPlayerLinks[i] && !(g.frontPlayerLinks[i] = alloc(kItemBytes)))
+                    return;
+            for (int i = 0; i < 2; ++i)
+                makeLink(g.frontPlayerLinks[i], linkItem, g.defs[PageControls].items[static_cast<size_t>(2 + i)].text, set[PagePlayer1 + i].header);
+            ptr32<sMenuItemStd>(g.frontPlayerLinks[0])->pNext = ptr32<sMenuItemStd>(g.frontPlayerLinks[1]);
+            const ptr32<sMenuItemStd> last = lastItem(config);
+            if (last && last.address != g.frontPlayerLinks[1])
+            {
+                last->pNext = ptr32<sMenuItemStd>(g.frontPlayerLinks[0]);
+                config->menuItems = static_cast<uint8>(config->menuItems + 2);
+            }
+        }
+        // Screen Adjust (moving the PS2's picture) becomes Display.
+        ptr32<sMenuItemStd> screenAdjust = nullptr;
+        for (ptr32<sMenuItemStd> p = menu->pMenuStart; p; p = p->pNext)
+            if (p->selectionTag == 0x10000203u)
+                screenAdjust = p;
+        if (screenAdjust)
+        {
+            screenAdjust->pTextGroup = ptr32<sTextGroup>(g.displayText);
+            screenAdjust->pLinkMenu = ptr32<sAMenuHeader>(set[PageDisplay].header);
+            screenAdjust->selectionTag = 0;
+        }
+        else if (g.frontFallbackLink || (g.frontFallbackLink = alloc(kItemBytes)))
+        {
+            makeLink(g.frontFallbackLink, linkItem, g.displayText, set[PageDisplay].header);
+            const ptr32<sMenuItemStd> last = lastItem(menu);
+            if (last && last.address != g.frontFallbackLink)
+            {
+                last->pNext = ptr32<sMenuItemStd>(g.frontFallbackLink);
+                menu->menuItems = static_cast<uint8>(menu->menuItems + 1);
+            }
+        }
         return;
-    // The front end: the player pages are reached from the game's own Controller configuration page (two items added
-    // after its vibration settings); the pause menu (and the front end, should that page not be found) has a Controls
-    // page for them.
-    const ptr32<sAMenuHeader> config = front ? controllerConfigPage(menu) : nullptr;
-    const ptr32<sAMenuHeader> playersFrom = config ? config : ptr32<sAMenuHeader>(set[PageControls].header);
-    fill(set, PageEnhance, model, choiceItem, linkItem, menu);
-    fill(set, PagePlayer1, model, choiceItem, linkItem, playersFrom);
-    fill(set, PagePlayer2, model, choiceItem, linkItem, playersFrom);
+    }
+    // The pause menu: the race's own items, then Game Options. In a cup the pause menu is another one, the first
+    // group's view (MenuInitScan), with its own items for the same settings: shortened too (the menu code sets each
+    // page's way back to the menu it was entered from).
+    if (!g.pauseLink && !(g.pauseLink = alloc(kItemBytes)))
+        return;
+    std::fill(std::begin(g.moved), std::end(g.moved), 0u);
+    makeLink(g.pauseLink, linkItem, g.copied[CopiedGameOptions], set[PageOptions].header);
+    shortenPauseMenu(menu, true);
+    if (const uint32_t cupMenu = pUIGroup->viewPosTag; cupMenu != 0u && cupMenu != menu.address && cupMenu < 0x2000000u)
+        shortenPauseMenu(ptr32<sAMenuHeader>(cupMenu), false);
+    fill(set, PageOptions, model, choiceItem, linkItem, menu);
+    fill(set, PageSound, model, choiceItem, linkItem, ptr32<sAMenuHeader>(set[PageOptions].header));
+    fill(set, PageDisplay, model, choiceItem, linkItem, ptr32<sAMenuHeader>(set[PageOptions].header));
+    fill(set, PageControls, model, choiceItem, linkItem, ptr32<sAMenuHeader>(set[PageOptions].header));
     for (int player = 0; player < 2; ++player)
     {
+        fill(set, PagePlayer1 + player, model, choiceItem, linkItem, ptr32<sAMenuHeader>(set[PageControls].header));
         const ptr32<sAMenuHeader> back(set[PagePlayer1 + player].header);
         fill(set, PageButtons1 + player, model, choiceItem, linkItem, back);
         fill(set, PageSticks1 + player, model, choiceItem, linkItem, back);
     }
-    fill(set, PageControls, model, choiceItem, linkItem, menu);
-    if (config)
-    {
-        for (int i = 0; i < 2; ++i)
-            if (!g.frontPlayerLinks[i] && !(g.frontPlayerLinks[i] = alloc(kItemBytes)))
-                return;
-        for (int i = 0; i < 2; ++i)
-            makeLink(g.frontPlayerLinks[i], linkItem, g.defs[PageControls].items[static_cast<size_t>(i)].text, set[PagePlayer1 + i].header);
-        ptr32<sMenuItemStd>(g.frontPlayerLinks[0])->pNext = ptr32<sMenuItemStd>(g.frontPlayerLinks[1]);
-        const ptr32<sMenuItemStd> last = lastItem(config);
-        if (last && last.address != g.frontPlayerLinks[1])
-        {
-            last->pNext = ptr32<sMenuItemStd>(g.frontPlayerLinks[0]);
-            config->menuItems = static_cast<uint8>(config->menuItems + 2);
-        }
-    }
-    makeLink(links[0], linkItem, g.defs[PageEnhance].title, set[PageEnhance].header);
-    makeLink(links[1], linkItem, g.defs[PageControls].title, set[PageControls].header);
-    ptr32<sMenuItemStd>(links[0])->pNext = config ? nullptr : ptr32<sMenuItemStd>(links[1]);
-    const uint32_t lastLink = config ? links[0] : links[1];
-    const uint8 added = config ? 1 : 2;
-    // The rebuilt menu: Enhancements and Controls after its last item (once). In a cup the pause menu is another one,
-    // the first group's view (MenuInitScan): the same items end that list too (the menu code sets each page's way back
-    // to the menu it was entered from).
-    const auto append = [&](ptr32<sAMenuHeader> h)
-    {
-        const ptr32<sMenuItemStd> last = lastItem(h);
-        if (last && last.address != lastLink && last.address != links[0])
-        {
-            last->pNext = ptr32<sMenuItemStd>(links[0]);
-            h->menuItems = static_cast<uint8>(h->menuItems + added);
-        }
-    };
-    append(menu);
-    if (!front)
-        if (const uint32_t cupMenu = pUIGroup->viewPosTag; cupMenu != 0u && cupMenu != menu.address && cupMenu < 0x2000000u)
-            append(ptr32<sAMenuHeader>(cupMenu));
 }
 
 // Each front-end frame and each paused race frame: a choice the player changed becomes the setting (applied live where
@@ -703,7 +880,7 @@ void poll()
                 std::fprintf(stderr, "[enhance-debug]   item %08x flags %04x status %02x var %08x\n", p.address, p->flags, p->statusFlags, p->pMenuVar.address);
         }
     }
-    PageDef &e = g.defs[PageEnhance];
+    PageDef &e = g.defs[PageDisplay];
     settings::Settings s = settings::get();
     bool changed = false;
     for (int i = 0; i < kEnhanceCount; ++i)

@@ -1050,17 +1050,20 @@ void MenuInitScan(ptr32<sUIgroup> pUIGroup, int32_t flag)
         if (g->selectionTag == 0x10000208u)
         {
             const ptr32<sMenuItemStd> p = AMenuGetMIT(g->pSourceHeader, g->linkPos);
-            p->flags = static_cast<uint16>(p->flags | 0x60u);
+            if (p) // enhanced recomp: the pause menu's Debug Menus may have moved (rc_enhance_menu.cpp)
+                p->flags = static_cast<uint16>(p->flags | 0x60u);
         }
-    enhance::install(pUIGroup); // enhanced recomp: Game Options > Enhancements, and Debug Menus shown
     const int32_t cup = fe().cup;
-    if (flag != 1)
-        return;
-    if (mainVars().raceType != 0x10000200u)
+    if (flag == 1 && mainVars().raceType != 0x10000200u)
         for (ptr32<sUIgroup> g = pUIGroup + 1; g->pSourceHeader.address != 0xffffffffu; g = g + 1)
             for (ptr32<sMenuItemStd> p = g->pSourceHeader->pMenuStart; p; p = p->pNext)
                 if (p->selectionTag == 0x10000078u)
                     p->flags = static_cast<uint16>(p->flags | 0x60u);
+    // Enhanced recomp: Game Options > Display (was Screen Adjust) and the PC controls pages, the pause menu's Game
+    // Options; Debug Menus shown. After the hiding above, so the items it moves keep it.
+    enhance::install(pUIGroup);
+    if (flag != 1)
+        return;
     if (cup != 0)
         menuSystem().pPauseMenu = ptr32<sAMenuHeader>(pUIGroup->viewPosTag);
 }

@@ -17,22 +17,29 @@ supported.
 
 ## Enhanced recomp: playing with the enhancements (`main`)
 
-Run `tools/play.sh` (on a hybrid-graphics laptop it uses the discrete NVIDIA GPU) and set things up in the game:
-**Game Options > Enhancements**, or in a race **Pause Menu > Enhancements** (start, then the last item). Changes apply
-at once, mid-race too (resolution at the next start), and are saved to `~/.config/rc-revenge-pro/settings.ini`:
+Run `tools/play.sh` (on a hybrid-graphics laptop it uses the discrete NVIDIA GPU) and set things up in the game's own
+menus. The screen settings are in **Game Options > Display** (the game's Screen Adjust, which moved the picture on a
+TV, replaced; "Affichage", "Anzeige", "Pantalla" in the other languages; the settings themselves are in English), the
+controls in **Game Options > Controls** (below). In a race, the pause menu keeps the race's own items (Resume,
+Restart, Quit or Quit Championship, Show Track Directions) and has one **Game Options** item mirroring the front
+end's: **Audio Setup** (the music and effects volume bars, applied at once), **Display**, **Controls** (vibration,
+Player 1/2 PC Controls) and **Debug Menus**. Not in the pause version: Game Setup (laps, weapons, number of cars: set
+before a race), Sound Mode (applied by the front end only), the controller layouts ("Define Player n Controls", pages
+of the front end), Load/Save Game, Load Track and Credits. Changes apply at once, mid-race too (resolution at the next
+start), and are saved to `~/.config/rc-revenge-pro/settings.ini`:
 
 | Setting | Choices | What it does |
 |---|---|---|
 | Aspect ratio | 4:3, 16:9, 16:10, 21:9 | Hor+ widescreen: the 3D view widens, nothing is stretched |
 | HUD and menus | Corrected, Stretched | In widescreen: HUD pinned to the screen's corners and menus kept in shape (pillarboxed), or the original layout stretched |
-| Display | Window, Fullscreen | True fullscreen on the current monitor (F11 toggles too) |
+| Screen mode | Window, Fullscreen | True fullscreen on the current monitor (F11 toggles too) |
 | Resolution (restart) | 1x to 6x | Internal resolution (3x-4x for 1080p-1440p) |
 | Race frame rate | 60, 90, 120, 144, 165, 240 | Races run up to this rate (match your screen); menus keep the original rate; game speed unchanged |
 | Smooth motion | On, Off | Cars, wheels and camera drawn between the game's 50 Hz physics steps: even motion at any frame rate (also at 60) |
 | V-Sync | Off, On, Adaptive | The window's swap interval. Adaptive (late frames tear instead of waiting) needs `GLX_EXT_swap_control_tear` from the X server; under XWayland with PRIME offload it is not offered, so it acts as On |
 | Variable refresh | Off, On | For a VRR (FreeSync/G-SYNC/Adaptive Sync) screen: each new picture is shown when it is ready (menus at the game's 50/60 Hz without judder), races capped 3 below the screen's rate (141 on 144 Hz). The desktop must allow VRR for the window (KDE: Display Configuration, Adaptive sync "Always", or fullscreen with "Automatic") |
 
-The same Game Options menu also shows the developers' **Debug Menus**, left hidden on the disc. Apart from Mirror
+Game Options (and the pause menu's Game Options) also shows the developers' **Debug Menus**, left hidden on the disc. Apart from Mirror
 Mode (the game's normal mirrored tracks), its items are not connected to anything in the released game.
 
 All settings work in both versions. In Europe (PAL, 50 Hz video) the menus keep 50 and races run at the chosen
@@ -40,8 +47,8 @@ rate; the physics step is the same 20 ms in both, so game speed is unchanged.
 
 **Controls**: each player is a virtual DualShock 2 read from the keyboard and/or a gamepad. In **Game Options >
 Controls** (the game's own Controller configuration page, which keeps its button layouts and vibration settings) the
-items **Player 1 PC Controls...** and **Player 2 PC Controls...** were added; in a race, **Pause Menu > Controls** leads
-to the same pages. Each has the player's device (Auto, Keyboard, Gamepad 1-4, Keyboard + Gamepad 1/2, None, with the
+items **Player 1 PC Controls...** and **Player 2 PC Controls...** were added; in a race, **Pause Menu > Game Options >
+Controls** leads to the same pages. Each has the player's device (Auto, Keyboard, Gamepad 1-4, Keyboard + Gamepad 1/2, None, with the
 connected gamepads' names; gamepads that are not connected are marked and skipped), **Buttons...** and **D-pad and
 sticks...** pages, and Reset to defaults. **Auto** (the default for both players): player 1 reads the keyboard and every
 connected gamepad player 2 does not use (all of them drive; rumble goes to the one used last), player 2 the next

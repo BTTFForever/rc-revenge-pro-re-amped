@@ -216,7 +216,7 @@ void forget();
 
 bool enabled()
 {
-    // Game Options > Enhancements, the settings file or RC_INTERP. Switched back on (in the pause menu): the states
+    // Game Options > Display, the settings file or RC_INTERP. Switched back on (in the pause menu): the states
     // kept from before are stale, so blending starts again after the next physics step.
     static bool was = settings::smoothMotion();
     const bool on = settings::smoothMotion();
@@ -359,7 +359,7 @@ float jumpLimit()
 
 } // namespace interp
 
-// The race frame rate (settings: Game Options > Enhancements, race_fps, PS2X_REFRESH_HZ): vblanks at n Hz while a race (or the demo) runs, so its loop draws up to n frames a second; the
+// The race frame rate (settings: Game Options > Display, race_fps, PS2X_REFRESH_HZ): vblanks at n Hz while a race (or the demo) runs, so its loop draws up to n frames a second; the
 // race keeps time on its own clock. The front end and other screens step their animations once a frame, so they keep
 // the video mode's rate.
 namespace {
@@ -373,7 +373,7 @@ void RcRefreshRace(bool racing)
     g_racing = racing;
     if (racing)
     {
-        const uint32_t hz = static_cast<uint32_t>(settings::raceRefreshHz()); // Game Options > Enhancements
+        const uint32_t hz = static_cast<uint32_t>(settings::raceRefreshHz()); // Game Options > Display
         const uint32_t normal = g_normalPeriod != 0u ? g_normalPeriod : static_cast<uint32_t>(scheduler.vblankPeriod().count());
         if (hz == 0u || 1000000u / hz >= normal) // not faster than the video mode (60 on NTSC, 50 on PAL)
         {
@@ -400,7 +400,7 @@ void RcRefreshRace(bool racing)
     }
 }
 
-// The settings changed (Pause Menu > Enhancements): a race on picks up its new frame rate at once.
+// The settings changed (Pause Menu > Game Options > Display): a race on picks up its new frame rate at once.
 void RcRefreshRaceUpdate()
 {
     if (!g_racing)

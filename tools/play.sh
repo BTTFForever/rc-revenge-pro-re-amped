@@ -7,7 +7,7 @@
 # PS2X_GS_GPU, PS2X_GS_HW, PS2X_GS_THREAD, PS2X_MTVU, RC_TRACK_SHADER and RC_VU1_REF can be overridden (tools/frame_record.sh does).
 # RC_VERSION=eu plays the Europe version (build-eu); the default is usa (build-decomp). See tools/version.sh.
 # The resolution, aspect ratio, fullscreen, race frame rate and smooth motion come from the settings file
-# (~/.config/rc-revenge-pro/settings.ini, changed in Game Options > Enhancements); an environment variable overrides it
+# (~/.config/rc-revenge-pro/settings.ini, changed in Game Options > Display); an environment variable overrides it
 # for one run (PS2X_GS_HW_SCALE, RC_ASPECT, PS2X_FULLSCREEN, PS2X_REFRESH_HZ, RC_INTERP). RC_VU1_REF=2 checks each VU1
 # program not yet compared in the game as it runs (a decompilation check; off by default).
 set -u

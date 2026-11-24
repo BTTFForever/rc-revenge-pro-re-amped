@@ -241,7 +241,7 @@ void FrontEndProcess()
         guest_call<void>(sym::CameraProcess, time, 0);
         m.time = time;
         guest_call<void>(sym::TaskProcess, time);
-        enhance::poll(); // enhanced recomp: Game Options > Enhancements
+        enhance::poll(); // enhanced recomp: the settings pages (Game Options > Display, PC controls)
         guest_call<void>(sym::AnimUpdateAnims);
         guest_call<void>(sym::GfxTex_Update);
         if (const ptr32<sAMenuHeader> pMenu = menuSystem().pActiveMenu; pMenu && (pMenu->evenMoreFlags & 2u) != 0)
