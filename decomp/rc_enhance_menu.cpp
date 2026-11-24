@@ -3,7 +3,7 @@
 //
 // Front end: Game Options > Screen Adjust (the PS2's picture position, not needed on a PC) becomes Display (the
 // screen settings: aspect ratio, HUD and menus, screen mode, resolution, frame rate, smooth motion, V-Sync,
-// variable refresh, HUD scale, menu scale, button prompts); the game's own Controller configuration page (Game
+// variable refresh, HUD scale, menu scale, button prompts, split screen); the game's own Controller configuration page (Game
 // Options > Controls) gets "Player 1 PC Controls..." and "Player 2 PC Controls...". The developers' hidden "Debug
 // Menus" item is shown.
 //
@@ -76,6 +76,7 @@ constexpr Choice kChoices[] = {
     {"HUD scale: %s", "1.0x*0.9x*0.8x*0.7x*0.6x*0.5x", 6},
     {"Menu scale: %s", "1.0x*0.9x*0.8x*0.7x*0.6x*0.5x", 6},
     {"Button prompts: %s", "PS2*Match controls*Off", 3},
+    {"Split screen: %s", "Horizontal*Vertical", 2}, // two-player races (rc_split.h)
 };
 constexpr int kEnhanceCount = static_cast<int>(sizeof(kChoices) / sizeof(kChoices[0]));
 
@@ -93,7 +94,8 @@ int value(const settings::Settings &s, int i)
     case 7: return s.vrr ? 1 : 0;
     case 8: return s.hudScale;
     case 9: return s.menuScale;
-    default: return s.prompts;
+    case 10: return s.prompts;
+    default: return s.split;
     }
 }
 
@@ -111,7 +113,8 @@ void apply(settings::Settings &s, int i, int v)
     case 7: s.vrr = v != 0; break;
     case 8: s.hudScale = v; break;
     case 9: s.menuScale = v; break;
-    default: s.prompts = v; break;
+    case 10: s.prompts = v; break;
+    default: s.split = v; break;
     }
 }
 

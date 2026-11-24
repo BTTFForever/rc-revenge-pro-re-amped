@@ -11,6 +11,7 @@
 #include "main_fuzz.h"
 #include "../rc_frame_tick.h"
 #include "../rc_front_interp.h"
+#include "../rc_split.h"
 #include <cstdlib>
 
 RC_VERSION_VARIANT(printf) // Europe also stores $f12-$f18
@@ -107,11 +108,19 @@ void viewTag(uint32_t index)
         return;
     rc::gfx::ViewTag tag{};
     tag.index = index;
-    const int32_t split = splitScreen() != 0 ? 1 : 0;
+    const int32_t isSplit = splitScreen() != 0 ? 1 : 0;
     tag.scissor[0] = 3;
-    tag.scissor[1] = split && index == 1 ? 0x70 : 3;
+    tag.scissor[1] = isSplit && index == 1 ? 0x70 : 3;
     tag.scissor[2] = 0x27d;
-    tag.scissor[3] = split && index == 0 ? 0x6f : 0xed;
+    tag.scissor[3] = isSplit && index == 0 ? 0x6f : 0xed;
+    int x1, y1, x2, y2;
+    if (isSplit && split::scissor(static_cast<int>(index), x1, y1, x2, y2)) // vertical split screen
+    {
+        tag.scissor[0] = x1;
+        tag.scissor[1] = y1;
+        tag.scissor[2] = x2;
+        tag.scissor[3] = y2;
+    }
     std::memcpy(&tag.yOffset, guest_host(kFrameMode), 4);
     const uint32_t camera = G(gRdr).pCamera.address;
     tag.camera = camera;
@@ -759,14 +768,20 @@ void SetFrameWindow(int32_t windowId, tTime time)
             at<uint32_t>(kFrameMode) = mode;
             call(kGfxP2RenderDmaSend);
         };
+        split::frameWindow(windowId); // enhancement: vertical split screen (rc_split.h)
+        int sx1, sy1, sx2, sy2;
+        const bool sideBySide = split::scissor(windowId, sx1, sy1, sx2, sy2);
         if (windowId == 0)
         {
             guest_call(kInit3dFrame, kWindow0, at<uint32_t>(kCurrentCamera) + 0x24u, time, splitScreen());
             if (splitScreen() != 0)
             {
-                guest_call(kRdrStateSetScissor, 0, 3, 3, 0x27d, RC_VERSION_EU ? 0x7f : 0x6f);
+                if (sideBySide) // the left half, no vertical offset
+                    guest_call(kRdrStateSetScissor, 0, sx1, sy1, sx2, sy2);
+                else
+                    guest_call(kRdrStateSetScissor, 0, 3, 3, 0x27d, RC_VERSION_EU ? 0x7f : 0x6f);
                 at<uint32_t>(kFrameSplit) = 1;
-                send(RC_VERSION_EU ? 0xc2800000u : 0xc2700000u); // -64.0f, USA -60.0f
+                send(sideBySide ? 0u : RC_VERSION_EU ? 0xc2800000u : 0xc2700000u); // -64.0f, USA -60.0f
             }
             else
             {
@@ -779,9 +794,12 @@ void SetFrameWindow(int32_t windowId, tTime time)
         else if (windowId == 1)
         {
             guest_call(kInit3dFrame2, kWindow1, at<uint32_t>(kCurrentCamera) + 0x24u, time, 0);
-            guest_call(kRdrStateSetScissor, 0, 3, RC_VERSION_EU ? 0x80 : 0x70, 0x27d, kScreenLines - 3);
+            if (sideBySide) // the right half
+                guest_call(kRdrStateSetScissor, 0, sx1, sy1, sx2, sy2);
+            else
+                guest_call(kRdrStateSetScissor, 0, 3, RC_VERSION_EU ? 0x80 : 0x70, 0x27d, kScreenLines - 3);
             at<uint32_t>(kFrameSplit) = 2;
-            send(RC_VERSION_EU ? 0x42800000u : 0x42700000u); // 64.0f, USA 60.0f
+            send(sideBySide ? 0u : RC_VERSION_EU ? 0x42800000u : 0x42700000u); // 64.0f, USA 60.0f
         }
         else
         {

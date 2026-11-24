@@ -6,6 +6,7 @@
 
 #include <cstring>
 #include "../rc_frame_tick.h"
+#include "../rc_split.h"
 #include "rc_decomp.h"
 
 // Europe variants (NOTES.md "Europe version"): LsFrameInit (the split-screen offset 64 lines instead of 56).
@@ -374,7 +375,7 @@ void LsFrameInit(tTime time, uint8 splitScreen, int32_t whichScreen)
     const ptr32<sRdrCamera> cameraAddress(sym::rdrCameraG);
     guest_call(kRdrSetupCamera, cameraAddress, static_cast<int32_t>(ee_ftoi(G(lsVarG).fov * constantAt(sym::lit4_32792c))));
     camera.vertDrawOffset = 0.0_f;
-    if (splitScreen != 0)
+    if (splitScreen != 0 && !split::sideBySide()) // vertical split screen (rc_split.h): no vertical offset
         camera.vertDrawOffset = whichScreen == 0 ? (RC_VERSION_EU ? -64.0_f : -56.0_f) : (RC_VERSION_EU ? 64.0_f : 56.0_f);
     LsCameraToRdr(cameraAddress);
     Rdr_UseCamera(cameraAddress);

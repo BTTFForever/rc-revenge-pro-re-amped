@@ -19,6 +19,7 @@ RC_VERSION_VARIANT(RdrState_Init)
 RC_VERSION_VARIANT(RdrPolyInitCamera)
 #include "../rc_frame_tick.h"
 #include "rc_widescreen.h"
+#include "rc_split.h"
 #include "display_fuzz.h"
 #include "ee_math.h"
 #include "vifpk.h"
@@ -147,8 +148,20 @@ void Rdr_SetupCamera(ptr32<_sRdrCamera> pCamera, tAngle viewAngle)
     cam.dValX = scaledD * half;
     cam.dVal = scaledD * half;
     // Widescreen (rc_settings): Hor+, the x projection scaled by (4/3)/aspect and the side planes widened.
-    const ee_float sideHalf = rc::settings::widescreen() ? ee_float(rc::widescreen::widenHalfAngle(static_cast<float>(x))) : x;
-    if (rc::settings::widescreen())
+    ee_float sideHalf = rc::settings::widescreen() ? ee_float(rc::widescreen::widenHalfAngle(static_cast<float>(x))) : x;
+    ee_float topHalf = x;
+    if (rc::split::sideBySide())
+    {
+        // Vertical split screen (rc_split.h): a half's projection, its side planes at its own edges.
+        float dx = cam.dValX.v, dy = cam.dValY.v, side = 0.0f, top = 0.0f;
+        rc::split::scaleProjection(dx, dy);
+        rc::split::halfAngles(dx, dy, x.v, side, top);
+        cam.dValX = ee_float(dx);
+        cam.dValY = ee_float(dy);
+        sideHalf = ee_float(side);
+        topHalf = ee_float(top);
+    }
+    else if (rc::settings::widescreen())
         cam.dValX = cam.dValX * ee_float(rc::settings::hscale());
 
     // Right and left: the X axis turned about Y (only two terms of the middle row are used).
@@ -167,7 +180,7 @@ void Rdr_SetupCamera(ptr32<_sRdrCamera> pCamera, tAngle viewAngle)
     }
     // Bottom and top: the Y axis turned about X.
     {
-        const ee_float s = ee_sinf(x), c = ee_cosf(x);
+        const ee_float s = ee_sinf(topHalf), c = ee_cosf(topHalf);
         const ee_float m[9] = {one, zero, zero, zero, c, s, zero, -s, c};
         ee_float v[3] = {zero, -one, zero};
         cam.normBottom.x = v[0];
@@ -1037,6 +1050,11 @@ void RdrPolyInitCamera(int32_t channel)
 #else
     put(0x114, player == 1 ? 0x44f90000u : player == 2 ? *static_cast<uint32_t *>(guest_host(sym::lit4_327bf8)) : 0x45000000u);
 #endif
+    // Vertical split screen (rc_split.h): the half's x centre, the screen's y centre. The ring's packets keep what was
+    // written last, so the x centre is always written.
+    putf(0x110, ee_float(rc::split::centreX()));
+    if (rc::split::sideBySide())
+        put(0x114, 0x45000000u);
     Rdr_UploadProg(ptr32<u32>(kShapeProgram));
     Rdr_AddDmaCall(packet.cast<void>());
 }

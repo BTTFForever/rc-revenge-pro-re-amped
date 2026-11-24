@@ -10,6 +10,7 @@
 RC_VERSION_VARIANT(VfxRenderer_SpinPickup)
 RC_VERSION_VARIANT(VfxRenderer_ReadySteadyGo)
 #include "rc_widescreen.h"
+#include "rc_split.h"
 #include "ai_fuzz.h"
 #include "ee_math.h"
 #include "vifpk.h"
@@ -101,6 +102,14 @@ void VfxSetupCameraMatrix()
     const ee_float depthY = depth * ee_float(at<float>(sym::lit4_3277ac));
     at<float>(s + 0x1b0) = rc::settings::widescreen() ? depth * ee_float(rc::settings::hscale()) : depth; // widescreen: Hor+
     at<float>(s + 0x1b4) = depthY;
+    if (rc::split::sideBySide())
+    {
+        // Vertical split screen (rc_split.h): the half's projection.
+        float dx = depth.v, dy = depthY.v;
+        rc::split::scaleProjection(dx, dy);
+        at<float>(s + 0x1b0) = dx;
+        at<float>(s + 0x1b4) = dy;
+    }
     // ps2CameraMatrix at +0x120 (the PSX matrix's 4.12 shorts as floats, row by row, w lanes zero), the translation at
     // +0x160, and the matrix's transpose at +0x170.
     const ee_float unit(0.000244140625f); // 2^-12
@@ -486,6 +495,16 @@ void VfxRenderer_SpinPickup(ptr32<_sVfx_Object> mem)
         at<float>(offset + 4) = ee_itof(kScreenLines / 2 - at<int32_t>(hud + 0x8c));
     else
         at<float>(offset + 4) = ee_itof(kScreenLines / 2 - at<int32_t>(hud + 0x8c)) * ee_float(at<float>(sym::lit4_327810));
+    if (rc::split::sideBySide())
+    {
+        // Vertical split screen (rc_split.h): toward the weapon box where the HUD now draws it (player 1's mirrored
+        // into the left half, player 2's moved into the right one, both at the top), through the half's projection.
+        const float px = static_cast<float>(at<int32_t>(hud + 0x84));
+        const float x = screen == 0 ? 318.0f - px : 322.0f + px;
+        const float y = static_cast<float>(at<int32_t>(sym::hudVarG + 0x8c)); // player 1's height for both
+        at<float>(offset) = (x - (screen == 0 ? 160.0f : 480.0f)) * 270.0f / at<float>(kVisFx + 0x1b0);
+        at<float>(offset + 4) = (static_cast<float>(kScreenLines / 2) - y) * 270.0f / at<float>(kVisFx + 0x1b4);
+    }
     at<float>(offset + 8) = 270.0f;
     sceVu0ApplyMatrix(ptr32<ee_float>(offset), ptr32<ee_float>(kVisFx + 0x170), ptr32<ee_float>(offset));
     vfx::vu0Add(offset, kVisFx + 0x160, offset);
@@ -762,10 +781,13 @@ void VfxRenderer_ReadySteadyGo(ptr32<_sVfx_Object> mem)
     const uint32_t hudRes = at<uint32_t>(at<uint32_t>(sym::pLvlG) + 0x40); // pLvlG->pHudRes
     const uint32_t screen = at<uint32_t>((sym::mainVarG + 0x378u));                      // mainVarG.iWhichSplitScreen
     const bool split = at<uint8_t>((sym::mainVarG + 0x368u)) != 0;                       // mainVarG.splitScreen
-    if (split && screen != 1)
+    // Vertical split screen (rc_split.h): drawn in each half, inside its scissor (the PS2 draws it once, through player
+    // 2's camera, over the whole screen: side by side that would centre it in player 2's half).
+    const bool sideBySide = split && rc::split::sideBySide();
+    if (split && screen != 1 && !sideBySide)
         return;
     const uint64_t scissor = G(gRdrStateScissorOverride);
-    G(gRdrStateScissorOverride) = kScreenScissor;
+    G(gRdrStateScissorOverride) = sideBySide ? scissor : kScreenScissor;
     const uint32_t picture = at<uint32_t>(m + 0x1a4);
     const uint32_t sp = vfx::sprite();
     at<uint8_t>(sp + vfx::spr::kFlipX) = 1;

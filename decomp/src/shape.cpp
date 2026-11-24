@@ -11,6 +11,7 @@
 // RdrAlphaAddTriangles, which call it in the original, follow too.
 RC_VERSION_VARIANT(RdrAlphaCameraToRdrCamera)
 #include "rc_widescreen.h"
+#include "rc_split.h"
 #include "ee_math.h"
 
 namespace rc {
@@ -82,6 +83,7 @@ void writeShapeCamera(uint8_t *p, uint32_t base, const sRdrVUShape &shape, const
         putf(p, base + 0x70 + col * 4u, dot(ex, ey, ez, cameraRows[col].x, cameraRows[col].y, cameraRows[col].z));
     putw(p, base + 0x7c, 0x3f800000); // 1.0
     putf(p, base + 0x24, camera.vertDrawOffset + ee_float(2048.0f));
+    putf(p, base + 0x20, ee_float(rc::split::centreX())); // vertical split screen: the half's x centre (else 2048)
 }
 
 // The next packet of a ring.
@@ -174,6 +176,7 @@ void writeVUShapePacket(const sRdrVUShape &shape, const _sRdrCamera &camera)
     std::memset(p + 0x1e0, 0, 12);
     putw(p, 0x1ec, 0x3f800000);
     putf(p, 0x154, camera.vertDrawOffset + ee_float(2048.0f));
+    putf(p, 0x150, ee_float(rc::split::centreX())); // vertical split screen: the half's x centre (else 2048)
 }
 
 } // namespace
@@ -586,6 +589,7 @@ void Rdr_VUSkin(ptr32<sRdrVUSkin> pSkin, ptr32<sAnimOutput> pAnimOut, ptr32<_sRd
         putw(b, 0x3c, 0x3f800000);
     }
     putf(p, 0x104, camera.vertDrawOffset + ee_float(2048.0f));
+    putf(p, 0x100, ee_float(rc::split::centreX())); // vertical split screen: the half's x centre (else 2048)
     // Side tag: the skin's chain calls, with the root bone's placement (mat then pos, contiguous at 0x8).
     float matrix[12];
     if (rc::gfx::live())
@@ -698,6 +702,15 @@ void alphaCamera(_sRdrCamera &cam)
     const int32_t player = G(gRdrPolyPlayer);
     constexpr float offset = RC_VERSION_EU ? 64.0f : 56.0f;
     cam.vertDrawOffset = player == 1 ? -offset : player == 2 ? offset : 0.0f;
+    if (rc::split::sideBySide())
+    {
+        // Vertical split screen (rc_split.h): the half's projection, centred on the screen's middle line.
+        float dx = dValX.v, dy = cam.dValY.v;
+        rc::split::scaleProjection(dx, dy);
+        cam.dValX = ee_float(dx);
+        cam.dValY = ee_float(dy);
+        cam.vertDrawOffset = 0.0f;
+    }
 }
 
 void transformPoint(f32 *out, const f32 *in, const sMat33 &m, const sVec3 &pos)
