@@ -3,6 +3,12 @@
 // starts at +0x40 with the ring header (mask, count, head, tail) and the particles from +0x44 (or later).
 
 #include "rc_settings.h" // enhanced recomp: widescreen
+#include "rc_decomp.h"
+
+// Europe variants (NOTES.md "Europe version"): VfxRenderer_SpinPickup (the pickup flies to the weapon icon from 0x80,
+// half a 256-line screen, instead of 0x78), VfxRenderer_ReadySteadyGo (the scissor's bottom 0xfd, kScreenScissor).
+RC_VERSION_VARIANT(VfxRenderer_SpinPickup)
+RC_VERSION_VARIANT(VfxRenderer_ReadySteadyGo)
 #include "rc_widescreen.h"
 #include "ai_fuzz.h"
 #include "ee_math.h"
@@ -452,7 +458,6 @@ void VfxRenderer_Aerial(ptr32<_sVfx_Object> mem)
 // type 2 means no one) of the screen being drawn, when that car is near enough to be drawn.
 void VfxRenderer_SpinPickup(ptr32<_sVfx_Object> mem)
 {
-    RC_DIVERT_IF_CHANGED(VfxRenderer_SpinPickup, mem);
     GuestFrame frame(0x90);
     const uint32_t m = mem.address;
     const uint32_t hudRes = at<uint32_t>(at<uint32_t>(sym::pLvlG) + 0x40); // pLvlG->pHudRes
@@ -478,9 +483,9 @@ void VfxRenderer_SpinPickup(ptr32<_sVfx_Object> mem)
     const uint32_t offset = frame.local<float>(0).address, pos = frame.local<float>(0x10).address;
     at<float>(offset) = ee_itof(at<int32_t>(hud + 0x84) - 0x140) * ee_float(0.5f);
     if (at<uint8_t>((sym::mainVarG + 0x368u)) == 0) // mainVarG.splitScreen
-        at<float>(offset + 4) = ee_itof(0x78 - at<int32_t>(hud + 0x8c));
+        at<float>(offset + 4) = ee_itof(kScreenLines / 2 - at<int32_t>(hud + 0x8c));
     else
-        at<float>(offset + 4) = ee_itof(0x78 - at<int32_t>(hud + 0x8c)) * ee_float(at<float>(sym::lit4_327810));
+        at<float>(offset + 4) = ee_itof(kScreenLines / 2 - at<int32_t>(hud + 0x8c)) * ee_float(at<float>(sym::lit4_327810));
     at<float>(offset + 8) = 270.0f;
     sceVu0ApplyMatrix(ptr32<ee_float>(offset), ptr32<ee_float>(kVisFx + 0x170), ptr32<ee_float>(offset));
     vfx::vu0Add(offset, kVisFx + 0x160, offset);
@@ -752,7 +757,6 @@ void VfxRenderer_WaterBallFlying(ptr32<_sVfx_Object> mem)
 // (or the only one), with the scissor override set while drawing.
 void VfxRenderer_ReadySteadyGo(ptr32<_sVfx_Object> mem)
 {
-    RC_DIVERT_IF_CHANGED(VfxRenderer_ReadySteadyGo, mem);
     GuestFrame frame(0xa0);
     const uint32_t m = mem.address;
     const uint32_t hudRes = at<uint32_t>(at<uint32_t>(sym::pLvlG) + 0x40); // pLvlG->pHudRes
@@ -761,7 +765,7 @@ void VfxRenderer_ReadySteadyGo(ptr32<_sVfx_Object> mem)
     if (split && screen != 1)
         return;
     const uint64_t scissor = G(gRdrStateScissorOverride);
-    G(gRdrStateScissorOverride) = 0xed0003027d0003ull;
+    G(gRdrStateScissorOverride) = kScreenScissor;
     const uint32_t picture = at<uint32_t>(m + 0x1a4);
     const uint32_t sp = vfx::sprite();
     at<uint8_t>(sp + vfx::spr::kFlipX) = 1;

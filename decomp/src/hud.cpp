@@ -11,6 +11,26 @@
 #include "hud_fuzz.h"
 #include "weapon.h"
 
+// Europe variants (NOTES.md "Europe version"): the PAL screen is 256 lines, so the 2D origin's y is 0x780 instead of
+// 0x788 (HudSprite*, HudWrongWayX, HudLost, HudMenuBorder; kScreenTop), and the panel's layout moves: HudCreate (the
+// second player's weapon 0xe8 down instead of 200), HudTopRight (the second player's panel 0x80 lower instead of
+// 0x70, the position 8 to the right), HudBottomRight (the speedometer 0x20 lower, 12 to the right; in a split screen
+// no 8-line lift for the second player), HudBottomLeft (the map 0x10 from the left, 0xf6 or 0xa0 down), HudMiddle
+// (the second half's signs at 0xb0, the weapon count 4 below its icon's top instead of 12), HudPanel ("DEMO" at 0xdc).
+RC_VERSION_VARIANT(HudCreate)
+RC_VERSION_VARIANT(HudSprite)
+RC_VERSION_VARIANT(HudSpriteMirror)
+RC_VERSION_VARIANT(HudSpriteHI)
+RC_VERSION_VARIANT(HudRotSpriteHI)
+RC_VERSION_VARIANT(HudWrongWayX)
+RC_VERSION_VARIANT(HudLost)
+RC_VERSION_VARIANT(HudMenuBorder)
+RC_VERSION_VARIANT(HudTopRight)
+RC_VERSION_VARIANT(HudBottomRight)
+RC_VERSION_VARIANT(HudBottomLeft)
+RC_VERSION_VARIANT(HudMiddle)
+RC_VERSION_VARIANT(HudPanel)
+
 namespace rc {
 
 void ResTypeSetConstructDaemon(ptr32<char> pType, uint32 constructDaemon, int16 options); // res.cpp
@@ -54,6 +74,9 @@ constexpr uint32_t kAINode = sym::aiNodeVarG, kVsyncInc = (sym::displayVarG + 0x
 constexpr uint32_t kSprintf = sym::sprintf, kTimerGet = sym::TimerGet, kReadyGoFade = sym::RevSfxReadyGoFade, kInitialReverb = sym::RevSfxInitialReverb;
 constexpr uint32_t kAMenuDisplayPsxKey = sym::AMenuDisplayPsxKey, kTEditBestLap = sym::TEditGetBestLapTimeFromPermSaveBuffer, kResLoad = sym::ResLoad, kHudTask = sym::HudTask;
 constexpr uint32_t kTimeTrial = 0x100001feu;
+// The 2D origin's y in the GS (2048 less half the screen): 0x788 (1928), in Europe 0x780 (1920, 256 lines).
+constexpr int32_t kScreenTop = 0x800 - kScreenLines / 2;
+const ee_float kScreenTopF = ee_float(static_cast<float>(kScreenTop));
 
 ee_float constant(uint32_t address) { return at<ee_float>(address); }
 int16_t slide() { return at<int16_t>(kHudSlide); }
@@ -223,7 +246,6 @@ void HudTask(ptr32<void>, tTime time)
 
 void HudCreate()
 {
-    RC_DIVERT_IF_CHANGED(HudCreate);
     GuestFrame frame(0x20);
     guest_call(weapon::kTaskSet, kHud, kHudTask, 1, 0);
     guest_call(weapon::kTaskCachedInsert, kHud);
@@ -236,7 +258,7 @@ void HudCreate()
     if (at<uint8_t>(kMainSplit) != 0)
     {
         at<int32_t>(kHud + 0x8cu) = 0x1c;
-        at<int32_t>(kHud + 0x90u) = 200;
+        at<int32_t>(kHud + 0x90u) = RC_VERSION_EU ? 0xe8 : 200;
         at<int32_t>(kHud + 0x88u) = 0x2c;
         at<int32_t>(kHud + 0x84u) = 0x2c;
     }
@@ -259,9 +281,8 @@ void HudTopLeft(ptr32<_sObject>, int8, int8)
 void HudSprite(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb)
 {
     const rc::widescreen::AnchorScope uiScope(rc::gfx::AnchorCentre, rc::widescreen::AnchorScope::Ui); // widescreen: menus and 2D pillarboxed
-    RC_DIVERT_IF_CHANGED(HudSprite, pSpr, fX, fY, rgb);
     const uint32_t width = (static_cast<uint32_t>(pSpr->width) << 1) & 0xffu, height = pSpr->height & 0x7fu;
-    const ee_float x = fX + ee_float(1728.0f), y = fY + ee_float(1928.0f);
+    const ee_float x = fX + ee_float(1728.0f), y = fY + kScreenTopF;
     GfxP2_TexFX(pSpr->pTextureHandle, rgb >> 24);
     const uint64_t x0 = coord(x), y0 = coord(y);
     const uint64_t x1 = coord(x + ee_itof(static_cast<int32_t>(width))), y1 = coord(y + ee_itof(static_cast<int32_t>(height)));
@@ -272,9 +293,8 @@ void HudSprite(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb)
 void HudSpriteMirror(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb)
 {
     const rc::widescreen::AnchorScope uiScope(rc::gfx::AnchorCentre, rc::widescreen::AnchorScope::Ui); // widescreen: menus and 2D pillarboxed
-    RC_DIVERT_IF_CHANGED(HudSpriteMirror, pSpr, fX, fY, rgb);
     const uint32_t width = (static_cast<uint32_t>(pSpr->width) << 1) & 0xffu, height = pSpr->height & 0x7fu;
-    const ee_float x = fX + ee_float(1728.0f), y = fY + ee_float(1928.0f);
+    const ee_float x = fX + ee_float(1728.0f), y = fY + kScreenTopF;
     GfxP2_TexFX(pSpr->pTextureHandle, rgb >> 24);
     const uint64_t x0 = coord(x), y0 = coord(y);
     const uint64_t x1 = coord(x - ee_itof(static_cast<int32_t>(width))), y1 = coord(y + ee_itof(static_cast<int32_t>(height)));
@@ -285,12 +305,11 @@ void HudSpriteMirror(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb)
 void HudSpriteHI(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb, ee_float otz)
 {
     const rc::widescreen::AnchorScope uiScope(rc::gfx::AnchorCentre, rc::widescreen::AnchorScope::Ui); // widescreen: menus and 2D pillarboxed
-    RC_DIVERT_IF_CHANGED(HudSpriteHI, pSpr, fX, fY, rgb, otz);
     const uint32_t height = pSpr->height, width = pSpr->width;
     const ee_float x = fX + ee_float(1728.0f);
     GfxP2_TexFX(pSpr->pTextureHandle, rgb >> 24);
     const uint64_t z = depth(otz, sym::lit4_32765c);
-    const ee_float y = fY + ee_float(1928.0f);
+    const ee_float y = fY + kScreenTopF;
     const uint64_t x0 = coord(x), y0 = coord(y);
     const uint64_t x1 = coord(x + ee_itof(static_cast<int32_t>(width))), y1 = coord(y + ee_itof(static_cast<int32_t>(height >> 1)));
     quad(xy(x0, y0), xy(x1, y0), xy(x0, y1), xy(x1, y1), colour(rgb), z);
@@ -301,7 +320,6 @@ void HudSpriteHI(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb, ee_
 void HudRotSpriteHI(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb, ee_float otz, ee_float ang)
 {
     const rc::widescreen::AnchorScope uiScope(rc::gfx::AnchorCentre, rc::widescreen::AnchorScope::Ui); // widescreen: menus and 2D pillarboxed
-    RC_DIVERT_IF_CHANGED(HudRotSpriteHI, pSpr, fX, fY, rgb, otz, ang);
     GuestFrame frame(0x160);
     const uint32_t sp = frame.local<uint8_t>(0).address;
     const ee_float minimum = at<ee_float>(sym::lit4_327660);
@@ -314,7 +332,7 @@ void HudRotSpriteHI(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb, 
     const uint32_t mat = sp + 0x40u;
     guest_call(sym::sceVu0UnitMatrix, mat);                  // sceVu0UnitMatrix
     guest_call(sym::sceVu0RotMatrixZ, mat, mat, ang);        // sceVu0RotMatrixZ
-    const ee_float x = fX + ee_float(1728.0f), y = fY + ee_float(1928.0f);
+    const ee_float x = fX + ee_float(1728.0f), y = fY + kScreenTopF;
     at<ee_float>(sp + 0x34u) = h;
     at<ee_float>(sp + 0x20u) = -w;
     at<ee_float>(sp + 0x14u) = -h;
@@ -344,8 +362,7 @@ void HudRotSpriteHI(ptr32<_sSprite> pSpr, ee_float fX, ee_float fY, uint32 rgb, 
 void HudWrongWayX(int32 iX, int32 iY, int32 iD)
 {
     const rc::widescreen::AnchorScope uiScope(rc::gfx::AnchorCentre, rc::widescreen::AnchorScope::Ui); // widescreen: menus and 2D pillarboxed
-    RC_DIVERT_IF_CHANGED(HudWrongWayX, iX, iY, iD);
-    const int32_t x = iX + 0x6c0, y = iY + 0x788;
+    const int32_t x = iX + 0x6c0, y = iY + kScreenTop;
     GfxP2_TexFX(ptr32<_sGfxTexture>(at<uint32_t>(hudRes() + 0xd0u)), 0);
     const Colour grey{0x8000000080ull, 0x8000000080ull};
     quad(xy(coord(x), coord(y + iD)), xy(coord(x - 2 * iD), coord(y)), xy(coord(x + 2 * iD), coord(y)),
@@ -356,8 +373,7 @@ void HudWrongWayX(int32 iX, int32 iY, int32 iD)
 void HudLost(int32 iX, int32 iY, int32 iD)
 {
     const rc::widescreen::AnchorScope uiScope(rc::gfx::AnchorCentre, rc::widescreen::AnchorScope::Ui); // widescreen: menus and 2D pillarboxed
-    RC_DIVERT_IF_CHANGED(HudLost, iX, iY, iD);
-    const int32_t x = iX + 0x6c0, y = iY + 0x788;
+    const int32_t x = iX + 0x6c0, y = iY + kScreenTop;
     GfxP2_TexFX(ptr32<_sGfxTexture>(at<uint32_t>(hudRes() + 0xd8u)), 0x20);
     const Colour grey{0x8000000080ull, 0x8000000080ull};
     quad(xy(coord(x - 2 * iD), coord(y - iD)), xy(coord(x + 2 * iD), coord(y - iD)), xy(coord(x - 2 * iD), coord(y + iD)),
@@ -369,11 +385,10 @@ void HudLost(int32 iX, int32 iY, int32 iD)
 void HudMenuBorder(ptr32<_sSprite> pSpr, int32 iCX, int32 iCY, int32 arg3)
 {
     const rc::widescreen::AnchorScope uiScope(rc::gfx::AnchorCentre, rc::widescreen::AnchorScope::Ui); // widescreen: menus and 2D pillarboxed
-    RC_DIVERT_IF_CHANGED(HudMenuBorder, pSpr, iCX, iCY, arg3);
     GuestFrame frame(0xd0);
     const uint32_t sp = frame.local<uint8_t>(0).address;
     const int32_t phase = static_cast<int32_t>(0u - at<uint32_t>(kVsyncInc)) << 1;
-    const int32_t x = iCX + 0x6c0, y = iCY + 0x788;
+    const int32_t x = iCX + 0x6c0, y = iCY + kScreenTop;
     const ee_float scale = at<ee_float>(sym::lit4_327668);
     const uint32_t height = pSpr->height, width = pSpr->width;
     const uint32_t halfHeight = height >> 1;
@@ -416,13 +431,12 @@ void HudMenuBorder(ptr32<_sSprite> pSpr, int32 iCX, int32 iCY, int32 arg3)
 // has been beaten. The second player's panel is 0x70 lower.
 void HudTopRight(ptr32<_sObject> pObj, int8 arg1, int8 player)
 {
-    RC_DIVERT_IF_CHANGED(HudTopRight, pObj, arg1, player);
     // Side tag: this element's sprites and text in the 2D packet.
     const rc::gfx::HudTag hud{rc::gfx::HudTopRight, rc::gfx::AnchorTopRight, {}};
     const rc::widescreen::AnchorScope anchorScope(hud.anchor); // widescreen: HUD corners anchored
     const rc::gfx::Span2D span(rc::gfx::DrawKey{rc::gfx::DrawHud, pObj.address, rc::gfx::HudTopRight, static_cast<uint32_t>(player)}, &hud);
     const uint32_t car = pObj.address;
-    const int32_t down = player == 0 ? 0 : 0x70;
+    const int32_t down = player == 0 ? 0 : (RC_VERSION_EU ? 0x80 : 0x70);
     const uint32_t res = hudRes();
     {
         GuestFrame frame(0x90);
@@ -439,7 +453,7 @@ void HudTopRight(ptr32<_sObject> pObj, int8 arg1, int8 player)
             const int32_t position = at<int32_t>(car + 0xe8u) != 0 ? at<int16_t>(car + 0x13cu) : at<int16_t>(car + 0x13eu);
             lift = 0;
             HudSprite(ptr32<_sSprite>(at<uint32_t>(res + 0x24u + static_cast<uint32_t>(position) * 4u)),
-                      ee_itof(slide() + 0x228), ee_itof(down - (slide() - 8)), 0x2808080);
+                      ee_itof(slide() + (RC_VERSION_EU ? 0x230 : 0x228)), ee_itof(down - (slide() - 8)), 0x2808080);
             laps = at<int16_t>(car + 0x104u);
         }
         const auto row = [&](int32_t offset, uint32_t text)
@@ -487,13 +501,14 @@ void HudTopRight(ptr32<_sObject> pObj, int8 arg1, int8 player)
 // screen gets only the digits.
 void HudBottomRight(ptr32<_sObject> pObj, int8 size, int8 player)
 {
-    RC_DIVERT_IF_CHANGED(HudBottomRight, pObj, size, player);
     // Side tag: this element's sprites and text in the 2D packet.
     const rc::gfx::HudTag hud{rc::gfx::HudBottomRight, rc::gfx::AnchorBottomRight, {}};
     const rc::widescreen::AnchorScope anchorScope(hud.anchor); // widescreen: HUD corners anchored
     const rc::gfx::Span2D span(rc::gfx::DrawKey{rc::gfx::DrawHud, pObj.address, rc::gfx::HudBottomRight, static_cast<uint32_t>(player)}, &hud);
     const uint32_t res = hudRes();
-    int32_t y = slide() + 0x98;
+    // Europe: 0x20 lower and 12 to the right (dial and digits), no lift for the second player in a split screen.
+    constexpr int32_t kRight = RC_VERSION_EU ? 0xc : 0;
+    int32_t y = slide() + (RC_VERSION_EU ? 0xb8 : 0x98);
     uint32_t speedSpr0, speedSpr1;
     ee_float digitsY, x0, x1;
     uint32_t rgb;
@@ -502,9 +517,13 @@ void HudBottomRight(ptr32<_sObject> pObj, int8 size, int8 player)
         if (size == 2)
         {
             const int32_t half = y / 2;
+#if RC_VERSION_EU
+            y = player == 1 ? half + 0x70 : half - 0x10;
+#else
             y = player == 1 ? half + 0x68 : half - 0x10;
             if (player != 0)
                 y -= 8;
+#endif
         }
         else
         {
@@ -514,20 +533,20 @@ void HudBottomRight(ptr32<_sObject> pObj, int8 size, int8 player)
             if (most < needle)
                 needle = most;
             const ee_float fy = ee_itof(y);
-            HudRotSpriteHI(ptr32<_sSprite>(at<uint32_t>(res + 0x48u)), ee_itof(slide() + 0x1e4), fy, 0x2000000, constant(sym::lit4_327640), -needle);
-            HudSpriteHI(ptr32<_sSprite>(at<uint32_t>(res + 0x48u)), ee_itof(slide() + 0x1e4), fy, 0x808080, constant(sym::lit4_327644));
-            HudSpriteHI(ptr32<_sSprite>(at<uint32_t>(res + 0x44u)), ee_itof(slide() + 0x1e4), fy, 0x20808080, constant(sym::lit4_327648));
+            HudRotSpriteHI(ptr32<_sSprite>(at<uint32_t>(res + 0x48u)), ee_itof(slide() + 0x1e4 + kRight), fy, 0x2000000, constant(sym::lit4_327640), -needle);
+            HudSpriteHI(ptr32<_sSprite>(at<uint32_t>(res + 0x48u)), ee_itof(slide() + 0x1e4 + kRight), fy, 0x808080, constant(sym::lit4_327644));
+            HudSpriteHI(ptr32<_sSprite>(at<uint32_t>(res + 0x44u)), ee_itof(slide() + 0x1e4 + kRight), fy, 0x20808080, constant(sym::lit4_327648));
         }
         const int32_t speed = ee_ftoi(at<ee_float>(at<uint32_t>(pObj.address + 0x20u) + 0x38u) * ee_float(float_from_bits(0x3b6a0000u)));
         const int32_t s = static_cast<int16_t>(at<uint16_t>(kHudSlide));
         const bool split = size == 2;
         digitsY = ee_itof(y + (split ? 0x20 : 0x18));
         rgb = split ? 0x2404040u : 0x4404040u;
-        x0 = ee_itof(s + (split ? 0x234 : 0x214));
+        x0 = ee_itof(s + (split ? 0x234 : 0x214) + kRight);
         speedSpr0 = at<uint32_t>(res + 0xa0u + static_cast<uint32_t>(speed / 10) * 4u);
         HudSpriteHI(ptr32<_sSprite>(speedSpr0), x0, digitsY, rgb, ee_float(0.0f));
         speedSpr1 = at<uint32_t>(res + 0xa0u + static_cast<uint32_t>(speed % 10) * 4u);
-        x1 = ee_itof(slide() + (split ? 0x244 : 0x224));
+        x1 = ee_itof(slide() + (split ? 0x244 : 0x224) + kRight);
     }
     HudSpriteHI(ptr32<_sSprite>(speedSpr1), x1, digitsY, rgb, ee_float(0.0f)); // a tail call
 }
@@ -536,7 +555,6 @@ void HudBottomRight(ptr32<_sObject> pObj, int8 size, int8 player)
 // flashing by their state at +0x48. The level's bounds scale the positions (level 'a' has fixed ones).
 void HudBottomLeft(ptr32<_sObject> arg0, int8 size, int8 player)
 {
-    RC_DIVERT_IF_CHANGED(HudBottomLeft, arg0, size, player);
     // Side tag: this element's sprites and text in the 2D packet.
     const rc::gfx::HudTag hud{rc::gfx::HudBottomLeft, rc::gfx::AnchorBottomLeft, {}};
     const rc::widescreen::AnchorScope anchorScope(hud.anchor); // widescreen: HUD corners anchored
@@ -548,11 +566,13 @@ void HudBottomLeft(ptr32<_sObject> arg0, int8 size, int8 player)
     if (player != 0 || at<uint32_t>(res + 8u) == 0)
         return;
     const uint32_t map = at<uint32_t>(res + 8u);
-    int32_t y0 = size == 2 ? 0x98 : 0xd8;
-    int32_t x0 = at<int32_t>(kMainMirror) != 0 ? static_cast<int32_t>(at<uint8_t>(map + 6u)) * 2 + 0x1a : 0x1a;
+    // Europe: 0x10 from the left, 0xf6 (split screen 0xa0) down.
+    constexpr int32_t kLeft = RC_VERSION_EU ? 0x10 : 0x1a, kDown = RC_VERSION_EU ? 0xf6 : 0xd8, kDownSplit = RC_VERSION_EU ? 0xa0 : 0x98;
+    int32_t y0 = size == 2 ? kDownSplit : kDown;
+    int32_t x0 = at<int32_t>(kMainMirror) != 0 ? static_cast<int32_t>(at<uint8_t>(map + 6u)) * 2 + kLeft : kLeft;
     if (at<uint8_t>(kMainLevel) == 0x61)
     {
-        y0 = size == 2 ? 0x98 : 0xd8;
+        y0 = size == 2 ? kDownSplit : kDown;
         at<int32_t>(kAINode + 0x18u) = -0x3e00;
         at<int32_t>(kAINode + 0x14u) = -0x3e00;
         x0 = 1;
@@ -600,7 +620,6 @@ void HudBottomLeft(ptr32<_sObject> arg0, int8 size, int8 player)
 // The wrong-way and lost signs (flashing), and the weapon held: its count and its icon, which fades in from white.
 void HudMiddle(ptr32<_sObject> pObj, int8 size, int8 arg2)
 {
-    RC_DIVERT_IF_CHANGED(HudMiddle, pObj, size, arg2);
     // Side tag: this element's sprites and text in the 2D packet.
     const rc::gfx::HudTag hud{rc::gfx::HudMiddle, rc::gfx::AnchorCentre, {}};
     const rc::widescreen::AnchorScope anchorScope(hud.anchor); // widescreen: HUD corners anchored
@@ -616,14 +635,14 @@ void HudMiddle(ptr32<_sObject> pObj, int8 size, int8 arg2)
         if (at<int32_t>(car + 0xf0u) >= 0x3b7 && (at<uint8_t>(kHudFlash) & 8) != 0)
         {
             if (size == 2)
-                HudWrongWayX(0x140, at<int32_t>(kMainWhichSplit) != 0 ? 0xa8 : 0x30, 0x10);
+                HudWrongWayX(0x140, at<int32_t>(kMainWhichSplit) != 0 ? (RC_VERSION_EU ? 0xb0 : 0xa8) : 0x30, 0x10);
             else
                 HudWrongWayX(0x140, 0x40, 0x20);
         }
         if (at<int32_t>(car + 0xecu) >= 0x15 && (at<uint8_t>(kHudFlash) & 8) != 0)
         {
             if (size == 2)
-                HudLost(0x140, at<int32_t>(kMainWhichSplit) != 0 ? 0xa8 : 0x30, 0x10);
+                HudLost(0x140, at<int32_t>(kMainWhichSplit) != 0 ? (RC_VERSION_EU ? 0xb0 : 0xa8) : 0x30, 0x10);
             else
                 HudLost(0x140, 0x48, 0x18);
         }
@@ -642,7 +661,7 @@ void HudMiddle(ptr32<_sObject> pObj, int8 size, int8 arg2)
         const int32_t py = at<int32_t>(kHud + 0x8cu + which), px = at<int32_t>(kHud + 0x84u + which);
         rgb = static_cast<uint32_t>(at<int32_t>(kHud + 0x7cu + which)) * 0x10101u | 0x80000000u;
         guest_call(kSprintf, kBuff, (sym::sec_sdata + 0x218u), static_cast<int32_t>(at<int8_t>(car + 0x194u))); // "%d"
-        print(px + 0xd, py + 0xc, kBuff);
+        print(px + 0xd, py + (RC_VERSION_EU ? 4 : 0xc), kBuff);
         fx = ee_itof(px - 0x20);
         fy = ee_itof(py - 0x10);
         const int32_t next = at<int8_t>(car + 0x1afu);
@@ -678,7 +697,6 @@ void HudMiddle(ptr32<_sObject> pObj, int8 size, int8 arg2)
 // "DEMO" instead.
 void HudPanel(ptr32<_sObject> pObj, int8 player)
 {
-    RC_DIVERT_IF_CHANGED(HudPanel, pObj, player);
     // Side tag: this element's sprites and text in the 2D packet.
     const rc::gfx::HudTag hud{rc::gfx::HudPanel, rc::gfx::AnchorStretch, {}};
     const rc::widescreen::AnchorScope anchorScope(hud.anchor); // widescreen: HUD corners anchored
@@ -718,7 +736,7 @@ void HudPanel(ptr32<_sObject> pObj, int8 player)
             return;
         }
     }
-    FontCentre(0xcc, ptr32<char>((sym::sec_sdata + 0x228u))); // "DEMO", a tail call
+    FontCentre(RC_VERSION_EU ? 0xdc : 0xcc, ptr32<char>((sym::sec_sdata + 0x228u))); // "DEMO", a tail call
 }
 
 // The front end's locked tracks: at each locked track's camera a car shadow and a padlock.

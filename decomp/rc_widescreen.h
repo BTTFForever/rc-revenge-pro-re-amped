@@ -46,7 +46,4 @@ struct RaceMenuScope
     ~RaceMenuScope();
 };
 
-// Wraps the recompiled HUD/2D functions whose natives this version does not register (Europe) in the same scopes.
-void installScopeWrappers(::PS2Runtime &runtime);
-
 } // namespace rc::widescreen

@@ -8,6 +8,11 @@
 // call (`j`) in the original runs after its frame is popped, so it is made outside the GuestFrame's scope here.
 
 #include "ee_math.h"
+#include "rc_decomp.h"
+
+// Europe variants: VfxUpdate and Vfx2PodiumPlay store in another order (the same body).
+RC_VERSION_VARIANT(VfxUpdate)
+RC_VERSION_VARIANT(Vfx2PodiumPlay)
 #include "vifpk.h"
 #include "visfx.h"
 #include "../rc_frame_tick.h"
@@ -887,7 +892,6 @@ ptr32<_sVfx_Object> VfxAddNew(ptr32<_sObject> pPlayerObj, int32 iY, int32 iZ, in
 // (as in the original).
 void VfxUpdate(ptr32<void> arg0, tTime time)
 {
-    RC_DIVERT_IF_CHANGED(VfxUpdate, arg0, time);
     GuestFrame frame(0xb0);
     const ptr32<memHandle> handle = frame.local<memHandle>(0);
     const uint32_t first = at<uint32_t>(kObjects);
@@ -1060,7 +1064,6 @@ void Vfx2CallBack(ptr32<_sTOBInst> pTOBInst, uint32 tag)
 // menu is set up, and a key (or the count reaching 0x100) hands over to the front end.
 void Vfx2PodiumPlay()
 {
-    RC_DIVERT_IF_CHANGED(Vfx2PodiumPlay);
     {
         GuestFrame frame(0x50);
         const uint32_t start = at<uint32_t>(at<uint32_t>(kLvl) + 0x30); // pLvlG->pStartData: the start positions, 8 bytes each

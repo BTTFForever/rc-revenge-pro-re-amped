@@ -3,6 +3,10 @@
 // visfx8.cpp; see visfx5.cpp for the renderers' conventions.
 
 #include "ai_fuzz.h"
+#include "rc_decomp.h"
+
+// Europe variant: VfxRenderer_DamageLightning computes in another order (the same body).
+RC_VERSION_VARIANT(VfxRenderer_DamageLightning)
 #include "ee_math.h"
 #include "vifpk.h"
 #include "visfx.h"
@@ -383,7 +387,6 @@ void VfxRenderer_AerialLightning(ptr32<_sVfx_Object> mem)
 // at +0x40 of the effect, eight bytes apart), fading in from black at the base to yellow-green as the effect ages.
 void VfxRenderer_DamageLightning(ptr32<_sVfx_Object> mem)
 {
-    RC_DIVERT_IF_CHANGED(VfxRenderer_DamageLightning, mem);
     GuestFrame frame(0x110);
     const uint32_t m = mem.address;
     const uint32_t car = at<uint32_t>(m + 0x78);

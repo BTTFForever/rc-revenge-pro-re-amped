@@ -758,7 +758,6 @@ namespace
         rc::vu1::installChecks();
         rc::vu1::installTrackDraw();
         rc::installDecomp(runtime);
-        rc::widescreen::installScopeWrappers(runtime); // Europe's recompiled HUD/2D functions
         PS2Runtime::IoPaths paths = PS2Runtime::getIoPaths();
         const std::filesystem::path isoPath = paths.elfDirectory.parent_path() / kIsoName;
         if (!indexIso(isoPath))
