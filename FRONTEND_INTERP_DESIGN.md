@@ -1,5 +1,9 @@
 # The front end at high refresh rates: design (2026-11-24)
 
+**Built 2026-11-24** (batches 1-3; batch 4 not done): see PERF_INVESTIGATION.md, "As built (2026-11-24): the menus
+at high refresh rates". One correction: `VfxUpdate` reschedules every 25 ms, not 1 ms (the effect handlers were
+already clock-timed).
+
 Read-only study (nothing built, the game not run). Question from the user: the menus (front end) still run at the
 video mode's rate (60 USA, 50 Europe) while races go up to 144 Hz with smooth motion; make the menus present at the
 high rate smoothly too. Background: `PERF_INVESTIGATION.md`, "As built (2026-11-23): high refresh rates and drawing

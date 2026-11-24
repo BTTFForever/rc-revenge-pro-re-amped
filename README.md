@@ -34,16 +34,17 @@ start), and are saved to `~/.config/rc-revenge-pro/settings.ini`:
 | HUD and menus | Corrected, Stretched | In widescreen: HUD pinned to the screen's corners and menus kept in shape (pillarboxed), or the original layout stretched |
 | Screen mode | Window, Fullscreen | True fullscreen on the current monitor (F11 toggles too) |
 | Resolution (restart) | 1x to 6x | Internal resolution (3x-4x for 1080p-1440p) |
-| Race frame rate | 60, 90, 120, 144, 165, 240 | Races run up to this rate (match your screen); menus keep the original rate; game speed unchanged |
-| Smooth motion | On, Off | Cars, wheels and camera drawn between the game's 50 Hz physics steps: even motion at any frame rate (also at 60) |
+| Frame rate | 60, 90, 120, 144, 165, 240 | Races run up to this rate (match your screen), and with Smooth motion on the menus too; game speed and timing unchanged (the game's logic keeps its 60 Hz ticks, 50 in Europe; the extra pictures are drawn between them). Saved as `race_fps` |
+| Smooth motion | On, Off | Cars, wheels and camera drawn between the game's 50 Hz physics steps: even motion at any frame rate (also at 60). In the menus (above 60/50 Hz): the fly-by camera, the turntable and podium cars and the animated scenery drawn between the menus' 60 Hz ticks (the 2D menus themselves step at 60, as on the PS2). Off: the menus keep the original rate |
 | V-Sync | Off, On, Adaptive | The window's swap interval. Adaptive (late frames tear instead of waiting) needs `GLX_EXT_swap_control_tear` from the X server; under XWayland with PRIME offload it is not offered, so it acts as On |
-| Variable refresh | Off, On | For a VRR (FreeSync/G-SYNC/Adaptive Sync) screen: each new picture is shown when it is ready (menus at the game's 50/60 Hz without judder), races capped 3 below the screen's rate (141 on 144 Hz). The desktop must allow VRR for the window (KDE: Display Configuration, Adaptive sync "Always", or fullscreen with "Automatic") |
+| Variable refresh | Off, On | For a VRR (FreeSync/G-SYNC/Adaptive Sync) screen: each new picture is shown when it is ready, races (and with Smooth motion the menus) capped 3 below the screen's rate (141 on 144 Hz); with Smooth motion off the menus show at the game's 50/60 Hz without judder. The desktop must allow VRR for the window (KDE: Display Configuration, Adaptive sync "Always", or fullscreen with "Automatic") |
 
 Game Options (and the pause menu's Game Options) also shows the developers' **Debug Menus**, left hidden on the disc. Apart from Mirror
 Mode (the game's normal mirrored tracks), its items are not connected to anything in the released game.
 
-All settings work in both versions. In Europe (PAL, 50 Hz video) the menus keep 50 and races run at the chosen
-rate; the physics step is the same 20 ms in both, so game speed is unchanged.
+All settings work in both versions. In Europe (PAL, 50 Hz video) the menus' logic keeps its 50 Hz ticks (shown at
+the chosen rate with Smooth motion, else at 50) and races run at the chosen rate; the physics step is the same 20 ms in
+both, so game speed is unchanged.
 
 **Controls**: each player is a virtual DualShock 2 read from the keyboard and/or a gamepad. In **Game Options >
 Controls** (the game's own Controller configuration page, which keeps its button layouts and vibration settings) the
@@ -84,7 +85,9 @@ disconnect and reconnect one), through the whole gamepad path; a line `shot <nam
 `<name>.png` in `PS2X_SCREENSHOT_DIR` (in order with port 0's lines). `RC_MENU_DUMP=2` dumps the menus' texts in all
 four languages.
 `PS2X_RUMBLE_LOG=1` logs the game's motor values and what the virtual gamepads receive. Switches for comparing or bypassing the other enhancements
-(all on by default): `RC_WATER_SHADER=0` (water on the CPU), `PS2X_GS_DIRECT_PRESENT=0` (frames copied through RAM),
+(all on by default): `RC_FE_INTERP=0` (menus at the video rate), `RC_FRAME_TICK=0` (races above the video rate step
+their per-frame logic every picture, as before; `RC_TICK_LOG=1` logs passes, logic ticks and the rates of what they
+step; `RC_FE_INTERP_LOG=1|2` and `RC_FE_TRACE=<file>` the menus' blending and their state per tick), `RC_WATER_SHADER=0` (water on the CPU), `PS2X_GS_DIRECT_PRESENT=0` (frames copied through RAM),
 `PS2X_GS_HW_TRACK_MULTITEX=0` and `..._DIRECT=0` (fewer draws), `PS2X_GS_HW_MULTIPASS=0`. `RC_BOOT_LEVEL=<n>` starts
 the attract demo on level n, `RC_DEMO_SECS=<n>` lengthens it, `tools/track_sweep.sh` measures every track's frame rate
 over a lap. `PERF_INVESTIGATION.md` records each change, how it was checked and what it gained.

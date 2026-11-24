@@ -458,6 +458,74 @@ errors; window captures of levels 9, 4, 18 look right. New pictures a second at 
 drawing 33% (was 43%), CLUT loads 16%, slot set-up 10%, the rest spread over the command queue, VRAM uploads and
 the present. Halving the draws mostly lowered the driver's share.
 
+## As built (2026-11-24): the menus at high refresh rates, and the races' per-frame logic on ticks
+
+Design: `FRONTEND_INTERP_DESIGN.md` (option A, batches 1-3; batch 4, blending the effect particles and the banner, not
+done). Code: `decomp/rc_frame_tick.{h,cpp}` (the clock and the rate switching), `decomp/rc_front_interp.{h,cpp}`
+(the front end's blending and its 2D resend), hooks in `FrontEndProcess`, `MainGameProcess`, `Rdr_EndFrame`,
+`GfxP2_SwapBuffers`, `VSyncCallbackFunction`, `VfxRender`, `Vfx3Rain`, `Vfx3Glint` and the input clock (overrides).
+
+**The tick clock.** When the vblank runs faster than the video mode (the Frame rate setting above 60 USA / 50 Europe;
+in the front end only with Smooth motion on), each loop pass asks `frametick::beginPass()` whether it is a logic tick:
+one pass per video-mode period (16,683 us / 20,000 us), never two in one pass, timed on the emulated vblank (vblanks
+counted times their period: each pass starts at a vblank and is shown at the next, so the blend is exact for the
+picture; the host clock gave ~5% uneven camera steps). The vblank is paced to real time, so ticks keep real time.
+- **Front end**: tick passes run the original body. The camera, the scenery objects (TSOs, their matrices built
+  before the draw as `TSORender` would) and the turntable's cars are kept per tick and drawn blended between the last
+  two ticks (one tick behind, as races); the real state goes back before any logic (`CarouselRender` and the menus see
+  it). Passes between ticks redraw the 3D only (`TSORender`, `CarouselDraw`, the podium through the race's
+  `RcInterpBeginDraw`), resend the tick's 2D packet part (K1, from the menus to the effects: ~35-57 KB; no 3D work is
+  ever added there, checked per second), and put back what the draws write: the objects, the scenery objects' flags
+  (`TSORender` clears the turntable's "in view" bit, which `CarouselRender` sets again on ticks only: without this the
+  cars vanished between ticks) and the turntable's clock. Video rate for the first pass (memory card), load/save and
+  memory card screens, the automatic load, the credits (they count vblanks) and the exit fade.
+- **Races**: tick passes do the per-frame logic (input, sound and music steps, the pause and results menus, rain
+  particles, tints, the vblank counter); the passes between draw the race (blended by smooth motion, as before) and
+  resend the tick's pause-menu 2D. The physics keeps its own 20 ms task. `RC_FRAME_TICK=0` restores the old way.
+- Everywhere: animated textures step on ticks only (`Rdr_EndFrame` re-uploads the same frame between ticks), the
+  podium's logic, rain and glints are drawn without stepping between ticks (the splashes' jitter from a host generator,
+  so the game's `rand()` sequence is untouched), the vblank counter counts video fields, and the input recording clock
+  counts ticks: `PS2X_PAD_REPLAY` files play the same at any rate, in menus and races.
+
+Correction to the design study: the effects task (`VfxUpdate`) reschedules itself every 25 ms, not every 1 ms, so the
+effect handlers (butterflies, sparks) were already clock-timed (40 Hz) in menus and races.
+
+**Measurements** (RTX 2060 via PRIME, 144 Hz screen, scale 2, 16:9, V-Sync on; `PS2X_PRESENT_LOG`, `RC_TICK_LOG=1`,
+`RC_FE_INTERP_LOG`, `RC_FE_TRACE`; scripted with `PS2X_PAD_LIVE`, `PS2X_PAD_REPLAY` and in-process `shot`s):
+
+| front end | presents/s | game fields/s | passes/s | logic ticks/s |
+|---|---|---|---|---|
+| USA, 144, smooth on | 143-144 | 143 | 144.0 | 60.0 |
+| Europe, 144, smooth on | 141-144 | 143 | 143.9 | 50.0 |
+| USA, VRR on (144 Hz screen) | 138 | 140 | 140.9 | 60.0 |
+| USA, 144, smooth off | 141 | 59.6 | 59.9 | 59.9 (as before) |
+| USA, frame rate 60 | 59 | 59 | 60.0 | 59.9 (as before) |
+| USA, 144, credits / memory card screen | | 59-60 | | (video rate) |
+
+- **Same logic at 60 and 144**: three `tools/front_walk.py` walks (seeds 7, 11, 12) replayed at frame rate 60
+  (feature off) and 144 with `RC_FE_TRACE`: identical active menu, selection, statuses, camera position, camera path
+  node and interp, turntable segment and music volume at every one of 794, 6,502 and 6,554 ticks. Only the
+  turntable's clock-timed mode flip (it stops when its angle reaches the target) lands one tick apart at 1-4 ticks.
+- **Fly-by camera** (`RC_FE_INTERP_LOG=2`, 144): fly-bys move up to ~27,500 camera units a tick (cuts are steps far
+  above the last, `RC_FE_INTERP_JUMP`); drawn, each picture's step differs from the mean of its neighbours by 1.8%
+  on average (the speed changes along the path at tick boundaries). Speed: the camera path is stepped per tick, so
+  the fly-by takes the same ticks (and time) as at 60 (trace above).
+- **Turntable**: the highlighted car is visible and turns a little each picture (8 consecutive captures); turning
+  between cars moves a car ~470 units a tick (USA), ~540 (Europe), blended.
+- **Menu slider** (Game Options > Audio Setup, music volume held 2 s): 119 steps in 1,986 ms at 144, 1,983 ms at 60.
+
+| race (two-player Horror World, rain; 144 Hz screen) | 60 | 144 before (`RC_FRAME_TICK=0`) | 144 now |
+|---|---|---|---|
+| pause menu music slider, steps/s | 60.0 | 67.7-103.7 (follows the picture rate) | 60.1-60.6 |
+| music fade on pausing, ms | 249-250 | 148-158 | 243-245 |
+| animated-texture frames/s | 60.0 | 90.6-103.5 | 59.8-59.9 |
+| rain and glint steps/s (two halves) | 120 | 181 | 119.8 |
+| vblank counter (menu border shimmer)/s | 60.0 | 90.5-103.4 | 59.8-59.9 |
+| pictures/s | 60 | 90-104 | 99-106 |
+
+Not covered by tests: the podium (it needs a finished race; its cars use the race's blending, unchanged), the attract
+demo's 30 s idle start (its timer task is clock-timed, unchanged), the Track Editor (stays at the video rate).
+
 ## The two renderer routes
 
 **(a) Keep the emulated GS's GL renderer and speed it up PCSX2-style.**
