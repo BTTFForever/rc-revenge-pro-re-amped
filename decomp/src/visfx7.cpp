@@ -6,6 +6,7 @@
 #include "ee_math.h"
 #include "vifpk.h"
 #include "visfx.h"
+#include "../rc_frame_tick.h"
 
 #include <algorithm>
 #include <emmintrin.h>
@@ -485,6 +486,11 @@ void Vfx3Glint()
     vfx::vu0Sub(offset.address, kCamera, kLastSpot + screen);
     const ee_float near(200.0f);
     bool nearLast = !(near < ee_abs(at<float>(offset.address))) && !(near < ee_abs(at<float>(offset.address + 4))) && !(near < ee_abs(at<float>(offset.address + 8)));
+    // Enhancement: between logic ticks (rc_frame_tick.h) the live glints are drawn as the tick left them: none start,
+    // age or die.
+    const bool step = frametick::logicPass();
+    if (step)
+        frametick::countGlintStep();
     const uint32_t sp = vfx::sprite();
     at<uint8_t>(sp + vfx::spr::kCode) = 2;
     at<uint16_t>(vfx::sprite() + vfx::spr::kAngle) = 0;
@@ -494,7 +500,7 @@ void Vfx3Glint()
         const uint32_t glint = kGlints + i * 0x30;
         if (at<int16_t>(glint + 0x10) == 0)
         {
-            if (nearLast)
+            if (nearLast || !step)
                 continue;
             at<uint16_t>(glint + 0x12) = static_cast<uint16_t>((vfx::random15() & 0x3f) + 0x3c);
             const int32_t r = rand();
@@ -521,17 +527,20 @@ void Vfx3Glint()
         const ee_float dx = ee_abs(at<float>(offset.address));
         if (limit < dx)
         {
-            at<int16_t>(glint + 0x10) = 0;
+            if (step)
+                at<int16_t>(glint + 0x10) = 0;
             continue;
         }
         const ee_float dz = ee_abs(at<float>(offset.address + 8));
         if (limit < dz)
         {
-            at<int16_t>(glint + 0x10) = 0;
+            if (step)
+                at<int16_t>(glint + 0x10) = 0;
             continue;
         }
         const ee_float distance = (dx + dz) * ee_float(at<float>(sym::lit4_327908));
-        at<uint16_t>(glint + 0x10) = static_cast<uint16_t>(at<uint16_t>(glint + 0x10) + 1);
+        if (step)
+            at<uint16_t>(glint + 0x10) = static_cast<uint16_t>(at<uint16_t>(glint + 0x10) + 1);
         int32_t away = ee_ftoi(distance);
         away = away < 0x100 ? away : 0xff;
         away = 0xff - away;

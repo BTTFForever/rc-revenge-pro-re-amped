@@ -9,6 +9,7 @@
 #include "physics_fuzz.h"
 #include "weapon.h"
 #include "rc_settings.h"
+#include "../rc_frame_tick.h"
 
 #include <algorithm>
 #include <cmath>
@@ -359,53 +360,26 @@ float jumpLimit()
 
 } // namespace interp
 
-// The race frame rate (settings: Game Options > Display, race_fps, PS2X_REFRESH_HZ): vblanks at n Hz while a race (or the demo) runs, so its loop draws up to n frames a second; the
-// race keeps time on its own clock. The front end and other screens step their animations once a frame, so they keep
-// the video mode's rate.
-namespace {
-bool g_racing = false;
-uint32_t g_normalPeriod = 0; // the video mode's vblank period, while a race runs faster
-}
-
+// The frame rate (settings: Game Options > Display, race_fps, PS2X_REFRESH_HZ): vblanks at n Hz while a race (or the
+// demo) runs, so its loop draws up to n frames a second; the race keeps time on its own clock, and the loop's per-frame
+// logic runs on video-rate ticks (rc_frame_tick.h). The front end goes fast by itself (FrontEndProcess, with Smooth
+// motion); the other screens keep the video mode's rate.
 void RcRefreshRace(bool racing)
 {
-    EeScheduler &scheduler = g_runtime->eeScheduler();
-    g_racing = racing;
-    if (racing)
+    frametick::setFast(frametick::Owner::Race, racing);
+    static bool logged = false;
+    if (racing && frametick::fast() && !logged && std::getenv("RC_INTERP_LOG"))
     {
-        const uint32_t hz = static_cast<uint32_t>(settings::raceRefreshHz()); // Game Options > Display
-        const uint32_t normal = g_normalPeriod != 0u ? g_normalPeriod : static_cast<uint32_t>(scheduler.vblankPeriod().count());
-        if (hz == 0u || 1000000u / hz >= normal) // not faster than the video mode (60 on NTSC, 50 on PAL)
-        {
-            if (g_normalPeriod != 0u)
-            {
-                scheduler.setVBlankPeriodMicroseconds(g_normalPeriod);
-                g_normalPeriod = 0;
-            }
-            return;
-        }
-        g_normalPeriod = normal;
-        scheduler.setVBlankPeriodMicroseconds(1000000u / hz);
-        static bool logged = false;
-        if (!logged && std::getenv("RC_INTERP_LOG"))
-        {
-            logged = true;
-            std::fprintf(stderr, "[race-fps] vblank %u us -> %u us, physics step %d ms\n", normal, 1000000u / hz, at<int32_t>(kTimeStep));
-        }
-    }
-    else if (g_normalPeriod != 0u)
-    {
-        scheduler.setVBlankPeriodMicroseconds(g_normalPeriod);
-        g_normalPeriod = 0;
+        logged = true;
+        std::fprintf(stderr, "[race-fps] vblank %u Hz, video %u us, physics step %d ms\n", frametick::raceHz(), frametick::videoPeriodUs(),
+                     at<int32_t>(kTimeStep));
     }
 }
 
-// The settings changed (Pause Menu > Game Options > Display): a race on picks up its new frame rate at once.
+// The settings changed (Game Options > Display, in the front end or a race's pause menu): the new frame rate at once.
 void RcRefreshRaceUpdate()
 {
-    if (!g_racing)
-        return;
-    RcRefreshRace(true); // faster than the video mode, or back to it
+    frametick::reapply();
 }
 
 namespace interp {

@@ -10,6 +10,7 @@
 #include "ee_math.h"
 #include "vifpk.h"
 #include "visfx.h"
+#include "../rc_frame_tick.h"
 
 #include <emmintrin.h>
 
@@ -1001,7 +1002,8 @@ void VfxRender()
     visFxClass &fx = G(visFxVarG);
     fx.sprite = fx.uiScratchSpriteAddress;
     at<uint32_t>(fx.uiScratchSpriteAddress.address + 0x1c) = 0; // vuPos[3]
-    guest_call(sym::Vfx2PodiumPlay); // Vfx2PodiumPlay
+    if (frametick::logicPass()) // enhancement: between logic ticks (rc_frame_tick.h) only the drawing
+        guest_call(sym::Vfx2PodiumPlay); // Vfx2PodiumPlay
     guest_call(sym::VfxSkyChangeStuff); // VfxSkyChangeStuff
     guest_call(sym::Vfx2RenderTSFX); // Vfx2RenderTSFX
     guest_call(sym::VfxCallRenderers); // VfxCallRenderers

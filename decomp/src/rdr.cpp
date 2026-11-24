@@ -6,6 +6,7 @@
 // tags, one per frame, swapped each frame.
 
 #include "rc_settings.h" // enhanced recomp: widescreen
+#include "../rc_frame_tick.h"
 #include "rc_widescreen.h"
 #include "display_fuzz.h"
 #include "ee_math.h"
@@ -240,6 +241,10 @@ void Rdr_EndFrame()
     end.qwc = 0;
     end.mark = 0;
     end.next = nullptr;
+    // Enhancement: between logic ticks (rc_frame_tick.h) the animated textures are uploaded again at the same frame
+    // (framecount / 3 is their clock: stepping it every picture ran them 2.4 times fast at 144 Hz).
+    if (!frametick::logicPass())
+        G(framecount) = G(framecount) - 1;
     GfxTex_Update();
     guest_call(kSceGsSyncPath, 0, 0);
     startVif1Chain((rdr.frameNumber & 1u) == 0 ? rdr.pDmaTag.address : rdr.pDmaTag.address + 1000u * 16u);

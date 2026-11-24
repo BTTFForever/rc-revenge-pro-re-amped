@@ -11,6 +11,8 @@
 
 #include "front.h"
 #include "front_fuzz.h"
+#include "../rc_frame_tick.h"
+#include "../rc_front_interp.h"
 
 #include <optional>
 
@@ -24,6 +26,11 @@ RC_VERSION_VARIANT(FEStartPos)
 
 namespace rc::enhance {
 void poll(); // rc_enhance_menu.cpp
+}
+
+namespace rc {
+void RcInterpBeginDraw(int32_t time); // gametask.cpp
+void RcInterpEndDraw();
 }
 
 namespace rc {
@@ -213,6 +220,83 @@ void FrontEndInit()
     CarouselSetAvailability();
 }
 
+namespace {
+
+// Enhancement: a pass between two logic ticks (rc_front_interp.h). The 3D of the tick's frame drawn again with the
+// state blended for this moment, the tick's 2D sent again; no logic, input, sound, task or menu code runs, and
+// whatever the draws write to the objects, the turntable and the animated textures is put back. False when the 3D
+// window could not be set up (the tick would return then too).
+bool renderOnlyPass(GuestFrame &frame)
+{
+    mainClass &m = mainVars();
+    sFrontEndClass &f = fe();
+    guest_call<void>(sym::Rdr_StartFrame);
+    guest_call<void>(sym::RdrState_ApplyDefaultStateBlock);
+    const tTime tickTime = m.time;
+    m.time = guest_call<int32_t>(sym::TimerGet, guest_addr(&m.gameTimer)); // the clock-timed animations at this moment
+    at<uint32_t>(sym::cameraVarG + 0xb70u) = sym::cameraVarG;
+    frontinterp::objectsSave();
+    frontinterp::applyCamera();
+    frontinterp::applyScenery();
+    frontinterp::logDrawnCamera();
+    bool ok = guest_call<int32_t>(sym::Init3dFrame, sym::mainVarG + 0x20u, sym::cameraVarG + 0x24u, m.time, 0) != 0;
+    if (ok)
+    {
+        guest_call<void>(sym::MeshInitFrame);
+        guest_call<void>(sym::LsFrameInit, m.time, 0, 0);
+        const ptr32<int32_t> temp = frame.local<int32_t>(0);
+        temp[0] = 0;
+        temp[1] = 0;
+        temp[2] = 0;
+        m.iWhichSplitScreen = 0;
+        guest_call<void>(sym::CellRenderInit, temp);
+        guest_call<void>(sym::Init3dChangeViewcone, static_cast<uint32_t>(at<uint16_t>(at<uint32_t>(sym::cameraVarG + 0xb70u) + 0x574u)));
+        guest_call<void>(sym::LsRenderWorld);
+        frontinterp::sceneryFlagsSave();
+        guest_call<void>(sym::TSORender, m.time);
+        frontinterp::sceneryFlagsRestore();
+        if (static_cast<uint32_t>(f.active - 3) < 2u)
+        {
+            if (G(dontDrawCarouselCarsFixG) == 1)
+            {
+                RcInterpBeginDraw(m.time);
+                guest_call<void>(sym::VfxRenderShadows);
+                guest_call<void>(sym::ObjectRenderAll);
+                RcInterpEndDraw();
+            }
+        }
+        else
+        {
+            sCarouselClass &c = carousel();
+            const tTime lastUpdated = c.lastUpdated; // CarouselDraw sets it: the turntable's next turn is timed from it
+            frontinterp::carsApply();
+            guest_call<void>(sym::VfxRenderShadows);
+            CarouselDraw(m.time);
+            frontinterp::carsRestore();
+            c.lastUpdated = lastUpdated;
+        }
+        guest_call<void>(sym::RdrAlphaAddToDmaChain);
+        guest_call<void>(sym::HudDrawLockedTracks);
+    }
+    frontinterp::restoreScenery();
+    frontinterp::restoreCamera();
+    if (ok)
+    {
+        frontinterp::k1Replay();
+        frontinterp::applyCamera();
+        guest_call<void>(sym::VfxRender); // its logic part (the podium's) runs on ticks only
+        frontinterp::restoreCamera();
+        frontinterp::objectsRestore();
+        guest_call<void>(sym::Rdr_EndFrame); // its animated-texture step too
+    }
+    else
+        frontinterp::objectsRestore();
+    m.time = tickTime;
+    return ok;
+}
+
+} // namespace
+
 // The front end: one frame per pass, until a choice sets mainVarG.status (a race, the Track Editor, a demo), then the
 // music fades out.
 void FrontEndProcess()
@@ -227,9 +311,30 @@ void FrontEndProcess()
     m.lastFrameTime = guest_call<int32_t>(sym::TimerGet, timer);
     guest_call<void>(sym::LoadingCallbackTerm);
     bool doCredits = false;
+    // Enhancement (FRONTEND_INTERP_DESIGN.md, rc_front_interp.h): with Smooth motion on and the frame rate above the
+    // video rate, the vblank runs at that rate here too; the logic below runs on video-rate ticks, the passes between
+    // them only draw (renderOnlyPass). Back to the video rate for whatever counts vblanks or waits on them: the first
+    // pass (the memory card), the load/save screens, the automatic load, the credits, the exit fade.
+    struct RateGuard
+    {
+        ~RateGuard() { frametick::setFast(frametick::Owner::Front, false); }
+    } rateGuard;
     do
     {
+        const bool fastOk = frontinterp::enabled() && G(firstEntryG) != 0 && f.loadSaveFlag == 0 &&
+                            !(static_cast<int32_t>(m.activeLanguage) != kNoLanguage && G(autoLoadDoneG) == 0);
+        frametick::setFast(frametick::Owner::Front, fastOk);
+        const bool tick = frametick::beginPass();
+        frontinterp::logPass(tick);
+        if (!tick)
+        {
+            if (!renderOnlyPass(frame))
+                return;
+            continue;
+        }
         ++frameCnt;
+        frontinterp::trace(frameCnt);
+        frametick::logSecond();
         guest_call<void>(sym::Rdr_StartFrame);
         bool menuDone = false;
         guest_call<void>(sym::RdrState_ApplyDefaultStateBlock);
@@ -256,8 +361,17 @@ void FrontEndProcess()
         guest_call<void>(sym::SfxDoSfx);
         guest_call<void>(sym::RCMusicFadeControl);
         at<uint32_t>(sym::cameraVarG + 0xb70u) = sym::cameraVarG; // pCamera = camera
+        // enhancement: this tick's drawn state kept, the 3D drawn between the last tick's and this one's
+        frontinterp::tickCapture();
+        frontinterp::applyCamera();
+        frontinterp::applyScenery();
+        frontinterp::logDrawnCamera();
         if (guest_call<int32_t>(sym::Init3dFrame, sym::mainVarG + 0x20u, sym::cameraVarG + 0x24u, m.time, 0) == 0)
+        {
+            frontinterp::restoreScenery();
+            frontinterp::restoreCamera();
             return;
+        }
         guest_call<void>(sym::MeshInitFrame);
         guest_call<void>(sym::LsFrameInit, m.time, 0, 0);
         const ptr32<int32_t> temp = frame.local<int32_t>(0);
@@ -273,19 +387,29 @@ void FrontEndProcess()
         {
             if (G(dontDrawCarouselCarsFixG) == 1)
             {
+                if (frametick::fast())
+                    RcInterpBeginDraw(m.time); // enhancement: the podium's cars between physics steps
                 guest_call<void>(sym::VfxRenderShadows);
                 guest_call<void>(sym::ObjectRenderAll);
+                RcInterpEndDraw();
             }
         }
         else
         {
+            frontinterp::restoreCamera(); // the turntable's logic sees the real camera
             CarouselRender(m.time);
+            frontinterp::carsCapture();
+            frontinterp::applyCamera();
+            frontinterp::carsApply();
             guest_call<void>(sym::VfxRenderShadows);
             CarouselDraw(m.time);
+            frontinterp::carsRestore();
         }
         guest_call<void>(sym::RdrAlphaAddToDmaChain);
         BuildLockedTracksList();
         guest_call<void>(sym::HudDrawLockedTracks);
+        frontinterp::restoreScenery(); // the menu logic sees the real state
+        frontinterp::restoreCamera();
         if (G(firstEntryG) == 0) // the first frame: load the saved game from the memory card
         {
             bool checkSpace = false;
@@ -319,6 +443,9 @@ void FrontEndProcess()
         }
         G(firstEntryCountDownG) = 0;
         G(firstEntryG) = 1;
+        const bool keep2d = frametick::fast();
+        if (keep2d)
+            frontinterp::k1Begin(); // enhancement: the 2D from here to the effects is kept for the passes between ticks
         if (static_cast<int32_t>(m.activeLanguage) != kNoLanguage && G(autoLoadDoneG) == 0)
         {
             GameAutoLoadSetup();
@@ -487,15 +614,21 @@ void FrontEndProcess()
                 guest_call<uint32_t>(sym::strcpy, guest_addr(m.trackNames[0]), pName);
             }
         }
+        if (keep2d)
+            frontinterp::k1End();
+        frontinterp::applyCamera();
         guest_call<void>(sym::VfxRender);
+        frontinterp::restoreCamera();
         guest_call<void>(sym::ObjectResetAllTint);
         guest_call<void>(sym::Rdr_EndFrame);
         if (doCredits)
         {
             doCredits = false;
+            frametick::setFast(frametick::Owner::Front, false); // the credits scroll by counted vblanks
             CreditsDisplay(menuSystem().pActiveMenu);
         }
     } while (m.status == 0);
+    frametick::setFast(frametick::Owner::Front, false); // the fade below counts vblanks
     guest_call<void>(sym::SfxDoSfx);
     const uint32_t fade = sym::rcmusicVarG + 0x14u;
     while (at<int32_t>(fade) != 0)

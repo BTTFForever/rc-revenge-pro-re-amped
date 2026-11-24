@@ -2,7 +2,7 @@
 // the game's own menus.
 //
 // Front end: Game Options > Screen Adjust (the PS2's picture position, not needed on a PC) becomes Display (the
-// screen settings: aspect ratio, HUD and menus, screen mode, resolution, race frame rate, smooth motion, V-Sync,
+// screen settings: aspect ratio, HUD and menus, screen mode, resolution, frame rate, smooth motion, V-Sync,
 // variable refresh); the game's own Controller configuration page (Game Options > Controls) gets "Player 1 PC
 // Controls..." and "Player 2 PC Controls...". The developers' hidden "Debug Menus" item is shown.
 //
@@ -68,7 +68,7 @@ constexpr Choice kChoices[] = {
     {"HUD and menus: %s", "Corrected*Stretched", 2},
     {"Screen mode: %s", "Window*Fullscreen", 2},
     {"Resolution (restart): %s", "1x*2x*3x*4x*5x*6x", 6},
-    {"Race frame rate: %s", "60*90*120*144*165*240", 6},
+    {"Frame rate: %s", "60*90*120*144*165*240", 6}, // races, and the menus with Smooth motion (settings key race_fps)
     {"Smooth motion: %s", "Off*On", 2},
     {"V-Sync: %s", "Off*On*Adaptive", 3},
     {"Variable refresh: %s", "Off*On", 2},

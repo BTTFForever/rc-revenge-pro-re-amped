@@ -10,6 +10,9 @@
 #include "ee_math.h"
 #include "vifpk.h"
 #include "visfx.h"
+#include "../rc_frame_tick.h"
+
+#include <random>
 
 namespace rc {
 
@@ -1307,7 +1310,14 @@ void Vfx3Rain()
     GuestFrame frame(0x140);
     const uint32_t vu = frame.local<float>(0).address, vu2 = vu + 0x10, vu3 = vu + 0x20, mat = vu + 0x30, material = vu + 0x80;
     constexpr uint32_t kParts = (sym::visFxVarG + 0x1c0u), kRaining = (sym::visFxVarG + 0xe60u), kTobs = (sym::visFxVarG + 0xe64u), kCamPos16 = (sym::visFxVarG + 0x108u);
-    at<int32_t>(kRaining) = 0;
+    // Enhancement: between logic ticks (rc_frame_tick.h) the drops are drawn where the tick left them: none start,
+    // none fall or age, the streaks use the tick's camera motion, the splashes' jitter comes from a host generator
+    // (the game's rand() sequence is left alone), and nothing the sound or the next tick reads is written.
+    const bool step = frametick::logicPass();
+    static uint8_t tickMotion[2][16];
+    static std::minstd_rand jitter(1u);
+    if (step)
+        at<int32_t>(kRaining) = 0;
     if (at<uint32_t>(kTobs) == 0)
         return;
     const int32_t screen = at<int32_t>(kWhichSplitScreen);
@@ -1331,7 +1341,8 @@ void Vfx3Rain()
         d = d < dz ? dz + (d >> 1) : d + (dz >> 1);
         if (d < static_cast<int32_t>(at<uint16_t>(tob + 0x2c)))
         {
-            at<int32_t>(kRaining) = 1;
+            if (step)
+                at<int32_t>(kRaining) = 1;
             starts = 0;
             break;
         }
@@ -1342,6 +1353,16 @@ void Vfx3Rain()
 
     // The camera's motion since the last frame, and its turn raised to the 32nd power ahead of the current matrix.
     vfx::vu0Sub(vu2, kCameraPos, oldCam);
+    if (step)
+    {
+        std::memcpy(tickMotion[screen & 1], guest_host(vu2), 16);
+        frametick::countRainStep();
+    }
+    else
+    {
+        std::memcpy(guest_host(vu2), tickMotion[screen & 1], 16);
+        starts = 2;
+    }
     guest_call(kMulMatrix, ptr32<float>(mat), ptr32<float>((sym::visFxVarG + 0x170u)), ptr32<float>(oldMat));
     for (int i = 0; i < 5; ++i)
         guest_call(kMulMatrix, ptr32<float>(mat), ptr32<float>(mat), ptr32<float>(mat));
@@ -1395,13 +1416,15 @@ void Vfx3Rain()
         }
         else
         {
-            const ee_float y = ee_float(at<float>(p + 4)) - ee_float(40.0f);
-            at<uint16_t>(p + 0x10) = static_cast<uint16_t>(at<uint16_t>(p + 0x10) - 1);
+            const ee_float y = step ? ee_float(at<float>(p + 4)) - ee_float(40.0f) : ee_float(at<float>(p + 4));
+            if (step)
+                at<uint16_t>(p + 0x10) = static_cast<uint16_t>(at<uint16_t>(p + 0x10) - 1);
             ++drops;
             at<float>(vu) = at<float>(p);
             at<float>(vu + 8) = at<float>(p + 8);
             at<float>(vu + 4) = y - ee_float(500.0f);
-            at<float>(p + 4) = y;
+            if (step)
+                at<float>(p + 4) = y;
             sceVu0ScaleVector(ptr32<ee_float>(vu3), ptr32<ee_float>(vu2), 8.0f);
             vfx::vu0Sub(vu, vu, vu3);
             const int32_t shade = at<int16_t>(p + 0x12);
@@ -1414,7 +1437,8 @@ void Vfx3Rain()
                                   at<float>(p + 0x14), -10.0f);
         }
     }
-    at<int32_t>((sym::revSfxVarG + 0x116cu)) = drops; // revSfxVarG.rain: the rain sound's strength
+    if (step)
+        at<int32_t>((sym::revSfxVarG + 0x116cu)) = drops; // revSfxVarG.rain: the rain sound's strength
     at<uint8_t>(G(visFxVarG).sprite.address + 0x24) = 2;
 
     // The splashes of the drops that have just landed.
@@ -1425,12 +1449,13 @@ void Vfx3Rain()
         sceVu0CopyVector(ptr32<ee_float>(G(visFxVarG).sprite.address + 0x10), ptr32<ee_float>(p));
         at<float>(G(visFxVarG).sprite.address + 0x14) = at<float>(p + 0x18);
         const ee_float scatter = float_from_bits(0x32c80000u), twentyFive = 25.0f;
+        const auto random = [&]() { return step ? rand() : static_cast<int32_t>(jitter() & 0x7fffffffu); };
         {
-            const ee_float r = ee_itof(rand());
+            const ee_float r = ee_itof(random());
             const uint32_t s = G(visFxVarG).sprite.address;
             at<float>(s + 0x10) = ee_float(at<float>(s + 0x10)) + (r * scatter - twentyFive);
         }
-        const ee_float r = ee_itof(rand());
+        const ee_float r = ee_itof(random());
         const uint32_t s = G(visFxVarG).sprite.address;
         at<float>(s + 0x18) = ee_float(at<float>(s + 0x18)) + (r * scatter - twentyFive);
         const int32_t life = at<int16_t>(p + 0x10);
@@ -1439,6 +1464,8 @@ void Vfx3Rain()
         at<float>(s) = ee_itof((life << 4) + 8);
         VfxPS2SpriteGroundRotated3D(ptr32<SVECTOR>(p + 0x1c), -40.0f);
     }
+    if (!step)
+        return;
     sceVu0CopyVector(ptr32<ee_float>(oldCam), ptr32<ee_float>(kCameraPos));
     guest_call(kCopyMatrix, ptr32<float>(oldMat), ptr32<float>((sym::visFxVarG + 0x120u)));
 }

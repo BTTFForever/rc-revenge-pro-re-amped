@@ -7,6 +7,8 @@
 // position on the disc and serve all reads from the ISO, as the hardware does.
 
 #include "../decomp/rc_widescreen.h"
+#include "../decomp/rc_frame_tick.h"
+#include "../decomp/rc_front_interp.h"
 #include "game_overrides.h"
 #include "ps2_recompiled_functions.h"
 #include "ps2_runtime.h"
@@ -543,7 +545,10 @@ namespace
                         (rdram[(kMain + 0x368u) & PS2_RAM_MASK] ? 2u : 0u);
             rc::gfx::scene(tag);
         }
-        g_inputClock.fetch_add(1u, std::memory_order_relaxed);
+        // Pictures drawn between logic ticks (rc_frame_tick.h: menus and races above the video rate) read no input, so
+        // the recording clock counts ticks: recordings replay the same at any frame rate.
+        if (rc::frametick::logicPass())
+            g_inputClock.fetch_add(1u, std::memory_order_relaxed);
         static const auto swapBuffers = rc::decompOr(rc::fns::GfxP2_SwapBuffers);
         swapBuffers(rdram, ctx, runtime);
     }
@@ -776,6 +781,7 @@ namespace
         runtime.replaceFunction(sym::sqrt, &sqrtSoftDouble);
         runtime.replaceFunction(sym::GfxP2_SwapBuffers, &countGameFrame);
         ps2_host_input::setInputFrameCounter(&g_inputClock);
+        rc::frontinterp::setInputClock(&g_inputClock);
         runtime.replaceFunction(sym::MainGameLevelInit, &mainGameLevelInit);
         runtime.replaceFunction(sym::sceMpegIsEnd, &mpegIsEnd);
         runtime.replaceFunction(sym::sceMpegGetPicture, &mpegGetPicture);

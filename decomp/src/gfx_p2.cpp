@@ -3,6 +3,7 @@
 // stay guest calls.
 
 #include "display_fuzz.h"
+#include "../rc_frame_tick.h"
 
 RC_VERSION_VARIANT(GfxP2_Init)                // Europe: the PAL display mode
 RC_VERSION_VARIANT(GfxP2_RenderDmaSendActual) // Europe: gLastTex cleared later, the same behaviour
@@ -50,7 +51,8 @@ void GfxP2_SwapBuffers()
     const uint32_t now = hw_read32(kT0Count);
     const uint32_t flipStart = G(swapTime1);
     G(swapTime2) = now - flipStart;
-    G(displayVarG).uiVSyncInc += 1u;
+    if (frametick::logicPass()) // enhancement: counts logic frames, not the pictures drawn between them
+        G(displayVarG).uiVSyncInc += 1u;
     G(swapTime1) = flipStart - G(swapTime0);
 }
 

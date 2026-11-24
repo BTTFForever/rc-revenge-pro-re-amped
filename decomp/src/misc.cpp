@@ -5,6 +5,7 @@
 #include "ee_math.h"
 
 #include <cstring>
+#include "../rc_frame_tick.h"
 
 namespace {
 constexpr rc::ee_float operator""_f(long double v) { return rc::ee_float(static_cast<float>(v)); }
@@ -47,7 +48,8 @@ int32_t ee_rem(int32_t a, int32_t b)
 // DISPLAY2.c: the vertical blank interrupt's callback counts frames.
 void VSyncCallbackFunction()
 {
-    G(displayVarG).uiVSyncInc = G(displayVarG).uiVSyncInc + 1;
+    if (frametick::videoFieldElapsed()) // enhancement: video-mode fields, however fast the vblank runs (rc_frame_tick.h)
+        G(displayVarG).uiVSyncInc = G(displayVarG).uiVSyncInc + 1;
 }
 
 // G0.c, GRAB.c, MESH.c, TOB.c, VIS.c, CARDEF.c, RECT.c: functions that do nothing.
