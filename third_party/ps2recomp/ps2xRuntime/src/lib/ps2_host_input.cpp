@@ -34,8 +34,15 @@ namespace ps2_host_input
         // RC: input from raylib's window, or from the host platform when one is installed (ps2_host_platform.h,
         // RC_RENDERER=vk). Both take raylib's codes, so every binding below means the same key in both modes.
         const ps2_host_platform::Hooks *platform() { return ps2_host_platform::hooks(); }
-        bool hostKeyDown(int key) { return platform() ? platform()->keyDown(key) : IsKeyDown(key); }
-        bool hostKeyPressed(int key) { return platform() ? platform()->keyPressed(key) : IsKeyPressed(key); }
+        // Test aid: keys held by PS2X_PAD_LIVE "key <name> <hold> <gap>" lines, inside the game only (the window loop's
+        // reads see them as the keyboard; nothing reaches the desktop). Now and at the sample before, for presses.
+        constexpr int kLiveKeys = 512;
+        std::array<bool, kLiveKeys> g_liveKeyDown{}, g_liveKeyWas{};
+        bool liveKey(int key) { return key >= 0 && key < kLiveKeys && g_liveKeyDown[static_cast<size_t>(key)]; }
+        bool liveKeyPressed(int key) { return liveKey(key) && !g_liveKeyWas[static_cast<size_t>(key)]; }
+
+        bool hostKeyDown(int key) { return liveKey(key) || (platform() ? platform()->keyDown(key) : IsKeyDown(key)); }
+        bool hostKeyPressed(int key) { return liveKeyPressed(key) || (platform() ? platform()->keyPressed(key) : IsKeyPressed(key)); }
         bool hostMouseButtonDown(int button) { return platform() ? platform()->mouseButtonDown(button) : IsMouseButtonDown(button); }
         bool hostMouseButtonPressed(int button) { return platform() ? platform()->mouseButtonPressed(button) : IsMouseButtonPressed(button); }
         bool hostWindowFocused() { return platform() ? platform()->focused() : IsWindowFocused(); }
@@ -332,7 +339,7 @@ namespace ps2_host_input
             static const char *path = []() -> const char * { const char *v = std::getenv("PS2X_PAD_LIVE"); return v && *v ? v : nullptr; }();
             if (!path)
                 return;
-            struct Press { int target; uint16_t buttons; std::string control; int hold, gap; }; // target: port, 100 + virtual pad, or -1 a screenshot
+            struct Press { int target; uint16_t buttons; std::string control; int hold, gap; }; // target: port, 100 + virtual pad, 200 + key, or -1 a screenshot
             using Clock = std::chrono::steady_clock;
             struct Queue
             {
@@ -345,6 +352,7 @@ namespace ps2_host_input
             static std::map<int, Queue> queues; // each port and virtual pad runs its own lines, at the same time as the others
             static Clock::time_point lastRead{};
             const auto now = Clock::now();
+            g_liveKeyWas = g_liveKeyDown;
             if (now - lastRead > std::chrono::milliseconds(20))
             {
                 lastRead = now;
@@ -374,7 +382,15 @@ namespace ps2_host_input
                             queues[0].presses.push_back({-1, 0, line.substr(5), 0, 0});
                             continue;
                         }
-                        if (std::sscanf(line.c_str(), "pad%d %63s %d %d", &pad, control, &hold, &gap) >= 2 && pad >= 1)
+                        if (std::sscanf(line.c_str(), "key %63s %d %d", control, &hold, &gap) >= 1)
+                        {
+                            const int source = ps2_input_bindings::parseKeySource(control);
+                            if ((source & 0xF0000) == ps2_input_bindings::kKey && (source & 0xFFFF) < kLiveKeys)
+                                queues[200].presses.push_back({200 + (source & 0xFFFF), 0, control, hold, gap}); // one queue for keys
+                            else
+                                std::cerr << "[input] live: no key '" << control << "'" << std::endl;
+                        }
+                        else if (std::sscanf(line.c_str(), "pad%d %63s %d %d", &pad, control, &hold, &gap) >= 2 && pad >= 1)
                             queues[100 + pad - 1].presses.push_back({100 + pad - 1, 0, control, hold, gap});
                         else if (std::sscanf(line.c_str(), "%x %d %d %d", &buttons, &hold, &gap, &port) >= 1)
                             queues[port == 1 ? 1 : 0].presses.push_back({port == 1 ? 1 : 0, static_cast<uint16_t>(buttons), {}, hold, gap});
@@ -411,7 +427,9 @@ namespace ps2_host_input
                     }
                     const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(now - q.started).count();
                     const bool held = age < p.hold;
-                    if (target >= 100)
+                    if (p.target >= 200)
+                        g_liveKeyDown[static_cast<size_t>(p.target - 200)] = held;
+                    else if (target >= 100)
                     {
                         if (held != q.virtualDown)
                         {
@@ -822,11 +840,15 @@ namespace ps2_host_input
                 r[0].keyboard = true;
                 r[0].pads = free & ~r[1].pads;
             }
+            static const bool logKeys = [] { const char *v = std::getenv("PS2X_GAMEPAD_LOG"); return v && *v && *v != '0'; }();
             for (int k = 32; k <= 348; ++k)
                 if (hostKeyPressed(k))
                 {
                     g_keyboardPressed = ++g_pressCount;
-                    break;
+                    if (logKeys) // which keys arrive (a controller in lizard mode types some: Enter, Escape, arrows)
+                        std::cerr << "[keyboard] key " << B::sourceName(B::kKey | k) << " pressed" << std::endl;
+                    else
+                        break;
                 }
             for (int slot = 0; slot < ps2_host_gamepad::kSlots; ++slot)
             {
@@ -987,17 +1009,21 @@ namespace ps2_host_input
             B::Player pl;
             B::Active act;
             unsigned otherPads = 0;
+            bool otherKeyboard = false;
             {
                 std::lock_guard<std::mutex> lock(g_bindMutex);
                 ensurePlayers();
                 pl = g_players[port];
                 act = g_active[port];
                 otherPads = g_active[port ^ 1u].pads;
+                otherKeyboard = g_active[port ^ 1u].keyboard;
             }
             bool keyboard = act.keyboard;
             unsigned pads = act.pads;
             // Menus: the keyboard and every connected gamepad no player reads drive player 1 too (the game's menus also
-            // take player 2's port).
+            // take player 2's port). Not a keyboard player 2 reads: its keys under player 1's bindings would be player
+            // 1's in a menu that only one player controls (the race's pause menu), and a Valve controller left in
+            // lizard mode types Enter (player 1's Start) with its A button, which there resumes the race.
             unsigned extraPads = 0;
             bool extraKeyboard = false;
             if (port == 0u && menuMode())
@@ -1005,7 +1031,7 @@ namespace ps2_host_input
                 for (int slot = 0; slot < ps2_host_gamepad::kSlots; ++slot)
                     if (ps2_host_gamepad::present(slot) && !((pads | otherPads) & (1u << slot)))
                         extraPads |= 1u << slot;
-                extraKeyboard = !keyboard;
+                extraKeyboard = !keyboard && !otherKeyboard;
             }
             state.connected = keyboard || pads != 0u || extraKeyboard || extraPads != 0u;
             if (!state.connected)
@@ -1533,7 +1559,7 @@ namespace ps2_input_bindings
         const bool any = player == 0 && menuMode();
         PromptDevice out;
         uint64_t best = 0;
-        if (a.keyboard || any)
+        if (a.keyboard || (any && !g_active[1].keyboard)) // the keyboard in menus too, unless player 2's
             best = g_keyboardPressed;
         for (int slot = 0; slot < ps2_host_gamepad::kSlots; ++slot)
             if (ps2_host_gamepad::present(slot) && ((a.pads & (1u << slot)) || any) && g_padPressed[slot] > best)

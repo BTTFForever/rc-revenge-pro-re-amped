@@ -60,8 +60,8 @@ connected gamepad player 2 does not use (all of them drive; rumble goes to the o
 gamepad connected after player 1's (kept while it stays connected; with one gamepad, player 2 has none). A chosen
 gamepad that is not connected (at start, or unplugged) counts as Auto until it is back (logged as `[controls]`). In the
 menus (front end and pause menu) the keyboard and every connected gamepad can always navigate, whatever the devices
-are set to (with player 1's bindings, the defaults for any menu control left unbound), so a device setting cannot lock
-you out. Settings files from before Auto (no `controls_version=2` line) keep their devices, except the old defaults
+are set to (with player 1's bindings, the defaults for any menu control left unbound; not a device player 2 reads, such
+as player 2's keyboard), so a device setting cannot lock you out. Settings files from before Auto (no `controls_version=2` line) keep their devices, except the old defaults
 (player 1 `keyboard+pad1`, player 2 `pad2`, always written whether chosen or not), which become `auto`. To rebind, press left or right on a control, then the new key or
 gamepad button, stick direction or trigger (Escape cancels, Delete clears, after 6 s it gives up; an input another
 control of that player already had moves to that control). Each control shows what it does in the player's chosen
@@ -73,7 +73,9 @@ which switch off their keyboard-and-mouse "lizard mode"; that needs Steam's udev
 Keyboard defaults for player 1: arrows, F cross, E circle, R square, Space triangle, Q L1, Left Shift R1, Left Ctrl L2,
 Right Shift R2, Enter start, Tab select, WASD left stick; player 2 (when set to the keyboard) IJKL, N, M, B, U, O, P, Y, 7,
 0, 9. Saved in the same settings file (`p1_device=auto`, `p1_key_cross=F`, `p1_pad_cross=a`, ...).
-`PS2X_GAMEPAD_LOG=1` logs every SDL joystick and gamepad (name, GUID, path, driver, mapping).
+`PS2X_GAMEPAD_LOG=1` logs every SDL joystick and gamepad (name, GUID, path, driver, mapping), each gamepad's buttons as
+they change and each key pressed (`[keyboard] key Enter pressed`: a controller left in its keyboard-and-mouse "lizard
+mode" types Enter with A, Escape with B and arrows with the d-pad, which shows here).
 
 For one run, an environment variable overrides the file: `RC_ASPECT=16:9`, `RC_HUD_SCALE=<50..100>`, `RC_MENU_SCALE=<50..100>`, `RC_BUTTON_PROMPTS=ps2|match|off`, `PS2X_GS_HW_SCALE=<n>`,
 `PS2X_FULLSCREEN=1`, `PS2X_REFRESH_HZ=<n>`, `RC_INTERP=0`, `PS2X_VSYNC=off|on|adaptive`, `PS2X_VRR=0|1`,
@@ -85,7 +87,8 @@ and longest gap, swap interval, VRR, monitor rate). `PS2X_PAD_LIVE=<file>` drive
 (0x0008 start, 0x4000 cross, 0x1000 triangle, 0x0010/0x0040/0x0080/0x0020 up/down/left/right); with
 `PS2X_SDL_VIRTUAL_PADS=<n>` the game also gets n virtual SDL gamepads, pressed by lines `pad<n> <SDL button or
 +/-axis> <hold ms> <gap ms>` (`pad1 a 100 300`, `pad2 +righttrigger 2000 100`; `pad3 unplug` and `pad3 plug`
-disconnect and reconnect one), through the whole gamepad path (`PS2X_SDL_VIRTUAL_PAD_TYPE=ps4|xbox` gives them a DualShock 4's
+disconnect and reconnect one; `key <name> <hold ms> <gap ms>`, a settings-file key name, holds a key inside the game
+only, nothing reaches the desktop), through the whole gamepad path (`PS2X_SDL_VIRTUAL_PAD_TYPE=ps4|xbox` gives them a DualShock 4's
 or an Xbox 360 controller's ids, so SDL labels their buttons that way; `RC_PROMPTS_LOG=1` logs what each button prompt shows); a line `shot <name>` saves the window's picture as
 `<name>.png` in `PS2X_SCREENSHOT_DIR` (in order with port 0's lines). `RC_MENU_DUMP=2` dumps the menus' texts in all
 four languages.

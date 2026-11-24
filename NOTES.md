@@ -1383,6 +1383,27 @@ on the left half, player 2 on the right, in both versions, live (also from the p
   changes.
 - Not changed: sound panning (the PS2 mixes both players' sounds the same way), the follow camera.
 
+### Pause menu: A on the gamepad resumed the race (2026-11-24)
+
+User report (Europe, two players, player 1 `p1_device=pad1` on a Steam Controller, player 2 `p2_device=keyboard`): in
+the race's pause menu, A on the pad closed the menu whatever item was highlighted (the highlight did move); player 2's
+N selected. The same walk with an SDL virtual pad as player 1 (Europe, the user's settings: 16:9, vertical split, 144,
+Match prompts) selected correctly (Quit Race opened its confirmation, Game Options its page), so the gamepad path,
+the menu code and the 144 Hz ticks were not it. The only way A becomes "close" there is Start: `pauseMenuStep` resumes
+the race when the player who paused hits Start (`InputHit(3)`) in the same frame. Menu mode (`readPort`) added the
+keyboard to player 1's port under player 1's key bindings (Enter = Start, arrows, F = Cross) whenever player 1 was
+not on the keyboard, even when player 2 reads it. A Valve controller in its keyboard-and-mouse lizard mode types Enter
+with A (Escape with B, arrows with the d-pad), and the user's Steam Controller (28de:1303, Bluetooth) has a
+keyboard-and-mouse interface ("Steam Ctrl (BT)", event18); so A arrived as Cross + Start on port 0 and resumed the race,
+while the d-pad's arrows only doubled the same move. Reproduced in-process with the new `key` live lines (pad1 A and
+key Enter together: menu closed, both versions' code path) and fixed: menu mode leaves out a keyboard player 2 reads
+(as it already left out player 2's gamepads); `promptDevice` likewise. Not proven on the hardware: that the
+controller types Enter while SDL's HIDAPI driver has it open. `PS2X_GAMEPAD_LOG=1` now logs key presses, so a session
+log shows it. With player 1 on Auto (keyboard + gamepads) such a controller's Enter is still player 1's Start.
+Checked (own sandboxes, `XDG_CONFIG_HOME` settings with the user's values, `PS2X_SDL_VIRTUAL_PADS=1`): Europe and USA,
+pause by pad, two downs to Quit Race, pad A + key Enter: before, the race resumed; after, the confirmation opened;
+Europe, player 2 pausing and choosing with keys 0, K, N: confirmation opened.
+
 ## Where to resume (2026-11-12)
 
 **Renderer (2026-11-22): P1 step 8 batch 4 (live 3D) is built** ("Live 3D" above; `RENDERER_3D_DESIGN.md` 20;
