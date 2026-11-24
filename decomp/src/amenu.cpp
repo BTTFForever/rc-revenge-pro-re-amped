@@ -9,6 +9,16 @@
 #include "amenu.h"
 #include "amenu_fuzz.h"
 
+// Europe variants (the PAL screen and the text offsets; NOTES.md "Europe version"): GetNewMenuFiddleFactor (the
+// other four offsets, plus 3), AMenuSnapsize, AMenuRectClipEnd, AMenuDrawScreenBox (a 256-line screen), AMenuDrawRect
+// (one line lower), AMenuDrawBorder (top row 10 lines lower, one more side row in a box 30 or more high).
+RC_VERSION_VARIANT(GetNewMenuFiddleFactor)
+RC_VERSION_VARIANT(AMenuSnapsize)
+RC_VERSION_VARIANT(AMenuDrawRect)
+RC_VERSION_VARIANT(AMenuDrawBorder)
+RC_VERSION_VARIANT(AMenuDrawScreenBox)
+RC_VERSION_VARIANT(AMenuRectClipEnd)
+
 namespace rc {
 
 using namespace amenu;
@@ -184,7 +194,17 @@ void AMenuAddTextToTGRP(ptr32<sTextGroup> pTextGroup, ptr32<char> pText)
 // The text offset for the working language in a scrolling menu.
 int32_t GetNewMenuFiddleFactor(ptr32<sAMenuHeader> pHeader)
 {
-    RC_DIVERT_IF_CHANGED(GetNewMenuFiddleFactor, pHeader);
+#if RC_VERSION_EU
+    // Europe: the tofsp offsets, plus 3 (3 for no language).
+    switch (language())
+    {
+    case 0: return pHeader->tofspEnglish + 3;
+    case 1: return pHeader->tofspFrench + 3;
+    case 2: return pHeader->tofspGerman + 3;
+    case 3: return pHeader->tofspSpanish + 3;
+    default: return 3;
+    }
+#else
     switch (language())
     {
     case 0: return pHeader->tofsnEnglish;
@@ -193,6 +213,7 @@ int32_t GetNewMenuFiddleFactor(ptr32<sAMenuHeader> pHeader)
     case 3: return pHeader->tofsnSpanish;
     default: return 0;
     }
+#endif
 }
 
 // Sets all eight text offsets to 2 ff, keeping each one's lowest bit.
@@ -488,7 +509,6 @@ void AMenuEntrySettingsMVAR(ptr32<sAMenuHeader> pHeader)
 // 0x1000 down), or at one of the fixed columns of moreFlags.
 void AMenuSnapsize(ptr32<sAMenuHeader> pHeader)
 {
-    RC_DIVERT_IF_CHANGED(AMenuSnapsize, pHeader);
     sAMenuHeader &h = *pHeader;
     h.width = static_cast<uint16>((h.width + 0x1d) / 0x1e * 0x1e);
     h.height = static_cast<uint16>((h.height + 9) / 0xf * 0xf);
@@ -496,7 +516,7 @@ void AMenuSnapsize(ptr32<sAMenuHeader> pHeader)
     if ((flags & 0x800u) != 0)
         h.x = i16((0x280 - h.width) / 2);
     if ((flags & 0x1000u) != 0)
-        h.y = i16((0xf0 - h.height) / 2);
+        h.y = i16((kScreenLines - h.height) / 2);
     const uint16_t more = h.moreFlags;
     if ((more & 8u) != 0)
         h.x = i16(0x140 - h.width);
@@ -513,7 +533,6 @@ void AMenuSnapsize(ptr32<sAMenuHeader> pHeader)
 // The menu's background: a translucent rectangle a little larger than the menu, with four thin strips around it.
 void AMenuDrawRect(ptr32<sAMenuHeader> pHeader, int32_t arg1)
 {
-    RC_DIVERT_IF_CHANGED(AMenuDrawRect, pHeader, arg1);
     Locals f(0x80);
     GfxP2_ZWriteEnable();
     const ee_float otz = constant(sym::lit4_32758c);
@@ -521,7 +540,7 @@ void AMenuDrawRect(ptr32<sAMenuHeader> pHeader, int32_t arg1)
     const ptr32<sBorderSet> pBorderSet = AMenuGetBorderSet(pHeader);
     const uint32_t yCurve = pBorderSet->yCurve, xCurve = pBorderSet->xCurve;
     const sAMenuHeader &h = *pHeader;
-    const uint32_t top = static_cast<uint32_t>(h.y) - yCurve + 10u;
+    const uint32_t top = static_cast<uint32_t>(h.y) - yCurve + (RC_VERSION_EU ? 11u : 10u); // Europe: one line lower
     const uint32_t left = static_cast<uint32_t>(h.x) - xCurve;
     const uint32_t bottom = at<uint16_t>(sym::ffRectBottomG) + top + (h.height + yCurve * 2u) - 0xfu;
     const uint32_t right = at<uint16_t>(sym::ffRectRightG) + left + (h.width + xCurve * 2u);
@@ -571,14 +590,14 @@ void AMenuDrawRect(ptr32<sAMenuHeader> pHeader, int32_t arg1)
 // The menu's border: corner, edge and side tiles (30 by 15) around the menu.
 void AMenuDrawBorder(ptr32<sAMenuHeader> pHeader, int32_t arg1)
 {
-    RC_DIVERT_IF_CHANGED(AMenuDrawBorder, pHeader, arg1);
     GuestFrame frame(0xc0);
     GfxP2_ZWriteEnable();
     const ptr32<sBorderSet> pBorderSet = AMenuGetBorderSet(pHeader);
     const sAMenuHeader &h = *pHeader;
     const auto part = [&](int index, int32_t x, int32_t y) { HudMenuBorder(pBorderSet->pBorderPart[index], x, y, static_cast<int32>(shine())); };
     const auto inside = [&](int16_t x) { return !(h.x + h.width - 0x1e < x); };
-    int16_t x = i16(static_cast<uint16_t>(h.x) - 0x1e), y = i16(static_cast<uint16_t>(h.y) - 0xf);
+    // Europe: the top row 5 lines above the menu instead of 15.
+    int16_t x = i16(static_cast<uint16_t>(h.x) - 0x1e), y = i16(static_cast<uint16_t>(h.y) - (RC_VERSION_EU ? 5 : 0xf));
     const int16_t leftEdge = x;
     part(0, leftEdge, y);
     for (x = i16(x + 0x1e); inside(x); x = i16(x + 0x1e))
@@ -586,7 +605,15 @@ void AMenuDrawBorder(ptr32<sAMenuHeader> pHeader, int32_t arg1)
     const int16_t rightEdge = x;
     part(2, rightEdge, y);
     y = i16(y + 0xf);
+#if RC_VERSION_EU
+    // Europe: one more side row (15 lines) in a box 30 or more high whose bottom is not above the row.
+    const int32_t bottom = h.y + h.height;
+    int32_t lowest = bottom - 0x19;
+    if (!(h.height < 0x1e) && !(bottom - 0xa < y))
+        lowest += 0xf;
+#else
     const int32_t lowest = h.y + h.height - 0x19;
+#endif
     for (; !(lowest < y); y = i16(y + 0xf))
     {
         part(4, i16(leftEdge - at<uint16_t>(sym::ffBordLeftG)), y);
@@ -610,18 +637,17 @@ void AMenuDrawBox(ptr32<sAMenuHeader> pHeader, int32_t flags)
 // A box around the whole screen.
 void AMenuDrawScreenBox(ptr32<sAMenuHeader> pHeader, int32_t arg1)
 {
-    RC_DIVERT_IF_CHANGED(AMenuDrawScreenBox, pHeader, arg1);
     Locals f(0xd0);
     GfxP2_ZWriteEnable();
     const ptr32<sUIcolourSet> pColourSet = AMenuGetColourSet(pHeader);
     f.sh(0xc, 0x280);
-    f.sh(0x12, 0xf0);
+    f.sh(0x12, kScreenLines);
     f.sw(0x0, 0x11);
     f.sh(0x4, 0);
     f.sh(0x6, 0);
     f.sh(0x8, 0x280);
     f.sh(0xa, 0);
-    f.sh(0xe, 0xf0);
+    f.sh(0xe, kScreenLines);
     f.sh(0x10, 0);
     f.sb(0x17, pColourSet->transLevel);
     f.sb(0x14, pColourSet->bRed);
@@ -630,12 +656,14 @@ void AMenuDrawScreenBox(ptr32<sAMenuHeader> pHeader, int32_t arg1)
     RectRender(f.ptr<_sRect>(0), constant(sym::lit4_327590));
     const ptr32<sBorderSet> pBorderSet = AMenuGetBorderSet(pHeader);
     const auto part = [&](int index, int32_t x, int32_t y) { HudMenuBorder(pBorderSet->pBorderPart[index], x, y, static_cast<int32>(shine())); };
+    // The bottom row and the last side row: 0xcc and 0xbd, in Europe 0xef and 0xe0 (a 256-line screen).
+    constexpr int32_t bottomRow = RC_VERSION_EU ? 0xef : 0xcc, lastSide = RC_VERSION_EU ? 0xe0 : 0xbd;
     for (int32_t x = 0x1e; x < 0x245; x += 0x1e)
     {
         part(1, x, 3);
-        part(6, x, 0xcc);
+        part(6, x, bottomRow);
     }
-    for (int32_t y = 0x12; !(0xbd < y); y += 0xf)
+    for (int32_t y = 0x12; !(lastSide < y); y += 0xf)
     {
         part(4, 0, y);
         part(7, 0x262, y);
@@ -643,11 +671,11 @@ void AMenuDrawScreenBox(ptr32<sAMenuHeader> pHeader, int32_t arg1)
     part(0, 0, 3);
     part(1, 0x244, 3);
     part(2, 0x262, 3);
-    part(4, 0, 0xbd);
-    part(5, 0, 0xcc);
-    part(6, 0x244, 0xcc);
-    part(7, 0x262, 0xbd);
-    part(3, 0x262, 0xcc);
+    part(4, 0, lastSide);
+    part(5, 0, bottomRow);
+    part(6, 0x244, bottomRow);
+    part(7, 0x262, lastSide);
+    part(3, 0x262, bottomRow);
 }
 
 // A slider: the knob sprite at the value's place, the bar in two shaded halves and a black frame behind.
@@ -762,10 +790,9 @@ void AMenuRectClipStart(ptr32<sAMenuHeader> pHeader, int32_t yOffset, int32_t cl
 
 void AMenuRectClipEnd(ptr32<sAMenuHeader> arg0, int32_t arg1)
 {
-    RC_DIVERT_IF_CHANGED(AMenuRectClipEnd, arg0, arg1);
     if (firstDrawPTT() != 0)
         return;
-    GfxP2_Scissor(0, 0, 0x280, 0xf0);
+    GfxP2_Scissor(0, 0, 0x280, kScreenLines);
 }
 
 // A tick box: empty (0), ticked (1) or crossed (2).

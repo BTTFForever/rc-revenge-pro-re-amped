@@ -9,6 +9,15 @@
 #include "amenu.h"
 #include "amenu_fuzz.h"
 
+// Europe variants (NOTES.md "Europe version"): the page box 0xb4 lines high instead of 0x94 (makeBox, for
+// BuildProgTTSub and CreateProgTTMenuBox), and BuildProgress's own layout (see there). PTTScroll and NewPTTScroll
+// store the jump position in another order (the same body).
+RC_VERSION_VARIANT(BuildProgTTSub)
+RC_VERSION_VARIANT(PTTScroll)
+RC_VERSION_VARIANT(NewPTTScroll)
+RC_VERSION_VARIANT(BuildProgress)
+RC_VERSION_VARIANT(CreateProgTTMenuBox)
+
 namespace rc {
 
 using namespace amenu;
@@ -95,7 +104,7 @@ void makeBox(ptr32<sAMenuHeader> pSourceHeader, ptr32<sAMenuHeader> pHeader, int
     h.flags = 0x820;
     h.y = 0x14;
     h.width = static_cast<uint16>(width);
-    h.height = 0x94;
+    h.height = RC_VERSION_EU ? 0xb4 : 0x94;
     AMenuSnapsize(pHeader);
 }
 
@@ -366,7 +375,6 @@ int32_t DisplayTTEntry(ptr32<sAMenuHeader> pHeader, int32_t x, int32_t y, int32_
 // keys, and draws the arrows and the title.
 void BuildProgTTSub(ptr32<sAMenuHeader> pSourceHeader, ptr32<sAMenuHeader> pHeader, int32_t width, ptr32<char> pTitle)
 {
-    RC_DIVERT_IF_CHANGED(BuildProgTTSub, pSourceHeader, pHeader, width, pTitle);
     Locals f(0x60);
     const sAMenuHeader &h = *pHeader;
     if (scrollHeight() == 0)
@@ -393,7 +401,6 @@ void BuildProgTTSub(ptr32<sAMenuHeader> pSourceHeader, ptr32<sAMenuHeader> pHead
 // end (1 and 2 when it reaches them), and up and down jump along the jump list.
 int32_t PTTScroll(ptr32<sAMenuHeader> pHeader)
 {
-    RC_DIVERT_IF_CHANGED(PTTScroll, pHeader);
     GuestFrame frame(0x50);
     const sAMenuHeader &h = *pHeader;
     int32_t retVal = 0;
@@ -447,7 +454,6 @@ int32_t PTTScroll(ptr32<sAMenuHeader> pHeader)
 // The jump keys alone: up and down move along the jump list, wrapping.
 void NewPTTScroll(ptr32<sAMenuHeader> pHeader)
 {
-    RC_DIVERT_IF_CHANGED(NewPTTScroll, pHeader);
     GuestFrame frame(0x10);
     const int32_t hitKey = AMenuNewProcessInput(-1, static_cast<eMenuInputStyle>(2), pHeader);
     if (hitKey == 2)
@@ -476,7 +482,41 @@ void NewPTTScroll(ptr32<sAMenuHeader> pHeader)
 // under a title that scrolls with them. For another card the page's offset is whatever the caller's $s2 held.
 void BuildProgress(ptr32<sAMenuHeader> pSourceHeader, ptr32<_sFrontGameStateData> pGameStateData, int32_t card)
 {
-    RC_DIVERT_IF_CHANGED(BuildProgress, pSourceHeader, pGameStateData, card);
+#if RC_VERSION_EU
+    // Europe: the halves are not moved down; the clip's extra height is -12 for the whole card, 24 for a half (0 for
+    // another card), plus two or four lines when the scrolled-off lines make two or three, less the scrolled-off
+    // lines and one line; the list starts 32 lines plus the scrolled-off lines down. For another card the page's
+    // offset is the caller's $s5.
+    int32_t y = static_cast<int32_t>(getRegU32(&g_runtime->eeScheduler().runningContext(), 21));
+    GuestFrame frame(0x80);
+    sAMenuHeader &h = *box();
+    CreateProgTTMenuBox(pSourceHeader, box(), 0x1e0);
+    AMenuDrawBox(box(), 0);
+    int32_t extra = 0;
+    AMenuDisplayOptions(box());
+    if (card == -1 || card == 1 || card == 2)
+    {
+        const int32_t message = card == -1 ? 0x1e : card == 1 ? 0x1f : 0x20;
+        y = 0;
+        const ptr32<char> pTitle = GetGeneralString(message);
+        extra = card == -1 ? -0xc : 0x18;
+        DisplayProgTTMenuTitle(pSourceHeader, box(), 0x1e0, pTitle);
+    }
+    const int32_t lineHeight = h.changeY;
+    if (lineHeight != 0)
+    {
+        const int32_t lines = G(scrollLinesG) / lineHeight + 1;
+        if (lines == 3)
+            extra += lineHeight * 2;
+        else if (lines == 4)
+            extra += lineHeight * 4;
+    }
+    AMenuRectClipStart(box(), scrollStartY(), extra + 0x20 - (G(scrollLinesG) + lineHeight));
+    y = DisplayProgressHeader(box(), pGameStateData, h.x, y + 0x20 + G(scrollLinesG) + scrollPos());
+    for (int32_t i = 1; i < 0x19; ++i)
+        y = DisplayProgressEntry(box(), pGameStateData, h.x, y, 0x1e0, i);
+    endPage(y, 5);
+#else
     int32_t y = static_cast<int32_t>(getRegU32(&g_runtime->eeScheduler().runningContext(), 18));
     GuestFrame frame(0x70);
     sAMenuHeader &h = *box();
@@ -500,6 +540,7 @@ void BuildProgress(ptr32<sAMenuHeader> pSourceHeader, ptr32<_sFrontGameStateData
     for (int32_t i = 1; i < 0x19; ++i)
         y = DisplayProgressEntry(box(), pGameStateData, h.x, y, 0x1e0, i);
     endPage(y, 5);
+#endif
 }
 
 // An earlier version: the header and three entries from the jump position, and a jump list of zeroes.
@@ -724,7 +765,6 @@ void BuildTrackEditorHelp(ptr32<sAMenuHeader> pSourceHeader)
 // On the first pass of a page: makes its box and draws the arrows.
 void CreateProgTTMenuBox(ptr32<sAMenuHeader> pSourceHeader, ptr32<sAMenuHeader> pHeader, int32_t width)
 {
-    RC_DIVERT_IF_CHANGED(CreateProgTTMenuBox, pSourceHeader, pHeader, width);
     Locals f(0x70);
     if (firstDrawPTT() == 0)
         return;

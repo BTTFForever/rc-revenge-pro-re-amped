@@ -387,6 +387,15 @@ inline constexpr bool registeredHere = F.sameAsReference || versionVariant<F>;
     inline constexpr bool versionVariant<fns::name> = true;                                          \
     }
 
+namespace rc {
+// The 2D screen's height in lines: 240 in the USA version (NTSC), 256 in the Europe version (PAL). Many of the Europe
+// variants' differences are this one (screen boxes, clip rectangles, centring).
+inline constexpr int32_t kScreenLines = RC_VERSION_EU ? 0x100 : 0xf0;
+// The GS scissor the renderer's state blocks default to: x 3 to 0x27d, y 3 to the screen's height less 3 (0xed, in
+// Europe 0xfd).
+inline constexpr uint64_t kScreenScissor = (static_cast<uint64_t>(kScreenLines - 3) << 48) | 0x00000003027d0003ull;
+} // namespace rc
+
 // The first statement of a native whose function differs in some version of the game (a changed function, listed by
 // tools/version_diff.py), when other native code calls it directly: in a version where it differs, the call goes to
 // that version's recompiled function instead, as guest code's calls do (the native is not registered there).

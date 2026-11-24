@@ -9,6 +9,13 @@
 #include "amenu.h"
 #include "amenu_fuzz.h"
 
+// Europe variants (NOTES.md "Europe version"): AMenuDisplayNewScroll (clears the menu's spare offset and always clips
+// to the snapped height), AMenuDisplayOptions (the key-hint line and the whole-screen box 16 lines lower, text offset
+// +4 instead of -4); AMenuDisplayAreaMenu only stores in another order (the same body).
+RC_VERSION_VARIANT(AMenuDisplayNewScroll)
+RC_VERSION_VARIANT(AMenuDisplayAreaMenu)
+RC_VERSION_VARIANT(AMenuDisplayOptions)
+
 namespace rc {
 
 using namespace amenu;
@@ -526,7 +533,6 @@ void AMenuDisplay(ptr32<sAMenuHeader> pHeader)
 // A scrolling list: every line is drawn, moved up by the scroll position and clipped to the menu's box.
 void AMenuDisplayNewScroll(ptr32<sAMenuHeader> pHeader)
 {
-    RC_DIVERT_IF_CHANGED(AMenuDisplayNewScroll, pHeader);
     sAMenuHeader &h = *pHeader;
     {
         GuestFrame frame(0xa0);
@@ -557,7 +563,13 @@ void AMenuDisplayNewScroll(ptr32<sAMenuHeader> pHeader)
         const int32_t room = static_cast<int32_t>(h.height) - yOffset - (G(scrollLinesG) + 8);
         const int32_t snapYscrollRemainder = changeY != 0 ? room % changeY : room;
         const int32_t snapYscroll = (lineCount + 1) * changeY + (changeY - snapYscrollRemainder);
+#if RC_VERSION_EU
+        // Europe: the spare offset (AMenuRectClipStart's) cleared, and no line less for a menu at x 0xf5.
+        h.spare = 0;
+        AMenuRectClipStart(pHeader, yOffset, snapYscroll);
+#else
         AMenuRectClipStart(pHeader, yOffset, h.x != 0xf5 ? snapYscroll : snapYscroll - changeY);
+#endif
         firstDrawPTT() = 0;
         uint32_t pTGRPList = h.pMenuStart.address;
         if (at<uint32_t>(pTGRPList) != 0)
@@ -659,7 +671,6 @@ int32_t AMenuAreaMenuCheckValidSelection(ptr32<sAMenuHeader> pHeader)
 // OK and cancel. On the first, measuring pass (amenuFirstDrawFlag) nothing is printed.
 void AMenuDisplayAreaMenu(ptr32<sAMenuHeader> pHeader)
 {
-    RC_DIVERT_IF_CHANGED(AMenuDisplayAreaMenu, pHeader);
     GuestFrame frame(0xc0);
     sAMenuHeader &h = *pHeader;
     int8_t &firstDraw = at<int8_t>(kFrontEnd + 0x2d5u);
@@ -754,7 +765,6 @@ void AMenuDisplayAreaMenu(ptr32<sAMenuHeader> pHeader)
 // as a small menu of its own. A menu without one gets the whole-screen box and the screen-adjust mode instead.
 void AMenuDisplayOptions(ptr32<sAMenuHeader> pHeader)
 {
-    RC_DIVERT_IF_CHANGED(AMenuDisplayOptions, pHeader);
     Locals f(0xb0);
     const ptr32<sAMenuHeader> pInstHeader = f.ptr<sAMenuHeader>(0);
     sAMenuHeader &inst = *pInstHeader;
@@ -771,7 +781,7 @@ void AMenuDisplayOptions(ptr32<sAMenuHeader> pHeader)
         inst.x = 0x1e;
         inst.y = 8;
         inst.width = 0x23a;
-        inst.height = 0xd2;
+        inst.height = RC_VERSION_EU ? 0xe2 : 0xd2;
         menuSystem().screenAdjust = 1;
         AMenuSnapsize(pInstHeader);
         AMenuDrawScreenBox(pInstHeader, 0);
@@ -790,10 +800,10 @@ void AMenuDisplayOptions(ptr32<sAMenuHeader> pHeader)
         inst.pTitleText = options;
     inst.flags = 0x824;
     inst.height = 0x28;
-    inst.y = 0xc8;
+    inst.y = RC_VERSION_EU ? 0xd8 : 0xc8;
     inst.width = static_cast<uint16>(FontLength(text(inst.pTitleText)));
     inst.changeY = 0xf;
-    SetTextOffsetFiddleFactor(pInstHeader, -4);
+    SetTextOffsetFiddleFactor(pInstHeader, RC_VERSION_EU ? 4 : -4);
     menuSystem().screenAdjust = 0;
     AMenuDisplayAll(pInstHeader);
 }

@@ -10,6 +10,12 @@
 #include "amenu.h"
 #include "amenu_fuzz.h"
 
+// Europe variants (NOTES.md "Europe version"): AMenuProcessScreenAdjust (the 2D offset's y 8 lines more: a 256-line
+// screen); AMenuProcessAreaMenu and AMenuProcessAll differ only in instruction order (the same body).
+RC_VERSION_VARIANT(AMenuProcessScreenAdjust)
+RC_VERSION_VARIANT(AMenuProcessAreaMenu)
+RC_VERSION_VARIANT(AMenuProcessAll)
+
 namespace rc {
 
 using namespace amenu;
@@ -675,7 +681,6 @@ void AMenuProcessNewScroll(ptr32<sAMenuHeader> pHeader, int32_t)
 // Moving the picture on the screen: the offsets go into both display buffers' DISPLAY registers.
 void AMenuProcessScreenAdjust(ptr32<sAMenuHeader> pHeader)
 {
-    RC_DIVERT_IF_CHANGED(AMenuProcessScreenAdjust, pHeader);
     GuestFrame frame(0x50);
     const auto ms = []() -> sMenuSystem & { return menuSystem(); };
     int32_t x = at<int16_t>(kFrontEnd + 0x264u), y = at<int16_t>(kFrontEnd + 0x266u);
@@ -732,7 +737,7 @@ void AMenuProcessScreenAdjust(ptr32<sAMenuHeader> pHeader)
     if (!(-0xb < y))
         y = -0xa;
     const uint64_t dx = static_cast<uint32_t>(x * 3 + 0x290) & 0xfffu;
-    const uint64_t dy = static_cast<uint64_t>(static_cast<uint32_t>(y + 0x30) & 0x7ffu) << 12;
+    const uint64_t dy = static_cast<uint64_t>(static_cast<uint32_t>(y + (RC_VERSION_EU ? 0x38 : 0x30)) & 0x7ffu) << 12;
     for (const uint32_t display : {(sym::gGfxP2_DBuff + 0x40u), (sym::gGfxP2_DBuff + 0x18u)})
     {
         uint64_t &value = at<uint64_t>(display);
@@ -746,7 +751,6 @@ void AMenuProcessScreenAdjust(ptr32<sAMenuHeader> pHeader)
 // the OK and cancel rows below it; select adds the character, accepts or cancels; the top button deletes.
 void AMenuProcessAreaMenu(ptr32<sAMenuHeader> pHeader)
 {
-    RC_DIVERT_IF_CHANGED(AMenuProcessAreaMenu, pHeader);
     GuestFrame frame(0x50);
     sAMenuHeader &h = *pHeader;
     const auto ms = []() -> sMenuSystem & { return menuSystem(); };
@@ -867,7 +871,6 @@ void AMenuProcessAreaMenu(ptr32<sAMenuHeader> pHeader)
 
 void AMenuProcessAll(ptr32<sAMenuHeader> pHeader)
 {
-    RC_DIVERT_IF_CHANGED(AMenuProcessAll, pHeader);
     sAMenuHeader &h = *pHeader;
     {
         GuestFrame frame(0x20);

@@ -5,6 +5,9 @@
 
 #include "ee_math.h"
 
+// Europe variant: FontSpecialCharacterOrColourChange stores in another order (the same body).
+RC_VERSION_VARIANT(FontSpecialCharacterOrColourChange)
+
 namespace rc {
 
 void ResTypeSetConstructDaemon(ptr32<char> pType, uint32 constructDaemon, int16 options);
@@ -352,7 +355,6 @@ namespace {
 
 int32_t fontSpecial(int16 x, int16 y, ptr32<char> pString, uint64_t savedS0, uint32_t savedRa)
 {
-    RC_DIVERT_IF_CHANGED(FontSpecialCharacterOrColourChange, x, y, pString);
     GuestFrame frame(0x20);
     std::memcpy(guest_host(frame.local<uint8_t>(0).address), &savedS0, 8);
     const uint64_t savedRa64 = savedRa;

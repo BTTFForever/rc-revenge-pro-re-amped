@@ -9,6 +9,10 @@
 
 #include "rc_decomp.h"
 
+// Europe variant (NOTES.md "Europe version"): BackdropDisplayBMP24 uploads the 240-line picture 8 lines down, centred
+// in the 256-line PAL frame buffer.
+RC_VERSION_VARIANT(BackdropDisplayBMP24)
+
 namespace rc {
 
 bool_ MemBlockAllocLo(ptr32<memHandle> pHandle, uint32 size); // mem.cpp
@@ -28,6 +32,7 @@ constexpr uint32_t kLegal = (sym::sec_rodata + 0x1c8u), kLeftVag = (sym::sec_rod
                    kCarMovie = (sym::sec_rodata + 0x208u), kAscScreen = (sym::sec_rodata + 0x218u), kDbyScreen = (sym::sec_rodata + 0x228u), kLogoScreen = (sym::sec_rodata + 0x238u);
 constexpr uint32_t kGsLoadImage = sym::gs_limage, kErrorFn = (sym::resVarG + 0x3d0u); // gs_limage, resVarG.pfLoadErrorFunction
 constexpr uint32_t kWidth = 640u, kHalfHeight = 0x80u;
+constexpr uint32_t kTop = RC_VERSION_EU ? 8u : 0u; // the picture's first line in the frame buffer
 // Pad keys InputHit takes: start and select end the sequence, cross and circle move to the next screen.
 constexpr uint32_t kKeyStart = 0x03u, kKeySelect = 0x13u, kKeyCross = 0x0eu, kKeyCircle = 0x1eu;
 
@@ -98,7 +103,6 @@ ptr32<void> BackdropLoadBMP24(ptr32<char> name)
 // (0xa00 when frameNumber & 1 == buffer, else 0).
 void BackdropDisplayBMP24(ptr32<void> pBmp, uint32 buffer)
 {
-    RC_DIVERT_IF_CHANGED(BackdropDisplayBMP24, pBmp, buffer);
     GuestFrame frame(0xf0);
     // Side tag: the two uploads into the frame buffer.
     const rc::gfx::SpanKicks upload(rc::gfx::KickLabel{rc::gfx::KickBackdrop, pBmp.address, buffer, 0u});
@@ -115,11 +119,11 @@ void BackdropDisplayBMP24(ptr32<void> pBmp, uint32 buffer)
         store<uint8_t>(load<uint32_t>(handle) + out + 3u, 0);
     }
     const auto base = [buffer] { return (G(gRdr).frameNumber & 1u) == buffer ? 0xa00u : 0u; };
-    guest_call(kSetDefLoadImage, kGsLoadImage, base(), kWidth >> 6, 0, 0, 0, kWidth, kHalfHeight);
+    guest_call(kSetDefLoadImage, kGsLoadImage, base(), kWidth >> 6, 0, 0, kTop, kWidth, kHalfHeight);
     guest_call(kFlushCache, 0);
     guest_call(kExecLoadImage, kGsLoadImage, load<uint32_t>(handle));
     guest_call(kSyncPath, 0, 0);
-    guest_call(kSetDefLoadImage, kGsLoadImage, base(), kWidth >> 6, 0, 0, kHalfHeight, kWidth, kHalfHeight);
+    guest_call(kSetDefLoadImage, kGsLoadImage, base(), kWidth >> 6, 0, 0, kTop + kHalfHeight, kWidth, kHalfHeight);
     guest_call(kFlushCache, 0);
     guest_call(kExecLoadImage, kGsLoadImage, load<uint32_t>(handle) + kHalfHeight * kWidth * 4u);
     guest_call(kSyncPath, 0, 0);

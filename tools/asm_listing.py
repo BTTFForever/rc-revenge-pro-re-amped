@@ -114,7 +114,8 @@ def listing(name, ver):
 def normalise(line):
     line = re.sub(r'^  [0-9a-f]+: ', '', line)
     line = re.sub(r'func_[0-9A-F]+', 'func', line)
-    line = re.sub(r'^(lui +\$\w+, )0x[0-9A-F]+', r'\1HI', line)
+    # A lui of an address in the image (0x10-0x3f) is normalised; other values (float constants) are kept.
+    line = re.sub(r'^(lui +\$\w+, )0x(?:[1-3][0-9A-F])$', r'\1HI', line)
     line = re.sub(r'(-?0x[0-9A-Fa-f]+|-?\d+)(\(\$\w+\) +;)', r'LO\2', line)
     line = re.sub(r'(addiu +\$\w+, \$\w+, )-?0x[0-9A-Fa-f]+( +;)', r'\1LO\2', line)
     line = re.sub(r'^L[0-9a-f]+:', 'L:', line)
