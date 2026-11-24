@@ -5,9 +5,12 @@
 #include "ee_math.h"
 
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
 #include "../rc_frame_tick.h"
 #include "../rc_split.h"
 #include "rc_decomp.h"
+#include "../rc_cars.h"
 
 // Europe variants (NOTES.md "Europe version"): LsFrameInit (the split-screen offset 64 lines instead of 56).
 RC_VERSION_VARIANT(LsFrameInit)
@@ -428,7 +431,7 @@ void CarListConstructDaemon(ptr32<memHandle> pHandle)
     GuestFrame frame(0xa0);
     sCarListClass &list = G(carListVarG);
     const uint32_t resource = pHandle->address;
-    const uint32_t total = static_cast<uint32_t>(G(mainVarG).noHuman) + G(mainVarG).noAI;
+    uint32_t total = static_cast<uint32_t>(G(mainVarG).noHuman) + G(mainVarG).noAI;
     list.altRendObjResource = nullptr;
     list.altRendObjResourceBoat = nullptr;
     const auto modelOf = [&](int32_t type) { return *static_cast<uint32_t *>(guest_host(resource + static_cast<uint32_t>(type) * 4u)); };
@@ -441,6 +444,14 @@ void CarListConstructDaemon(ptr32<memHandle> pHandle)
     }
     for (uint32_t i = 0; i < total; ++i)
     {
+        // Enhancement (rc_cars.h): a car past the 8th whose textures may not fit in the GS memory left is not raced.
+        if (!cars::roomForCar(static_cast<int>(i)))
+        {
+            cars::dropCars(static_cast<int>(i));
+            total = i;
+            break;
+        }
+        const uint32_t texBefore = G(nextTexAddr);
         const int32_t type = list.car[i].type;
         if (type != OBJECT_TYPE_NONE)
         {
@@ -476,6 +487,9 @@ void CarListConstructDaemon(ptr32<memHandle> pHandle)
         }
         else
             list.boat[i].pDef = ptr32<_sObjectDef>(0xffffffffu);
+        if (std::getenv("RC_CARS_LOG"))
+            std::fprintf(stderr, "[cars] car %u type %d level %u: GS textures 0x%x -> 0x%x (+0x%x)\n", i, type, G(mainVarG).level, texBefore,
+                         G(nextTexAddr), G(nextTexAddr) - texBefore);
     }
 }
 

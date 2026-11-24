@@ -685,12 +685,24 @@ void MainRaceOver(int32_t flag)
 // Keeps each car's cup points (by car type) and player 1's place.
 void SaveChampionshipPoints()
 {
+    // Enhancement (rc_cars.h): the table moved and kept by car type, so a car left out of one race (GS memory full)
+    // keeps its points for the next; the original rewrote it in race order.
     const int32_t n = carCount();
     for (int32_t i = 0; i < n; ++i)
     {
         const uint8_t points = at<uint8_t>(orderAt(i) + 6u);
-        at<uint32_t>(cars::kChampCars + 4u * static_cast<uint32_t>(i)) = carType(orderCar(i)); // enhancement: mainVarG.champPoints moved
-        at<uint8_t>(cars::kChampPoints + static_cast<uint32_t>(i)) = points;
+        const uint32_t type = carType(orderCar(i));
+        int32_t slot = -1;
+        for (int32_t j = 0; j < cars::kMaxCars && slot < 0; ++j)
+            if (at<uint32_t>(cars::kChampCars + 4u * static_cast<uint32_t>(j)) == type)
+                slot = j;
+        for (int32_t j = 0; j < cars::kMaxCars && slot < 0; ++j)
+            if (at<uint32_t>(cars::kChampCars + 4u * static_cast<uint32_t>(j)) == 0)
+                slot = j;
+        if (slot < 0)
+            continue;
+        at<uint32_t>(cars::kChampCars + 4u * static_cast<uint32_t>(slot)) = type;
+        at<uint8_t>(cars::kChampPoints + static_cast<uint32_t>(slot)) = points;
     }
     for (uint32_t i = 0; i < at<uint32_t>(kObjectList + 0x170u); ++i)
         if (at<uint8_t>(orderCar(static_cast<int32_t>(i)) + 0x44u) == 0)
@@ -764,9 +776,11 @@ void ClearRankingDisplay()
 
 void ClearChampionshipPoints()
 {
-    const int32_t n = carCount();
-    for (int32_t i = 0; i < n; ++i)
+    for (int32_t i = 0; i < cars::kMaxCars; ++i) // enhancement: the whole moved table, types too (kept by type)
+    {
+        at<uint32_t>(cars::kChampCars + 4u * static_cast<uint32_t>(i)) = 0;
         at<uint8_t>(cars::kChampPoints + static_cast<uint32_t>(i)) = 0;
+    }
 }
 
 // Gives each car back the cup points kept for its type.
@@ -776,12 +790,21 @@ void SetChampionshipPoints()
     for (int32_t i = 0; i < n; ++i)
     {
         const uint32_t car = orderCar(i);
-        for (int32_t j = 0; j < n; ++j)
+        bool kept = false;
+        for (int32_t j = 0; j < cars::kMaxCars; ++j)
             if (carType(car) == at<uint32_t>(cars::kChampCars + 4u * static_cast<uint32_t>(j)))
             {
                 at<uint8_t>(orderAt(i) + 7u) = 0;
                 at<uint8_t>(orderAt(i) + 6u) = at<uint8_t>(cars::kChampPoints + static_cast<uint32_t>(j));
+                kept = true;
             }
+        // Enhancement: a cup car with no points kept yet (left out of the races so far) starts from 0, not from what
+        // its race-order slot held (with every car in every race, as on the PS2, each one is found above).
+        if (!kept && cup() != 0 && at<uint32_t>(cars::kChampCars) != 0)
+        {
+            at<uint8_t>(orderAt(i) + 7u) = 0;
+            at<uint8_t>(orderAt(i) + 6u) = 0;
+        }
     }
 }
 

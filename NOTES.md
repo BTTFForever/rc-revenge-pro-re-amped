@@ -1446,6 +1446,94 @@ vertical and horizontal, player 1 or 2 pausing (keys and a virtual pad, window s
 screen every frame from opening to the front end. A box in the left half was not reproduced; a screenshot of it (and
 which item and device led there) would be needed.
 
+### Car limits (2026-11-24)
+User request: more than the PS2's 8 cars (single player) and 6 (two players). Now up to 12 in both (`rc_cars.h/.cpp`,
+`kMaxCars`), set on the game's own Game Setup page. Where each limit comes from, and what was done:
+
+- **The counts.** Game Setup's "Single race Number of Cars" (MVAR tag 0x10000035, 2-8) and "Multi-player Number of Cars"
+  (0x10000036, 2-6) are menu variables of the front end's level file; a new card has 8 and 4. `AMenuEntrySettingsMVAR`
+  fills them from `gameConfig.singleCarCount/multiCarCount` (frontEndVarG +0x190/+0x194), OK stores them back
+  (`Code::GameConfig`), and the race set-up takes `noAI = count - 1` (single race) or `count - 2` (`Code::TwoPlayer`;
+  `noHuman` 2), as do the Track Editor's races (`tedit_mainmenu.cpp`). The championship ("Arcade" code) is always
+  `noAI = 7`, the attract demo 8 computer cars (4 split screen). Now: both ranges reach 12
+  (`cars::entrySettings` raises `maxValue`); the championship races `max(8, single count)`. The counts stay the memory
+  card's while within the PS2's ranges; once one above them is chosen both go to settings.ini (`cars_single`,
+  `cars_multi`, 0 = the card's; `RC_CARS_SINGLE`/`RC_CARS_MULTI`) and the card keeps at most 8 and 6, so a save still
+  loads on a PS2. So the default is exactly the original (8 and 4 on a new card).
+- **Fixed tables sized for 8, moved** to a 32 KB block of guest RAM at 0x4F8000-0x500000 (the top of the gap between the
+  executable's .bss end, 0x4c7190 USA / 0x4c7410 Europe, and the game's heap at 0x500000; the runtime's own allocations,
+  about 5 KB plus the enhanced menus' pages, now stop at 0x4F8000, `kGuestHeapLimit` in the overrides). All their
+  users are native code, so the accesses changed in place:
+  - `aiVarG.raceOrder[8]` (12 bytes each; right after it `player1CameIn`/`player2CameIn` and the podium objects, so a
+    9th car overwrote the players' places): `cars::kRaceOrder`, used by ai.cpp (`raceOrderAt`), main2.cpp/main.h,
+    pickup.cpp, tbox.cpp, weapon.h (weapon.cpp, weapon2.cpp).
+  - `mainVarG.cupCarList[8]` (+0x178) and `champPoints` (+0x198 types, +0x1b8 points; after them `trackNames`):
+    `cars::kCupCarList` (kMaxCars + 4 entries: `MainSetCarsRemoveDuplicates` skips the players' cars),
+    `kChampCars`, `kChampPoints` (main2.cpp, front_menu.cpp's cup set-up). `MainSetCars(3)` draws the 8 as before
+    (the same `rand` calls, so 8 or fewer cars are unchanged) and `cars::fillCupList` adds different cars, unlocked ones
+    first (`CheckCarAvailability`), any of the 19 when those run out.
+  - `racePointsG` (9 7 6 5 4 3 2 1; the next bytes are `links_600`): `cars::racePoints`, 0 from 9th.
+- **Level data for 8.** The start grid (`pLvlG->pStartData`, `sStartData.startPos[8]`, four rows of two;
+  `ObjectCreateCars` puts car i on place count-1-i, so the players are at the back): `cars::startGrid` copies the 8
+  places and adds rows behind the last one along the AI route (the node holding the back row, `prev[0]` links back,
+  the same distance from the route's line and height above it, rows spaced as the level's), each turned along the route
+  there. The results and cup ranking menus (pause menu groups 9/10, 8 lines each): `cars::extendResultMenus` appends
+  lines 9-12 (copies of line 8 in all four languages, "10" with one fill dot fewer) after `MenuInitScan`, once per level
+  load; `BuildResults` already hides lines past the race's count, the ranking hides them for the cup's count. The HUD's
+  position sprites (`hudRes.pPosSpr[8]`, big digits "1"-"8"; also the finish-position effect's, `pLvlG+0x40`): from 9th
+  `HudTopRight` prints the number in the race font scaled to the sprites' height (`FontPrintFX` fx 5, new: both axes;
+  the font is drawn at half height in field lines), right-aligned where "8" ends; the 3D finish number is left out
+  (only its dust). The pickups' weapon tables by place (8 rows, already scaled down for fewer cars): spread over more
+  places the same way (`PickupGiveWeapon`).
+- **Trigger boxes (the stuck camera).** `TBoxProcess` gives each car the mask bit 16 + its place; the top byte is the
+  cameras' (0xff000001/2). The first 12-car tests showed the race camera parked at a trackside spot turning to follow
+  the player: the 9th-12th cars' bits landed in the camera byte, so camera trigger boxes fired for them. Now places from
+  9th share 8th's bit. With 8 cars the camera is as before (checked: same walk, 8 cars, autopilot and manual).
+- **Already big enough.** carListVarG 20 cars + 20 boats; objectVarG.list[46] (and boatStore); FPhysLib.pCarList[24];
+  the frame-tick interpolation table (gametask.cpp, 32); car types: 19 (`r % 0x13 + 1`), a type twice gets the
+  alternative paint (`CarListConstructDaemon`), so 12 different cars always fit; the trigger-box place bits, the
+  weapons' targeting by race order, the AI's route choice by half the field (`noObjects >> 1`), cameras (two, per
+  player), replays (players' pads only).
+- **Memory** (new `[level]` line after each load: free heap, render buffers, top of the GS textures). The game's heap is
+  0x500000-0x1FF0000 (27 MB); the render buffers are half of what is left after a load, at most 0x32000. With 12 cars
+  the heap keeps 10-16 MB free after the load on every level (level 18, the fullest: 0xa21400 with 12, 0xaa4400 with 8)
+  and every level keeps the full render buffers. Heap is not a limit.
+- **GS texture memory is.** The game's own allocator (`GfxTex_ManageTexture`, `nextTexAddr` from 0x1E0000 up to
+  0x400000, the end of the GS's 4 MB; past it the textures are not uploaded and their addresses wrap, the game only
+  prints the overflow). The cars' models load last (`CarListConstructDaemon`), each car type once (a repeated type shares
+  them): 0x4d00-0x14c00 per type on land levels, car plus boat 0x2b00-0x10300 on the boat levels and 0x5800-0x19500 on
+  the levels with both. Before the cars the levels sit at 0x2bc000-0x38c000; with 12 random cars (the attract demo, all
+  24 levels) 6, 18 (0x40f300) and close to it 12, 19, 24 (0x3f4b00-0x3fb300) would overflow. So `cars::roomForCar`
+  checks, before each car past the 8th with a type not yet loaded, the room left against that type's measured cost
+  (tables in rc_cars.cpp; unmeasured types: the most of their kind plus a margin); the race goes without that car and
+  the ones after it (`dropCars` lowers `noAI` and `aiVarG.noAIPlayers`; logged as `[cars] level n: GS texture memory
+  full ..., racing 9 cars instead of 12`). Level 18 then races 9, level 6 10. The next race gets the chosen count back
+  (`restoreCount` in `MainGameInit`). Championship points are kept by car type (`SaveChampionshipPoints` merges), so a car
+  left out of one cup race keeps its points; a cup car first seen later starts from 0. Making more room would need a
+  larger emulated GS memory (`PS2_GS_VRAM_SIZE`, 4 MB, used throughout the GS emulation and renderers) or reusing types
+  (a type twice already gets the alternative paint).
+- **Cost.** Uncapped frame rate (240, no V-Sync, 2x, 16:9, the attract demo; mean presents per second over 20 s, USA,
+  RTX 2060 via PRIME, before the GS memory check, so level 18 really had 12):
+
+  | Level | 8 cars | 12 cars | split screen 6 / 8 / 12 |
+  |---|---|---|---|
+  | 1 (Horror) | 240 | 239 | 232 / 228 / 225 |
+  | 9 (jungle river, both) | 230 | 224 | |
+  | 18 (heaviest) | 237 | 215 | 214 / 199 / 128 |
+
+  Single player costs little; split screen with 12 on the heaviest level drops to about 130, still twice 60.
+- **Sound.** Each car's engine is a 3D effect (`sfx3D`, the computer cars' through one effect type) allocated by the
+  sound system per frame; more cars only compete for the SPU2's voices, nothing is sized per car. Not measured.
+- **Not done / limits.** The 3D finish number from 9th on (no texture); places 9-12 have no points; a two-digit place in
+  the HUD is the font's digits, not the sprites' style. More than 12: the tables are sized by `kMaxCars`; the trigger
+  boxes' place bits stop at 16 cars (8 with own bits), car types at 19, the results menu's height (13 lines fit at
+  the default menu scale). Verification: functions whose oracle/shadow set-ups write `aiVarG.raceOrder` (pickup, physics
+  fuzz) or the cup tables now read other addresses than their recompiled originals; those comparisons are no longer
+  meaningful (the enhanced line does not gate on them).
+- Test aids: `RC_TEST_AUTOPILOT=1` (the players' cars drive themselves with the computer's control), `RC_BOOT_CARS=<n>`
+  and `RC_BOOT_SPLIT=1` (the `RC_BOOT_LEVEL` demo with n computer cars, split screen), `RC_CARS_LOG=1` (added grid places,
+  cup car lists).
+
 ## Where to resume (2026-11-12)
 
 **Renderer (2026-11-22): P1 step 8 batch 4 (live 3D) is built** ("Live 3D" above; `RENDERER_3D_DESIGN.md` 20;

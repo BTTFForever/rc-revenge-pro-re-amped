@@ -260,6 +260,7 @@ void MainInit()
 
 void MainFrontInit()
 {
+    cars::forgetCount();
     {
         GuestFrame frame(0x30);
         guest_call(kLoadingInit, 1);
@@ -305,6 +306,7 @@ void MainFrontTerm()
 
 void MainTrackEdInit()
 {
+    cars::forgetCount();
     {
         GuestFrame frame(0x20);
         at<uint32_t>(kCarList + 0x1e8u) = 0;
@@ -372,6 +374,7 @@ void MainTrackEdTerm()
 
 void MainGameInit()
 {
+    cars::restoreCount(); // enhancement: a race that dropped cars for GS memory (rc_cars.h) gives the next level its count back
     {
         GuestFrame frame(0x20);
         for (const uint32_t f : {kMtlInit, kAColInit, kOColInit, kTColInit, kCarColInit, kGameTaskInit, kCameraInit, kAnimInit, kRCMusicStop})

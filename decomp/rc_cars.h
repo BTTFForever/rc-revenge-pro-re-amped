@@ -56,6 +56,15 @@ void extendResultMenus();
 // The position sprite's texture for a place 0..7 (the level's), or 0 from 9th (none: callers draw text instead).
 uint32_t placeSprite(uint32_t res, int place);
 
+// GS texture memory (the game's allocator, nextTexAddr up to 0x400000; the cars' models load last): whether car `place`
+// (CarListConstructDaemon's order) fits; always for the first 8 and a type already loaded. Else the race goes without it
+// and the cars after it (dropCars: noAI and aiVarG.noAIPlayers lowered, logged); restoreCount, at each race's start,
+// gives the next level the chosen count again, until the front end or the Track Editor sets one (forgetCount).
+bool roomForCar(int place);
+void dropCars(int keep);
+void restoreCount();
+void forgetCount();
+
 // The cars the race needs beyond the cup's 8 (MainSetCars 3): further different cars.
 void fillCupList(int count);
 

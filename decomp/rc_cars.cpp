@@ -317,6 +317,57 @@ void extendResultMenus()
 
 uint32_t placeSprite(uint32_t res, int place) { return place >= 0 && place < 8 ? at<uint32_t>(res + 0x24u + 4u * static_cast<uint32_t>(place)) : 0u; }
 
+namespace {
+int g_chosenAI = -1, g_droppedAI = -1; // the computer cars chosen, and what dropCars left (-1: none dropped)
+// GS memory one car type's textures took (NOTES.md "Car limits", the attract demo with 12 random cars on 30 levels'
+// loads), by car type 1-19: on a land level, a boat level (the car without its parts, and its boat), a level of both;
+// 0 where not measured, which counts as the most measured of that kind plus a margin (the reserve).
+constexpr uint32_t kCarCost[20] = {0, 0xc500, 0x8d00, 0xb500, 0, 0xb000, 0x4d00, 0, 0, 0x9f00, 0x7f00, 0, 0x8b00, 0x9100, 0, 0, 0x14c00, 0xce00, 0xdb00, 0};
+constexpr uint32_t kBoatCost[20] = {0, 0x6000, 0x8500, 0xfc00, 0, 0x3300, 0x2b00, 0, 0, 0x8e00, 0x7900, 0, 0x8d00, 0x10300, 0, 0, 0x6900, 0xaa00, 0xe200, 0};
+constexpr uint32_t kBothCost[20] = {0, 0x10000, 0xa100, 0x18000, 0, 0xbb00, 0x5800, 0, 0, 0x10500, 0xc800, 0, 0xd700, 0x16f00, 0, 0, 0x19500, 0x10200, 0xe700, 0};
+constexpr uint32_t kCarReserve = 0x17000u, kBoatReserve = 0x12000u, kBothReserve = 0x1b000u, kMargin = 0x1000u;
+}
+
+bool roomForCar(int place)
+{
+    const sCarListClass &list = G(carListVarG);
+    if (place < 8 || place < static_cast<int>(G(mainVarG).noHuman))
+        return true;
+    for (int j = 0; j < place; ++j)
+        if (list.car[j].type == list.car[place].type)
+            return true; // its model and textures are loaded already
+    const uint32_t level = G(mainVarG).level % 12u;
+    const bool both = (level == 9 || level == 0xb) && G(mainVarG).level != 'a', boats = level == 5 || level == 0 || level == 8;
+    const uint32_t type = static_cast<uint32_t>(list.car[place].type);
+    const uint32_t known = type < 20u ? (both ? kBothCost : boats ? kBoatCost : kCarCost)[type] : 0u;
+    const uint32_t reserve = known != 0 ? known + kMargin : both ? kBothReserve : boats ? kBoatReserve : kCarReserve;
+    const uint32_t top = G(nextTexAddr);
+    return top < 0x400000u && 0x400000u - top >= reserve;
+}
+
+void dropCars(int keep)
+{
+    mainClass &m = G(mainVarG);
+    const int ai = std::max(0, keep - static_cast<int>(m.noHuman));
+    if (g_chosenAI < 0)
+        g_chosenAI = m.noAI;
+    m.noAI = static_cast<uint8>(ai);
+    G(aiVarG).noAIPlayers = ai;
+    g_droppedAI = ai;
+    std::fprintf(stderr, "[cars] level %u: GS texture memory full (0x%x used of 0x400000), racing %d cars instead of %d\n", m.level,
+                 G(nextTexAddr), keep, static_cast<int>(m.noHuman) + g_chosenAI);
+}
+
+void restoreCount()
+{
+    mainClass &m = G(mainVarG);
+    if (g_chosenAI >= 0 && m.noAI == g_droppedAI)
+        m.noAI = static_cast<uint8>(g_chosenAI);
+    g_chosenAI = g_droppedAI = -1;
+}
+
+void forgetCount() { g_chosenAI = g_droppedAI = -1; }
+
 void fillCupList(int count)
 {
     // RemoveDuplicates takes the computer's cars from this list in order, skipping the players' cars: entries up to
