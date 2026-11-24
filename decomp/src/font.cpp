@@ -65,6 +65,11 @@ uint8_t charWidth(const font &f, uint32_t fontAddress, uint32_t index)
 
 int16_t add16(int32_t a, int32_t b) { return static_cast<int16_t>(a + b); }
 
+// Enhanced recomp: the proportional fonts' "D" is drawn to the right edge of its 14-texel cell, and the one-texel
+// overlap the fonts' flag 1 gives every character left it touching the next letter ("Display", "Directions", "Debug").
+// It advances one more (only the advance: the glyph is drawn as before).
+int32_t kern(uint32_t c) { return c == 'D' ? 1 : 0; }
+
 // A byte of a string as the recompiled code reads it: an address outside RAM (a wild text pointer) goes to the
 // runtime's hardware path (0 where nothing is mapped: an empty string) instead of wrapping into RAM.
 uint8_t guestByte(uint32_t address)
@@ -127,7 +132,7 @@ uint32 FontLength(ptr32<char> pString)
             }
             else
             {
-                line = line + charWidth(f, fontPtr.address, glyphIndex(f, c)) - (fontPtr->flags & 1u);
+                line = line + charWidth(f, fontPtr.address, glyphIndex(f, c)) - (fontPtr->flags & 1u) + static_cast<uint32_t>(kern(c));
                 ++at;
             }
         }
@@ -232,7 +237,7 @@ ptr32<char> FontPrint(int16 x, int16 y, ptr32<char> pString)
                     pen = add16(pen, fontPtr->chWidth);
                 else
                 {
-                    pen = add16(pen, ch(widths + index)); // the width read again after the sprite is drawn
+                    pen = add16(pen, ch(widths + index) + kern(c)); // the width read again after the sprite is drawn
                     if ((fontPtr->flags & 1) != 0)
                         pen = add16(pen, -1);
                 }
@@ -336,7 +341,7 @@ int32_t FontPrintFX(int16 x, int16 y, ptr32<char> pString, uint16 fx, uint16 fxV
                 placeGlyph(f, fontPtr.address, index, raise, sprite);
                 p.x = pen;
                 SpriteRenderScaled(sprite, ptr32<_sSpriteParams>(kSpriteParams), 0.0f);
-                pen = add16(pen, ch(widths + index));
+                pen = add16(pen, ch(widths + index) + kern(c));
                 if ((fontPtr->flags & 1) != 0)
                     pen = add16(pen, -1);
             }

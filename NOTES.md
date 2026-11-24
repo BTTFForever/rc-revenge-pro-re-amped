@@ -1287,6 +1287,15 @@ scale about a point in the region it belongs to.
   main menu, Options, Display, Audio, cup select and vehicle select at 0.5x; text is readable at 0.5x at the default 2x
   internal resolution in a 1280x720 window.
 
+### Font: "D" one pixel wider (2026-11-24)
+The menus' proportional font (widths dumped from its table: `D` 14, `i` 6, `O` 16, flags 3) draws every glyph one texel
+over the previous one's last column (flag 1), and its `D` fills its cell to the right edge, so it touched the next
+letter: "Display" (our page) but also the game's own "Directions" (pause menu) and "Debug Menus". `FontPrint`,
+`FontPrintFX` and `FontLength` now advance one pixel more after a `D` in the proportional fonts (`kern` in `font.cpp`);
+the glyph is drawn as before, and every width (centring, wrapping, the key-hint boxes) comes from `FontLength`, so they
+agree. All languages and both versions (the same font code). Checked: Game Options page and pause menu at 1.0x and 0.5x
+menu scale, USA, before and after.
+
 ## Where to resume (2026-11-12)
 
 **Renderer (2026-11-22): P1 step 8 batch 4 (live 3D) is built** ("Live 3D" above; `RENDERER_3D_DESIGN.md` 20;
