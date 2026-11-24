@@ -19,6 +19,12 @@ RC_VERSION_VARIANT(printf) // Europe also stores $f12-$f18
 // loop (and with it the race frame rate and smooth motion hooks) runs in both versions; its callees that differ in
 // Europe (SetFrameWindow, MainScreenGameInit, CheckPads) divert to Europe's own functions.
 RC_VERSION_VARIANT(MainGameProcess)
+// The PAL screen (256 lines; NOTES.md "Europe version"): MainInit (the 3D window and Init3d's second argument 0xe6
+// instead of 0x111), MainScreenGameInit (the windows; the split screen's bottom half 0x3f high), SetFrameWindow (the
+// scissors and the split screen's offsets 64 instead of 60).
+RC_VERSION_VARIANT(MainInit)
+RC_VERSION_VARIANT(MainScreenGameInit)
+RC_VERSION_VARIANT(SetFrameWindow)
 
 namespace rc {
 
@@ -133,7 +139,8 @@ void defineWindow(const GuestFrame &frame, uint32_t window, int32_t s0, int32_t 
     at<int32_t>(frame.local<uint8_t>(0x10).address) = s10;
     at<int32_t>(frame.local<uint8_t>(0x18).address) = s18;
     at<int32_t>(frame.local<uint8_t>(0x20).address) = s20;
-    guest_call(kView3dDefine3dDeviceWindow, window, -0xa0, -0x78, 0xa0, 0x78, 0xa0, 0x78, -0xa0);
+    constexpr int32_t half = kScreenLines / 2; // 0x78, in Europe 0x80
+    guest_call(kView3dDefine3dDeviceWindow, window, -0xa0, -half, 0xa0, half, 0xa0, half, -0xa0);
 }
 
 // Waits for the music to fade out.
@@ -165,7 +172,6 @@ void countFrames(uint32_t time, bool print)
 
 void MainInit()
 {
-    RC_DIVERT_IF_CHANGED(MainInit);
     GuestFrame frame(0x80);
     guest_call(kPrintf, (sym::sec_rodata + 0xda0u));
     guest_call(kMemBlockInit, 0x500000, 0x1af0000);
@@ -201,12 +207,12 @@ void MainInit()
     guest_call(kRCMusicInit, 0x24);
     call(kSfxInitReverb);
     guest_call(kTSOSetSFXCallBack, kRevSfxTSO);
-    if (guest_call<uint32_t>(kInit3d, 0x3436, 0x111, 5, 0x2000, 0x7d0, 0x2328, 0x25800) == 0)
+    if (guest_call<uint32_t>(kInit3d, 0x3436, RC_VERSION_EU ? 0xe6 : 0x111, 5, 0x2000, 0x7d0, 0x2328, 0x25800) == 0)
     {
         call(kInit3dClean);
         guest_call(kExit, 1);
     }
-    defineWindow(frame, kWindow0, -0x78, 0xa0, 0x78, 0xa0, 0x78);
+    defineWindow(frame, kWindow0, -kScreenLines / 2, 0xa0, kScreenLines / 2, 0xa0, kScreenLines / 2);
     at<uint8_t>(kMain + 0x369u) = 1;     // noHuman
     at<uint32_t>(kMain + 0x3a8u) = 1;    // pickupsOnOff
     at<uint32_t>(kMain + 0x3b0u) = 0xc4; // sfxVolume
@@ -714,16 +720,22 @@ void MainTerm()
 // overlay's.
 void MainScreenGameInit(int32_t i)
 {
-    RC_DIVERT_IF_CHANGED(MainScreenGameInit, i);
     {
-        GuestFrame frame(0xa0);
+        GuestFrame frame(RC_VERSION_EU ? 0x90 : 0xa0);
         if (i == 0)
-            defineWindow(frame, kWindow0, -0x78, 0xa0, 0x78, 0xa0, 0x78);
+            defineWindow(frame, kWindow0, -kScreenLines / 2, 0xa0, kScreenLines / 2, 0xa0, kScreenLines / 2);
         else
         {
+#if RC_VERSION_EU
+            // Europe: halves of a 256-line screen; the bottom one's height is 0x3f, not 0x40.
+            defineWindow(frame, kWindow0, -0x40, 0xa0, 0x40, 0xa0, 0x40);
+            defineWindow(frame, kWindow1, -0x40, 0xa0, 0x3f, 0xa0, 0xc0);
+            defineWindow(frame, kWindow2, -0x80, 0xa0, 0x80, 0xa0, 0x80);
+#else
             defineWindow(frame, kWindow0, -0x3c, 0xa0, 0x3c, 0xa0, 0x3c);
             defineWindow(frame, kWindow1, -0x3c, 0xa0, 0x3c, 0xa0, 0xb4);
             defineWindow(frame, kWindow2, -0x78, 0xa0, 0x78, 0xa0, 0x78);
+#endif
             guest_call(kInit3dWindows, kWindow0, 0);
             guest_call(kInit3dWindows, kWindow1, 1);
         }
@@ -734,7 +746,6 @@ void MainScreenGameInit(int32_t i)
 // Makes a window current: its camera, the 3D frame, the scissor for its half of the screen and the 2D offset.
 void SetFrameWindow(int32_t windowId, tTime time)
 {
-    RC_DIVERT_IF_CHANGED(SetFrameWindow, windowId, time);
     {
         GuestFrame frame(0x20);
         if (windowId != 2)
@@ -753,13 +764,13 @@ void SetFrameWindow(int32_t windowId, tTime time)
             guest_call(kInit3dFrame, kWindow0, at<uint32_t>(kCurrentCamera) + 0x24u, time, splitScreen());
             if (splitScreen() != 0)
             {
-                guest_call(kRdrStateSetScissor, 0, 3, 3, 0x27d, 0x6f);
+                guest_call(kRdrStateSetScissor, 0, 3, 3, 0x27d, RC_VERSION_EU ? 0x7f : 0x6f);
                 at<uint32_t>(kFrameSplit) = 1;
-                send(0xc2700000u); // -60.0f
+                send(RC_VERSION_EU ? 0xc2800000u : 0xc2700000u); // -64.0f, USA -60.0f
             }
             else
             {
-                guest_call(kRdrStateSetScissor, 0, 3, 3, 0x27d, 0xed);
+                guest_call(kRdrStateSetScissor, 0, 3, 3, 0x27d, kScreenLines - 3);
                 at<uint32_t>(kFrameMode) = 0;
                 at<uint32_t>(kFrameSplit) = 0;
                 call(kGfxP2RenderDmaSend);
@@ -768,13 +779,13 @@ void SetFrameWindow(int32_t windowId, tTime time)
         else if (windowId == 1)
         {
             guest_call(kInit3dFrame2, kWindow1, at<uint32_t>(kCurrentCamera) + 0x24u, time, 0);
-            guest_call(kRdrStateSetScissor, 0, 3, 0x70, 0x27d, 0xed);
+            guest_call(kRdrStateSetScissor, 0, 3, RC_VERSION_EU ? 0x80 : 0x70, 0x27d, kScreenLines - 3);
             at<uint32_t>(kFrameSplit) = 2;
-            send(0x42700000u); // 60.0f
+            send(RC_VERSION_EU ? 0x42800000u : 0x42700000u); // 64.0f, USA 60.0f
         }
         else
         {
-            guest_call(kRdrStateSetScissor, 0, 3, 3, 0x27d, 0xed);
+            guest_call(kRdrStateSetScissor, 0, 3, 3, 0x27d, kScreenLines - 3);
             at<uint32_t>(kFrameMode) = 0;
             at<uint32_t>(kFrameSplit) = 0;
             call(kGfxP2RenderDmaSend);

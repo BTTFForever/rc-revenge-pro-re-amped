@@ -4,6 +4,12 @@
 // The uploads themselves still go through the SDK's GS library (guest_call).
 
 #include "ee_math.h"
+#include "rc_decomp.h"
+
+// Europe variants: GfxTex_ManageTexture and GfxTex_Update store the counters and nextTexAddr in another order (the
+// same body).
+RC_VERSION_VARIANT(GfxTex_ManageTexture)
+RC_VERSION_VARIANT(GfxTex_Update)
 
 namespace rc {
 
@@ -83,7 +89,6 @@ void GfxTex_Term() {}
 // the smaller side stays above 4), padded to sizes the GS accepts, then its palette.
 void GfxTex_ManageTexture(ptr32<_sGfxTexture> pTexture)
 {
-    RC_DIVERT_IF_CHANGED(GfxTex_ManageTexture, pTexture);
     GuestFrame frame(0x150);
     _sGfxTexture &tex = *pTexture;
     uint32_t levels = (tex.flags & 0x1c) >> 2;
@@ -191,7 +196,6 @@ void GfxTex_ManageTexture(ptr32<_sGfxTexture> pTexture)
 // Re-uploads every animated texture's levels with the frame for this point in time (a new frame every 3).
 void GfxTex_Update()
 {
-    RC_DIVERT_IF_CHANGED(GfxTex_Update);
     GuestFrame frame(0x80);
     // Side tag: the animated textures' uploads (each also labelled by GfxP2_LoadTexMip).
     const rc::gfx::SpanKicks uploads(rc::gfx::KickLabel{rc::gfx::KickAnimatedTexture, 0u, static_cast<uint32_t>(G(gNumAnimTextures)), 0u});

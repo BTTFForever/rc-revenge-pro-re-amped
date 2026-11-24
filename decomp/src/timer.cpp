@@ -12,6 +12,13 @@
 
 #include "rc_decomp.h"
 
+// Europe variants (NOTES.md "Europe version"): timer 0's period is 0x3d09 ticks (bus clock / 256 at the 15,625 Hz PAL
+// line rate) instead of 0x3d86 (15,734 Hz NTSC), in SysTimerInit, SysTimerAdd, SysTimerGet and SysTimerHandler.
+RC_VERSION_VARIANT(SysTimerInit)
+RC_VERSION_VARIANT(SysTimerAdd)
+RC_VERSION_VARIANT(SysTimerGet)
+RC_VERSION_VARIANT(SysTimerHandler)
+
 namespace rc {
 
 namespace {
@@ -22,7 +29,7 @@ constexpr uint32_t kAddIntcHandler2 = sym::AddIntcHandler2, kRemoveIntcHandler =
                    kEnableIntc = sym::EnableIntc;
 constexpr uint32_t kSysTimerHandler = sym::SysTimerHandler, kSysTimer = sym::sysTimerVarG, kProgramCounter = (sym::sysTimerVarG + 0x18u), kListHead = (sym::sysTimerVarG + 0x14u);
 constexpr int32_t kIntcTimer0 = 9;
-constexpr uint32_t kTicksPerPeriod = 0x3d86u;
+constexpr uint32_t kTicksPerPeriod = RC_VERSION_EU ? 0x3d09u : 0x3d86u;
 
 template <typename T>
 T load(uint32_t address)
@@ -69,7 +76,6 @@ int32_t runTimers(uint32_t timer, int32_t limit)
 
 void SysTimerInit()
 {
-    RC_DIVERT_IF_CHANGED(SysTimerInit);
     {
         GuestFrame frame(0x30);
         sysTimerClass &t = sys();
@@ -94,10 +100,9 @@ void SysTimerTerm()
     guest_call(kDisableIntc, kIntcTimer0);
 }
 
-// Adds a timer called every 0x3d86 / frequency ticks, catches the clock up and runs the list as the handler does.
+// Adds a timer called every kTicksPerPeriod / frequency ticks, catches the clock up and runs the list as the handler does.
 void SysTimerAdd(ptr32<_sSysTimer> pNewTimer, ee_fnptr pFnCallback, uint32 frequency)
 {
-    RC_DIVERT_IF_CHANGED(SysTimerAdd, pNewTimer, pFnCallback, frequency);
     {
         GuestFrame frame(0x50);
         sysTimerClass &t = sys();
@@ -143,7 +148,6 @@ void SysTimerRemove(ptr32<_sSysTimer> pSysTimer)
 
 tTime SysTimerGet()
 {
-    RC_DIVERT_IF_CHANGED(SysTimerGet);
     const sysTimerClass &t = sys();
     const uint32_t carry = t.tickTimeCarry;
     const int32_t count = static_cast<int32_t>(hw_read32(kT0Count));
@@ -166,7 +170,6 @@ int64 SysTimerGetTicks()
 // Timer 0's compare interrupt (INTC 9). Saves the EPC where pStore points, as the handler protocol expects.
 int32_t SysTimerHandler(int32_t arg0, ptr32<void> pStore, ptr32<void> pEPC)
 {
-    RC_DIVERT_IF_CHANGED(SysTimerHandler, arg0, pStore, pEPC);
     GuestFrame frame(0x50);
     sysTimerClass &t = sys();
     store<uint32_t>(pStore.address, pEPC.address);

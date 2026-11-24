@@ -6,6 +6,17 @@
 // tags, one per frame, swapped each frame.
 
 #include "rc_settings.h" // enhanced recomp: widescreen
+#include "rc_decomp.h"
+
+// Europe variants (NOTES.md "Europe version"): RdrState_SetStateBlockToDefaults and RdrState_Init (the scissor's bottom
+// 0xfd: kScreenScissor), RdrPolyInitCamera (the split screens' y centres 1984 and 2112 instead of 1992 and 2104);
+// GfxP2_Tex, GfxP2_TexExt and GfxP2_TexFX store gLstTex at another point (the same body).
+RC_VERSION_VARIANT(GfxP2_Tex)
+RC_VERSION_VARIANT(GfxP2_TexExt)
+RC_VERSION_VARIANT(GfxP2_TexFX)
+RC_VERSION_VARIANT(RdrState_SetStateBlockToDefaults)
+RC_VERSION_VARIANT(RdrState_Init)
+RC_VERSION_VARIANT(RdrPolyInitCamera)
 #include "../rc_frame_tick.h"
 #include "rc_widescreen.h"
 #include "display_fuzz.h"
@@ -476,7 +487,6 @@ void gifRegisters(uint64_t *q, int32_t first, std::initializer_list<uint64_t> va
 // Sets the GS for a sprite texture unless it is already set: TEX1 (no mipmaps), TEXA, then TEX0.
 void GfxP2_Tex(ptr32<_sGfxTexture> pTex)
 {
-    RC_DIVERT_IF_CHANGED(GfxP2_Tex, pTex);
     if (pTex == G(gLastTex))
         return;
     sGfxP2 &gfx = G(gGfxP2);
@@ -492,7 +502,6 @@ void GfxP2_Tex(ptr32<_sGfxTexture> pTex)
 // As GfxP2_Tex, with filtering (attrib 1: bilinear, 2: blended) and the blend for an alpha type.
 void GfxP2_TexExt(ptr32<_sGfxTexture> pTex, s32 attrib, s32 alphaType)
 {
-    RC_DIVERT_IF_CHANGED(GfxP2_TexExt, pTex, attrib, alphaType);
     if (pTex == G(gLastTex))
         return;
     sGfxP2 &gfx = G(gGfxP2);
@@ -522,7 +531,6 @@ void GfxP2_TexExt(ptr32<_sGfxTexture> pTex, s32 attrib, s32 alphaType)
 // blending.
 void GfxP2_TexFX(ptr32<_sGfxTexture> pTex, u32 attrib)
 {
-    RC_DIVERT_IF_CHANGED(GfxP2_TexFX, pTex, attrib);
     if (pTex == G(gLastTex))
         return;
     sGfxP2 &gfx = G(gGfxP2);
@@ -597,11 +605,10 @@ void RdrState_SetPixelAlphaBlendControlEnable(ptr32<sRdrStateBlock> block, u32 e
 
 void RdrState_SetStateBlockToDefaults(ptr32<sRdrStateBlock> block)
 {
-    RC_DIVERT_IF_CHANGED(RdrState_SetStateBlockToDefaults, block);
     block->alpha = 0x44;
     block->pabe = 1;
     block->clamp = 5;
-    block->scissor = 0xed0003027d0003ull;
+    block->scissor = kScreenScissor;
     block->test = 0x702f7;
     block->zbuf = 0x10000a0;
 }
@@ -655,7 +662,6 @@ void RdrState_ApplyDefaultStateBlock()
 // Allocates the ring of 256 state packets and fills in the parts that never change: the DMA, VIF and GIF headers.
 void RdrState_Init()
 {
-    RC_DIVERT_IF_CHANGED(RdrState_Init);
     MemBlockAllocLo(ptr32<memHandle>(guest_addr(&G(g_RdrStateDmaBlocks))), 0x9000);
     sRdrStateBlock &hardware = G(g_RdrStateOfHardware);
     hardware.pabe = ~0ull;
@@ -678,7 +684,7 @@ void RdrState_Init()
         packet.vifFlusha = 0x13000000;
     }
     RdrState_SetStateBlockToDefaults(ptr32<sRdrStateBlock>(guest_addr(&G(g_RdrDefaultRenderState))));
-    G(gRdrStateScissorOverride) = 0xed0003027d0003ull;
+    G(gRdrStateScissorOverride) = kScreenScissor;
 }
 
 // RENDER.c
@@ -992,7 +998,6 @@ void RdrPolyInit()
 // Adds the packet that sets the shape microprogram's camera for a channel, from the shape packet ring.
 void RdrPolyInitCamera(int32_t channel)
 {
-    RC_DIVERT_IF_CHANGED(RdrPolyInitCamera, channel);
     sRdr &rdr = G(gRdr);
     const int32_t index = rdr.currShapeData;
     rdr.currShapeData = rdr.currShapeData + 1;
@@ -1027,7 +1032,11 @@ void RdrPolyInitCamera(int32_t channel)
     putf(0x168, eye[2]);
     put(0x16c, 0x3f800000); // 1.0
     const int32_t player = G(gRdrPolyPlayer);
+#if RC_VERSION_EU
+    put(0x114, player == 1 ? 0x44f80000u : player == 2 ? 0x45040000u : 0x45000000u); // 1984, 2112 or 2048
+#else
     put(0x114, player == 1 ? 0x44f90000u : player == 2 ? *static_cast<uint32_t *>(guest_host(sym::lit4_327bf8)) : 0x45000000u);
+#endif
     Rdr_UploadProg(ptr32<u32>(kShapeProgram));
     Rdr_AddDmaCall(packet.cast<void>());
 }

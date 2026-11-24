@@ -4,6 +4,12 @@
 // list to the frame's DMA chain. Packets come from a ring of 360 in gRdr.pShapeData (384 for the Track Editor).
 
 #include "rc_settings.h" // enhanced recomp: widescreen
+#include "rc_decomp.h"
+
+// Europe variant (NOTES.md "Europe version"): RdrAlphaCameraToRdrCamera's split-screen offset is 64 lines (half of a
+// 128-line half of the PAL screen) instead of 56; alphaCamera holds it, so RdrAlphaAddToDmaChain and
+// RdrAlphaAddTriangles, which call it in the original, follow too.
+RC_VERSION_VARIANT(RdrAlphaCameraToRdrCamera)
 #include "rc_widescreen.h"
 #include "ee_math.h"
 
@@ -690,7 +696,8 @@ void alphaCamera(_sRdrCamera &cam)
     cam.dValX = rc::settings::widescreen() ? dValX * ee_float(rc::settings::hscale()) : dValX; // widescreen: Hor+
     cam.dValY = dValX * *static_cast<ee_float *>(guest_host(sym::lit4_327bcc));
     const int32_t player = G(gRdrPolyPlayer);
-    cam.vertDrawOffset = player == 1 ? -56.0f : player == 2 ? 56.0f : 0.0f;
+    constexpr float offset = RC_VERSION_EU ? 64.0f : 56.0f;
+    cam.vertDrawOffset = player == 1 ? -offset : player == 2 ? offset : 0.0f;
 }
 
 void transformPoint(f32 *out, const f32 *in, const sMat33 &m, const sVec3 &pos)
@@ -709,7 +716,6 @@ ee_float depth(const f32 *v, const _sRdrCamera &cam)
 
 void RdrAlphaCameraToRdrCamera(ptr32<_sRdrCamera> pCam)
 {
-    RC_DIVERT_IF_CHANGED(RdrAlphaCameraToRdrCamera, pCam);
     alphaCamera(*pCam);
 }
 

@@ -7,6 +7,9 @@
 #include <cstdio>
 #include <cstdlib>
 
+// Europe variant: CheckPads stores pauseReasonG in another order (the same body).
+RC_VERSION_VARIANT(CheckPads)
+
 namespace rc {
 
 using namespace mainunit;
@@ -690,7 +693,6 @@ void SaveChampionshipPoints()
 // A missing pad pauses the game with a "connect the controller" box; returns which player's (1, 2) or 0.
 int32_t CheckPads(int32_t numHumans)
 {
-    RC_DIVERT_IF_CHANGED(CheckPads, numHumans);
     GuestFrame frame(0x40);
     int32_t missing = guest_call<uint32_t>(kInputPadPresent, 0) == 0 ? 1 : 0;
     if (missing == 0 && numHumans == 2)

@@ -12,6 +12,9 @@
 
 #include <cstring>
 
+// Europe variant (NOTES.md "Europe version"): DisplaySetMode (a 256-line screen, display driver 0).
+RC_VERSION_VARIANT(DisplaySetMode)
+
 namespace rc {
 
 bool_ HeapInit(uint32 heapSize); // heap.cpp
@@ -52,18 +55,17 @@ T &mem(uint32_t address) { return *static_cast<T *>(guest_host(address)); }
 
 void DisplaySetMode()
 {
-    RC_DIVERT_IF_CHANGED(DisplaySetMode);
     displayClass &display = G(displayVarG);
-    display.dispDef.yResolution = 0xf0;
+    display.dispDef.yResolution = kScreenLines;
     display.dispDef.modulo = 0x280;
     display.dispDef.colourDepth = 0x100;
     display.state.pDispDef = ptr32<_sDisplayDefinition>(guest_addr(&display.dispDef));
-    display.state.driverId = 1;
+    display.state.driverId = RC_VERSION_EU ? 0 : 1; // Europe: driver 0
     display.dispDef.xResolution = 0x280;
     display.state.pDeviceWindow = nullptr;
     display.state.pPort = nullptr;
     display.state.pDriverData = nullptr;
-    Gfx_Init(0x280, 0xf0);
+    Gfx_Init(0x280, kScreenLines);
     display.viewBuffer = 0;
 }
 

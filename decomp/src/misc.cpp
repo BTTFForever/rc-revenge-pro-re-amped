@@ -6,6 +6,13 @@
 
 #include <cstring>
 #include "../rc_frame_tick.h"
+#include "rc_decomp.h"
+
+// Europe variants (NOTES.md "Europe version"): LsFrameInit (the split-screen offset 64 lines instead of 56).
+RC_VERSION_VARIANT(LsFrameInit)
+// Europe: CarListConstructDaemon and RendObjRender store in another order (the same body).
+RC_VERSION_VARIANT(CarListConstructDaemon)
+RC_VERSION_VARIANT(RendObjRender)
 
 namespace {
 constexpr rc::ee_float operator""_f(long double v) { return rc::ee_float(static_cast<float>(v)); }
@@ -362,14 +369,13 @@ void LsRenderWorld()
 // split screen), makes it the renderer's, resets the render state and clears the last texture.
 void LsFrameInit(tTime time, uint8 splitScreen, int32_t whichScreen)
 {
-    RC_DIVERT_IF_CHANGED(LsFrameInit, time, splitScreen, whichScreen);
     GuestFrame frame(0x50);
     sRdrCamera &camera = G(rdrCameraG);
     const ptr32<sRdrCamera> cameraAddress(sym::rdrCameraG);
     guest_call(kRdrSetupCamera, cameraAddress, static_cast<int32_t>(ee_ftoi(G(lsVarG).fov * constantAt(sym::lit4_32792c))));
     camera.vertDrawOffset = 0.0_f;
     if (splitScreen != 0)
-        camera.vertDrawOffset = whichScreen == 0 ? -56.0_f : 56.0_f;
+        camera.vertDrawOffset = whichScreen == 0 ? (RC_VERSION_EU ? -64.0_f : -56.0_f) : (RC_VERSION_EU ? 64.0_f : 56.0_f);
     LsCameraToRdr(cameraAddress);
     Rdr_UseCamera(cameraAddress);
     GfxP2_DefRenderState();
@@ -418,7 +424,6 @@ void RendObjInit()
 // first one's model but is told (altRendObj) to draw with its own paint. Levels 5, 0, 8, 9 and 11 (mod 12) have boats.
 void CarListConstructDaemon(ptr32<memHandle> pHandle)
 {
-    RC_DIVERT_IF_CHANGED(CarListConstructDaemon, pHandle);
     GuestFrame frame(0xa0);
     sCarListClass &list = G(carListVarG);
     const uint32_t resource = pHandle->address;
@@ -558,7 +563,6 @@ uint64_t envMapTex0(const _sGfxTexture &texture)
 // distance from the camera plane, or 0x7fff if the object is out of sight.
 int16 RendObjRender(ptr32<_sRendObj> pRendObj, ptr32<SVECTOR> pPOI__unused, ptr32<SVECTOR> pNormal__unused, int32_t doTint)
 {
-    RC_DIVERT_IF_CHANGED(RendObjRender, pRendObj, pPOI__unused, pNormal__unused, doTint);
     GuestFrame frame(0x30);
     _sRendObj &object = *pRendObj;
     const ptr32<_sRendObjHead> headAddress = object.pRendObjHead;

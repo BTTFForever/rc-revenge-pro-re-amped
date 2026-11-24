@@ -16,6 +16,16 @@
 #include "rc_decomp.h"
 #include "stream_fuzz.h"
 
+// Europe variants (NOTES.md "Europe version"): mpegOnInterruptPLAY, MpegLoadFile and MpegSplashFrame upload the picture
+// 8 lines down in the 256-line PAL frame buffer (rows 8 and 0x108 instead of 0 and 0x100, kMovieTop); playMpeg keeps 0
+// and 0x100 in both versions. playMpeg, MpegInitSplash and mpegOnInterruptLOAD store in another order (the same body).
+RC_VERSION_VARIANT(mpegOnInterruptPLAY)
+RC_VERSION_VARIANT(playMpeg)
+RC_VERSION_VARIANT(MpegLoadFile)
+RC_VERSION_VARIANT(MpegInitSplash)
+RC_VERSION_VARIANT(MpegSplashFrame)
+RC_VERSION_VARIANT(mpegOnInterruptLOAD)
+
 namespace rc {
 
 void MemBlockFree(ptr32<memHandle> pHandle); // mem.cpp
@@ -23,6 +33,7 @@ bool_ MemBlockAllocLo(ptr32<memHandle> pHandle, uint32 size);
 bool_ MemBlockAllocHi(ptr32<memHandle> pHandle, uint32 size);
 void loadImage(ptr32<u_int> tags); // ldimage.cpp
 void setLoadImageTags(ptr32<u_int> tags, ptr32<void> image, int32_t x, int32_t y, int32_t width, int32_t height);
+constexpr int32_t kMovieTop = RC_VERSION_EU ? 8 : 0; // the picture's first row in the frame buffer
 void setLoadImageTagsTile(ptr32<u_int> tags, ptr32<void> image, int32_t x, int32_t y, int32_t width, int32_t height);
 
 int32_t playMpeg(ptr32<sceMpeg> mp, ptr32<ee_uint128> bs, int32_t size);
@@ -137,13 +148,21 @@ void playMpegFile(ptr32<char> filename)
 // chains for its size, then vblankPlayer on INTC 2.
 void mpegOnInterruptPLAY(int32 swatch, int32 looping)
 {
-    RC_DIVERT_IF_CHANGED(mpegOnInterruptPLAY, swatch, looping);
     {
         GuestFrame frame(0x50);
+#if RC_VERSION_EU
+        // Europe reads the buffer slot before storing (the same unless swatch is out of range, -1 reading mpegLooping).
+        const uint32_t buffer = load<uint32_t>(bufferSlot(swatch));
+        store<int32_t>(kMpegLooping, looping);
+        store<int32_t>(kMpegSwitch, swatch);
+        if (buffer == 0u)
+            return;
+#else
         store<int32_t>(kMpegLooping, looping);
         store<int32_t>(kMpegSwitch, swatch);
         if (load<uint32_t>(bufferSlot(swatch)) == 0u)
             return;
+#endif
         guest_call(kMpegInit);
         clearBackground(0x80000000u);
         guest_call(kMpegCreate, kMpegG, kMpegStore, 0xb4800);
@@ -153,8 +172,8 @@ void mpegOnInterruptPLAY(int32 swatch, int32 looping)
         startDisplay(1);
         guest_call(kGsSyncPath, 0, 0);
         guest_call(kMpegGetPicture, kMpegG, kRgb32, 0x280);
-        setLoadImageTags(uploadChain(0), ptr32<void>(kRgb32), 0, 0, load<int32_t>(kMpegG), load<int32_t>(kMpegG + 4u));
-        setLoadImageTags(uploadChain(1), ptr32<void>(kRgb32), 0, 0x100, load<int32_t>(kMpegG), load<int32_t>(kMpegG + 4u));
+        setLoadImageTags(uploadChain(0), ptr32<void>(kRgb32), 0, kMovieTop, load<int32_t>(kMpegG), load<int32_t>(kMpegG + 4u));
+        setLoadImageTags(uploadChain(1), ptr32<void>(kRgb32), 0, kMovieTop + 0x100, load<int32_t>(kMpegG), load<int32_t>(kMpegG + 4u));
         store<int32_t>(kVblankHandle, guest_call<int32_t>(kAddIntcHandler, 2, kVblankPlayer, 0));
     }
     guest_call(kEnableIntc, 2);
@@ -186,7 +205,6 @@ void mpegOnInterruptTERM(int32 swatch)
 // sceMpegIsEnd's answer (non-zero), left in $v0 by the tail call to endDisplay.
 int32_t playMpeg(ptr32<sceMpeg> mp, ptr32<ee_uint128> bs, int32_t size)
 {
-    RC_DIVERT_IF_CHANGED(playMpeg, mp, bs, size);
     int32_t end;
     {
         GuestFrame frame(0xa0);
@@ -283,7 +301,6 @@ void clearBackground(u_int val)
 
 void MpegLoadFile(ptr32<char> filename)
 {
-    RC_DIVERT_IF_CHANGED(MpegLoadFile, filename);
     int32_t width, height;
     {
         GuestFrame frame(0x60);
@@ -304,11 +321,11 @@ void MpegLoadFile(ptr32<char> filename)
         startDisplay(1);
         guest_call(kGsSyncPath, 0, 0);
         guest_call(kMpegGetPicture, kMpegG, kRgb32, 0x280);
-        setLoadImageTags(uploadChain(0), ptr32<void>(kRgb32), 0, 0, load<int32_t>(kMpegG), load<int32_t>(kMpegG + 4u));
+        setLoadImageTags(uploadChain(0), ptr32<void>(kRgb32), 0, kMovieTop, load<int32_t>(kMpegG), load<int32_t>(kMpegG + 4u));
         width = load<int32_t>(kMpegG);
         height = load<int32_t>(kMpegG + 4u);
     }
-    setLoadImageTags(uploadChain(1), ptr32<void>(kRgb32), 0, 0x100, width, height);
+    setLoadImageTags(uploadChain(1), ptr32<void>(kRgb32), 0, kMovieTop + 0x100, width, height);
 }
 
 // The vertical blank handler's work driven by a count: decode on even counts, upload on odd ones.
@@ -335,7 +352,6 @@ void MpegDoAFrame(int32 vblankCount)
 
 void MpegInitSplash(ptr32<char> filename)
 {
-    RC_DIVERT_IF_CHANGED(MpegInitSplash, filename);
     {
         GuestFrame frame(0x30);
         const int32_t read = readFile(filename, ptr32<ptr32<uint8_t>>(kSplashBuffer), ptr32<int32_t>(kSplashSize), 0);
@@ -356,15 +372,14 @@ void MpegInitSplash(ptr32<char> filename)
 // One frame of the splash movie, waited for with sceGsSyncV. Returns the vertical blank counter, advanced by one.
 int32 MpegSplashFrame()
 {
-    RC_DIVERT_IF_CHANGED(MpegSplashFrame);
     GuestFrame frame(0x40);
     if (guest_call<int32_t>(kMpegIsEnd, kSplashG) == 0)
     {
         store<int32_t>(kGetit, guest_call<int32_t>(kMpegGetPicture, kSplashG, kRgb32, 0x280));
         if (load<int32_t>(kSplashG + 8u) == 0)
         {
-            setLoadImageTags(uploadChain(0), ptr32<void>(kRgb32), 0, 0, load<int32_t>(kSplashG), load<int32_t>(kSplashG + 4u));
-            setLoadImageTags(uploadChain(1), ptr32<void>(kRgb32), 0, 0x100, load<int32_t>(kSplashG), load<int32_t>(kSplashG + 4u));
+            setLoadImageTags(uploadChain(0), ptr32<void>(kRgb32), 0, kMovieTop, load<int32_t>(kSplashG), load<int32_t>(kSplashG + 4u));
+            setLoadImageTags(uploadChain(1), ptr32<void>(kRgb32), 0, kMovieTop + 0x100, load<int32_t>(kSplashG), load<int32_t>(kSplashG + 4u));
         }
         if (load<int32_t>(kGetit) >= 0)
         {
@@ -409,7 +424,6 @@ void MpegSplashTERM()
 // Reads a movie into buffer swatch (clearing the screen first if asked); the buffer is 0 if that failed.
 void mpegOnInterruptLOAD(ptr32<char> filename, int32 swatch, int32 hi, int32 clear)
 {
-    RC_DIVERT_IF_CHANGED(mpegOnInterruptLOAD, filename, swatch, hi, clear);
     GuestFrame frame(0x40);
     if (clear != 0)
         clearBackground(0x80000000u);
