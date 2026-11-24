@@ -14,11 +14,7 @@ out="$RC_ORACLE_BUILD/dumps"; sandbox="$RC_ORACLE_BUILD/capture"
 [ -x "$game" ] || { echo "no $game: ninja -C $RC_ORACLE_BUILD rc_revenge_pro" >&2; exit 2; }
 mkdir -p "$out"
 [ $# -gt 0 ] || set -- 5 17 18 20
-if nvidia-smi -L >/dev/null 2>&1; then
-    export __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only __GLX_VENDOR_LIBRARY_NAME=nvidia
-else
-    echo "warning: NVIDIA GPU not responding, using the integrated GPU" >&2
-fi
+rc_use_nvidia || exit 1
 status=0
 for what in "$@"; do
     if pgrep -f 'rc_revenge_pro ' >/dev/null; then

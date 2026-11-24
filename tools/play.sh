@@ -27,14 +27,8 @@ case "$mode" in
     *) echo "play, record or replay"; exit 1 ;;
 esac
 # On a hybrid-graphics machine with an NVIDIA GPU, always run on it (PRIME render offload), never the integrated GPU.
-if command -v nvidia-smi >/dev/null && ! nvidia-smi -L >/dev/null 2>&1 && [ "${PLAY_ALLOW_IGPU:-0}" != 1 ]; then
-    echo "The NVIDIA GPU is not responding (nvidia-smi failed), so the game was not started. Rebooting normally clears this." >&2
-    echo "Set PLAY_ALLOW_IGPU=1 to run on the integrated GPU anyway." >&2
-    exit 1
-fi
-if nvidia-smi -L >/dev/null 2>&1; then
-    export __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only __GLX_VENDOR_LIBRARY_NAME=nvidia
-fi
+# (rc_use_nvidia, tools/version.sh: refuses to start when the GPU is listed but not working.)
+rc_use_nvidia || exit 1
 # RC_RENDERER=vk (NOTES.md): SDL3 window and input, Vulkan presentation through the RHI. RC_VK_VALIDATION=1 adds the
 # Khronos validation layer with synchronisation validation (its messages go to session.log as "rhi_vk validation
 # error/warning"); with no layer installed, RC_VVL_LIB=<libVkLayer_khronos_validation.so> names one, as for

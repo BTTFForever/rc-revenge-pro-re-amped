@@ -40,7 +40,7 @@ echo "$name: session $(( $(date +%s) - start )) s"
 grep -a "^\[frame-record\] wrote\|draw lists (DLST)" "$out/$name.session.log" | cut -c1-200
 [ -f "$dump" ] || { echo "no dump"; exit 2; }
 [ "${LIVE_NO_REPLAY:-0}" = 1 ] && exit 0
-export __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only
+rc_use_nvidia || exit 1
 rr="${LIVE_RC_REPLAY:-$RC_GAME_BUILD/rc_replay}"
 "$rr" "$dump" --consumer dlst --quiet > "$out/$name.dlst.txt" 2>&1; d=$?
 "$rr" "$dump" --consumer vk --verify --quiet > "$out/$name.vk.txt" 2>&1; v=$?

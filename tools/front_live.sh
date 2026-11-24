@@ -14,11 +14,7 @@ out="$RC_GAME_BUILD/frontlive/$mode-$seed"; sandbox="$RC_GAME_BUILD/frontlive/ga
 rm -rf "$out"; mkdir -p "$out/shots"
 rc_make_sandbox "$sandbox"
 python3 "$root/tools/front_walk.py" "$seed" 300 6000 ${FRONT_WALK_DEEPER:-} > "$out/walk.pad"
-if nvidia-smi -L >/dev/null 2>&1; then
-    export __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only __GLX_VENDOR_LIBRARY_NAME=nvidia
-else
-    echo "warning: NVIDIA GPU not responding, using the integrated GPU" >&2
-fi
+rc_use_nvidia || exit 1
 fields=$(seq -s, 600 600 6000)
 if [ "$mode" = skip ]; then
     check=(RC_DECOMP_SKIP="$names")
