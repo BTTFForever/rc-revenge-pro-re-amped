@@ -9,6 +9,8 @@
 
 #include "main.h"
 #include "main_fuzz.h"
+#include "../rc_frame_tick.h"
+#include "../rc_front_interp.h"
 #include <cstdlib>
 
 RC_VERSION_VARIANT(printf) // Europe also stores $f12-$f18
@@ -479,7 +481,8 @@ void MainGameProcess()
         else
             guest_call(kRCMusicPlayTrackEdit, guest_call<uint32_t>(kTEditGetSoundTrackNdxForTrack));
     };
-    RcRefreshRace(true); // enhancement: PS2X_REFRESH_HZ applies to the race loop only
+    RcRefreshRace(true); // enhancement: the frame rate setting (Game Options > Display, PS2X_REFRESH_HZ)
+    frontinterp::k1Forget(1);
     if (status() == 0x10)
     {
         playTune();
@@ -491,11 +494,35 @@ void MainGameProcess()
         playTune();
         guest_call(kRCMusicSetVol, 0);
     }
+    // Enhancement: above the video rate, the loop's per-frame logic (input, sound and music steps, the pause and results
+    // menus, rain and glint ageing, tint steps, animated textures, the frame counter) runs on video-rate ticks
+    // (rc_frame_tick.h); the passes between them draw the race (blended by smooth motion) and send the tick's pause
+    // menu again. The physics keeps its own 20 ms clock either way. RC_FRAME_TICK=0: every pass steps, as before.
+    std::vector<uint32_t> tintHold; // the objects' current tints, kept through a pass between ticks
+    const auto holdTints = [&tintHold]()
+    {
+        tintHold.clear();
+        for (uint32_t i = 0; i < at<uint32_t>(sym::objectVarG + 0x170u); ++i)
+            if (const uint32_t obj = at<uint32_t>(sym::objectVarG + 4u * i))
+            {
+                tintHold.push_back(obj);
+                tintHold.push_back(at<uint32_t>(obj + 4u));
+            }
+    };
+    const auto releaseTints = [&tintHold]()
+    {
+        for (size_t k = 0; k + 1 < tintHold.size(); k += 2)
+            at<uint32_t>(tintHold[k] + 4u) = tintHold[k + 1];
+        tintHold.clear();
+    };
     do
     {
+        const bool logic = frametick::beginPass();
+        frametick::logSecond();
         call(kRdrStartFrame);
         call(kApplyDefaultState);
-        call(kInputSnapshot);
+        if (logic)
+            call(kInputSnapshot);
         const uint32_t time = guest_call<uint32_t>(kTimerGet, kTimer);
         guest_call(kVertAnimFrameUpdate, time);
         gameTime() = time;
@@ -503,7 +530,8 @@ void MainGameProcess()
         RcInterpBeginCamera(static_cast<int32_t>(time)); // enhancement: the frame's cameras between physics steps
         SetFrameWindow(0, static_cast<tTime>(gameTime()));
         call(kTBoxProcess);
-        call(kRdrParticleProcess);
+        if (logic)
+            call(kRdrParticleProcess);
         call(kMeshInitFrame);
         guest_call(kInit3dChangeViewcone, at<uint16_t>(kCamera + 0x574u));
         guest_call(kLsFrameInit, gameTime(), splitScreen(), 0);
@@ -511,6 +539,8 @@ void MainGameProcess()
         call(kGfxP2RenderDmaSend);
         call(kAIDoRaceOrder);
         RcInterpBeginDraw(static_cast<int32_t>(time)); // enhancement: cars and cameras drawn between physics steps
+        if (!logic)
+            holdTints(); // the draws step each object's tint towards its target: once per tick
         guest_call(kMemset, temp, 0, 0xc);
         {
             const uint32_t t = gameTime();
@@ -563,22 +593,38 @@ void MainGameProcess()
             call(kVfxRender);
             call(kApplyDefaultState);
         }
-        call(kObjectResetAllTint);
+        if (logic)
+            call(kObjectResetAllTint);
+        else
+            releaseTints();
         RcInterpEndDraw();
         SetFrameWindow(2, static_cast<tTime>(gameTime()));
-        guest_call(kObjectSfxDoAll, splitScreen(), gameTime());
-        guest_call(kRevSfxUpdateAmbient, splitScreen());
-        guest_call(kRevSfxPauseFade, 0);
-        call(kSfxDoSfx);
-        call(kRCMusicFadeControl);
+        if (logic)
+        {
+            guest_call(kObjectSfxDoAll, splitScreen(), gameTime());
+            guest_call(kRevSfxUpdateAmbient, splitScreen());
+            guest_call(kRevSfxPauseFade, 0);
+            call(kSfxDoSfx);
+            call(kRCMusicFadeControl);
+        }
         if (splitScreen() != 0)
             SetFrameWindow(2, static_cast<tTime>(gameTime()));
         if (status() != 0x10)
         {
-            if (CheckPads(noHuman()) == 0)
-                PauseMenuProcess(ptr32<mainClass>(kMain));
+            if (logic)
+            {
+                const bool keep2d = frametick::fast();
+                if (keep2d)
+                    frontinterp::k1Begin(1); // kept for the passes between ticks
+                if (CheckPads(noHuman()) == 0)
+                    PauseMenuProcess(ptr32<mainClass>(kMain));
+                if (keep2d)
+                    frontinterp::k1End(1);
+            }
+            else
+                frontinterp::k1Replay(1);
         }
-        if (status() == 0x10 && guest_call<uint32_t>(kInputTestAnyKeyHeld) != 0)
+        if (logic && status() == 0x10 && guest_call<uint32_t>(kInputTestAnyKeyHeld) != 0)
             MainDemoEndTask(ptr32<void>(at<uint32_t>(kMain + 0x388u)), static_cast<tTime>(at<uint32_t>(kMain + 0x380u)));
         countFrames(time, true);
         guest_call(kDisplayRenderFrameProfile, splitScreen());
