@@ -3286,6 +3286,9 @@ struct GSHwBackend::Impl
                 setUniform1i(g, locMulti, trackMultiDraw ? 1 : 0);
                 g.Uniform1i(locTrack, 1);
                 g.Enable(kClipDistance0);
+                // The near plane is gl_ClipDistance[0]'s; depth past the buffer's range is clamped per pixel (as the GS
+                // saturates it) rather than clipped away near the camera.
+                g.Enable(0x864Fu); // GL_DEPTH_CLAMP
                 trackBound = true;
             }
             g.DrawArrays(kTriangles, 0, static_cast<GLsizei>(trackDraw->triangles * 3u));
@@ -3401,6 +3404,7 @@ struct GSHwBackend::Impl
         if (trackBound)
         {
             g.Disable(0x3000u); // GL_CLIP_DISTANCE0
+            g.Disable(0x864Fu); // GL_DEPTH_CLAMP
             g.Uniform1i(locTrack, 0);
             setUniform1i(g, locMulti, 0); // the fragment shader reads it for every draw
         }

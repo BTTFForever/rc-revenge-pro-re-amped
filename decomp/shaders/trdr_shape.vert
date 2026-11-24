@@ -33,6 +33,7 @@ struct TrdrVertex
     vec4 colour;  // On the PS2 scale, 128 is full brightness.
     float keep;   // 0 if the facing test rejects the triangle.
     float viewZ;
+    vec4 view;    // The view-space position (with the depth bias), for corners behind the near plane.
 };
 
 // A skinned corner: its position through one bone matrix, and a second position through another, blended.
@@ -80,6 +81,7 @@ TrdrVertex trdrVertex(int index)
     if (shapeMode != 3 && !water)
         view.z += quad[base + 4].w; // A depth bias stored in the first corner's texture coordinate w.
     o.viewZ = view.z;
+    o.view = view;
 
     const float q = 1.0 / view.z;
     o.gs = vec3(view.xy * q * screenScale.xy + screenOffset.xy, view.w * q * screenScale.z);
@@ -143,6 +145,20 @@ void trackMain()
     if (v.keep == 0.0)
     {
         gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // Outside the clip volume: the whole triangle is discarded.
+        return;
+    }
+    if (v.viewZ < clipRange.z)
+    {
+        // A corner behind the near plane (its triangle is cut there by gl_ClipDistance). Its clip-space position must
+        // be the same linear function of the view-space position as the corners in front, so that the point where
+        // an edge is cut has the right screen position and depth: GS x, y and depth times the view z, without the
+        // divide (which flips the sign behind the viewer) or the depth clamp. Clamping it bent the depth across the
+        // cut part of the triangle: near the camera, water came out deeper than the shore just under it and lost the
+        // depth test, so whole triangles of water vanished there.
+        const vec4 view = v.view;
+        const vec2 pixels = view.xy * screenScale.xy + (screenOffset.xy - gsToClip.xy + gsToClip.z) * view.z;
+        const float depth = view.w * screenScale.z / gsDepthRange * 2.0 - view.z; // (2 * depth - 1) * view z
+        gl_Position = vec4(pixels * uInvSize * 2.0 - view.z, gsToClip.w > 0.5 ? -depth : depth, view.z);
         return;
     }
     const vec2 pixels = v.gs.xy - gsToClip.xy + gsToClip.z;
