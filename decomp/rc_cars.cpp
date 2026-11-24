@@ -328,6 +328,16 @@ constexpr uint32_t kBothCost[20] = {0, 0x10000, 0xa100, 0x18000, 0, 0xbb00, 0x58
 constexpr uint32_t kCarReserve = 0x17000u, kBoatReserve = 0x12000u, kBothReserve = 0x1b000u, kMargin = 0x1000u;
 }
 
+uint32_t textureCost(int place)
+{
+    const sCarListClass &list = G(carListVarG);
+    const uint32_t level = G(mainVarG).level % 12u;
+    const bool both = (level == 9 || level == 0xb) && G(mainVarG).level != 'a', boats = level == 5 || level == 0 || level == 8;
+    const uint32_t type = static_cast<uint32_t>(list.car[place].type);
+    const uint32_t known = type < 20u ? (both ? kBothCost : boats ? kBoatCost : kCarCost)[type] : 0u;
+    return known != 0 ? known + kMargin : both ? kBothReserve : boats ? kBoatReserve : kCarReserve;
+}
+
 bool roomForCar(int place)
 {
     const sCarListClass &list = G(carListVarG);
@@ -336,11 +346,7 @@ bool roomForCar(int place)
     for (int j = 0; j < place; ++j)
         if (list.car[j].type == list.car[place].type)
             return true; // its model and textures are loaded already
-    const uint32_t level = G(mainVarG).level % 12u;
-    const bool both = (level == 9 || level == 0xb) && G(mainVarG).level != 'a', boats = level == 5 || level == 0 || level == 8;
-    const uint32_t type = static_cast<uint32_t>(list.car[place].type);
-    const uint32_t known = type < 20u ? (both ? kBothCost : boats ? kBoatCost : kCarCost)[type] : 0u;
-    const uint32_t reserve = known != 0 ? known + kMargin : both ? kBothReserve : boats ? kBoatReserve : kCarReserve;
+    const uint32_t reserve = textureCost(place);
     const uint32_t top = G(nextTexAddr);
     return top < 0x400000u && 0x400000u - top >= reserve;
 }

@@ -117,6 +117,14 @@ public:
                            const uint8_t *data,
                            uint32_t sizeBytes);
     void writeRegister(uint8_t regAddr, uint64_t value);
+    // Texture banks (gs_texture_bank.h): keeps a copy of `pages` 8 KB pages of GS memory from `basePage` as bank `bank`
+    // (the region must be the same for every bank; bank 0 starts a new set and forgets the others). Waits for the
+    // backend to finish what it was given. clearTextureBanks forgets them all.
+    void saveTextureBank(int bank, uint32_t basePage, uint32_t pages);
+    void clearTextureBanks();
+    // A copy of GS memory as the backend has it after everything given so far (waits for it).
+    void copyVram(std::vector<uint8_t> &out);
+    uint64_t textureBankLoads() const { return m_bankLoads; }
 
     const uint8_t *lockDisplaySnapshot(uint32_t &outSize);
     void unlockDisplaySnapshot();
@@ -228,6 +236,15 @@ private:
     GSTrxPos m_trxpos{};
     GSTrxReg m_trxreg{};
     uint32_t m_trxdir = 3;
+
+    // Texture banks: the region (in 256-byte blocks), each bank's copy as CT32 pixels of a 64-pixel-wide image, the bank
+    // the region holds now (-1: unknown), loads done.
+    void loadTextureBankUnlocked(uint32_t bank);
+    uint32_t m_bankBlockLo = 0, m_bankBlockHi = 0;
+    std::vector<std::vector<uint8_t>> m_banks;
+    int m_bankCurrent = -1;
+    bool m_bankLoading = false;
+    uint64_t m_bankLoads = 0;
 
 
     static constexpr int kMaxVerts = 6;

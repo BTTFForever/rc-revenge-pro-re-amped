@@ -267,6 +267,15 @@ namespace
         // cars; RC_BOOT_CARS=<n> (2..12) for the car limits' tests (decomp/rc_cars.h)
         const char *bootCars = std::getenv("RC_BOOT_CARS");
         rdram[kMain + 0x36Au] = bootCars ? static_cast<uint8_t>(std::clamp(std::atoi(bootCars), 2, 12)) : 8u;
+        // RC_BOOT_RACE=1 (a test aid, with RC_TEST_AUTOPILOT=1 for a car that drives itself): a single race instead of
+        // the demo, the player (two with RC_BOOT_SPLIT=1) in the first car type, RC_BOOT_CARS cars in all.
+        if (const char *race = std::getenv("RC_BOOT_RACE"); race && *race == '1')
+        {
+            const uint8_t humans = rdram[kMain + 0x368u] != 0 ? 2u : 1u;
+            word(kMain + 0x4u, 3u); // toDo: a race
+            rdram[kMain + 0x369u] = humans;
+            rdram[kMain + 0x36Au] = static_cast<uint8_t>(std::max(1, static_cast<int>(rdram[kMain + 0x36Au]) - humans));
+        }
         std::memcpy(rdram + (sym::mainVarG + 0x1c0u), "TEST", 5u);
         ctx->pc = getRegU32(ctx, 31);
     }

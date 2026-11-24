@@ -6,6 +6,7 @@
 // tags, one per frame, swapped each frame.
 
 #include "rc_settings.h" // enhanced recomp: widescreen
+#include "rc_cars.h"
 #include "rc_decomp.h"
 
 // Europe variants (NOTES.md "Europe version"): RdrState_SetStateBlockToDefaults and RdrState_Init (the scissor's bottom
@@ -417,6 +418,7 @@ void Rdr_StartFrame()
     rotate(camera.normLeft, camera.rotLeft);
     rotate(camera.normBottom, camera.rotBottom);
     rotate(camera.normTop, camera.rotTop);
+    cars::texturesFrameStart(); // enhancement: the cars' texture banks (rc_cars.h)
     GfxP2_BeginScene();
 }
 

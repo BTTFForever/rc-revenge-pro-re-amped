@@ -481,6 +481,7 @@ void HudTopRight(ptr32<_sObject> pObj, int8 arg1, int8 player)
                 at<uint16_t>(car + 0x13eu) = at<uint16_t>(car + 0x13cu);
             const int32_t position = at<int32_t>(car + 0xe8u) != 0 ? at<int16_t>(car + 0x13cu) : at<int16_t>(car + 0x13eu);
             lift = 0;
+            cars::dumpPlaceSprites(res);
             if (const uint32_t sprite = cars::placeSprite(res, position))
                 HudSprite(ptr32<_sSprite>(sprite), ee_itof(slide() + (RC_VERSION_EU ? 0x230 : 0x228)), ee_itof(down - (slide() - 8)), 0x2808080);
             else

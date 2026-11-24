@@ -1,6 +1,8 @@
 #include "runtime/gs/gs_survey.h"
 #include "ps2_capture_hooks.h"
 #include "runtime/gs/gs_track_batch.h"
+#include "runtime/gs/gs_texture_bank.h"
+#include "runtime/gs/ps2_gs_memory.h"
 #include "runtime/gs/gs_frontend.h"
 #include "runtime/gs/gs_cpu_backend.h"
 #include "runtime/gs/gs_recording.h"
@@ -274,6 +276,7 @@ void GS::reset()
     m_trxpos = {};
     m_trxreg = {};
     m_trxdir = 3;
+    m_bankCurrent = -1;
     m_vtxCount = 0;
     m_vtxIndex = 0;
     m_preferredDisplaySourceFrame = {};
@@ -1279,6 +1282,11 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
         return;
     }
 #endif
+    if (regAddr == kGSTextureBankRegister)
+    {
+        loadTextureBankUnlocked(static_cast<uint32_t>(value & 0xFFu));
+        return;
+    }
     if (regAddr < ps2x::capture::kGsRegCount)
         ps2x::capture::g_gsRawRegs[regAddr] = value;
     const bool interestingReg =
@@ -1599,6 +1607,16 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
     case GS_REG_TRXDIR:
     {
         m_trxdir = static_cast<uint32_t>(value & 0x3);
+        // Texture banks: a transfer into the shared region that is not a bank's leaves it holding something else.
+        // (Rows are counted as 32 per page row, the smallest page height: possibly more pages than it touches.)
+        if (m_bankBlockHi != 0u && !m_bankLoading && (m_trxdir == 0u || m_trxdir == 2u))
+        {
+            const uint32_t lo = m_bitbltbuf.dbp;
+            const uint32_t pageRows = (static_cast<uint32_t>(m_trxpos.dsay) + m_trxreg.rrh + 31u) / 32u;
+            const uint32_t hi = lo + pageRows * std::max<uint32_t>(m_bitbltbuf.dbw, 1u) * 32u;
+            if (lo < m_bankBlockHi && m_bankBlockLo < hi)
+                m_bankCurrent = -1;
+        }
         if (m_trxdir == 1u)
             if (const ps2x::capture::Hooks *capture = ps2x::capture::g_hooks; capture && capture->odd)
                 capture->odd(ps2x::capture::OddLocalToHost, GS_REG_TRXDIR, value);
@@ -1857,6 +1875,81 @@ void GS::vertexKick(bool drawing)
         m_vtxCount = 0;
         break;
     }
+}
+
+void GS::saveTextureBank(int bank, uint32_t basePage, uint32_t pages)
+{
+    constexpr uint32_t kPages = static_cast<uint32_t>(GSMem::MEMORY_SIZE / 8192u);
+    if (bank < 0 || bank >= kGSTextureBankCount || pages == 0u || basePage + pages > kPages || pages * 32u > 4095u)
+        return;
+    std::vector<uint8_t> vram;
+    copyVram(vram); // as snapshotVRAM: outside the state lock, the backend kept alive
+    if (vram.size() < GSMem::MEMORY_SIZE)
+        return;
+    static std::once_flag tablesOnce;
+    std::call_once(tablesOnce, [] { GSMem::InitLookupTables(); });
+    // The region as a 64-pixel-wide CT32 image: page p is rows 32p to 32p+31, so a transfer of it with DBW 1 writes
+    // every word of every page back where it was.
+    const uint32_t rows = pages * 32u, base = basePage * 32u;
+    std::vector<uint8_t> image(static_cast<size_t>(rows) * 64u * 4u);
+    for (uint32_t y = 0; y < rows; ++y)
+        for (uint32_t x = 0; x < 64u; ++x)
+        {
+            const uint32_t word = GSMem::ReadCT32(vram.data(), base, 1u, x, y);
+            std::memcpy(image.data() + (static_cast<size_t>(y) * 64u + x) * 4u, &word, 4u);
+        }
+    std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
+    if (bank == 0)
+        m_banks.clear();
+    if (m_banks.size() <= static_cast<size_t>(bank))
+        m_banks.resize(static_cast<size_t>(bank) + 1u);
+    m_banks[static_cast<size_t>(bank)] = std::move(image);
+    m_bankBlockLo = base;
+    m_bankBlockHi = bank == 0 ? base + pages * 32u : std::max(m_bankBlockHi, base + pages * 32u);
+    m_bankCurrent = bank; // the region holds it now
+}
+
+void GS::copyVram(std::vector<uint8_t> &out)
+{
+    std::lock_guard<std::mutex> backendLock(m_backendLifetimeMutex);
+    out.clear();
+    if (!m_backend)
+        return;
+    m_backend->Sync(GSSyncReason::DebugReadback);
+    m_backend->SnapshotVram(out);
+}
+
+void GS::clearTextureBanks()
+{
+    std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
+    m_banks.clear();
+    m_bankBlockLo = m_bankBlockHi = 0u;
+    m_bankCurrent = -1;
+}
+
+void GS::loadTextureBankUnlocked(uint32_t bank)
+{
+    if (bank >= m_banks.size() || m_banks[bank].empty() || m_bankCurrent == static_cast<int>(bank))
+        return;
+    const std::vector<uint8_t> &image = m_banks[bank];
+    const GSBitBltBuf bitbltbuf = m_bitbltbuf;
+    const GSTrxPos trxpos = m_trxpos;
+    const GSTrxReg trxreg = m_trxreg;
+    const uint32_t trxdir = m_trxdir;
+    const uint32_t rows = static_cast<uint32_t>(image.size() / 256u);
+    m_bankLoading = true;
+    // BITBLTBUF: DBP the region, DBW 1, DPSM CT32; TRXREG 64 x rows; TRXDIR host to local.
+    // TRXPOS: SSAX, SSAY tag the bank (gs_texture_bank.h).
+    const uint64_t tag = (static_cast<uint64_t>(bank) + 1u) | (static_cast<uint64_t>(kGSTextureBankTransferTag) << 16);
+    uploadImageNativeUnlocked((static_cast<uint64_t>(m_bankBlockLo) << 32) | (1ull << 48), tag, 64u | (static_cast<uint64_t>(rows) << 32), 0u,
+                              image.data(), static_cast<uint32_t>(image.size()));
+    m_bankLoading = false;
+    m_bitbltbuf = bitbltbuf;
+    m_trxpos = trxpos;
+    m_trxreg = trxreg;
+    m_trxdir = trxdir;
+    m_bankCurrent = static_cast<int>(bank);
+    ++m_bankLoads;
 }
 
 void GS::processImageData(const uint8_t *data, uint32_t sizeBytes)

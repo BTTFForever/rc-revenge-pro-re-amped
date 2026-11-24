@@ -11,6 +11,7 @@
 // RdrAlphaAddTriangles, which call it in the original, follow too.
 RC_VERSION_VARIANT(RdrAlphaCameraToRdrCamera)
 #include "rc_widescreen.h"
+#include "rc_cars.h"
 #include "rc_split.h"
 #include "ee_math.h"
 
@@ -233,6 +234,7 @@ void Rdr_FixVUShape(ptr32<sRdrVUShape> pShape)
 {
     if (!pShape)
         return;
+    cars::bankShape(pShape.address); // enhancement: a shape of a car in a texture bank (rc_cars.h)
     uint32_t list = pShape->pTexFixList.address;
     const ptr32<ptr32<_sGfxTexture>> textures = pShape->pTex;
     for (uint32_t remaining = pShape->numFixups; remaining != 0; --remaining, list += 4)
@@ -811,6 +813,7 @@ void RdrAlphaAddTriangles(ptr32<sRdrVUShape> shape)
     }
     _sRdrCamera camera;
     alphaCamera(camera);
+    const int bank = cars::shapeBank(shape.address); // enhancement: a car in a texture bank (rc_cars.h)
     ptr32<sTriSorter> slot = alpha.pTriSortList + alpha.numTriangles;
     for (; count != 0; --count, tris = tris + 1)
     {
@@ -821,6 +824,7 @@ void RdrAlphaAddTriangles(ptr32<sRdrVUShape> shape)
         slot->distance = d1 + d2 + d3;
         if (0.0f <= d1.v || 0.0f <= d2.v || 0.0f <= d3.v)
         {
+            cars::noteAlpha(tris.address, bank);
             slot->pTri = tris;
             alpha.numTriangles = alpha.numTriangles + 1;
             slot = slot + 1;
@@ -838,6 +842,7 @@ void RdrAlphaAddToDmaChain()
     if (alpha.numTriangles < 1)
     {
         alpha.nextTempTri = 0;
+        cars::alphaDone();
         return;
     }
     _sRdrCamera camera;
@@ -909,13 +914,26 @@ void RdrAlphaAddToDmaChain()
     uint32_t vuAddress = 0;
     int32_t left = total;
     ptr32<sTriSorter> entry = alpha.pTriSortList;
+    int switches = 0; // enhancement: texture bank changes (rc_cars.h), at most kMaxSwitches a chain
+    constexpr int kMaxSwitches = 64;
     if (0 < left && 0 < G(maxAlphaPolys))
     {
         uint32_t reach = 0xf;
         for (;;)
         {
             uint32_t at = vuAddress;
-            if (0x17f < reach)
+            // Enhancement: a triangle of a car in another texture bank. The batch so far is drawn, then the chain calls
+            // the bank's marker. Past kMaxSwitches such triangles are left out (the buffers are sized for the original).
+            const int bank = cars::alphaBank(entry->pTri.address);
+            const bool change = bank >= 0 && bank != cars::lastBank();
+            if (change && switches >= kMaxSwitches)
+            {
+                entry = entry + 1;
+                if (--left <= 0)
+                    break;
+                continue;
+            }
+            if (0x17f < reach || (change && vuAddress != 0))
             {
                 endBatch(vuAddress);
                 at = 0;
@@ -927,6 +945,17 @@ void RdrAlphaAddToDmaChain()
                 u8at(tag + 0x12) = 0;
                 u32at(tag + 0x14) = vif;
                 tag += 32;
+            }
+            if (change)
+            {
+                ++switches;
+                u16at(tag) = 0;
+                u8at(tag + 2) = 0;
+                u8at(tag + 3) = 0x50; // call
+                u32at(tag + 4) = cars::alphaMarker(bank);
+                u32at(tag + 8) = 0;
+                u32at(tag + 12) = 0;
+                tag += 16;
             }
             u8at(tag + 2) = 0;
             u8at(tag + 3) = 0x30;
@@ -961,6 +990,7 @@ void RdrAlphaAddToDmaChain()
     RdrState_ApplyDefaultStateBlock();
     alpha.nextTempTri = 0;
     alpha.numTriangles = 0;
+    cars::alphaDone();
     if (vifEnd < vif + 16)
         guest_call(kPrintf, (sym::sec_rodata + 0x26f0u)); // "overflowed\n"
     if (0x600 < vifWords)

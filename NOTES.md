@@ -1447,6 +1447,14 @@ screen every frame from opening to the front end. A box in the left half was not
 which item and device led there) would be needed.
 
 ### Car limits (2026-11-24)
+
+**Batch 3, parked unfinished (2026-11-24):** texture banks for cars past the 8th that don't fit in GS memory
+(decomp/rc_car_textures.cpp, gs_texture_bank.h, the frontend/HW-backend bank restore) and place numbers 9-12 built
+from the level's digits (decomp/rc_place_glyphs.cpp). Builds on USA and EU but is untested: the RTX 2060 crashed
+(Xid 175) during the first test runs, and it was not established whether this code was involved. Banks are opt-in
+(`RC_CAR_TEXTURE_BANKS=1`); without them the "leave out cars that don't fit" rule still applies. Still to do: test
+banks on levels 6/18 (1P, 2P, results/podium, Track Editor), check the 9-12 numbers on screen, per-level fps survey
+at 8/12 cars, and decide on the GPU-crash question before enabling by default.
 User request: more than the PS2's 8 cars (single player) and 6 (two players). Now up to 12 in both (`rc_cars.h/.cpp`,
 `kMaxCars`), set on the game's own Game Setup page. Where each limit comes from, and what was done:
 

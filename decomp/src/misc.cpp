@@ -444,8 +444,9 @@ void CarListConstructDaemon(ptr32<memHandle> pHandle)
     }
     for (uint32_t i = 0; i < total; ++i)
     {
-        // Enhancement (rc_cars.h): a car past the 8th whose textures may not fit in the GS memory left is not raced.
-        if (!cars::roomForCar(static_cast<int>(i)))
+        // Enhancement (rc_cars.h): a car past the 8th whose textures do not fit in the GS memory left shares a region
+        // with others (a texture bank), or if even that cannot take it, is not raced.
+        if (cars::carTextures(static_cast<int>(i), static_cast<int>(total)) == cars::CarTextures::Drop)
         {
             cars::dropCars(static_cast<int>(i));
             total = i;
@@ -487,6 +488,12 @@ void CarListConstructDaemon(ptr32<memHandle> pHandle)
         }
         else
             list.boat[i].pDef = ptr32<_sObjectDef>(0xffffffffu);
+        if (!cars::carLoaded(static_cast<int>(i)))
+        {
+            cars::dropCars(static_cast<int>(i));
+            total = i;
+            break;
+        }
         if (std::getenv("RC_CARS_LOG"))
             std::fprintf(stderr, "[cars] car %u type %d level %u: GS textures 0x%x -> 0x%x (+0x%x)\n", i, type, G(mainVarG).level, texBefore,
                          G(nextTexAddr), G(nextTexAddr) - texBefore);
@@ -639,6 +646,7 @@ int16 RendObjRender(ptr32<_sRendObj> pRendObj, ptr32<SVECTOR> pPOI__unused, ptr3
                (static_cast<uint32_t>(head.b) << 8);
     version = shape.version;
     const ptr32<sRdrVUShape> shapeAddress(headAddress.address);
+    cars::useBank(cars::shapeBank(shapeAddress.address)); // enhancement: a banked car's textures (rc_cars.h)
     if (version == 2.0_f)
     {
         guest_call(kRdrVUShape, shapeAddress, cameraAddress, tint);

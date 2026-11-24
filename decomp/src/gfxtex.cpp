@@ -4,6 +4,7 @@
 // The uploads themselves still go through the SDK's GS library (guest_call).
 
 #include "ee_math.h"
+#include "rc_cars.h"
 #include "rc_decomp.h"
 
 // Europe variants: GfxTex_ManageTexture and GfxTex_Update store the counters and nextTexAddr in another order (the
@@ -65,6 +66,7 @@ uint64_t mipBase(const _sGfxTexture &tex, int first)
 
 void GfxTex_Init()
 {
+    cars::texturesReset(); // enhancement: the cars' texture banks (rc_cars.h) go with the memory
     G(gNumAnimTextures) = 0;
     G(nextTexAddr) = kFirstTexAddr;
     G(framecount) = 0;
@@ -90,6 +92,7 @@ void GfxTex_Term() {}
 void GfxTex_ManageTexture(ptr32<_sGfxTexture> pTexture)
 {
     GuestFrame frame(0x150);
+    cars::bankTexture(pTexture.address);
     _sGfxTexture &tex = *pTexture;
     uint32_t levels = (tex.flags & 0x1c) >> 2;
     int32_t w = tex.wd, h = tex.ht;
@@ -150,10 +153,12 @@ void GfxTex_ManageTexture(ptr32<_sGfxTexture> pTexture)
         }
         else if (static_cast<uint32_t>(tex.fmt) - 0x13u < 2u && w < h)
             w = h;
-        if (G(nextTexAddr) <= kLastTexAddr)
+        // Enhancement: a texture bank's level that would pass the end of GS memory is not uploaded (rc_cars.h).
+        const uint32_t size = levelSize(static_cast<uint32_t>(tex.fmt), w, h);
+        if (G(nextTexAddr) <= kLastTexAddr && cars::bankUpload(G(nextTexAddr), size))
             guest_call(kLoadTexMip, G(nextTexAddr), pTexture, level, 0);
         tex.idxList[level] = static_cast<s32>(G(nextTexAddr) >> 8);
-        G(nextTexAddr) += levelSize(static_cast<uint32_t>(tex.fmt), w, h);
+        G(nextTexAddr) += size;
         if (levels < level + 1)
             break;
         w = tex.wd;
@@ -177,7 +182,7 @@ void GfxTex_ManageTexture(ptr32<_sGfxTexture> pTexture)
     {
         const bool eightBit = tex.fmt == 0x13;
         const ptr32<void> image = frame.local<void>(eightBit ? 0 : 0x60);
-        if (G(nextTexAddr) <= kLastTexAddr)
+        if (G(nextTexAddr) <= kLastTexAddr && cars::bankUpload(G(nextTexAddr), eightBit ? 0x400u : 0x100u))
         {
             guest_call(kSetDefLoadImage, image, static_cast<int32_t>(G(nextTexAddr) << 8) >> 16, 1, 0, 0, 0, eightBit ? 0x10 : 8, eightBit ? 0x10 : 2);
             guest_call(kExecLoadImage, image, tex.pClut);

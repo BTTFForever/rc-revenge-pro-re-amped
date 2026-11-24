@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "runtime/gs/gs_track_batch.h"
+#include "runtime/gs/gs_texture_bank.h"
 
 const char *g_gsTrackVertexShader = nullptr;
 
@@ -669,6 +670,14 @@ struct GSHwBackend::Impl
     double firstRawZ = 0.0;
 
     std::unordered_map<uint64_t, Texture> textures;
+    // Texture banks (gs_texture_bank.h): the shared region's blocks and the bank it holds (-1: none). Textures there are
+    // cached per bank, so a bank put back finds its textures decoded.
+    uint32_t bankLo = 0, bankHi = 0;
+    int bank = -1;
+    uint64_t bankKey(uint32_t tbp) const
+    {
+        return bank >= 0 && tbp >= bankLo && tbp < bankHi ? (static_cast<uint64_t>(bank) + 1u) * 0x9E3779B97F4A7C15ull : 0u;
+    }
     std::vector<RenderTarget> targets;
     uint64_t useCounter = 0, writeSeq = 0;
     struct UploadRecord { uint32_t lo, hi; uint64_t seq; };
@@ -975,6 +984,7 @@ struct GSHwBackend::Impl
             key = key * 1099511628211ull ^ clutHash;
             key = key * 1099511628211ull ^ (t.cpsm | (t.csm << 8) | (t.csa << 16));
         }
+        key ^= bankKey(t.tbp0);
         Texture &tex = textures[key];
         tex.lastUse = ++useCounter;
         if (tex.valid)
@@ -1081,8 +1091,8 @@ struct GSHwBackend::Impl
     Texture &indexTextureFor(const GSDrawState &s)
     {
         const GSTex0Reg &t = s.context.tex0;
-        const uint64_t key = (1ull << 63) | t.tbp0 | (static_cast<uint64_t>(t.tbw) << 14) | (static_cast<uint64_t>(t.psm & 63) << 20) |
-                             (static_cast<uint64_t>(s.textureWidth) << 26) | (static_cast<uint64_t>(s.textureHeight) << 38);
+        const uint64_t key = ((1ull << 63) | t.tbp0 | (static_cast<uint64_t>(t.tbw) << 14) | (static_cast<uint64_t>(t.psm & 63) << 20) |
+                              (static_cast<uint64_t>(s.textureWidth) << 26) | (static_cast<uint64_t>(s.textureHeight) << 38)) ^ bankKey(t.tbp0);
         Texture &tex = textures[key];
         tex.lastUse = ++useCounter;
         if (tex.valid)
@@ -3624,7 +3634,23 @@ void GSHwBackend::BeginTransfer(const GSTransferCommand &command)
     {
         const uint32_t rows = static_cast<uint32_t>(command.trxpos.dsay) + command.trxreg.rrh;
         const uint32_t lo = command.bitbltbuf.dbp, hi = lo + spanBlocks(command.bitbltbuf.dpsm, command.bitbltbuf.dbw, rows);
-        d.invalidateBlocks(lo, hi);
+        if (command.direction == 0u && command.trxpos.ssay == kGSTextureBankTransferTag && command.trxpos.ssax != 0u)
+        {
+            // A texture bank put back: the region's textures of that bank are as they were decoded (keyed by bank).
+            d.bank = static_cast<int>(command.trxpos.ssax) - 1;
+            if (lo != d.bankLo || hi > d.bankHi)
+            {
+                d.invalidateBlocks(lo, hi);
+                d.bankLo = lo;
+                d.bankHi = std::max(d.bankHi, hi);
+            }
+        }
+        else
+        {
+            d.invalidateBlocks(lo, hi); // every bank's textures in the range
+            if (lo < d.bankHi && d.bankLo < hi)
+                d.bank = -1;
+        }
         // GOW_GS_HW_XFERWATCH=<hex block>: debug, log the transfers whose block range holds that block
         static const long xferWatch = std::getenv("GOW_GS_HW_XFERWATCH") ? std::strtol(std::getenv("GOW_GS_HW_XFERWATCH"), nullptr, 16) : -1;
         // GOW_GS_HW_XFERRANGE=<lo hex>-<hi hex>: also log every transfer whose destination block lies in [lo, hi)
