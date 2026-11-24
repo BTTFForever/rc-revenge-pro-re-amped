@@ -3,7 +3,7 @@
 //
 // Front end: Game Options > Screen Adjust (the PS2's picture position, not needed on a PC) becomes Display (the
 // screen settings: aspect ratio, HUD and menus, screen mode, resolution, frame rate, smooth motion, V-Sync,
-// variable refresh, HUD scale, menu scale); the game's own Controller configuration page (Game
+// variable refresh, HUD scale, menu scale, button prompts); the game's own Controller configuration page (Game
 // Options > Controls) gets "Player 1 PC Controls..." and "Player 2 PC Controls...". The developers' hidden "Debug
 // Menus" item is shown.
 //
@@ -75,6 +75,7 @@ constexpr Choice kChoices[] = {
     {"Variable refresh: %s", "Off*On", 2},
     {"HUD scale: %s", "1.0x*0.9x*0.8x*0.7x*0.6x*0.5x", 6},
     {"Menu scale: %s", "1.0x*0.9x*0.8x*0.7x*0.6x*0.5x", 6},
+    {"Button prompts: %s", "PS2*Match controls*Off", 3},
 };
 constexpr int kEnhanceCount = static_cast<int>(sizeof(kChoices) / sizeof(kChoices[0]));
 

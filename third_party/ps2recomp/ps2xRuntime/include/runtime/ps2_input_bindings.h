@@ -71,6 +71,18 @@ namespace ps2_input_bindings
     Active active(int player);
     std::string activeName(int player); // "Keyboard + Steam Controller", "nothing"
 
+    // Button prompts: the device whose bindings a player's prompts show, the one of the devices it reads (in the menus,
+    // for player 1, any device) pressed last; before any press a gamepad if it has one, else the keyboard.
+    struct PromptDevice
+    {
+        bool gamepad = false;
+        int slot = -1;
+    };
+    PromptDevice promptDevice(int player);
+    // A gamepad's label for a button: an SDL_GamepadButtonLabel (1 A, 2 B, 3 X, 4 Y, 5 Cross, 6 Circle, 7 Square,
+    // 8 Triangle), 0 unknown.
+    int gamepadButtonLabel(int slot, int sdlButton);
+
     // The game is in a menu (called each menu frame; lapses a moment after the calls stop): the keyboard and every
     // connected gamepad no player reads also drive player 1's port, with player 1's bindings (the defaults for any
     // menu control left unbound), so a device setting can never lock the menus.

@@ -735,6 +735,8 @@ namespace ps2_host_input
         int g_p2AutoPad = -1;                          // player 2's Auto gamepad, kept while connected
         bool g_fallback[kPadPorts] = {false, false};  // logged: a chosen gamepad not connected
         std::atomic<int64_t> g_menuUntil{0};           // menu mode until (steady clock, ns)
+        // Button prompts: when each device was last pressed (a count of presses seen; 0 never): the keyboard, the slots.
+        uint64_t g_pressCount = 0, g_keyboardPressed = 0, g_padPressed[ps2_host_gamepad::kSlots]{};
 
         int lowestSlot(unsigned mask)
         {
@@ -819,6 +821,20 @@ namespace ps2_host_input
             {
                 r[0].keyboard = true;
                 r[0].pads = free & ~r[1].pads;
+            }
+            for (int k = 32; k <= 348; ++k)
+                if (hostKeyPressed(k))
+                {
+                    g_keyboardPressed = ++g_pressCount;
+                    break;
+                }
+            for (int slot = 0; slot < ps2_host_gamepad::kSlots; ++slot)
+            {
+                static bool wasInUse[ps2_host_gamepad::kSlots]{};
+                const bool inUse = (present & (1u << slot)) && padInUse(slot);
+                if (inUse && !wasInUse[slot])
+                    g_padPressed[slot] = ++g_pressCount;
+                wasInUse[slot] = inUse;
             }
             for (uint32_t i = 0; i < kPadPorts; ++i)
             {
@@ -1508,6 +1524,40 @@ namespace ps2_input_bindings
             }
         return out.empty() ? "nothing" : out;
     }
+
+    PromptDevice promptDevice(int player)
+    {
+        using namespace ps2_host_input;
+        std::lock_guard<std::mutex> lock(g_bindMutex);
+        const Active a = g_active[player & 1];
+        const bool any = player == 0 && menuMode();
+        PromptDevice out;
+        uint64_t best = 0;
+        if (a.keyboard || any)
+            best = g_keyboardPressed;
+        for (int slot = 0; slot < ps2_host_gamepad::kSlots; ++slot)
+            if (ps2_host_gamepad::present(slot) && ((a.pads & (1u << slot)) || any) && g_padPressed[slot] > best)
+            {
+                best = g_padPressed[slot];
+                out.gamepad = true;
+                out.slot = slot;
+            }
+        if (best == 0)
+        {
+            int slot = a.activePad;
+            for (int s = 0; slot < 0 && any && s < ps2_host_gamepad::kSlots; ++s)
+                if (ps2_host_gamepad::present(s))
+                    slot = s;
+            if (slot >= 0)
+            {
+                out.gamepad = true;
+                out.slot = slot;
+            }
+        }
+        return out;
+    }
+
+    int gamepadButtonLabel(int slot, int sdlButton) { return ps2_host_gamepad::buttonLabelOf(slot, sdlButton); }
 
     void menuFrame()
     {

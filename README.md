@@ -40,6 +40,7 @@ start), and are saved to `~/.config/rc-revenge-pro/settings.ini`:
 | Variable refresh | Off, On | For a VRR (FreeSync/G-SYNC/Adaptive Sync) screen: each new picture is shown when it is ready, races (and with Smooth motion the menus) capped 3 below the screen's rate (141 on 144 Hz); with Smooth motion off the menus show at the game's 50/60 Hz without judder. The desktop must allow VRR for the window (KDE: Display Configuration, Adaptive sync "Always", or fullscreen with "Automatic") |
 | HUD scale | 1.0x to 0.5x | The race HUD smaller, each part shrunk toward its own corner or edge (position and laps top right, speedometer bottom right, map bottom left, the weapon and the wrong-way sign toward the edge nearest them; in split screen toward its own half's corners). For big high-resolution screens. Saved as `hud_scale` (100 to 50) |
 | Menu scale | 1.0x to 0.5x | The menus smaller (front end, pause menu, results), toward the screen's centre, their key hints toward the bottom. Saved as `menu_scale` |
+| Button prompts | PS2, Match controls, Off | The button pictures in the menus (the key hints "Back", "Select", the controller layout pages): the PS2's; what the control is bound to on the device you used last (a PlayStation-style gamepad keeps the PS2 shapes, other gamepads show A/B/X/Y in their colours or the button's name, the keyboard the key's name; the arrows stay while they are on the d-pad or the arrow keys; player 2's bindings on player 2's layout page); or none (the key-hint line is not drawn). Saved as `button_prompts` (ps2, match, off) |
 
 Game Options (and the pause menu's Game Options) also shows the developers' **Debug Menus**, left hidden on the disc. Apart from Mirror
 Mode (the game's normal mirrored tracks), its items are not connected to anything in the released game.
@@ -73,7 +74,7 @@ Right Shift R2, Enter start, Tab select, WASD left stick; player 2 (when set to 
 0, 9. Saved in the same settings file (`p1_device=auto`, `p1_key_cross=F`, `p1_pad_cross=a`, ...).
 `PS2X_GAMEPAD_LOG=1` logs every SDL joystick and gamepad (name, GUID, path, driver, mapping).
 
-For one run, an environment variable overrides the file: `RC_ASPECT=16:9`, `RC_HUD_SCALE=<50..100>`, `RC_MENU_SCALE=<50..100>`, `PS2X_GS_HW_SCALE=<n>`,
+For one run, an environment variable overrides the file: `RC_ASPECT=16:9`, `RC_HUD_SCALE=<50..100>`, `RC_MENU_SCALE=<50..100>`, `RC_BUTTON_PROMPTS=ps2|match|off`, `PS2X_GS_HW_SCALE=<n>`,
 `PS2X_FULLSCREEN=1`, `PS2X_REFRESH_HZ=<n>`, `RC_INTERP=0`, `PS2X_VSYNC=off|on|adaptive`, `PS2X_VRR=0|1`,
 `PS2X_PAD1_DEVICE`/`PS2X_PAD2_DEVICE=auto|keyboard|pad1|...|keyboard+pad1|none`, `PS2X_BIND_<BUTTON>=<key>` (player 1's keyboard),
 `PS2X_GAMECONTROLLERDB=<gamecontrollerdb.txt>` (extra SDL mappings).
@@ -83,7 +84,8 @@ and longest gap, swap interval, VRR, monitor rate). `PS2X_PAD_LIVE=<file>` drive
 (0x0008 start, 0x4000 cross, 0x1000 triangle, 0x0010/0x0040/0x0080/0x0020 up/down/left/right); with
 `PS2X_SDL_VIRTUAL_PADS=<n>` the game also gets n virtual SDL gamepads, pressed by lines `pad<n> <SDL button or
 +/-axis> <hold ms> <gap ms>` (`pad1 a 100 300`, `pad2 +righttrigger 2000 100`; `pad3 unplug` and `pad3 plug`
-disconnect and reconnect one), through the whole gamepad path; a line `shot <name>` saves the window's picture as
+disconnect and reconnect one), through the whole gamepad path (`PS2X_SDL_VIRTUAL_PAD_TYPE=ps4|xbox` gives them a DualShock 4's
+or an Xbox 360 controller's ids, so SDL labels their buttons that way; `RC_PROMPTS_LOG=1` logs what each button prompt shows); a line `shot <name>` saves the window's picture as
 `<name>.png` in `PS2X_SCREENSHOT_DIR` (in order with port 0's lines). `RC_MENU_DUMP=2` dumps the menus' texts in all
 four languages.
 `PS2X_RUMBLE_LOG=1` logs the game's motor values and what the virtual gamepads receive. Switches for comparing or bypassing the other enhancements

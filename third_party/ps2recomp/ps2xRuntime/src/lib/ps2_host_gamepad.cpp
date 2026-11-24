@@ -27,6 +27,7 @@ namespace ps2_host_gamepad
             SDL_Gamepad *pad = nullptr;
             SDL_JoystickID id = 0;
             std::string name;
+            SDL_GamepadType type = SDL_GAMEPAD_TYPE_STANDARD; // for the button prompts' labels
             uint8_t small = 0, large = 0; // the motors last sent
             uint64_t rumbleSent = 0;      // SDL_GetTicks of the last send
             uint32_t loggedButtons = 0;   // PS2X_GAMEPAD_LOG: the buttons and axes last logged
@@ -58,6 +59,21 @@ namespace ps2_host_gamepad
             desc.button_mask = (1u << (SDL_GAMEPAD_BUTTON_DPAD_RIGHT + 1)) - 1u;
             desc.axis_mask = (1u << SDL_GAMEPAD_AXIS_COUNT) - 1u;
             desc.name = "RC virtual gamepad";
+            // PS2X_SDL_VIRTUAL_PAD_TYPE=ps4|xbox (test aid): a vendor and product SDL knows, so the pad's type (and its
+            // face buttons' labels) are those of a DualShock 4 or an Xbox 360 controller.
+            if (const char *t = std::getenv("PS2X_SDL_VIRTUAL_PAD_TYPE"))
+            {
+                if (std::strcmp(t, "ps4") == 0)
+                {
+                    desc.vendor_id = 0x054c;
+                    desc.product_id = 0x09cc;
+                }
+                else if (std::strcmp(t, "xbox") == 0)
+                {
+                    desc.vendor_id = 0x045e;
+                    desc.product_id = 0x028e;
+                }
+            }
             desc.userdata = reinterpret_cast<void *>(static_cast<intptr_t>(i + 1));
             desc.Rumble = virtualRumble;
             const SDL_JoystickID id = SDL_AttachVirtualJoystick(&desc);
@@ -204,6 +220,7 @@ namespace ps2_host_gamepad
                     g_slots[i].id = id;
                     const char *n = SDL_GetGamepadName(pad);
                     g_slots[i].name = n ? n : "Gamepad";
+                    g_slots[i].type = SDL_GetGamepadType(pad);
                     g_slots[i].small = g_slots[i].large = 0;
                     SDL_SetGamepadPlayerIndex(pad, i);
                     std::fprintf(stderr, "[gamepad] gamepad %d connected: %s\n", i + 1, g_slots[i].name.c_str());
@@ -380,6 +397,13 @@ namespace ps2_host_gamepad
         const char *k = buttonKey(b);
         return k ? k : "?";
     }
+    int buttonLabelOf(int slot, int b)
+    {
+        if (!present(slot))
+            return 0;
+        return static_cast<int>(SDL_GetGamepadButtonLabelForType(g_slots[slot].type, static_cast<SDL_GamepadButton>(b)));
+    }
+    int type(int slot) { return present(slot) ? static_cast<int>(g_slots[slot].type) : 0; }
     const char *buttonKey(int b) { return SDL_GetGamepadStringForButton(static_cast<SDL_GamepadButton>(b)); }
     const char *axisKey(int a) { return SDL_GetGamepadStringForAxis(static_cast<SDL_GamepadAxis>(a)); }
     int buttonFromKey(const char *key) { return SDL_GetGamepadButtonFromString(key); }
@@ -434,6 +458,8 @@ namespace ps2_host_gamepad
     int count() { return 0; }
     std::string name(int) { return {}; }
     std::string buttonLabel(int) { return "?"; }
+    int buttonLabelOf(int, int) { return 0; }
+    int type(int) { return 0; }
     const char *buttonKey(int) { return nullptr; }
     const char *axisKey(int) { return nullptr; }
     int buttonFromKey(const char *) { return -1; }

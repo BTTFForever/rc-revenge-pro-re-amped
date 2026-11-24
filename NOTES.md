@@ -1296,6 +1296,33 @@ the glyph is drawn as before, and every width (centring, wrapping, the key-hint 
 agree. All languages and both versions (the same font code). Checked: Game Options page and pause menu at 1.0x and 0.5x
 menu scale, USA, before and after.
 
+### Button prompts (2026-11-24)
+Setting `button_prompts` = ps2 | match | off (Display page "Button prompts", `RC_BUTTON_PROMPTS`). The menus' texts put
+button pictures in with "}0" to "}7", which the font (`fontSpecial`, the native FontSpecialCharacterOrColourChange)
+hands to the picture function `AMenuDisplayPsxKey` (the PS2 key sheet, 32 pixels each): 0 left/right arrows
+("}0Change"), 1 up/down arrows ("}1Move"), 2 and 3 single arrows (not seen in the texts), 4 square, 5 circle, 6 cross,
+7 triangle (the key hints "}7Back }6Select", the controller layout pages "Accelerate }6 button"). `rc_prompts.h` /
+`src/amenu_prompts.cpp` draw them instead when the setting is not ps2, and `FontLength` uses the same widths, so the
+key-hint boxes, centring and wrapping fit.
+- Match controls: the device is the one the player pressed last (`ps2_input_bindings::promptDevice`; the window loop
+  counts key and gamepad presses; in the menus player 1's is any device, as the menus take them all); before any press
+  a gamepad if there is one. The player: 2 on the game's "Define Player 2 Controls" page (its UI group tag 0x10000215),
+  else 1. A face button bound to a gamepad button shows the gamepad's own label (`SDL_GetGamepadButtonLabelForType`
+  with the type cached when it is opened): Cross/Circle/Square/Triangle the PS2 picture of that shape, A/B/X/Y a dark
+  round button with the letter in green, red, blue, yellow; any other input (shoulders, Start, triggers, keys) a dark
+  key cap with its name (`sourceName` without "Pad "). The arrows stay pictures while both are on the d-pad or the
+  arrow keys, else a cap "J/L". An unbound control shows the default the menus fall back to.
+- Off: the key-hint line under a menu is not drawn (`AMenuDisplayOptions`); in other texts (the layout pages) a face
+  button's picture becomes its name in the line's colour ("Cross button", like the page's own "R1 button"), and an
+  arrow is left out with the space after it.
+- Drawing: polygons as fans of `RectRender` quads (each draws (v0, v3, v2) and (v0, v1, v2)); the 2D is depth-tested
+  (greater), so the rim is drawn at the PS2 pictures' depth and the face at half of it (in front), the letter at 0. The
+  label is printed with `FontPrint` from inside the font's own line: the sprite parameters (scratchpad) and the font
+  colour are saved around it. Lines are twice as tall as pixels are wide, so a round button is 26 by 14.
+- Test aid: `PS2X_SDL_VIRTUAL_PAD_TYPE=ps4|xbox` gives the virtual SDL gamepads a DualShock 4's or Xbox 360 pad's
+  vendor and product, so SDL types and labels them that way; `RC_PROMPTS_LOG=1` logs each key hint string and what each
+  picture became.
+
 ## Where to resume (2026-11-12)
 
 **Renderer (2026-11-22): P1 step 8 batch 4 (live 3D) is built** ("Live 3D" above; `RENDERER_3D_DESIGN.md` 20;

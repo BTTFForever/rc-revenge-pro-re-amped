@@ -3,6 +3,7 @@
 // the sprite parameters in scratchPadG and calling the sprite renderer. "}x" in a string draws button icon x
 // through pGfxFnG (digits and capitals) or switches the colour ("}a" grey, "}b" back); a carriage return ends a line.
 
+#include "rc_prompts.h" // enhanced recomp: button prompts
 #include "ee_math.h"
 
 // Europe variant: FontSpecialCharacterOrColourChange stores in another order (the same body).
@@ -79,6 +80,19 @@ uint8_t guestByte(uint32_t address)
     return *static_cast<const uint8_t *>(guest_host(address));
 }
 
+// Enhanced recomp (rc_prompts.h): the "}<key>" at address is a picture the button prompts draw instead of the PS2's (its
+// key, else -1).
+int32_t promptKey(uint32_t address)
+{
+    const uint8_t c = guestByte(address);
+    if (c < '0' || c > '7' || G(pGfxFnG).address != sym::AMenuDisplayPsxKey || !rc::prompts::replaces(c - '0'))
+        return -1;
+    return c - '0';
+}
+// Off: the space after a picture left out goes with it (address: the picture's code).
+bool dropSpace(uint32_t address) { const int32_t key = promptKey(address); return key >= 0 && rc::prompts::dropsSpace(key) && guestByte(address + 1) == ' '; }
+
+
 } // namespace
 
 // The width of the longest line of a string, in pixels.
@@ -126,9 +140,11 @@ uint32 FontLength(ptr32<char> pString)
             {
                 // A button icon is 32 wide; a colour change takes no room.
                 const int32_t next = static_cast<int8_t>(ch(1));
-                if (static_cast<uint32_t>(next - 0x30) < 10u || static_cast<uint32_t>(next - 0x41) < 0x1au)
+                if (const int32_t key = promptKey(at + 1); key >= 0)
+                    line += static_cast<uint32_t>(rc::prompts::width(key)); // enhanced recomp: button prompts
+                else if (static_cast<uint32_t>(next - 0x30) < 10u || static_cast<uint32_t>(next - 0x41) < 0x1au)
                     line += 0x20;
-                at += 2;
+                at += dropSpace(at + 1) ? 3 : 2;
             }
             else
             {
@@ -211,6 +227,8 @@ ptr32<char> FontPrint(int16 x, int16 y, ptr32<char> pString)
             {
                 ++at;
                 pen = static_cast<int16_t>(fontSpecial(pen, y, ptr32<char>(at), s0, sym::FontPrint + (f.type == 0 ? 0x1bcu : 0x358u)));
+                if (dropSpace(at))
+                    ++at; // enhanced recomp: button prompts off
             }
             else
             {
@@ -307,6 +325,8 @@ int32_t FontPrintFX(int16 x, int16 y, ptr32<char> pString, uint16 fx, uint16 fxV
             {
                 ++at;
                 pen = static_cast<int16_t>(fontSpecial(pen, y, ptr32<char>(at), callerS0(), sym::FontPrintFX + 0x218u));
+                if (dropSpace(at))
+                    ++at; // enhanced recomp: button prompts off
             }
             else if (c != 0x20)
             {
@@ -331,6 +351,8 @@ int32_t FontPrintFX(int16 x, int16 y, ptr32<char> pString, uint16 fx, uint16 fxV
             {
                 ++at;
                 pen = static_cast<int16_t>(fontSpecial(pen, y, ptr32<char>(at), s0, sym::FontPrintFX + 0x3a0u));
+                if (dropSpace(at))
+                    ++at; // enhanced recomp: button prompts off
             }
             else
             {
@@ -366,7 +388,14 @@ int32_t fontSpecial(int16 x, int16 y, ptr32<char> pString, uint64_t savedS0, uin
     std::memcpy(guest_host(frame.local<uint8_t>(0x10).address), &savedRa64, 8);
     const int32_t c = static_cast<int8_t>(*pString);
     int32_t pen = x;
-    if (static_cast<uint8_t>(c - 0x30) < 10u || static_cast<uint32_t>(c - 0x41) < 0x1au)
+    if (const int32_t key = promptKey(pString.address); key >= 0)
+    {
+        // Enhanced recomp: a button prompt drawn as the setting says, at its own width.
+        rc::prompts::draw(x, y, key);
+        pen = static_cast<int16_t>(x + rc::prompts::width(key));
+        GfxP2_RenderDmaSend();
+    }
+    else if (static_cast<uint8_t>(c - 0x30) < 10u || static_cast<uint32_t>(c - 0x41) < 0x1au)
     {
         if (G(pGfxFnG).address != 0)
         {

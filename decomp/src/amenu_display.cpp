@@ -6,6 +6,7 @@
 // An item's text depends on its variable: none (plain text), a choice ("*"-separated list, shown in the text's %s or
 // on a second line), a number, a slider, or a tabbed line.
 
+#include "rc_prompts.h" // enhanced recomp: button prompts
 #include "rc_widescreen.h" // enhanced recomp: menu scale
 #include "amenu.h"
 #include "amenu_fuzz.h"
@@ -799,6 +800,8 @@ void AMenuDisplayOptions(ptr32<sAMenuHeader> pHeader)
     }
     if (!inst.pTitleText)
         inst.pTitleText = options;
+    if (prompts::hidesHints(text(inst.pTitleText).address))
+        return; // enhanced recomp: button prompts off, no key hints
     inst.flags = 0x824;
     inst.height = 0x28;
     inst.y = RC_VERSION_EU ? 0xd8 : 0xc8;
