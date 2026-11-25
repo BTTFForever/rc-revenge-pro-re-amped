@@ -264,9 +264,9 @@ namespace
         rdram[kMain + 0x34Au] = static_cast<uint8_t>(bootLevel());
         rdram[kMain + 0x368u] = std::getenv("RC_BOOT_SPLIT") ? 1u : 0u; // not split screen (RC_BOOT_SPLIT=1: the split-screen demo)
         rdram[kMain + 0x369u] = 0u;
-        // cars; RC_BOOT_CARS=<n> (2..12) for the car limits' tests (decomp/rc_cars.h)
+        // cars; RC_BOOT_CARS=<n> (2..8) for the car limits' tests (decomp/rc_cars.h)
         const char *bootCars = std::getenv("RC_BOOT_CARS");
-        rdram[kMain + 0x36Au] = bootCars ? static_cast<uint8_t>(std::clamp(std::atoi(bootCars), 2, 12)) : 8u;
+        rdram[kMain + 0x36Au] = bootCars ? static_cast<uint8_t>(std::clamp(std::atoi(bootCars), 2, 8)) : 8u;
         // RC_BOOT_RACE=1 (a test aid, with RC_TEST_AUTOPILOT=1 for a car that drives itself): a single race instead of
         // the demo, the player (two with RC_BOOT_SPLIT=1) in the first car type, RC_BOOT_CARS cars in all.
         if (const char *race = std::getenv("RC_BOOT_RACE"); race && *race == '1')

@@ -1448,6 +1448,14 @@ which item and device led there) would be needed.
 
 ### Car limits (2026-11-24)
 
+**Limits back to 8 (2026-11-25, user's decision):** a race now has at most 8 cars in both modes (`cars::kMaxRace = 8`
+in rc_cars.h): single race 2-8 as on the PS2, two players 2-8 (the PS2's 6, raised). The Game Setup ranges, the
+settings.ini/`RC_CARS_*` values, `RC_BOOT_CARS` and the cup count are clamped to it; the memory card still keeps at most
+6 for two players, a 7 or 8 goes to settings.ini. Everything built for 9-12 (tables still sized by `kMaxCars = 12`, the
+added grid rows, places 9-12, batch 3's texture banks) stays in the code but is not reached. Checked: level 18, split
+screen, 8 cars (`RC_BOOT_LEVEL=18 RC_BOOT_SPLIT=1 RC_BOOT_CARS=8`), all 8 cars' textures fit (GS textures to 0x3db900),
+75 s without a fault. The text below describes the 12-car work as it was.
+
 **Batch 3, parked unfinished (2026-11-24):** texture banks for cars past the 8th that don't fit in GS memory
 (decomp/rc_car_textures.cpp, gs_texture_bank.h, the frontend/HW-backend bank restore) and place numbers 9-12 built
 from the level's digits (decomp/rc_place_glyphs.cpp). Builds on USA and EU but is untested: the RTX 2060 crashed

@@ -15,7 +15,10 @@
 
 namespace rc::cars {
 
-inline constexpr int kMaxCars = 12;       // every count: the menus' ranges, the tables below
+inline constexpr int kMaxCars = 12;       // the tables below (sized for 12; races use at most kMaxRace)
+// The largest race offered (2026-11-25: back to 8 for single player, as on the PS2; two players raised from 6 to 8).
+// The 9-12 car code (added grid rows, places 9-12, texture banks) stays but is not reached while this is 8.
+inline constexpr int kMaxRace = 8;
 inline constexpr int kPs2Single = 8, kPs2Multi = 6; // the PS2's ranges' tops (what the memory card keeps at most)
 
 // The extension block: [kGuestBase, kGuestEnd) of guest RAM, below the game's heap at 0x500000.

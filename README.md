@@ -44,14 +44,11 @@ start), and are saved to `~/.config/rc-revenge-pro/settings.ini`:
 | Split screen | Horizontal, Vertical | Two-player races: player 1 above player 2 (the PS2's), or player 1 on the left half and player 2 on the right. Side by side, each half's view is zoomed out a little (its horizontal view narrower and its vertical view taller by the same factor, about 0.7 in 4:3 and 0.8 in 16:9; nothing stretched), each player's position, laps and speed at the screen's outer edge (player 1's HUD mirrored), the weapons at the inner edges and the map at the bottom of the line between the halves. Changes apply mid-race too. Saved as `split` (horizontal, vertical); `RC_SPLIT` overrides it |
 
 **Cars in a race**: the game's own **Game Options > Game Setup** page sets the number of cars, "Single race Number of
-Cars" (the PS2's 2 to 8) and "Multi-player Number of Cars" (the PS2's 2 to 6); both now go up to 12. A championship
-races 8 cars, or the single race count when that is more (the cup's 8 cars and further ones drawn at random, preferring
-those unlocked); Track Editor races follow the same two counts. The counts stay on the memory card as before as long as
-they are within the PS2's ranges; once one above them is chosen, both are kept in the settings file (`cars_single`,
-`cars_multi`; 0 means the memory card's) and the memory card gets the PS2's maximum, so a save stays usable on a PS2.
-`RC_CARS_SINGLE=<2..12>` and `RC_CARS_MULTI=<2..12>` override them for one run. From 9th on, the position is drawn in the
-race font (the level's number sprites go to 8), places 9 and on score no points, and the extra cars start in rows
-behind the level's grid along the track. Details and measurements: NOTES.md "Car limits".
+Cars" (2 to 8, as on the PS2) and "Multi-player Number of Cars" (the PS2's 2 to 6, now up to 8). Track Editor races
+follow the same two counts. The counts stay on the memory card as before as long as they are within the PS2's ranges;
+once a two-player count above 6 is chosen, both are kept in the settings file (`cars_single`, `cars_multi`; 0 means the
+memory card's) and the memory card gets 6, so a save stays usable on a PS2. `RC_CARS_SINGLE=<2..8>` and
+`RC_CARS_MULTI=<2..8>` override them for one run. Details: NOTES.md "Car limits".
 
 Game Options (and the pause menu's Game Options) also shows the developers' **Debug Menus**, left hidden on the disc. Apart from Mirror
 Mode (the game's normal mirrored tracks), its items are not connected to anything in the released game.

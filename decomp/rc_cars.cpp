@@ -28,7 +28,7 @@ bool logOn()
     return on;
 }
 
-int clampCount(int n, int low) { return std::clamp(n, low, kMaxCars); }
+int clampCount(int n, int low) { return std::clamp(n, low, kMaxRace); }
 
 // Game Setup's two items, by their selection tags.
 constexpr uint32_t kSingleTag = 0x1000028du, kMultiTag = 0x1000028eu;
@@ -134,16 +134,16 @@ uint32_t lineItem(int menu, int extra) { return kMenuLines + static_cast<uint32_
 int singleCount(int cardValue)
 {
     const int s = settings::get().carsSingle;
-    return s > 0 ? clampCount(s, 2) : cardValue;
+    return s > 0 ? clampCount(s, 2) : std::min(cardValue, kMaxRace);
 }
 
 int multiCount(int cardValue)
 {
     const int s = settings::get().carsMulti;
-    return s > 0 ? clampCount(s, 2) : cardValue;
+    return s > 0 ? clampCount(s, 2) : std::min(cardValue, kMaxRace);
 }
 
-int cupCount() { return std::max(8, std::min(singleCount(8), kMaxCars)); }
+int cupCount() { return std::max(8, std::min(singleCount(8), kMaxRace)); }
 
 void entrySettings(uint32_t item)
 {
@@ -154,12 +154,12 @@ void entrySettings(uint32_t item)
     const sFrontGameConfig &c = G(frontEndVarG).gameStateData.gameConfig;
     if (p->selectionTag == kSingleTag)
     {
-        var.maxValue = kMaxCars;
+        var.maxValue = kMaxRace;
         var.value = singleCount(c.singleCarCount);
     }
     else if (p->selectionTag == kMultiTag)
     {
-        var.maxValue = kMaxCars;
+        var.maxValue = kMaxRace;
         var.value = multiCount(c.multiCarCount);
     }
 }

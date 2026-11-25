@@ -78,7 +78,7 @@ int splitFromText(const std::string &text)
     return text == "vertical" || text == "v" || text == "1" ? SplitVertical : SplitHorizontal;
 }
 
-int carsFromNumber(int n) { return n <= 0 ? 0 : std::clamp(n, 2, 12); }
+int carsFromNumber(int n) { return n <= 0 ? 0 : std::clamp(n, 2, 8); }
 
 int promptsFromText(const std::string &text)
 {
