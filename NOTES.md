@@ -1583,7 +1583,9 @@ Not yet run on another distribution. Next: step 3, the AppImage.
 Step 3 (2026-11-26), `tools/release/appimage.sh`: lays out `dist/AppDir` (AppRun starts usr/bin/rc-launcher; the
 games and lib/ beside it; desktop entry; icon from `tools/release/icon.svg`, original artwork: the game's cover art in
 `../Icon.png` is copyrighted and must not ship) and packs it with appimagetool. Checked: the game runs from the AppDir
-(USA, level 5), `desktop-file-validate` passes. Waiting on appimagetool (the session could not download and run it).
+(USA, level 5), `desktop-file-validate` passes. Packed with appimagetool (continuous, downloaded by the user to
+~/tools/appimagetool): 23 MB. The AppImage itself (through FUSE) ran USA and Europe to a race, and a first run from
+empty folders (`--disc` with the USA .cue) set up and played. Name: `git describe`, so tag the release (v0.1.0) first.
 
 ## Where to resume (2026-11-12)
 
