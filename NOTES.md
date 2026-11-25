@@ -1580,6 +1580,10 @@ libGLX and libOpenGL, glibc symbols up to 2.34. Found on the way: `port_engine/h
 system's `xxhash.h` (now in README's requirements). Checked on this machine: both releases through the dist launcher
 to a race (level 5) on the RTX 2060, and the intro (movies through the static FFmpeg) the same as the dev build's log.
 Not yet run on another distribution. Next: step 3, the AppImage.
+Step 3 (2026-11-26), `tools/release/appimage.sh`: lays out `dist/AppDir` (AppRun starts usr/bin/rc-launcher; the
+games and lib/ beside it; desktop entry; icon from `tools/release/icon.svg`, original artwork: the game's cover art in
+`../Icon.png` is copyrighted and must not ship) and packs it with appimagetool. Checked: the game runs from the AppDir
+(USA, level 5), `desktop-file-validate` passes. Waiting on appimagetool (the session could not download and run it).
 
 ## Where to resume (2026-11-12)
 
