@@ -1569,6 +1569,18 @@ Next: step 2, portable game binaries (an older-glibc build in podman, a minimal 
 decoder and swscale, SDL3 and the rest bundled); step 3, an AppImage with the launcher and both binaries, built locally
 (it needs the disc) and attached to a GitHub release. The binaries need AVX2 (about 2013 on): say so in the release.
 
+### Release: portable game binaries (2026-11-26)
+Step 2: `tools/release/build.sh` builds the launcher and the USA and Europe games in a podman container
+(`tools/release/Containerfile`: AlmaLinux 9, glibc 2.34, gcc-toolset-14, SDL3 3.4.20 built shared, FFmpeg 7.1.1 static
+with only the MPEG-2 decoder, its parser, swscale and swresample, xxhash-devel) into `build-release-<usa|eu|launcher>`
+and collects `dist/rc-revenge-pro/` (rc-launcher, rc_revenge_pro_usa, rc_revenge_pro_eu, lib/libSDL3.so.0; rpath
+`$ORIGIN/lib`, stripped; `dist/` is ignored by git: it holds compiled game code). The same options as the dev builds
+(no build type, `RC_GAME_OPT=-O1`). From the system the binaries need only libc, libm, libstdc++, libgcc_s, libz,
+libGLX and libOpenGL, glibc symbols up to 2.34. Found on the way: `port_engine/host/src/gpu_bridge.cpp` includes the
+system's `xxhash.h` (now in README's requirements). Checked on this machine: both releases through the dist launcher
+to a race (level 5) on the RTX 2060, and the intro (movies through the static FFmpeg) the same as the dev build's log.
+Not yet run on another distribution. Next: step 3, the AppImage.
+
 ## Where to resume (2026-11-12)
 
 **Renderer (2026-11-22): P1 step 8 batch 4 (live 3D) is built** ("Live 3D" above; `RENDERER_3D_DESIGN.md` 20;

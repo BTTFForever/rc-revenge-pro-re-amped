@@ -28,3 +28,5 @@ dump_*.txt
 __pycache__/
 # Frame record dumps (RC_FRAME_RECORD, RENDERER_FRAME_RECORD.md): game data
 *.rcfr
+# Release builds (tools/release/build.sh): contain compiled game code, never commit
+/dist/

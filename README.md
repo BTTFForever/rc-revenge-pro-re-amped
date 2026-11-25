@@ -152,7 +152,7 @@ are listed in [`NOTES.md`](NOTES.md). This is a work in progress, not a finished
 
 - Linux on x86-64 with AVX2 (the build uses `-mavx2`). Other platforms are untested.
 - CMake 3.21+, Ninja, a C++20 compiler (GCC 13 or later is what this is developed with), Python 3, pkg-config.
-- Development packages for FFmpeg (libavcodec, libavformat, libavutil, libswresample, libswscale), OpenGL and X11
+- xxHash (header only, `xxhash.h`), and development packages for FFmpeg (libavcodec, libavformat, libavutil, libswresample, libswscale), OpenGL and X11
   (raylib's dependencies: libX11, libXrandr, libXinerama, libXcursor, libXi, or the Wayland equivalents).
 - Network access the first time you configure: CMake downloads raylib, imgui, rlImGui, ELFIO, toml11, fmt, libdwarf,
   rabbitizer, Vulkan-Headers and volk.
@@ -192,6 +192,13 @@ to it, the memory cards `mc0` and `mc1` (shared with `tools/play.sh`), and `logs
 system), sets `play.sh`'s defaults for any variable not already set, and reports a crash with the log's location.
 Options: `--choose-disc` (another image or release), `--version usa|eu`, `--disc <image> [--setup-only]` (no dialogs,
 for scripts). `RC_GAME_BINARY=<path>` starts another game binary.
+
+## Release builds
+
+`tools/release/build.sh [usa] [eu]` (needs podman and `tools/setup.sh` done for each version) builds the launcher and
+the games in a container with an older glibc (2.34), so they run on most current Linux distributions, and puts them in
+`dist/rc-revenge-pro/` with the SDL3 library they use. FFmpeg is built in (the movies' decoder only). These files contain
+the compiled game code: they are for releases, never for the repository.
 
 ## Running
 

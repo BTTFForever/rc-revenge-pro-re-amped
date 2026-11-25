@@ -1,0 +1,37 @@
+# The release build environment (tools/release/build.sh): an older glibc (2.34) so the game runs on most current
+# distributions, GCC 14 from gcc-toolset (its newer C++ runtime parts are linked into the binary, so the system
+# libstdc++ of those distributions is enough), SDL3 built from source (bundled with the release) and a minimal static
+# FFmpeg (the movies' MPEG-2 decoder and swscale only).
+FROM docker.io/library/almalinux:9
+
+RUN dnf -y install dnf-plugins-core epel-release && dnf config-manager --set-enabled crb && \
+    dnf -y install gcc-toolset-14-gcc gcc-toolset-14-gcc-c++ gcc-toolset-14-binutils \
+        cmake ninja-build git python3 pkgconf-pkg-config patchelf file which xz \
+        zlib-devel glslang mesa-libGL-devel mesa-libEGL-devel libglvnd-devel \
+        libX11-devel libXext-devel libXrandr-devel libXinerama-devel libXcursor-devel libXi-devel libXfixes-devel \
+        libXScrnSaver-devel libXtst-devel libxkbcommon-devel wayland-devel wayland-protocols-devel libdecor-devel \
+        alsa-lib-devel pulseaudio-libs-devel pipewire-devel systemd-devel dbus-devel libusb1-devel && \
+    dnf clean all
+
+ENV PATH=/opt/rh/gcc-toolset-14/root/usr/bin:$PATH \
+    PKG_CONFIG_PATH=/opt/deps/lib/pkgconfig:/opt/deps/lib64/pkgconfig \
+    CMAKE_PREFIX_PATH=/opt/deps
+
+# SDL3 (the version ico_rhi fetches otherwise, RC_SDL3_TAG): shared, bundled beside the game.
+ARG SDL3_TAG=release-3.4.20
+RUN git clone --depth 1 --branch ${SDL3_TAG} https://github.com/libsdl-org/SDL.git /tmp/sdl && \
+    cmake -S /tmp/sdl -B /tmp/sdl/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/deps \
+        -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF -DSDL_TEST_LIBRARY=OFF -DSDL_EXAMPLES=OFF && \
+    ninja -C /tmp/sdl/build install && rm -rf /tmp/sdl
+
+# FFmpeg: static, only what the game uses (MPEG-2 video for the movies, swscale; avformat and swresample are linked).
+ARG FFMPEG_VERSION=7.1.1
+RUN curl -fsSL https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz | tar -xJ -C /tmp && \
+    cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
+    ./configure --prefix=/opt/deps --enable-static --disable-shared --enable-pic --disable-programs --disable-doc \
+        --disable-autodetect --disable-network --disable-everything --disable-x86asm \
+        --enable-decoder=mpeg2video --enable-parser=mpegvideo --enable-swscale --enable-swresample && \
+    make -j"$(nproc)" install && cd / && rm -rf /tmp/ffmpeg-${FFMPEG_VERSION}
+
+# Header-only libraries the code includes from the system.
+RUN dnf -y install xxhash-devel && dnf clean all
