@@ -5,6 +5,20 @@ A native Linux build of the PS2 game, made with PS2Recomp. Set it up with `tools
 Status on 2026-11-09: boots, plays video and music, renders the menus and races correctly, and runs
 at a steady 60 fps at the main menu and mostly 50-60 fps in the attract-mode race. Game speed follows the frame rate.
 
+## Where to pick up (2026-11-26): first release, v0.1.0, packed and not yet published
+- Tag `v0.1.0` is pushed. `dist/RC_Revenge_Pro_Re-Amped-v0.1.0-x86_64.AppImage` and its `.sha256` are built and tested
+  on this machine: USA and Europe to a race, a first run from empty folders. `dist/` is local only (game code). To
+  rebuild: `tools/release/build.sh`, then `APPIMAGETOOL=~/tools/appimagetool/appimagetool-x86_64.AppImage
+  tools/release/appimage.sh`.
+- Release notes, a draft for the user to review: `tools/release/notes-v0.1.0.md`.
+- The user's steps, none done yet: make the GitHub repo public; create the release (`gh release create v0.1.0 <AppImage>
+  <.sha256> --title "RC Revenge Pro: Re-Amped v0.1.0" --notes-file tools/release/notes-v0.1.0.md`); install it through
+  Quiver Launcher, take a screenshot, and submit it as a static recompilation. Quiver's reviewers may still say whether
+  prebuilt binaries (option B) are acceptable; option A (build on the player's machine) is the fallback.
+- Worth doing: run it once on another distribution or GPU (only tested on Arch with NVIDIA). Open from the way: the GS
+  shader cache writes nothing (each run compiles its shaders again).
+- Details: "Release: the launcher" and "Release: portable game binaries" near the end.
+
 ## Where to pick up (2026-11-09)
 `tools/play.sh` uses the God of War renderer (`PS2X_GS_HW=1`) at `PS2X_GS_HW_SCALE=2`; enlarge the window to see the extra detail. (The old `run.sh`, removed on 2026-11-19, ran the recompiled `build/` with the default renderer at native 240 lines.)
 Open decisions and work:
