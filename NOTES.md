@@ -1554,6 +1554,21 @@ User request: more than the PS2's 8 cars (single player) and 6 (two players). No
   and `RC_BOOT_SPLIT=1` (the `RC_BOOT_LEVEL` demo with n computer cars, split screen), `RC_CARS_LOG=1` (added grid places,
   cup car lists).
 
+### Release: the launcher (2026-11-25)
+The user will submit to Quiver Launcher (installs a project's GitHub release files; projects must not ship the game's
+files and must ask players for their own copy). Chosen for now: option B, prebuilt game binaries plus the player's disc,
+until Quiver's reviewers answer; option A (the game built on the player's machine) stays the fallback, and the launcher
+serves both. Step 1, `launcher/` (README "The launcher"): standalone, SDL3 only, no game code. The game needs from the
+disc only its executable (from which it reads the game's code and data) and the image; a run with nothing else extracted
+loaded levels normally. Checked: set-up from the USA and Europe `.iso`s and `.cue`/`.bin`s (the converted ISOs equal the
+reference images byte for byte), refusals for a BIOS dump and a PNG, both releases started through it to a race (level
+5 demo) on the RTX 2060, and stopping the launcher (SIGTERM) stops the game. Not yet tried by hand: the first-run dialogs
+and file picker (SDL3: portal or zenity). Seen in passing: the GS shader cache writes no files any more (`play.sh`'s
+`build-decomp/shader-cache` is unchanged since 2026-11-19), so each run compiles its shaders.
+Next: step 2, portable game binaries (an older-glibc build in podman, a minimal static FFmpeg with only the MPEG-2
+decoder and swscale, SDL3 and the rest bundled); step 3, an AppImage with the launcher and both binaries, built locally
+(it needs the disc) and attached to a GitHub release. The binaries need AVX2 (about 2013 on): say so in the release.
+
 ## Where to resume (2026-11-12)
 
 **Renderer (2026-11-22): P1 step 8 batch 4 (live 3D) is built** ("Live 3D" above; `RENDERER_3D_DESIGN.md` 20;

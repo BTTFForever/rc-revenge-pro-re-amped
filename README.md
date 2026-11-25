@@ -178,6 +178,21 @@ The first build takes a while (the recompiled code is large; roughly 15 minutes 
 builds the offline oracle, `--no-build` stops after configuring, `-j N` sets the build jobs. Run it once for each
 version you own. Everything it creates is ignored by git. Details and the manual steps are in `NOTES.md`, "Rebuilding".
 
+## The launcher (`launcher/`)
+
+`rc-launcher` is what a release starts. It contains no game code and builds on its own (it needs only SDL3):
+`cmake -S launcher -B build-launcher -G Ninja && ninja -C build-launcher`. On the first run it asks for your disc image
+(`.iso`, or `.bin`/`.cue`; a raw `.bin` is converted to an `.iso` once), checks it is the USA or Europe release with the
+expected executable, copies only that executable, and starts the matching game binary: `rc_revenge_pro_usa` or
+`rc_revenge_pro_eu` beside it, or in this source tree `build-decomp/` or `build-eu/`. Later runs go straight into the
+game. Everything lives in `~/.local/share/rc-revenge-pro/<usa|eu>/`: `game/` (the executable), the disc image or a link
+to it, the memory cards `mc0` and `mc1` (shared with `tools/play.sh`), and `logs/session.log` (the previous run's in
+`session.prev.log`). The choice is kept in `~/.config/rc-revenge-pro/launcher.ini`, shader caches in
+`~/.cache/rc-revenge-pro/`. It picks the NVIDIA GPU as `play.sh` does (`RC_GPU=default` leaves the choice to the
+system), sets `play.sh`'s defaults for any variable not already set, and reports a crash with the log's location.
+Options: `--choose-disc` (another image or release), `--version usa|eu`, `--disc <image> [--setup-only]` (no dialogs,
+for scripts). `RC_GAME_BINARY=<path>` starts another game binary.
+
 ## Running
 
 ```sh
