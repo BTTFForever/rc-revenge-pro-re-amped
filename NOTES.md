@@ -361,6 +361,10 @@ for the next one.
 
 ## Known limits and open questions
 - Output is the game's native 240 lines per frame, scaled to the window. The half-line bob is removed.
+- Memory card kept between runs (2026-11-25): `tools/play.sh` links `~/.local/share/rc-revenge-pro/<version>/mc0`, `mc1`
+  (`RC_CARDS` in tools/version.sh) into its sandbox, which it still rebuilds each run; before, every start wiped the cards.
+  Record/replay, `RC_FRESH_CARD=1` and the test scripts (shadow, front_live, tedit_live, capture_dumps) keep clean cards.
+  Checked: a save put on the card is found after a restart (`GetDir ... result=1`) and kept.
 - Memory card (2026-11-18): saving and loading work through the runtime's sceMc* stubs (files under the sandbox's `mc0`; both cards always present and formatted, commands finish at once). Unformatted, missing or full cards are reached only in the oracle.
 - Attract-mode freeze, parked 2026-11-09: one rainy jungle demo (level 3) stops the game in `VfxCallHandlers`. The effects list
   loops because a block is handed out while still on the heap's free list. No double free was detected; a free-list link goes bad

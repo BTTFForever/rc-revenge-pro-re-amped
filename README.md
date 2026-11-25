@@ -185,7 +185,8 @@ tools/play.sh                     # USA
 RC_VERSION=eu tools/play.sh       # Europe
 ```
 
-The game starts from a clean memory card each time (`<build>/play/`); its output goes to `<build>/play/session.log`.
+The memory cards are kept between runs in `~/.local/share/rc-revenge-pro/<usa|eu>/` (`mc0`, `mc1`; `RC_CARDS=<folder>`
+uses another); `RC_FRESH_CARD=1` starts from empty cards for one run. The game's output goes to `<build>/play/session.log`.
 `tools/play.sh record <name>` and `tools/play.sh replay <name>` record and replay the controller
 (`decomp/recordings/`). On a hybrid-graphics laptop with an NVIDIA GPU, `play.sh` runs the game on it through PRIME
 render offload.

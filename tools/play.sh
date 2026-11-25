@@ -1,5 +1,7 @@
 #!/bin/bash
-# Plays the decomp build from a clean memory card, optionally recording or replaying the controller.
+# Plays the game, optionally recording or replaying the controller.
+# The memory cards are kept between runs in ~/.local/share/rc-revenge-pro/<version>/mc0, mc1 ($RC_CARDS overrides the
+# folder). Recording, replaying and RC_FRESH_CARD=1 start from clean, empty cards instead (a replay needs the same start).
 #   tools/play.sh                 plays (no recording)
 #   tools/play.sh record <name>   writes decomp/recordings/<name>.pad
 #   tools/play.sh replay <name>   plays it back (<name> with a / in it: that .pad file)
@@ -18,7 +20,9 @@ mode="${1:-play}"
 pad="$root/decomp/recordings/${name:-}.pad"
 case "${name:-}" in */*) pad="$name" ;; esac # a path to a .pad file outside decomp/recordings
 sandbox="$RC_GAME_BUILD/play"
-rc_make_sandbox "$sandbox"
+cards="$RC_CARDS"
+[ "$mode" != play ] || [ "${RC_FRESH_CARD:-0}" = 1 ] && cards=""
+rc_make_sandbox "$sandbox" "$cards"
 [ -x "${PLAY_BINARY:-$RC_GAME_BUILD/rc_revenge_pro}" ] || { echo "no game build at $RC_GAME_BUILD: run tools/setup.sh first" >&2; exit 1; }
 case "$mode" in
     play) input="PS2X_PAD_REPLAY=" ;;

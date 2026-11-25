@@ -10,12 +10,21 @@ case "${RC_VERSION:-usa}" in
          RC_GAME_BUILD="$root/build-eu"; RC_ORACLE_BUILD="$root/build-oracle-eu" ;;
     *) echo "RC_VERSION must be usa or eu, not ${RC_VERSION}" >&2; exit 2 ;;
 esac
+# The player's memory cards, kept between runs (tools/play.sh): one pair per version.
+RC_CARDS="${RC_CARDS:-${XDG_DATA_HOME:-$HOME/.local/share}/rc-revenge-pro/${RC_VERSION:-usa}}"
 [ -e "$RC_DISC/$RC_ELF" ] || echo "warning: no $RC_DISC/$RC_ELF: run tools/setup.sh with your ${RC_VERSION:-usa} disc image" >&2
 
 # Makes a sandbox disc folder (links to the extracted files, empty memory cards) and links the disc image beside it.
+# With a second argument, the memory cards are that folder's mc0 and mc1 instead (made if missing, kept between runs).
 rc_make_sandbox() {
-    local sandbox="$1"
-    rm -rf "$sandbox"; mkdir -p "$sandbox/disc/mc0" "$sandbox/disc/mc1"
+    local sandbox="$1" cards="${2:-}"
+    rm -rf "$sandbox"; mkdir -p "$sandbox/disc"
+    if [ -n "$cards" ]; then
+        mkdir -p "$cards/mc0" "$cards/mc1"
+        ln -s "$cards/mc0" "$sandbox/disc/mc0"; ln -s "$cards/mc1" "$sandbox/disc/mc1"
+    else
+        mkdir -p "$sandbox/disc/mc0" "$sandbox/disc/mc1"
+    fi
     for entry in "$RC_DISC"/*; do
         case "$(basename "$entry")" in mc0|mc1) ;; *) ln -s "$entry" "$sandbox/disc/" ;; esac
     done
