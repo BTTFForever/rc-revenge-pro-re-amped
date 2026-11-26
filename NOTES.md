@@ -5,7 +5,9 @@ A native Linux build of the PS2 game, made with PS2Recomp. Set it up with `tools
 Status on 2026-11-09: boots, plays video and music, renders the menus and races correctly, and runs
 at a steady 60 fps at the main menu and mostly 50-60 fps in the attract-mode race. Game speed follows the frame rate.
 
-## Where to pick up (2026-11-26): first release, v0.1.0, packed and not yet published
+## Where to pick up (2026-11-26): first release, v0.1.0, published
+- Done 2026-11-26: repo made public; GitHub release v0.1.0 created with the AppImage and .sha256
+  (https://github.com/BTTFForever/rc-revenge-pro-re-amped/releases/tag/v0.1.0). Still to do: Quiver submission.
 - Tag `v0.1.0` is pushed. `dist/RC_Revenge_Pro_Re-Amped-v0.1.0-x86_64.AppImage` and its `.sha256` are built and tested
   on this machine: USA and Europe to a race, a first run from empty folders. `dist/` is local only (game code). To
   rebuild: `tools/release/build.sh`, then `APPIMAGETOOL=~/tools/appimagetool/appimagetool-x86_64.AppImage
