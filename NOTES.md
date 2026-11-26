@@ -122,8 +122,9 @@ Europe's 50 Hz menus and movies now present 50 a second (before: 60, so one pict
 ## Where to pick up (2026-11-26): v0.2.0 (Windows) published; Windows only from here
 - Done: GitHub release v0.2.0, latest (https://github.com/BTTFForever/rc-revenge-pro-re-amped/releases/tag/v0.2.0):
   the Windows zip and its .sha256 (`tools/release/build.ps1`), notes `tools/release/notes-v0.2.0.md`. Created with the
-  GitHub CLI (installed with winget, signed in as BTTFForever). Still to do: the Quiver submission (start program
-  `rc-launcher.exe`).
+  GitHub CLI (installed with winget, signed in as BTTFForever). Submitted to Quiver Launcher on 2026-11-26 as a game
+  port (decompilation, PS2, start program `rc-launcher.exe`). The form's automatic check failed, with no reason given;
+  a Quiver maintainer will check it again. Waiting for their answer.
 - The project has been removed from the Linux PC (user, 2026-11-26). Windows is the only build and test platform now:
   no new Linux AppImage will be made, so v0.1.0 stays the last Linux release. The Linux scripts (tools/setup.sh,
   play.sh, release/build.sh, release/appimage.sh) and the Linux code paths stay in the tree but are no longer built or
