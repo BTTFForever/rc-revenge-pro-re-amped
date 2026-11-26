@@ -159,7 +159,10 @@ foreach(stage vert frag)
 endforeach()
 target_sources(rc_revenge_pro PRIVATE platform/vk_host.cpp ${RC_PLATFORM_SHADER_HEADERS})
 if(WIN32)
-    target_sources(rc_revenge_pro PRIVATE platform/win_gpu.cpp) # the discrete GPU on hybrid laptops
+    # The discrete GPU on hybrid laptops; started with no arguments, hand over to rc-launcher.exe beside it.
+    target_sources(rc_revenge_pro PRIVATE platform/win_gpu.cpp)
+    target_link_libraries(rc_revenge_pro PRIVATE shell32)
+    set_source_files_properties(platform/win_gpu.cpp PROPERTIES SKIP_UNITY_BUILD_INCLUSION TRUE) # windows.h vs raylib
 endif()
 set_source_files_properties(platform/vk_host.cpp PROPERTIES SKIP_UNITY_BUILD_INCLUSION TRUE
     INCLUDE_DIRECTORIES "${CMAKE_CURRENT_BINARY_DIR}/generated")

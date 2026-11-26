@@ -164,6 +164,14 @@ void Rdr_SetupCamera(ptr32<_sRdrCamera> pCamera, tAngle viewAngle)
     }
     else if (rc::settings::widescreen())
         cam.dValX = cam.dValX * ee_float(rc::settings::hscale());
+    if (const float z = rc::overscanZoom(); z != 1.0f)
+    {
+        // Overscan (rc_decomp.h): the view shrunk into the scissor's border, the side and top planes widened to match.
+        cam.dValX = cam.dValX * ee_float(z);
+        cam.dValY = cam.dValY * ee_float(z);
+        sideHalf = ee_float(std::atan(std::tan(static_cast<float>(sideHalf)) / z));
+        topHalf = ee_float(std::atan(std::tan(static_cast<float>(topHalf)) / z));
+    }
 
     // Right and left: the X axis turned about Y (only two terms of the middle row are used).
     {
@@ -623,7 +631,7 @@ void RdrState_SetStateBlockToDefaults(ptr32<sRdrStateBlock> block)
     block->alpha = 0x44;
     block->pabe = 1;
     block->clamp = 5;
-    block->scissor = kScreenScissor;
+    block->scissor = screenScissor();
     block->test = 0x702f7;
     block->zbuf = 0x10000a0;
 }
@@ -699,7 +707,7 @@ void RdrState_Init()
         packet.vifFlusha = 0x13000000;
     }
     RdrState_SetStateBlockToDefaults(ptr32<sRdrStateBlock>(guest_addr(&G(g_RdrDefaultRenderState))));
-    G(gRdrStateScissorOverride) = kScreenScissor;
+    G(gRdrStateScissorOverride) = screenScissor();
 }
 
 // RENDER.c

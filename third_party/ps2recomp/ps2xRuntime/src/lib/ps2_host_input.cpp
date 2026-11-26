@@ -1476,14 +1476,15 @@ namespace ps2_input_bindings
     {
         if (!text)
             return -1;
+        // The sign first: lower() turns '-' into '_' (for key names), which made every "-leftx" unreadable.
+        if (text[0] == '+' || text[0] == '-')
+        {
+            const int a = ps2_host_gamepad::axisFromKey(lower(text + 1).c_str());
+            return a >= 0 ? padAxisSource(a, text[0] == '-') : -1;
+        }
         const std::string t = lower(text);
         if (t.empty() || t == "none")
             return 0;
-        if (t[0] == '+' || t[0] == '-')
-        {
-            const int a = ps2_host_gamepad::axisFromKey(t.c_str() + 1);
-            return a >= 0 ? padAxisSource(a, t[0] == '-') : -1;
-        }
         const int b = ps2_host_gamepad::buttonFromKey(t.c_str());
         return b >= 0 ? padButtonSource(b) : -1;
     }

@@ -32,7 +32,7 @@ start), and are saved to `~/.config/rc-revenge-pro/settings.ini`:
 |---|---|---|
 | Aspect ratio | 4:3, 16:9, 16:10, 21:9 | Hor+ widescreen: the 3D view widens, nothing is stretched |
 | HUD and menus | Corrected, Stretched | In widescreen: HUD pinned to the screen's corners and menus kept in shape (pillarboxed), or the original layout stretched |
-| Screen mode | Window, Fullscreen | True fullscreen on the current monitor (F11 toggles too) |
+| Screen mode | Window, Fullscreen | Fullscreen on the current monitor (F11 toggles too); on Windows borderless (no display mode switch, so the monitor does not re-sync) |
 | Resolution (restart) | 1x to 6x | Internal resolution (3x-4x for 1080p-1440p) |
 | Frame rate | 60, 90, 120, 144, 165, 240 | Races run up to this rate (match your screen), and with Smooth motion on the menus too; game speed and timing unchanged (the game's logic keeps its 60 Hz ticks, 50 in Europe; the extra pictures are drawn between them). Saved as `race_fps` |
 | Smooth motion | On, Off | Cars, wheels and camera drawn between the game's 50 Hz physics steps: even motion at any frame rate (also at 60). In the menus (above 60/50 Hz): the fly-by camera, the turntable and podium cars and the animated scenery drawn between the menus' 60 Hz ticks (the 2D menus themselves step at 60, as on the PS2). Off: the menus keep the original rate |
@@ -42,6 +42,13 @@ start), and are saved to `~/.config/rc-revenge-pro/settings.ini`:
 | Menu scale | 1.0x to 0.5x | The menus smaller (front end, pause menu, results), toward the screen's centre, their key hints toward the bottom. Saved as `menu_scale` |
 | Button prompts | PS2, Match controls, Off | The button pictures and button names in the menus (the key hints "Back", "Select", the controller layout pages' "R1 button" and "left analog stick", the Track Editor help's "L2 button" and "START menu"): the PS2's; what the control is bound to on the device you used last (a PlayStation-style gamepad keeps the PS2 shapes and L1/R2 names, other gamepads show A/B/X/Y in their colours or RB, LT, Start, the keyboard the key's name; the arrows and the stick wording stay while they are on the d-pad and sticks or the arrow keys; player 2's bindings on player 2's layout page and in the race's pause menu when player 2 paused); or Off: no key-hint line, and the buttons named by place in each language ("bottom button", "right trigger button", "the pause menu"). Saved as `button_prompts` (ps2, match, off) |
 | Split screen | Horizontal, Vertical | Two-player races: player 1 above player 2 (the PS2's), or player 1 on the left half and player 2 on the right. Side by side, each half's view is zoomed out a little (its horizontal view narrower and its vertical view taller by the same factor, about 0.7 in 4:3 and 0.8 in 16:9; nothing stretched), each player's position, laps and speed at the screen's outer edge (player 1's HUD mirrored), the weapons at the inner edges and the map at the bottom of the line between the halves. Changes apply mid-race too. Saved as `split` (horizontal, vertical); `RC_SPLIT` overrides it |
+
+**No black border**: the PS2 game leaves a 3-pixel edge round its picture unpainted (a TV's overscan hid it; a
+monitor shows a black frame). The 3D view is shrunk by 2.5% about the screen's centre so the whole camera view lands
+inside that edge, and the window shows the picture with the edge cropped: the screen is filled and nothing of the 3D
+view is lost (the 2D overlay, HUD and menus, comes out 2.5% larger). `RC_OVERSCAN=0` shows the PS2's picture with its
+border; `RC_FULL_FRAME=1` instead draws the 3D over the whole frame, which shows geometry the game squashes into the
+first lines (the reason for the border).
 
 **Cars in a race**: the game's own **Game Options > Game Setup** page sets the number of cars, "Single race Number of
 Cars" (2 to 8, as on the PS2) and "Multi-player Number of Cars" (the PS2's 2 to 6, now up to 8). Track Editor races
@@ -88,7 +95,7 @@ they change and each key pressed (`[keyboard] key Enter pressed`: a controller l
 mode" types Enter with A, Escape with B and arrows with the d-pad, which shows here).
 
 For one run, an environment variable overrides the file: `RC_ASPECT=16:9`, `RC_HUD_SCALE=<50..100>`, `RC_MENU_SCALE=<50..100>`, `RC_BUTTON_PROMPTS=ps2|match|off`, `PS2X_GS_HW_SCALE=<n>`,
-`PS2X_FULLSCREEN=1`, `PS2X_REFRESH_HZ=<n>`, `RC_INTERP=0`, `PS2X_VSYNC=off|on|adaptive`, `PS2X_VRR=0|1`,
+`PS2X_FULLSCREEN=1`, `PS2X_REFRESH_HZ=<n>`, `RC_INTERP=0`, `RC_OVERSCAN=0` (the PS2 picture with its black border, see below), `RC_FULL_FRAME=1`, `PS2X_VSYNC=off|on|adaptive`, `PS2X_VRR=0|1`,
 `PS2X_PAD1_DEVICE`/`PS2X_PAD2_DEVICE=auto|keyboard|pad1|...|keyboard+pad1|none`, `PS2X_BIND_<BUTTON>=<key>` (player 1's keyboard),
 `PS2X_GAMECONTROLLERDB=<gamecontrollerdb.txt>` (extra SDL mappings).
 `PS2X_PRESENT_LOG=<file>` writes the window's presentation once a second (presents and game fields per second, mean
@@ -214,6 +221,7 @@ system), sets `play.sh`'s defaults for any variable not already set, and reports
 On Windows: `rc-launcher.exe` beside `rc_revenge_pro_usa.exe` / `rc_revenge_pro_eu.exe`; the settings in
 `%APPDATA%\rc-revenge-pro\launcher.ini`, everything else in `%LOCALAPPDATA%\rc-revenge-pro\<usa|eu>\` (`game\` with the
 executable and the memory cards as plain folders, `logs\`, `shaders\`); an `.iso` is read where it is (no link).
+A disc image as the only argument (`rc-launcher.exe "<image>"`, as a launcher such as Quiver may pass the player's game copy) plays it, setting it up first if it is not the one set up already. On Windows a game executable started with no arguments (`rc_revenge_pro_usa.exe`) hands over to `rc-launcher.exe` beside it.
 Options: `--choose-disc` (another image or release), `--version usa|eu`, `--disc <image> [--setup-only]` (no dialogs,
 for scripts). `RC_GAME_BINARY=<path>` starts another game binary.
 

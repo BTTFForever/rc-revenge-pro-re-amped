@@ -71,6 +71,12 @@ namespace ps2_host_display
         fitWindow.store(enabled, std::memory_order_relaxed);
     }
 
+    std::atomic<float> overscanCrop{0.0f};
+    void setOverscanCrop(float fraction)
+    {
+        overscanCrop.store(fraction, std::memory_order_relaxed);
+    }
+
     void updateWindowAspect()
     {
         int width = 0;
@@ -3120,7 +3126,10 @@ void PS2Runtime::run()
                     dstWidth = screenHeight * displayAspect;
                 }
             }
-            const Rectangle srcRect{0.0f, 0.0f, static_cast<float>(presentWidth), static_cast<float>(presentHeight)};
+            // The game's unpainted border, cropped as the game asks (setOverscanCrop): the same fraction from each edge.
+            const float crop = ps2_host_display::overscanCrop.load(std::memory_order_relaxed);
+            const float w = static_cast<float>(presentWidth), h = static_cast<float>(presentHeight);
+            const Rectangle srcRect{w * crop, h * crop, w * (1.0f - 2.0f * crop), h * (1.0f - 2.0f * crop)};
             const Rectangle dstRect{(screenWidth - dstWidth) * 0.5f, (screenHeight - dstHeight) * 0.5f, dstWidth, dstHeight};
             DrawTexturePro(displayTex, srcRect, dstRect, Vector2{0.0f, 0.0f}, 0.0f, WHITE);
         }
@@ -3197,6 +3206,30 @@ void PS2Runtime::run()
         // monitor at its current mode (no mode switch, over the desktop's panels); the picture keeps its aspect.
         {
             int want = ps2_host_display::fullscreenRequest.exchange(-1, std::memory_order_acq_rel);
+#if defined(_WIN32)
+            // Windows: borderless fullscreen (an undecorated window covering the monitor). GLFW's true fullscreen
+            // takes the display exclusively and the monitor re-syncs on every switch, even at the same mode.
+            const bool isFullscreen = IsWindowState(FLAG_BORDERLESS_WINDOWED_MODE);
+            if (IsKeyPressed(KEY_F11))
+                want = isFullscreen ? 0 : 1;
+            if (want >= 0 && (want == 1) != isFullscreen)
+            {
+                ps2_host_input::releaseMouse();
+                if (want == 1)
+                {
+                    restoreMaximized = IsWindowMaximized();
+                    if (restoreMaximized)
+                        RestoreWindow(); // borderless mode sizes the window itself; a maximized one would stay framed
+                    ToggleBorderlessWindowed();
+                }
+                else
+                {
+                    ToggleBorderlessWindowed();
+                    if (restoreMaximized)
+                        MaximizeWindow();
+                }
+            }
+#else
             if (IsKeyPressed(KEY_F11))
                 want = IsWindowFullscreen() ? 0 : 1;
             if (want >= 0 && (want == 1) != IsWindowFullscreen())
@@ -3218,6 +3251,7 @@ void PS2Runtime::run()
                         MaximizeWindow();
                 }
             }
+#endif
         }
 #endif
         ps2_host_input::sample();

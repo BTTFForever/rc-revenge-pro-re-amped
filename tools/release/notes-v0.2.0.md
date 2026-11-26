@@ -1,6 +1,11 @@
 **RC Revenge Pro: Re-Amped** is a native PC port of the PlayStation 2 game *RC Revenge Pro* (2000), built from a static recompilation of the PS2 executable with all of the game's own code decompiled into C++. It runs at high frame rates and resolutions, in widescreen, with modern controllers.
 
-**New in v0.2.0: Windows.** This release adds a native Windows build. The game itself is the same as v0.1.0. On Linux, keep using the v0.1.0 AppImage.
+**New in v0.2.0: Windows.** This release adds a native Windows build. On Linux, keep using the v0.1.0 AppImage.
+
+Also new:
+- **No black border.** The PS2 game left a thin unpainted edge round its picture, which TVs hid. The picture now fills the screen, and none of the 3D view is lost.
+- **Borderless fullscreen** on Windows: switching to fullscreen no longer makes the monitor re-sync.
+- Rebound stick directions (left, up) are now remembered between runs.
 
 ## You need your own copy of the game
 
@@ -31,7 +36,7 @@ Windows may show a SmartScreen warning because the program is not signed (More i
 
 **Display.** All of these are in **Game Options → Display**:
 - Widescreen in 16:9, 16:10 or 21:9. The 3D view widens rather than stretching, and the HUD stays pinned to the screen corners.
-- Internal resolution up to 6x, fullscreen or windowed.
+- Internal resolution up to 6x, fullscreen (borderless) or windowed.
 - Races at up to 240 fps. Smooth motion draws cars and the camera between the game's physics steps, and game speed is unchanged.
 - V-Sync, adaptive V-Sync and variable refresh (FreeSync/G-SYNC).
 - HUD and menu scale.

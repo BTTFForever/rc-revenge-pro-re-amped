@@ -110,6 +110,11 @@ void VfxSetupCameraMatrix()
         at<float>(s + 0x1b0) = dx;
         at<float>(s + 0x1b4) = dy;
     }
+    if (const float z = rc::overscanZoom(); z != 1.0f) // overscan (rc_decomp.h): the view shrunk into the border
+    {
+        at<float>(s + 0x1b0) *= z;
+        at<float>(s + 0x1b4) *= z;
+    }
     // ps2CameraMatrix at +0x120 (the PSX matrix's 4.12 shorts as floats, row by row, w lanes zero), the translation at
     // +0x160, and the matrix's transpose at +0x170.
     const ee_float unit(0.000244140625f); // 2^-12
@@ -787,7 +792,7 @@ void VfxRenderer_ReadySteadyGo(ptr32<_sVfx_Object> mem)
     if (split && screen != 1 && !sideBySide)
         return;
     const uint64_t scissor = G(gRdrStateScissorOverride);
-    G(gRdrStateScissorOverride) = sideBySide ? scissor : kScreenScissor;
+    G(gRdrStateScissorOverride) = sideBySide ? scissor : screenScissor();
     const uint32_t picture = at<uint32_t>(m + 0x1a4);
     const uint32_t sp = vfx::sprite();
     at<uint8_t>(sp + vfx::spr::kFlipX) = 1;

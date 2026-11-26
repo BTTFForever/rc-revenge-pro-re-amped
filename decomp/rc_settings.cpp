@@ -1,5 +1,6 @@
 // The enhanced recomp's settings (rc_settings.h).
 #include "rc_settings.h"
+#include "rc_decomp.h"
 
 #include "runtime/ps2_display_options.h"
 #include "runtime/ps2_input_bindings.h"
@@ -351,6 +352,8 @@ __attribute__((constructor(101))) void load()
     setenv("__GL_GSYNC_ALLOWED", "1", 0);
     setenv("__GL_VRR_ALLOWED", "1", 0);
     g_settings = s;
+    // The PS2's unpainted border: cropped from the window's picture, the 3D shrunk to fit inside it (rc_decomp.h).
+    ps2_host_display::setOverscanCrop((1.0f - rc::overscanZoom()) * 0.5f);
     // The runtime reads these itself.
     setenv("PS2X_GS_HW_SCALE", std::to_string(s.scale).c_str(), 1);
     if (s.fullscreen)

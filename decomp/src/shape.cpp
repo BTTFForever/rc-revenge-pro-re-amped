@@ -713,6 +713,12 @@ void alphaCamera(_sRdrCamera &cam)
         cam.dValY = ee_float(dy);
         cam.vertDrawOffset = 0.0f;
     }
+    if (const float z = rc::overscanZoom(); z != 1.0f) // overscan (rc_decomp.h): the view shrunk into the border
+    {
+        cam.dValX = cam.dValX * ee_float(z);
+        cam.dValY = cam.dValY * ee_float(z);
+        cam.vertDrawOffset = cam.vertDrawOffset * ee_float(z);
+    }
 }
 
 void transformPoint(f32 *out, const f32 *in, const sMat33 &m, const sVec3 &pos)

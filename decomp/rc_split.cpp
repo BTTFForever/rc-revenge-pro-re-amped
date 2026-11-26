@@ -88,10 +88,10 @@ bool scissor(int window, int &x1, int &y1, int &x2, int &y2)
 {
     if (!settings::splitVertical() || !splitByte() || window == 2)
         return false;
-    y1 = 3;
-    y2 = kScreenLines - 3;
-    x1 = window == 0 ? 3 : kRightStart;
-    x2 = window == 0 ? kLeftEnd : 0x27d;
+    y1 = scissorTop();
+    y2 = scissorBottom();
+    x1 = window == 0 ? scissorLeft() : kRightStart;
+    x2 = window == 0 ? kLeftEnd : scissorRight();
     return true;
 }
 

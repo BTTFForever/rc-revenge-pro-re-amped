@@ -784,13 +784,13 @@ void SetFrameWindow(int32_t windowId, tTime time)
                 if (sideBySide) // the left half, no vertical offset
                     guest_call(kRdrStateSetScissor, 0, sx1, sy1, sx2, sy2);
                 else
-                    guest_call(kRdrStateSetScissor, 0, 3, 3, 0x27d, RC_VERSION_EU ? 0x7f : 0x6f);
+                    guest_call(kRdrStateSetScissor, 0, scissorLeft(), scissorTop(), scissorRight(), RC_VERSION_EU ? 0x7f : 0x6f);
                 at<uint32_t>(kFrameSplit) = 1;
                 send(sideBySide ? 0u : RC_VERSION_EU ? 0xc2800000u : 0xc2700000u); // -64.0f, USA -60.0f
             }
             else
             {
-                guest_call(kRdrStateSetScissor, 0, 3, 3, 0x27d, kScreenLines - 3);
+                guest_call(kRdrStateSetScissor, 0, scissorLeft(), scissorTop(), scissorRight(), scissorBottom());
                 at<uint32_t>(kFrameMode) = 0;
                 at<uint32_t>(kFrameSplit) = 0;
                 call(kGfxP2RenderDmaSend);
@@ -802,13 +802,13 @@ void SetFrameWindow(int32_t windowId, tTime time)
             if (sideBySide) // the right half
                 guest_call(kRdrStateSetScissor, 0, sx1, sy1, sx2, sy2);
             else
-                guest_call(kRdrStateSetScissor, 0, 3, RC_VERSION_EU ? 0x80 : 0x70, 0x27d, kScreenLines - 3);
+                guest_call(kRdrStateSetScissor, 0, scissorLeft(), RC_VERSION_EU ? 0x80 : 0x70, scissorRight(), scissorBottom());
             at<uint32_t>(kFrameSplit) = 2;
             send(sideBySide ? 0u : RC_VERSION_EU ? 0x42800000u : 0x42700000u); // 64.0f, USA 60.0f
         }
         else
         {
-            guest_call(kRdrStateSetScissor, 0, 3, 3, 0x27d, kScreenLines - 3);
+            guest_call(kRdrStateSetScissor, 0, scissorLeft(), scissorTop(), scissorRight(), scissorBottom());
             at<uint32_t>(kFrameMode) = 0;
             at<uint32_t>(kFrameSplit) = 0;
             call(kGfxP2RenderDmaSend);

@@ -34,12 +34,14 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <shellapi.h>
 #else
 #include <fcntl.h>
 #include <sys/wait.h>
@@ -613,9 +615,24 @@ int main(int argc, char **argv)
         std::freopen("CONOUT$", "w", stdout);
         std::freopen("CONOUT$", "w", stderr);
     }
+    // The arguments as UTF-8 (argv is in the ANSI code page, which cannot hold every path).
+    std::vector<std::string> utf8Args;
+    std::vector<char *> utf8Argv;
+    int wargc = 0;
+    if (LPWSTR *wargv = CommandLineToArgvW(GetCommandLineW(), &wargc))
+    {
+        for (int i = 0; i < wargc; ++i)
+            utf8Args.push_back(utf8(fs::path(wargv[i])));
+        LocalFree(wargv);
+        for (std::string &a : utf8Args)
+            utf8Argv.push_back(a.data());
+        utf8Argv.push_back(nullptr);
+        argc = static_cast<int>(utf8Args.size());
+        argv = utf8Argv.data();
+    }
 #endif
     bool chooseDisc = false, setupOnly = false;
-    std::string wanted, disc;
+    std::string wanted, disc, image;
     for (int i = 1; i < argc; ++i)
     {
         const std::string a = argv[i];
@@ -627,9 +644,11 @@ int main(int argc, char **argv)
             disc = argv[++i];
         else if (a == "--setup-only")
             setupOnly = true;
+        else if (!a.empty() && a[0] != '-' && image.empty())
+            image = a; // a disc image to play, as a launcher such as Quiver may pass the player's game copy
         else
         {
-            std::cout << "usage: " << argv[0] << " [--choose-disc | --disc <image> [--setup-only]] [--version usa|eu]\n";
+            std::cout << "usage: " << argv[0] << " [--choose-disc | --disc <image> [--setup-only]] [--version usa|eu] [<disc image>]\n";
             return a == "--help" || a == "-h" ? 0 : 2;
         }
     }
@@ -640,6 +659,24 @@ int main(int argc, char **argv)
     {
         std::cerr << "--version is usa or eu\n";
         return 2;
+    }
+    if (!image.empty() && disc.empty())
+    {
+        // Already set up from this image and still ready: play it; else set it up (with dialogs: a player started this).
+        const std::string wantedImage = utf8(fs::absolute(fromUtf8(image)));
+        const Release *same = nullptr;
+        for (const Release &r : kReleases)
+            if (const auto it = config.find(std::string("disc_") + r.id); it != config.end() && it->second == wantedImage && ready(r))
+                same = &r;
+        release = same ? same : prepare(image, config);
+        if (!release)
+            return 1;
+        if (same && config["version"] != same->id)
+        {
+            config["version"] = same->id;
+            saveConfig(config);
+        }
+        return play(*release);
     }
     if (!disc.empty())
     {

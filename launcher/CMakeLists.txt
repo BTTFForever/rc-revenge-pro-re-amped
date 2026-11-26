@@ -15,3 +15,6 @@ if(WIN32)
     # A windowed program (no console window); --disc's messages still reach a console it was started from.
     set_target_properties(rc-launcher PROPERTIES WIN32_EXECUTABLE ON)
 endif()
+if(WIN32)
+    target_link_libraries(rc-launcher PRIVATE shell32) # CommandLineToArgvW
+endif()

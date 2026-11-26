@@ -54,6 +54,31 @@ on Windows (recompiler, recompile, stabs2c, gen_addrs, VU1 images and vu1_recomp
 CRLF). PowerShell 5.1 note: with `$ErrorActionPreference='Stop'`, a native program's stderr line (a CMake warning)
 is fatal under redirection; the scripts run native programs with 'Continue' and judge them by exit code.
 
+### Play-test fixes (2026-11-26, user report on Windows)
+- **Fullscreen re-synced the monitor**: GLFW's true fullscreen takes the display exclusively, so Windows switches
+  mode even at the same resolution. On Windows it is now raylib's borderless windowed mode (ps2_runtime.cpp's window
+  loop; F11 and the settings both). Linux keeps true fullscreen.
+- **Black border round the picture**: the game's 3D scissor is x 3..0x27d, y 3..lines-3 (rc_decomp.h), so the frame
+  has an unpainted edge (measured on 640x480 shots: USA 6 rows top, 4 bottom, 3 and 2 columns; Europe 5, 3, 3, 2).
+  First tried: the scissor opened to the whole frame (`RC_FULL_FRAME=1`): the edge fills, but geometry the renderer
+  squashes into the first lines shows at the top of level 1's trees (columns smeared down ~3 field lines): the
+  border hid that. Then cropping at present alone: a 2% zoom, the edge of the view lost. Kept: the PS2 scissor,
+  the 3D projection scaled by `overscanZoom()` = (lines-6)/lines about the centre (rdr.cpp Rdr_SetupCamera's dValX/Y
+  and side/top planes, shape.cpp's alphaCamera incl. vertDrawOffset, visfx6.cpp's sprite depths, display.cpp's view
+  cone), and the window crops (1-zoom)/2 from every edge (`ps2_host_display::setOverscanCrop`, set by the settings
+  load). Checked with `tools/play.ps1 replay playtest2` at fields 4000/5000, `RC_OVERSCAN=0` against the default:
+  the same 3D view edge to edge with no border; the HUD 2.5% larger and up to ~12 px nearer the edges. Not done: the
+  2D shrunk the same way (the HUD would then match exactly; the movies cannot be, a different path); a horizontal
+  split screen loses about a line and a half at its halves' outer edges (their projection centres are not scaled).
+- **Stick bindings did not reload** (all platforms): `parsePadSource` lowered the text first, and `lower()` turns '-'
+  into '_' (for key names), so `-leftx`, `-lefty`, `-rightx`, `-righty` were "unknown, kept the default". Now the
+  sign is read first; the user's settings file loads with no warnings.
+- **Quiver**: it unpacks a release zip and picks the program to start itself unless the catalog names one, and its
+  "Easy setup" can pass the player's game copy to the program. So the game exe started with no arguments hands over
+  to `rc-launcher.exe --version <id>` beside it (platform/win_gpu.cpp, a constructor; nothing changes without the
+  launcher beside it), and the launcher plays a disc image given as its only argument (set up first unless it is the
+  one set up). Both checked with the release build on a fresh profile. Launcher arguments are read as UTF-8 on Windows.
+
 ### Windows release (2026-11-26)
 `tools\release\build.ps1` (README "Release builds"): launcher and both games in `build-release-win-<usa|eu|launcher>`,
 collected in `dist\rc-revenge-pro-windows\` and zipped with a .sha256. FFmpeg 7.1.1 static, only the MPEG-2 decoder,

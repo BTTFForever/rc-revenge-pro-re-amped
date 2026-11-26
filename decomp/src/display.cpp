@@ -244,6 +244,11 @@ void View3dInitViewconeReject()
         halfX = static_cast<int16>(static_cast<float>(halfX) / rc::settings::hscale());
     if (rc::split::raceSideBySide()) // vertical split screen: a half's view cone (both halves share window 0's)
         rc::split::viewCone(static_cast<int16_t>(view.dUX), halfX, halfY);
+    if (const float z = rc::overscanZoom(); z != 1.0f) // overscan (rc_decomp.h): the cone widened as the view shrinks
+    {
+        halfX = static_cast<int16>(static_cast<float>(halfX) / z);
+        halfY = static_cast<int16>(static_cast<float>(halfY) / z);
+    }
     view.srcXNorm.x = static_cast<int16>(d);
     view.srcYNorm.z = halfY;
     view.srcXNorm.z = halfX;

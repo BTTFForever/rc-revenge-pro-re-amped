@@ -5,6 +5,9 @@ namespace ps2_host_display
     void setAspect(float aspect);
     float aspect();
     void setFitWindow(bool enabled);
+    // The fraction of the picture's width and of its height cropped from each edge when it is shown (0: none): the
+    // game's unpainted border (decomp/rc_decomp.h, overscanZoom). The same fraction on all sides keeps the aspect.
+    void setOverscanCrop(float fraction);
     void setStartMaximized(bool enabled);
     void setHeadless(bool enabled);
     // The window's first size (0: the default 640x480).

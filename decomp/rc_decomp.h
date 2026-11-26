@@ -10,6 +10,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdlib>
 #include <cmath>
 #include <cstddef>
 #include <iterator>
@@ -391,9 +392,41 @@ namespace rc {
 // The 2D screen's height in lines: 240 in the USA version (NTSC), 256 in the Europe version (PAL). Many of the Europe
 // variants' differences are this one (screen boxes, clip rectangles, centring).
 inline constexpr int32_t kScreenLines = RC_VERSION_EU ? 0x100 : 0xf0;
-// The GS scissor the renderer's state blocks default to: x 3 to 0x27d, y 3 to the screen's height less 3 (0xed, in
-// Europe 0xfd).
-inline constexpr uint64_t kScreenScissor = (static_cast<uint64_t>(kScreenLines - 3) << 48) | 0x00000003027d0003ull;
+// The PS2 picture's border. The 3D scissor is x 3 to 0x27d, y 3 to the screen's height less 3 (0xed, in Europe 0xfd):
+// a 3-pixel unpainted border, which a TV's overscan hid and a monitor shows as a black frame. The scissor also hides
+// geometry the renderer squashes into the first lines (seen at the top of level 1's trees when it was opened up).
+// Enhanced (the default): the scissor stays, the 3D projection is shrunk about the screen's centre by overscanZoom()
+// so the whole camera view lands inside it, and the window shows the picture with the border cropped
+// (ps2_host_display::setOverscanCrop): the screen filled, nothing of the view lost, no zoom.
+//   RC_OVERSCAN=0      the PS2's picture: border shown, no shrink, no crop.
+//   RC_FULL_FRAME=1    the scissor opened to the whole frame instead (no shrink, no crop; shows those artefacts).
+inline bool envIs(const char *name, char value)
+{
+    const char *v = std::getenv(name);
+    return v && *v == value;
+}
+inline bool fullFrameScissor()
+{
+    static const bool on = envIs("RC_FULL_FRAME", '1');
+    return on;
+}
+// The factor the 3D projection is scaled by (1: none): the scissor's inner height over the screen's.
+inline float overscanZoom()
+{
+    static const float zoom = envIs("RC_OVERSCAN", '0') || fullFrameScissor()
+                                  ? 1.0f
+                                  : static_cast<float>(kScreenLines - 6) / static_cast<float>(kScreenLines);
+    return zoom;
+}
+inline int32_t scissorLeft() { return fullFrameScissor() ? 0 : 3; }
+inline int32_t scissorRight() { return fullFrameScissor() ? 0x27f : 0x27d; }
+inline int32_t scissorTop() { return fullFrameScissor() ? 0 : 3; }
+inline int32_t scissorBottom() { return kScreenLines - (fullFrameScissor() ? 1 : 3); }
+inline uint64_t screenScissor()
+{
+    return (static_cast<uint64_t>(scissorBottom()) << 48) | (static_cast<uint64_t>(scissorTop()) << 32) |
+           (static_cast<uint64_t>(scissorRight()) << 16) | static_cast<uint64_t>(scissorLeft());
+}
 } // namespace rc
 
 // The first statement of a native whose function differs in some version of the game (a changed function, listed by
