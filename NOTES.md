@@ -5,6 +5,19 @@ A native Linux build of the PS2 game, made with PS2Recomp. Set it up with `tools
 Status on 2026-11-09: boots, plays video and music, renders the menus and races correctly, and runs
 at a steady 60 fps at the main menu and mostly 50-60 fps in the attract-mode race. Game speed follows the frame rate.
 
+## Moving to Windows (2026-11-26)
+The project folder was trimmed from 33 GB to 1.5 GB to move it by USB drive to the Windows 11 PC (RTX 2070S), which
+is the main build target from now on. Removed (all can be regenerated or are kept elsewhere):
+- every `fork/build-*` folder (Linux builds, including ~24 GB of frame dumps in `build-*/frame-dumps`; recapture them
+  with `tools/capture_dumps.sh` if they are needed again), and `fork/dist` (the v0.1.0 AppImage is on the GitHub release);
+- the `fork-exp` worktree (branch `exp/quick-dirty` is pushed, including the last recording);
+- `disc/`, `disc_eu/` and the `fork/game/` symlinks (`tools/setup.sh` extracts the disc files from the ISO again);
+- the `.bin`/`.cue` rips (each ISO was checked to be byte-identical to a fresh conversion of its `.bin`; the
+  executables inside match setup.sh's SHA-1s).
+Kept next to `fork/`: both ISOs, the BIOS dumps, `ico-pc/`, `ghidra_ee/`, `backups/` (git bundles). There are no
+symlinks left and no Windows-illegal file names. The memory cards in ~/.local/share/rc-revenge-pro were empty.
+The build scripts (setup.sh, play.sh, release/) are Linux/bash; a Windows build needs its own set-up.
+
 ## Where to pick up (2026-11-26): first release, v0.1.0, published
 - Done 2026-11-26: repo made public; GitHub release v0.1.0 created with the AppImage and .sha256
   (https://github.com/BTTFForever/rc-revenge-pro-re-amped/releases/tag/v0.1.0). Still to do: Quiver submission.
