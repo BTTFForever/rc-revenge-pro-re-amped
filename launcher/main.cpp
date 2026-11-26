@@ -321,7 +321,11 @@ const Release *prepare(const std::string &chosen, Config &config)
     }
     const fs::path dir = dataDir(*release);
     std::error_code ec;
+#ifdef _WIN32
+    for (const char *sub : {"game", "logs"}) // the cards are folders inside game\ (below)
+#else
     for (const char *sub : {"game", "mc0", "mc1", "logs"})
+#endif
         fs::create_directories(dir / sub, ec);
     {
         std::ofstream out(elfPath(*release), std::ios::binary | std::ios::trunc);

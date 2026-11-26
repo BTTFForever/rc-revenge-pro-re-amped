@@ -48,6 +48,30 @@ Not yet done on Windows: `setup.ps1` from scratch (recompiler, stabs2c, VU1 conv
 generated headers used were the Linux ones), a played race by hand, the oracle, the Vulkan renderer (`RC_RENDERER=vk`),
 gamepads, and a release (step after this one). Debugging tip: gdb (`mingw-w64-x86_64-gdb`) from an MSYS2 bash did not
 pass `APPDATA`/`RC_DISC_IMAGE` through to the game; run from PowerShell instead.
+Clean clone (2026-11-26): a fresh clone of e5b12ce, `tools\setup.ps1 "..\RC Revenge Pro (USA).iso"`: exit 0, every step
+on Windows (recompiler, recompile, stabs2c, gen_addrs, VU1 images and vu1_recomp, game). `output\`, `vu1\`,
+`vu1_images\` and `decomp\generated\usa\` are identical to the Linux-made ones (ignoring CR: Python on Windows writes
+CRLF). PowerShell 5.1 note: with `$ErrorActionPreference='Stop'`, a native program's stderr line (a CMake warning)
+is fatal under redirection; the scripts run native programs with 'Continue' and judge them by exit code.
+
+### Windows release (2026-11-26)
+`tools\release\build.ps1` (README "Release builds"): launcher and both games in `build-release-win-<usa|eu|launcher>`,
+collected in `dist\rc-revenge-pro-windows\` and zipped with a .sha256. FFmpeg 7.1.1 static, only the MPEG-2 decoder,
+parser, swscale and swresample (the Linux release's set), built once by `tools/release/ffmpeg-windows.sh` (signature
+checked against FFmpeg's release key FCF986EA...D67658D8) into `C:\msys64\opt\rc-ffmpeg-7.1.1` (no spaces allowed:
+FFmpeg's configure and .pc files; run in an MSYS2 MINGW64 login shell, TMPDIR=/tmp); linked with
+`-DPS2X_FFMPEG_STATIC=ON` (pkg-config's static flags: bcrypt). libstdc++/libgcc static. Bundled DLLs: SDL3, zlib,
+libiconv, winpthread; the rest is Windows' own (opengl32, msvcrt, bcrypt, ...). The game exports NvOptimusEnablement and
+AmdPowerXpressRequestHighPerformance (platform/win_gpu.cpp). Checked from an empty profile (APPDATA and LOCALAPPDATA
+pointed at a scratch folder, PATH only Windows' folders): `rc-launcher --disc <iso> --setup-only` for both images,
+then `rc-launcher --version usa|eu`, level 5 demo (RC_BOOT_LEVEL and PS2X_PAD_LIVE inherited through the launcher),
+screenshots correct, intro movie through the static FFmpeg, `quit` ends game and launcher (exit 0). Note: the launcher
+is a windowed program, so PowerShell's `&` does not wait for it; use `Start-Process -Wait` in scripts (two set-ups run
+at once overwrite each other's launcher.ini).
+Seen on the way, open: a hitch of 22-28 ms about every 6 s in races (PS2X_PRESENT_LOG longest gap; dev and release
+builds alike, Europe and USA; the first dev run did not show it), and 60-70 ms gaps at about 11 s and 41 s from a fresh
+profile (probably shader compiles: the GS shader cache still writes nothing). To investigate next (frame pacing on
+Windows: timer resolution, the present path at vsync off on a 120 Hz screen).
 
 ## Where to pick up (2026-11-26): first release, v0.1.0, published
 - Done 2026-11-26: repo made public; GitHub release v0.1.0 created with the AppImage and .sha256

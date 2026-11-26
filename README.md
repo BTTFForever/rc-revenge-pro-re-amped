@@ -219,7 +219,12 @@ for scripts). `RC_GAME_BINARY=<path>` starts another game binary.
 
 ## Release builds
 
-`tools/release/build.sh [usa] [eu]` (needs podman and `tools/setup.sh` done for each version) builds the launcher and
+Windows: `tools\release\build.ps1 [-Versions usa,eu]` (MSYS2 as for `setup.ps1`, plus `make` and `diffutils`) builds the
+launcher and both games with a minimal static FFmpeg (built once from ffmpeg.org into `C:\msys64\opt\rc-ffmpeg-7.1.1`) and
+static libstdc++, collects them with the few DLLs they need in `dist\rc-revenge-pro-windows\`, and zips that folder
+(`dist\RC_Revenge_Pro_Re-Amped-<version>-windows-x86_64.zip` and its `.sha256`).
+
+Linux: `tools/release/build.sh [usa] [eu]` (needs podman and `tools/setup.sh` done for each version) builds the launcher and
 the games in a container with an older glibc (2.34), so they run on most current Linux distributions, and puts them in
 `dist/rc-revenge-pro/` with the SDL3 library they use. FFmpeg is built in (the movies' decoder only). These files contain
 the compiled game code: they are for releases, never for the repository.

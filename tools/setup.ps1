@@ -40,21 +40,29 @@ foreach ($tool in 'cmake', 'ninja', 'g++') {
 $ninjaJobs = if ($Jobs -gt 0) { @('-j', "$Jobs") } else { @() }
 function Step([string]$text) { Write-Host "`n== $text" }
 # Runs a native program; stops the set-up when it fails.
+# Windows PowerShell turns a native program's stderr lines into errors, which 'Stop' would make fatal (a CMake warning
+# stopped the set-up): native programs run with 'Continue', their output as plain text, judged by the exit code alone.
 function Run {
     param([string]$exe, [string[]]$arguments, [string]$log = '')
+    $ErrorActionPreference = 'Continue'
     if ($log) {
-        & $exe @arguments *> $log
+        & $exe @arguments 2>&1 | ForEach-Object { "$_" } | Out-File -Encoding utf8 $log
     } else {
-        & $exe @arguments
+        & $exe @arguments 2>&1 | ForEach-Object { "$_" } | Write-Host
     }
-    if ($LASTEXITCODE -ne 0) {
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    if ($code -ne 0) {
         if ($log) { Get-Content $log -Tail 20 | Write-Host }
-        throw "$exe failed (exit $LASTEXITCODE)$(if ($log) { ": see $log" })"
+        throw "$exe failed (exit $code)$(if ($log) { ": see $log" })"
     }
 }
 function Py([string[]]$arguments) {
-    $out = & python -I @arguments
-    if ($LASTEXITCODE -ne 0) { throw "python $($arguments -join ' ') failed" }
+    $ErrorActionPreference = 'Continue'
+    $out = & python -I @arguments 2>&1 | ForEach-Object { "$_" }
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    if ($code -ne 0) { $out | Write-Host; throw "python $($arguments -join ' ') failed" }
     $out
 }
 

@@ -349,7 +349,15 @@ else()
     )
 
     add_library(ffmpeg INTERFACE)
-    target_link_libraries(ffmpeg INTERFACE PkgConfig::FFMPEG)
+    # PS2X_FFMPEG_STATIC: a static FFmpeg (the Windows release's, tools/release/build.ps1) with its private
+    # dependencies (Libs.private: bcrypt and the like on Windows), which the plain pkg-config target leaves out.
+    option(PS2X_FFMPEG_STATIC "Link FFmpeg with pkg-config's --static flags" OFF)
+    if(PS2X_FFMPEG_STATIC)
+        target_include_directories(ffmpeg INTERFACE ${FFMPEG_STATIC_INCLUDE_DIRS})
+        target_link_libraries(ffmpeg INTERFACE ${FFMPEG_STATIC_LDFLAGS})
+    else()
+        target_link_libraries(ffmpeg INTERFACE PkgConfig::FFMPEG)
+    endif()
 endif()
 
 function(ps2x_stage_ffmpeg_runtime_dlls target_name)
