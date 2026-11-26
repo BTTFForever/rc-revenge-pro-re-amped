@@ -5,8 +5,17 @@
 #include <algorithm>
 #include <cstdlib>
 #include <fcntl.h>
+#ifdef _WIN32
+#define O_BINARY_IF_WIN O_BINARY
+#else
+#define O_BINARY_IF_WIN 0
+#endif
 #include <string>
+#ifdef _WIN32
+#include <io.h>
+#else
 #include <unistd.h>
+#endif
 #include <unordered_map>
 #include <vector>
 
@@ -107,8 +116,16 @@ void readIso(const Iso &iso, uint64_t offset, void *out, size_t size)
     std::memset(out, 0, size);
     if (iso.fd >= 0 && size != 0)
     {
+#ifdef _WIN32
+        if (_lseeki64(iso.fd, static_cast<long long>(offset), SEEK_SET) >= 0)
+        {
+            const int got = _read(iso.fd, out, static_cast<unsigned>(size));
+            (void)got;
+        }
+#else
         const ssize_t got = pread(iso.fd, out, size, static_cast<off_t>(offset));
         (void)got;
+#endif
     }
 }
 
@@ -151,7 +168,7 @@ const Iso &iso()
 #else
         constexpr const char *kDefault = "game/usa/RC Revenge Pro (USA).iso";
 #endif
-        result.fd = open(path ? path : kDefault, O_RDONLY);
+        result.fd = open(path ? path : kDefault, O_RDONLY | O_BINARY_IF_WIN);
         if (result.fd < 0)
         {
             std::fprintf(stderr, "[res_fuzz] no disc image (set RC_ISO)\n");

@@ -11,6 +11,9 @@
 // Files: ~/.config/rc-revenge-pro/launcher.ini (the chosen release and images), ~/.local/share/rc-revenge-pro/<usa|eu>/
 // (game/ holding the executable and links to the memory cards mc0, mc1, which tools/play.sh shares; the disc image or a
 // link to it; logs/session.log), ~/.cache/rc-revenge-pro/<usa|eu>/shaders.
+// Windows: %APPDATA%\rc-revenge-pro\launcher.ini and %LOCALAPPDATA%\rc-revenge-pro\<usa|eu>\ (game\ with the
+// executable and the memory cards mc0, mc1 as real folders; logs\; shaders\). No links (they need privileges there): an
+// .iso is read where it is, through RC_DISC_IMAGE; a .bin is converted once into that folder.
 // Environment: RC_GAME_BINARY (the game binary to start), RC_GPU=default (no PRIME offload), and every variable the game
 // reads (the defaults below are set only where the environment has none).
 
@@ -24,16 +27,24 @@
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
-#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
 #include <optional>
 #include <string>
-#include <sys/wait.h>
 #include <thread>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <sys/wait.h>
 #include <unistd.h>
+#endif
 
 namespace fs = std::filesystem;
 using launcher::DiscImage;
@@ -59,9 +70,40 @@ const Release *releaseById(const std::string &id)
     return nullptr;
 }
 
+// Paths as UTF-8 text (the settings file, messages) and back.
+std::string utf8(const fs::path &p)
+{
+    const std::u8string s = p.u8string();
+    return std::string(s.begin(), s.end());
+}
+fs::path fromUtf8(const std::string &s) { return fs::path(std::u8string(s.begin(), s.end())); }
+
 void log(const std::string &line) { std::cerr << "[launcher] " << line << std::endl; }
 
+// Sets an environment variable; overwrite false keeps a value already there.
+void setEnv(const char *name, const std::string &value, bool overwrite)
+{
+#ifdef _WIN32
+    if (!overwrite && std::getenv(name))
+        return;
+    _putenv_s(name, value.c_str());
+#else
+    setenv(name, value.c_str(), overwrite ? 1 : 0);
+#endif
+}
+
 // ---- Folders and the launcher's settings ----
+#ifdef _WIN32
+fs::path knownDir(const wchar_t *var)
+{
+    if (const wchar_t *v = _wgetenv(var); v && *v)
+        return fs::path(v);
+    return fs::current_path();
+}
+fs::path configDir() { return knownDir(L"APPDATA") / "rc-revenge-pro"; }
+fs::path dataDir(const Release &r) { return knownDir(L"LOCALAPPDATA") / "rc-revenge-pro" / r.id; }
+fs::path cacheDir(const Release &r) { return dataDir(r); }
+#else
 fs::path xdg(const char *var, const char *fallback)
 {
     if (const char *v = std::getenv(var); v && *v == '/')
@@ -72,6 +114,7 @@ fs::path xdg(const char *var, const char *fallback)
 fs::path configDir() { return xdg("XDG_CONFIG_HOME", ".config") / "rc-revenge-pro"; }
 fs::path dataDir(const Release &r) { return xdg("XDG_DATA_HOME", ".local/share") / "rc-revenge-pro" / r.id; }
 fs::path cacheDir(const Release &r) { return xdg("XDG_CACHE_HOME", ".cache") / "rc-revenge-pro" / r.id; }
+#endif
 
 using Config = std::map<std::string, std::string>;
 
@@ -97,12 +140,14 @@ void saveConfig(const Config &c)
 
 // ---- Dialogs ----
 bool g_sdl = false;
+#ifndef _WIN32
 volatile pid_t g_child = 0;
 void forwardSignal(int sig)
 {
     if (g_child > 0)
         kill(g_child, sig);
 }
+#endif
 bool g_quiet = false; // --disc: no dialogs, messages to the terminal
 void ensureSdl()
 {
@@ -163,7 +208,11 @@ std::string chooseFile()
     ensureSdl();
     static const SDL_DialogFileFilter filters[] = {{"PS2 disc images (.iso, .bin, .cue)", "iso;bin;cue;ISO;BIN;CUE"}, {"All files", "*"}};
     FileChoice choice;
+#ifdef _WIN32
+    const char *home = std::getenv("USERPROFILE");
+#else
     const char *home = std::getenv("HOME");
+#endif
     SDL_ShowOpenFileDialog(fileChosen, &choice, nullptr, filters, 2, home, false);
     while (!choice.done)
     {
@@ -213,7 +262,17 @@ bool withProgress(const std::string &message, std::atomic<float> &progress, Work
 }
 
 // ---- Setting a release up from a disc image ----
+Config g_config; // the launcher's settings, loaded in main
 fs::path isoLink(const Release &r) { return dataDir(r) / r.isoName; }   // where the game looks: beside game/
+// The image the game reads: on Windows an .iso is read where it is (its path in the settings), else isoLink.
+fs::path gameImage(const Release &r)
+{
+#ifdef _WIN32
+    if (const auto it = g_config.find(std::string("image_") + r.id); it != g_config.end() && !it->second.empty())
+        return fromUtf8(it->second);
+#endif
+    return isoLink(r);
+}
 fs::path elfPath(const Release &r) { return dataDir(r) / "game" / r.elf; }
 
 std::string fileSha1(const fs::path &path)
@@ -227,16 +286,16 @@ std::string fileSha1(const fs::path &path)
 bool ready(const Release &r)
 {
     std::error_code ec;
-    if (!fs::exists(isoLink(r), ec) || fileSha1(elfPath(r)) != r.sha1)
+    if (!fs::exists(gameImage(r), ec) || fileSha1(elfPath(r)) != r.sha1)
         return false;
-    DiscImage image(isoLink(r));
+    DiscImage image(gameImage(r));
     return image.ok() && image.bootName() == r.elf;
 }
 
 // Sets up the release on the disc image; returns it, or nullptr after telling the player why not.
 const Release *prepare(const std::string &chosen, Config &config)
 {
-    DiscImage image(chosen);
+    DiscImage image(fromUtf8(chosen)); // SDL gives UTF-8
     if (!image.ok())
     {
         tell(SDL_MESSAGEBOX_ERROR, "That file cannot be used:\n" + image.error());
@@ -274,20 +333,30 @@ const Release *prepare(const std::string &chosen, Config &config)
         }
     }
     // The game keeps its memory cards beside its executable: link them to the release's folder (shared with tools/play.sh).
+#ifdef _WIN32
+    for (const char *card : {"mc0", "mc1"}) // real folders there (links need privileges on Windows)
+        fs::create_directories(dir / "game" / card, ec);
+#else
     for (const char *card : {"mc0", "mc1"})
         if (const fs::path link = dir / "game" / card; !fs::exists(fs::symlink_status(link, ec)))
             fs::create_directory_symlink(fs::path("..") / card, link, ec);
+#endif
 
     const fs::path iso = isoLink(*release);
     fs::remove(iso, ec);
+    config[std::string("image_") + release->id] = "";
     if (!image.raw())
     {
+#ifdef _WIN32
+        config[std::string("image_") + release->id] = utf8(image.path());
+#else
         fs::create_symlink(image.path(), iso, ec);
         if (ec)
         {
             tell(SDL_MESSAGEBOX_ERROR, "Could not link the disc image: " + ec.message());
             return nullptr;
         }
+#endif
     }
     else // the game reads 2048-byte sectors: convert a raw .bin once
     {
@@ -309,7 +378,7 @@ const Release *prepare(const std::string &chosen, Config &config)
             return nullptr;
         }
     }
-    config[std::string("disc_") + release->id] = fs::absolute(chosen).string();
+    config[std::string("disc_") + release->id] = utf8(fs::absolute(fromUtf8(chosen)));
     config["version"] = release->id;
     saveConfig(config);
     log(std::string("set up ") + release->label + " from " + chosen);
@@ -319,10 +388,22 @@ const Release *prepare(const std::string &chosen, Config &config)
 // ---- Starting the game ----
 fs::path exeDir()
 {
+#ifdef _WIN32
+    static wchar_t buffer[32768];
+    const DWORD n = GetModuleFileNameW(nullptr, buffer, 32768);
+    return n > 0 && n < 32768 ? fs::path(std::wstring(buffer, n)).parent_path() : fs::current_path();
+#else
     std::error_code ec;
     const fs::path self = fs::read_symlink("/proc/self/exe", ec);
     return ec ? fs::current_path() : self.parent_path();
+#endif
 }
+
+#ifdef _WIN32
+constexpr const char *kExe = ".exe";
+#else
+constexpr const char *kExe = "";
+#endif
 
 std::optional<fs::path> gameBinary(const Release &r)
 {
@@ -330,18 +411,29 @@ std::optional<fs::path> gameBinary(const Release &r)
         return fs::path(v);
     const fs::path here = exeDir();
     const fs::path candidates[] = {
-        here / (std::string("rc_revenge_pro_") + r.id),                                                 // a release
-        here.parent_path() / (std::string(r.id) == "eu" ? "build-eu" : "build-decomp") / "rc_revenge_pro", // the source tree
+        here / (std::string("rc_revenge_pro_") + r.id + kExe), // a release
+        here.parent_path() / (std::string(r.id) == "eu" ? "build-eu" : "build-decomp") / (std::string("rc_revenge_pro") + kExe), // the source tree
     };
     for (const fs::path &p : candidates)
+    {
+#ifdef _WIN32
+        std::error_code ec;
+        if (fs::is_regular_file(p, ec))
+            return p;
+#else
         if (access(p.c_str(), X_OK) == 0)
             return p;
+#endif
+    }
     return std::nullopt;
 }
 
 // The discrete NVIDIA GPU through PRIME render offload when its driver is there and healthy (as tools/play.sh does).
 bool chooseGpu()
 {
+#ifdef _WIN32
+    return true; // Windows picks the GPU itself (the game exports NvOptimusEnablement for hybrid laptops)
+#else
     if (const char *v = std::getenv("RC_GPU"); v && std::string(v) == "default")
         return true;
     if (std::system("command -v nvidia-smi >/dev/null 2>&1") != 0)
@@ -364,9 +456,9 @@ bool chooseGpu()
             problem = "the driver reports errors";
     if (problem.empty())
     {
-        setenv("__NV_PRIME_RENDER_OFFLOAD", "1", 0);
-        setenv("__VK_LAYER_NV_optimus", "NVIDIA_only", 0);
-        setenv("__GLX_VENDOR_LIBRARY_NAME", "nvidia", 0);
+        setEnv("__NV_PRIME_RENDER_OFFLOAD", "1", false);
+        setEnv("__VK_LAYER_NV_optimus", "NVIDIA_only", false);
+        setEnv("__GLX_VENDOR_LIBRARY_NAME", "nvidia", false);
         return true;
     }
     log("NVIDIA GPU not usable: " + problem);
@@ -374,7 +466,61 @@ bool chooseGpu()
                "The NVIDIA graphics card is not working (" + problem + "). Restarting the computer usually resets it.\n\n"
                "The game can run on the other graphics adapter instead, probably more slowly.",
                {"Use the other adapter", "Quit"}) == 0;
+#endif
 }
+
+#ifdef _WIN32
+// Starts the game with its output in the log file and the release's folder as its working folder, and waits for it. A
+// job object ties the game to the launcher: closing the launcher closes the game.
+int runGame(const Release &r, const fs::path &binary, const fs::path &logFile)
+{
+    SECURITY_ATTRIBUTES inherit = {sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
+    HANDLE out = CreateFileW(logFile.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &inherit, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    STARTUPINFOW si = {};
+    si.cb = sizeof si;
+    if (out != INVALID_HANDLE_VALUE)
+    {
+        si.dwFlags = STARTF_USESTDHANDLES;
+        si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+        si.hStdOutput = out;
+        si.hStdError = out;
+    }
+    std::wstring command = L"\"" + binary.wstring() + L"\" \"" + elfPath(r).wstring() + L"\"";
+    const std::wstring folder = dataDir(r).wstring();
+    PROCESS_INFORMATION pi = {};
+    const BOOL started = CreateProcessW(binary.c_str(), command.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, folder.c_str(), &si, &pi);
+    const DWORD startError = GetLastError();
+    if (out != INVALID_HANDLE_VALUE)
+        CloseHandle(out);
+    if (!started)
+    {
+        tell(SDL_MESSAGEBOX_ERROR, "Could not start the game (Windows error " + std::to_string(startError) + ").");
+        return 1;
+    }
+    if (HANDLE job = CreateJobObjectW(nullptr, nullptr))
+    {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {};
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof limits);
+        AssignProcessToJobObject(job, pi.hProcess); // the handle closes with the launcher, and the game with it
+    }
+    CloseHandle(pi.hThread);
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    if (code >= 0xC0000000u) // an exception status (access violation, stack overflow, ...), not an exit code
+    {
+        char hex[16];
+        std::snprintf(hex, sizeof hex, "0x%08lX", static_cast<unsigned long>(code));
+        log("the game stopped with status " + std::string(hex));
+        tell(SDL_MESSAGEBOX_ERROR, std::string("The game stopped unexpectedly (status ") + hex + ").\n\nIts log is in\n" +
+                                       utf8(logFile) + "\nPlease include it when reporting the problem.");
+        return 1;
+    }
+    return static_cast<int>(code);
+}
+#endif
 
 int play(const Release &r)
 {
@@ -397,18 +543,24 @@ int play(const Release &r)
         {"PS2X_GS_SHADER_CACHE_DIR", shaders.string()}, {"RC_TRACK_SHADER", "1"}, {"RC_VU1_REF", "0"},
     };
     for (const auto &[name, value] : defaults)
-        setenv(name, value.c_str(), 0);
+        setEnv(name, value, false);
+#ifdef _WIN32
+    setEnv("RC_DISC_IMAGE", utf8(gameImage(r)), true);
+#endif
 
     const fs::path logs = dataDir(r) / "logs", logFile = logs / "session.log";
     fs::create_directories(logs, ec);
     fs::rename(logFile, logs / "session.prev.log", ec);
-    log("starting " + binary->string() + " (" + r.label + "), output in " + logFile.string());
+    log("starting " + utf8(*binary) + " (" + r.label + "), output in " + logFile.string());
 
     if (g_sdl)
     {
         SDL_Quit();
         g_sdl = false;
     }
+#ifdef _WIN32
+    return runGame(r, *binary, logFile);
+#else
     const pid_t child = fork();
     if (child == 0)
     {
@@ -443,12 +595,21 @@ int play(const Release &r)
         return 1;
     }
     return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+#endif
 }
 
 } // namespace
 
 int main(int argc, char **argv)
 {
+#ifdef _WIN32
+    // A windowed program has no console: use the one it was started from, if any, for the terminal messages.
+    if (AttachConsole(ATTACH_PARENT_PROCESS))
+    {
+        std::freopen("CONOUT$", "w", stdout);
+        std::freopen("CONOUT$", "w", stderr);
+    }
+#endif
     bool chooseDisc = false, setupOnly = false;
     std::string wanted, disc;
     for (int i = 1; i < argc; ++i)
@@ -468,7 +629,8 @@ int main(int argc, char **argv)
             return a == "--help" || a == "-h" ? 0 : 2;
         }
     }
-    Config config = loadConfig();
+    g_config = loadConfig();
+    Config &config = g_config;
     const Release *release = releaseById(wanted.empty() ? config["version"] : wanted);
     if (!wanted.empty() && !release)
     {

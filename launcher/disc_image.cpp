@@ -20,6 +20,26 @@ std::string upper(std::string s)
     return s;
 }
 
+// Paths may hold non-ASCII characters: open them as wide strings on Windows, and seek with 64-bit offsets.
+std::FILE *openFile(const std::filesystem::path &path, const char *mode)
+{
+#ifdef _WIN32
+    const std::wstring wmode(mode, mode + std::strlen(mode));
+    return _wfopen(path.c_str(), wmode.c_str());
+#else
+    return std::fopen(path.c_str(), mode);
+#endif
+}
+
+bool seekTo(std::FILE *f, uint64_t offset)
+{
+#ifdef _WIN32
+    return _fseeki64(f, static_cast<long long>(offset), SEEK_SET) == 0;
+#else
+    return fseeko(f, static_cast<off_t>(offset), SEEK_SET) == 0;
+#endif
+}
+
 uint32_t le32(const uint8_t *p) { return p[0] | (p[1] << 8) | (p[2] << 16) | (uint32_t(p[3]) << 24); }
 
 // A .cue's first FILE entry, else the path itself.
@@ -50,7 +70,7 @@ DiscImage::DiscImage(const std::filesystem::path &path)
     m_path = resolveCue(std::filesystem::absolute(path), m_error);
     if (!m_error.empty())
         return;
-    m_file = std::fopen(m_path.c_str(), "rb");
+    m_file = openFile(m_path, "rb");
     if (!m_file)
     {
         m_error = "cannot open " + m_path.string();
@@ -103,10 +123,10 @@ bool DiscImage::sector(uint64_t lba, uint32_t count, uint8_t *out)
     if (lba + count > m_sectors)
         return false;
     if (!m_raw)
-        return fseeko(m_file, static_cast<off_t>(lba * kSector), SEEK_SET) == 0 &&
+        return seekTo(m_file, lba * kSector) &&
                std::fread(out, kSector, count, m_file) == count;
     for (uint32_t i = 0; i < count; ++i)
-        if (fseeko(m_file, static_cast<off_t>((lba + i) * kRaw + m_offset), SEEK_SET) != 0 ||
+        if (!seekTo(m_file, (lba + i) * kRaw + m_offset) ||
             std::fread(out + size_t(i) * kSector, kSector, 1, m_file) != 1)
             return false;
     return true;
@@ -185,7 +205,7 @@ std::string DiscImage::bootName()
 
 bool DiscImage::writeIso(const std::filesystem::path &out, std::atomic<float> &progress)
 {
-    std::FILE *f = std::fopen(out.c_str(), "wb");
+    std::FILE *f = openFile(out, "wb");
     if (!f)
     {
         m_error = "cannot write " + out.string();

@@ -31,6 +31,10 @@ set(PS2X_ENABLE_SCCACHE OFF CACHE BOOL "")
 # The fork targets AVX2. FMA stays off and contraction is disabled because the PS2's
 # float results depend on each operation being rounded separately.
 add_compile_options(-mavx2 -msse4.2 -ffp-contract=off)
+# MinGW defaults to the MSVC bitfield layout; the PS2 structs (rc_types.h, rc_layout_check.cpp) need GCC's.
+if(MINGW)
+    add_compile_options(-mno-ms-bitfields)
+endif()
 # Clang applies type-based aliasing from -O1 up; recompiled code reads guest memory through casts.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_options(-fno-strict-aliasing)

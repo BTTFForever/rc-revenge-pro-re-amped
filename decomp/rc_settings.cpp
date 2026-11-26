@@ -103,6 +103,11 @@ int swapInterval(int vsync) { return vsync == VsyncAdaptive ? -1 : vsync == Vsyn
 std::string defaultPath()
 {
     std::string base;
+#ifdef _WIN32
+    // Windows: %APPDATA%\rc-revenge-pro\settings.ini (HOME is set only inside MSYS2 shells, so never use it here).
+    if (const char *appdata = std::getenv("APPDATA"); appdata && *appdata)
+        return std::string(appdata) + "\\rc-revenge-pro\\settings.ini";
+#endif
     if (const char *x = std::getenv("XDG_CONFIG_HOME"); x && *x)
         base = x;
     else if (const char *home = std::getenv("HOME"); home && *home)
@@ -113,6 +118,16 @@ std::string defaultPath()
 }
 
 namespace B = ps2_input_bindings;
+
+#ifdef _WIN32
+// POSIX setenv on Windows (overwrite 0 keeps a value already set).
+int setenv(const char *name, const char *value, int overwrite)
+{
+    if (!overwrite && std::getenv(name))
+        return 0;
+    return _putenv_s(name, value);
+}
+#endif
 
 // The file's controls_version (0: none, a file from before the Auto device). Version 2 files keep the devices as saved;
 // in older ones the old defaults (player 1 keyboard+pad1, player 2 pad2), which were always written whether chosen or

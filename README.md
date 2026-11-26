@@ -1,6 +1,6 @@
 # RC Revenge Pro: Re-Amped
 
-A native decompilation PC port of the PlayStation 2 game *RC Revenge Pro* (2000). It runs on Linux (x86-64) as an
+A native decompilation PC port of the PlayStation 2 game *RC Revenge Pro* (2000). It runs on Windows and Linux (x86-64) as an
 ordinary program built from C++ source. The USA (SLUS-20153, NTSC) and Europe (SLES-50077, PAL) releases are both
 supported.
 
@@ -150,6 +150,15 @@ are listed in [`NOTES.md`](NOTES.md). This is a work in progress, not a finished
 
 ## Requirements
 
+Windows 10/11 (x86-64, AVX2) or Linux. Windows (native build, MinGW-w64 GCC from MSYS2):
+- [MSYS2](https://www.msys2.org) in `C:\msys64` (`$env:RC_MSYS2` names another folder) with, from its MSYS2 shell:
+  `pacman -S --needed mingw-w64-x86_64-{gcc,cmake,ninja,pkgconf,sdl3,ffmpeg,glslang,xxhash,zlib}`.
+- Python 3 for Windows (python.org or the Microsoft Store), as `python`.
+- Some antivirus programs quarantine MSYS2's assembler or the freshly built game as "AI"/heuristic detections; add
+  `C:\msys64` and this folder to its allow list.
+- The rest as below: network access on the first configure, disk space, your own disc image.
+
+Linux:
 - Linux on x86-64 with AVX2 (the build uses `-mavx2`). Other platforms are untested.
 - CMake 3.21+, Ninja, a C++20 compiler (GCC 13 or later is what this is developed with), Python 3, pkg-config.
 - xxHash (header only, `xxhash.h`), and development packages for FFmpeg (libavcodec, libavformat, libavutil, libswresample, libswscale), OpenGL and X11
@@ -174,6 +183,18 @@ tools/setup.sh /path/to/your/RC-Revenge-Pro.iso     # or the .cue / .bin
 4. converts the VU1 microprograms;
 5. builds the game in `build-decomp/` (USA) or `build-eu/` (Europe).
 
+On Windows, in PowerShell from this folder (the counterparts of the shell scripts, same steps and options):
+
+```powershell
+tools\setup.ps1 "C:\path\to\RC Revenge Pro (USA).iso"     # -Oracle, -NoBuild, -Jobs N
+tools\play.ps1                                              # -Version eu; record <name>, replay <name>
+```
+
+An `.iso` is read where it is (no links on Windows: its path is kept in `game\<version>\disc-image.txt` and passed to
+the game as `RC_DISC_IMAGE`); a `.bin` is converted once into `game\<version>\`. `play.ps1` keeps the memory cards
+in `%LOCALAPPDATA%\rc-revenge-pro\<version>\game\mc0, mc1` (the launcher's), the settings file is
+`%APPDATA%\rc-revenge-pro\settings.ini`, and the log goes to `<build folder>\play\session.log`.
+
 The first build takes a while (the recompiled code is large; roughly 15 minutes on 8 cores). Options: `--oracle` also
 builds the offline oracle, `--no-build` stops after configuring, `-j N` sets the build jobs. Run it once for each
 version you own. Everything it creates is ignored by git. Details and the manual steps are in `NOTES.md`, "Rebuilding".
@@ -190,6 +211,9 @@ to it, the memory cards `mc0` and `mc1` (shared with `tools/play.sh`), and `logs
 `session.prev.log`). The choice is kept in `~/.config/rc-revenge-pro/launcher.ini`, shader caches in
 `~/.cache/rc-revenge-pro/`. It picks the NVIDIA GPU as `play.sh` does (`RC_GPU=default` leaves the choice to the
 system), sets `play.sh`'s defaults for any variable not already set, and reports a crash with the log's location.
+On Windows: `rc-launcher.exe` beside `rc_revenge_pro_usa.exe` / `rc_revenge_pro_eu.exe`; the settings in
+`%APPDATA%\rc-revenge-pro\launcher.ini`, everything else in `%LOCALAPPDATA%\rc-revenge-pro\<usa|eu>\` (`game\` with the
+executable and the memory cards as plain folders, `logs\`, `shaders\`); an `.iso` is read where it is (no link).
 Options: `--choose-disc` (another image or release), `--version usa|eu`, `--disc <image> [--setup-only]` (no dialogs,
 for scripts). `RC_GAME_BINARY=<path>` starts another game binary.
 

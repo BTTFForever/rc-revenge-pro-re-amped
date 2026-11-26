@@ -772,7 +772,11 @@ namespace
         rc::vu1::installTrackDraw();
         rc::installDecomp(runtime);
         PS2Runtime::IoPaths paths = PS2Runtime::getIoPaths();
-        const std::filesystem::path isoPath = paths.elfDirectory.parent_path() / kIsoName;
+        // The disc image beside the executable's folder, or RC_DISC_IMAGE (used on Windows, where links need privileges).
+        const char *imageOverride = std::getenv("RC_DISC_IMAGE");
+        const std::filesystem::path isoPath = imageOverride && *imageOverride
+                                                  ? std::filesystem::path(imageOverride)
+                                                  : paths.elfDirectory.parent_path() / kIsoName;
         if (!indexIso(isoPath))
         {
             std::cerr << "[rc_revenge_pro] could not read " << isoPath

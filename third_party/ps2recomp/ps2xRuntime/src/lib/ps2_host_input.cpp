@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <mutex>
+#include "runtime/static_mutex.h"
 #include <deque>
 #include <map>
 #include <optional>
@@ -725,7 +726,7 @@ namespace ps2_host_input
 
         // ---- The players' bindings (runtime/ps2_input_bindings.h) ----
         namespace B = ps2_input_bindings;
-        std::mutex g_bindMutex;
+        ps2x::StaticMutex g_bindMutex; // locked from the settings load, before dynamic initialisation (static_mutex.h)
         std::array<B::Player, kPadPorts> g_players;
         bool g_playersSet = false;
         std::atomic<uint8_t> g_motors[kPadPorts][2]{}; // the game's small and large motor per port
@@ -787,7 +788,7 @@ namespace ps2_host_input
         // player 1's (kept while connected).
         void resolvePlayers() // the window loop
         {
-            std::lock_guard<std::mutex> lock(g_bindMutex);
+            std::lock_guard<ps2x::StaticMutex> lock(g_bindMutex);
             ensurePlayers();
             unsigned present = 0;
             for (int i = 0; i < ps2_host_gamepad::kSlots; ++i)
@@ -1018,7 +1019,7 @@ namespace ps2_host_input
             unsigned otherPads = 0;
             bool otherKeyboard = false;
             {
-                std::lock_guard<std::mutex> lock(g_bindMutex);
+                std::lock_guard<ps2x::StaticMutex> lock(g_bindMutex);
                 ensurePlayers();
                 pl = g_players[port];
                 act = g_active[port];
@@ -1083,7 +1084,7 @@ namespace ps2_host_input
             uint8_t small[ps2_host_gamepad::kSlots]{}, large[ps2_host_gamepad::kSlots]{};
             std::array<B::Active, kPadPorts> active;
             {
-                std::lock_guard<std::mutex> lock(g_bindMutex);
+                std::lock_guard<ps2x::StaticMutex> lock(g_bindMutex);
                 active = g_active;
             }
             for (uint32_t port = 0; port < kPadPorts; ++port)
@@ -1517,7 +1518,7 @@ namespace ps2_input_bindings
         using namespace ps2_host_input;
         if (player < 0 || player >= static_cast<int>(kPadPorts))
             return {};
-        std::lock_guard<std::mutex> lock(g_bindMutex);
+        std::lock_guard<ps2x::StaticMutex> lock(g_bindMutex);
         ensurePlayers();
         return g_players[static_cast<size_t>(player)];
     }
@@ -1527,7 +1528,7 @@ namespace ps2_input_bindings
         using namespace ps2_host_input;
         if (player < 0 || player >= static_cast<int>(kPadPorts))
             return;
-        std::lock_guard<std::mutex> lock(g_bindMutex);
+        std::lock_guard<ps2x::StaticMutex> lock(g_bindMutex);
         ensurePlayers();
         g_players[static_cast<size_t>(player)] = p;
     }
@@ -1541,7 +1542,7 @@ namespace ps2_input_bindings
         using namespace ps2_host_input;
         if (player < 0 || player >= static_cast<int>(kPadPorts))
             return {};
-        std::lock_guard<std::mutex> lock(g_bindMutex);
+        std::lock_guard<ps2x::StaticMutex> lock(g_bindMutex);
         return g_active[static_cast<size_t>(player)];
     }
 
@@ -1563,7 +1564,7 @@ namespace ps2_input_bindings
     PromptDevice promptDevice(int player)
     {
         using namespace ps2_host_input;
-        std::lock_guard<std::mutex> lock(g_bindMutex);
+        std::lock_guard<ps2x::StaticMutex> lock(g_bindMutex);
         const Active a = g_active[player & 1];
         const bool any = player == 0 && menuMode();
         PromptDevice out;

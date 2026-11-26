@@ -1,6 +1,6 @@
 # RC Revenge Pro (SLUS-20153): static recompilation
 
-A native Linux build of the PS2 game, made with PS2Recomp. Set it up with `tools/setup.sh` and start it with `tools/play.sh` (see `README.md`).
+A native Windows and Linux build of the PS2 game, made with PS2Recomp. Set it up with `tools/setup.ps1` (Windows) or `tools/setup.sh` and start it with `tools/play.ps1` or `tools/play.sh` (see `README.md`).
 
 Status on 2026-11-09: boots, plays video and music, renders the menus and races correctly, and runs
 at a steady 60 fps at the main menu and mostly 50-60 fps in the attract-mode race. Game speed follows the frame rate.
@@ -17,6 +17,37 @@ is the main build target from now on. Removed (all can be regenerated or are kep
 Kept next to `fork/`: both ISOs, the BIOS dumps, `ico-pc/`, `ghidra_ee/`, `backups/` (git bundles). There are no
 symlinks left and no Windows-illegal file names. The memory cards in ~/.local/share/rc-revenge-pro were empty.
 The build scripts (setup.sh, play.sh, release/) are Linux/bash; a Windows build needs its own set-up.
+
+## Windows build (2026-11-26): native, USA and Europe to a race
+Toolchain: MSYS2's MinGW-w64 (MINGW64 environment: GCC 16.2, CMake, Ninja, SDL3 3.4.20, FFmpeg 8, glslang, xxhash,
+zlib; packages in README "Requirements"), Python 3.14 for Windows. MSVC was not tried: the code relies on GCC
+extensions throughout, and GCC was the fastest compiler on Linux. Scripts: `tools/setup.ps1`, `tools/play.ps1` and
+`tools/version.ps1` (the counterparts of setup.sh, play.sh and version.sh). What had to change:
+- **Bitfield layout.** MinGW defaults to `-mms-bitfields` (MSVC layout), which moved fields after bitfields in 20 PS2
+  structs (`rc_layout_check.cpp`'s static asserts, e.g. `tGS_BGCOLOR.p0` at 4 instead of 3). The whole build uses
+  `-mno-ms-bitfields` on MinGW (top-level CMakeLists).
+- **`std::mutex` is not constant-initialised on MinGW-w64** (no constexpr constructor; glibc's is). The settings load
+  (`rc_settings.cpp`, `constructor(101)`, before every dynamic initialiser) locks `ps2_host_input`'s bindings mutex:
+  `std::system_error` (EINVAL) at start. That mutex is now `ps2x::StaticMutex` (`runtime/static_mutex.h`: an SRWLOCK
+  on Windows, `std::mutex` elsewhere). Any other global mutex code under `load()` reaches needs the same.
+- **Disc image without links**: `RC_DISC_IMAGE=<image>` (overrides/rc_revenge_pro_overrides.cpp) names the image the
+  game reads instead of `<elf folder>/../<name>.iso`. The memory cards stay beside the executable copy; `play.ps1` makes
+  them directory junctions (no privileges needed) to the launcher's cards.
+- `rc_addrs.h`: guest symbols `_iob` and `__mb_cur_max` are macros in MinGW's stdio; `gen_addrs.py` now pushes/undefines
+  and pops them around the namespace (regenerate the headers: they are not tracked).
+- FFmpeg: the runtime's Windows branch downloads an MSVC prebuilt; under MinGW it now uses pkg-config (MSYS2's FFmpeg).
+- Settings file `%APPDATA%\rc-revenge-pro\settings.ini`; `setenv` shim in rc_settings.cpp; `pread` in res_fuzz.cpp.
+- Launcher: Windows folders (`%APPDATA%`, `%LOCALAPPDATA%`), CreateProcess with the log as stdout/stderr and a
+  kill-on-close job object, no console windows, an `.iso` read in place (`image_<id>` in launcher.ini), `--disc`
+  messages to the console it was started from, UTF-8 paths. Built, not yet run through its dialogs.
+Checked (RTX 2070 SUPER, 120 Hz screen, scale 2, 4:3): USA and Europe each started with `RC_BOOT_LEVEL=5` from
+`tools/play.ps1`, driven and quit through `PS2X_PAD_LIVE` (no desktop input), in-process screenshots at fields 600,
+1500 and 2400 show the level 5 demo race correctly (water, boats, HUD "DEMO"); intro movie decoded, audio device up,
+clean exit. Europe's `PS2X_PRESENT_LOG`: 60.0 presents/s throughout the race, longest gap 17 ms after the first second.
+Not yet done on Windows: `setup.ps1` from scratch (recompiler, stabs2c, VU1 conversion; the `output*/`, `vu1/` and
+generated headers used were the Linux ones), a played race by hand, the oracle, the Vulkan renderer (`RC_RENDERER=vk`),
+gamepads, and a release (step after this one). Debugging tip: gdb (`mingw-w64-x86_64-gdb`) from an MSYS2 bash did not
+pass `APPDATA`/`RC_DISC_IMAGE` through to the game; run from PowerShell instead.
 
 ## Where to pick up (2026-11-26): first release, v0.1.0, published
 - Done 2026-11-26: repo made public; GitHub release v0.1.0 created with the AppImage and .sha256

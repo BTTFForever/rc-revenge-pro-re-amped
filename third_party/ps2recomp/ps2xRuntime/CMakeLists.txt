@@ -253,7 +253,7 @@ option(PS2X_ENABLE_FFMPEG "Enable FFmpeg-backed MPEG video decoding" ${PS2X_ENAB
 if(NOT PS2X_ENABLE_FFMPEG)
     message(STATUS "FFmpeg disabled; MPEG video decode falls back to stub frames")
     add_library(ffmpeg INTERFACE)
-elseif(WIN32)
+elseif(WIN32 AND NOT MINGW) # MinGW (MSYS2) uses its own FFmpeg through pkg-config below
     include(ExternalProject)
 
     set(FFMPEG_PREBUILT_TAG "n7.1-241205")
@@ -399,6 +399,7 @@ add_library(ps2_runtime STATIC
     src/lib/ps2_memory.cpp
     src/lib/ps2_pad.cpp
     src/lib/ps2_host_input.cpp
+    src/lib/static_mutex.cpp
     src/lib/ps2_host_gamepad.cpp
     src/lib/ps2_rom_device.cpp
     src/lib/ps2_vfs.cpp
@@ -634,7 +635,7 @@ install(TARGETS ps2_runtime ps2EntryRunner
     ARCHIVE DESTINATION lib
 )
 
-if(WIN32 AND PS2X_ENABLE_FFMPEG)
+if(WIN32 AND NOT MINGW AND PS2X_ENABLE_FFMPEG)
     install(DIRECTORY "${FFMPEG_BIN_DIR}/"
         DESTINATION bin
         FILES_MATCHING
