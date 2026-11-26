@@ -119,6 +119,16 @@ pictures in the race:
 - 144 fps, V-Sync off: 422 -> 269, likewise limited by the game's own frame times.
 Europe's 50 Hz menus and movies now present 50 a second (before: 60, so one picture in five shown twice).
 
+## Where to pick up (2026-11-26): v0.2.0 (Windows) published; Windows only from here
+- Done: GitHub release v0.2.0, latest (https://github.com/BTTFForever/rc-revenge-pro-re-amped/releases/tag/v0.2.0):
+  the Windows zip and its .sha256 (`tools/release/build.ps1`), notes `tools/release/notes-v0.2.0.md`. Created with the
+  GitHub CLI (installed with winget, signed in as BTTFForever). Still to do: the Quiver submission (start program
+  `rc-launcher.exe`).
+- The project has been removed from the Linux PC (user, 2026-11-26). Windows is the only build and test platform now:
+  no new Linux AppImage will be made, so v0.1.0 stays the last Linux release. The Linux scripts (tools/setup.sh,
+  play.sh, release/build.sh, release/appimage.sh) and the Linux code paths stay in the tree but are no longer built or
+  tested; check them before relying on them. Release notes should say Windows only.
+
 ## Where to pick up (2026-11-26): first release, v0.1.0, published
 - Done 2026-11-26: repo made public; GitHub release v0.1.0 created with the AppImage and .sha256
   (https://github.com/BTTFForever/rc-revenge-pro-re-amped/releases/tag/v0.1.0). Still to do: Quiver submission.
