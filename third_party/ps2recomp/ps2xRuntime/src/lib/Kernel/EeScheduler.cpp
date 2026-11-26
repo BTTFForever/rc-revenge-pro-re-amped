@@ -2397,6 +2397,8 @@ void EeScheduler::processDueDeadlines()
                               EeEvent{EeEventType::VBlankStart, 0, 0});
                 m_pacingRefCycle = scheduled.deadlineCycle;
                 m_pacingRefTime = hostStart;
+                m_fieldStartNs.store(std::chrono::duration_cast<std::chrono::nanoseconds>(hostStart.time_since_epoch()).count(),
+                                     std::memory_order_release);
             }
             processEvent(scheduled.event);
         }

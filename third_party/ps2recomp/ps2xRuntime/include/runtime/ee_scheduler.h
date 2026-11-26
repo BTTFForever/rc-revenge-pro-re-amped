@@ -414,6 +414,10 @@ public:
     void dispatchGsInterrupt();
     void setVSyncFlag(uint32_t flagAddress, uint32_t tickAddress);
     [[nodiscard]] uint64_t currentVSyncTick() const noexcept;
+    // RC: when the latest field began on the host's clock (steady_clock nanoseconds since its epoch; 0 before the
+    // first). The field's scheduled start, so it follows the steady field grid rather than when the game thread got
+    // to it: the window presents in step with it (ps2_runtime.cpp).
+    [[nodiscard]] int64_t fieldStartNanoseconds() const noexcept { return m_fieldStartNs.load(std::memory_order_acquire); }
     uint32_t setGsVSyncCallback(uint32_t callback, uint32_t gp, uint32_t sp);
 
     [[noreturn]] void waitVSync(uint64_t afterTick, int fixedResult = -1, std::function<void(R5900Context &)> completion = {});
@@ -595,6 +599,7 @@ private:
     uint64_t m_pacingCheckCycle = 0;
     uint64_t m_pacingRefCycle = 0;
     std::chrono::steady_clock::time_point m_pacingRefTime{};
+    std::atomic<int64_t> m_fieldStartNs{0};
 
     mutable std::mutex m_snapshotMutex;
     EeKernelSnapshot m_snapshot;

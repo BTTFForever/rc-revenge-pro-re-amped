@@ -5,6 +5,7 @@
 Also new:
 - **No black border.** The PS2 game left a thin unpainted edge round its picture, which TVs hid. The picture now fills the screen, and none of the 3D view is lost.
 - **Borderless fullscreen** on Windows: switching to fullscreen no longer makes the monitor re-sync.
+- **Smoother frame pacing.** The window now shows each of the game's frames exactly once, in step with the game. Before, it ran on its own clock, and every few seconds it showed one frame twice and skipped the next.
 - Rebound stick directions (left, up) are now remembered between runs.
 
 ## You need your own copy of the game

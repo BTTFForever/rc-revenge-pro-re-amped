@@ -99,7 +99,9 @@ For one run, an environment variable overrides the file: `RC_ASPECT=16:9`, `RC_H
 `PS2X_PAD1_DEVICE`/`PS2X_PAD2_DEVICE=auto|keyboard|pad1|...|keyboard+pad1|none`, `PS2X_BIND_<BUTTON>=<key>` (player 1's keyboard),
 `PS2X_GAMECONTROLLERDB=<gamecontrollerdb.txt>` (extra SDL mappings).
 `PS2X_PRESENT_LOG=<file>` writes the window's presentation once a second (presents and game fields per second, mean
-and longest gap, swap interval, VRR, monitor rate). `PS2X_PAD_LIVE=<file>` drives a running game from a test: lines
+and longest gap, swap interval, VRR, monitor rate). Without variable refresh the window presents once per game field,
+half way into it, so a picture is never shown twice and the next skipped (`PS2X_PRESENT_PHASE=<0-0.99>` another point
+in the field, `off` the old fixed-rate cap; see NOTES "Frame pacing"). `PS2X_PAD_LIVE=<file>` drives a running game from a test: lines
 `<buttons hex> <hold ms> <gap ms> [port]` appended to the file are pressed in order on pad port 0 (or 1, player 2)
 (0x0008 start, 0x4000 cross, 0x1000 triangle, 0x0010/0x0040/0x0080/0x0020 up/down/left/right); with
 `PS2X_SDL_VIRTUAL_PADS=<n>` the game also gets n virtual SDL gamepads, pressed by lines `pad<n> <SDL button or

@@ -2964,7 +2964,7 @@ void PS2Runtime::run()
     {
         frameTimes.open(path);
         if (frameTimes)
-            frameTimes << "seconds,field,source_sequence,render_revision,new_source,interval_ms,submit_ms,swap_ms,shared,hash_valid,image_hash,image_changed\n";
+            frameTimes << "seconds,field,source_sequence,render_revision,new_source,interval_ms,submit_ms,swap_ms,shared,hash_valid,image_hash,image_changed,field_phase\n";
         else
             std::cerr << "[gs-present] cannot write frame times: " << path << '\n';
     }
@@ -2995,6 +2995,16 @@ void PS2Runtime::run()
     int swapInterval = 0, appliedCap = ps2_host_display::hostTargetFps;
     uint64_t presentCount = 0u, vrrLastTick = 0u;
     PresentLog presentLog;
+    const double presentPhase = []
+    {
+        const char *v = std::getenv("PS2X_PRESENT_PHASE");
+        if (!v || !*v)
+            return 0.5;
+        if (std::string_view(v) == "off")
+            return -1.0;
+        return std::clamp(std::atof(v), 0.0, 0.99);
+    }();
+    auto lockedPresent = std::chrono::steady_clock::time_point{};
     const ps2_host_platform::Hooks *platform = ps2_host_platform::hooks();
     if (platform)
         runHostPlatformLoop(*this, *platform, gameThreadFinished, screenshotFields, hashImages);
@@ -3059,7 +3069,12 @@ void PS2Runtime::run()
             if (const int fps = ps2_host_display::targetFpsRequest.exchange(0, std::memory_order_acq_rel); fps > 0)
                 ps2_host_display::hostTargetFps = fps;
             const bool vrr = ps2_host_display::variableRefresh.load(std::memory_order_acquire);
-            const int cap = vrr ? 0 : ps2_host_display::hostTargetFps;
+            // RC: without V-Sync, present in step with the game's fields: once a field, a set part of the way into
+            // it (PS2X_PRESENT_PHASE, default 0.5; "off": the fixed-rate cap as before). A window paced by its own
+            // clock drifts against the game's (59.94 against 60, and both timers' jitter), and whenever the two line
+            // up it shows one picture twice and skips the next, in bursts of a second or more every few seconds.
+            const bool lockToFields = !vrr && presentPhase >= 0.0;
+            const int cap = vrr || lockToFields ? 0 : ps2_host_display::hostTargetFps;
             if (cap != appliedCap)
             {
                 SetTargetFPS(cap);
@@ -3078,6 +3093,30 @@ void PS2Runtime::run()
                        PresentClock::now() - waitStart < std::chrono::milliseconds(50))
                     std::this_thread::sleep_for(std::chrono::microseconds(250));
                 vrrLastTick = eeScheduler().currentVSyncTick();
+            }
+            else if (lockToFields)
+            {
+                const int64_t fieldStart = eeScheduler().fieldStartNanoseconds();
+                const auto period = std::chrono::duration_cast<PresentClock::duration>(eeScheduler().vblankPeriod());
+                const auto now = PresentClock::now();
+                if (fieldStart != 0 && period.count() > 0)
+                {
+                    auto target = PresentClock::time_point(std::chrono::duration_cast<PresentClock::duration>(std::chrono::nanoseconds(fieldStart))) +
+                                  std::chrono::duration_cast<PresentClock::duration>(period * presentPhase);
+                    // One present a field: the first such point at least half a field after the last one.
+                    const auto earliest = lockedPresent + period / 2;
+                    if (target < earliest)
+                        target += period * ((earliest - target) / period + 1);
+                    // The game held up (loading) or the grid jumped: wait no longer than a field.
+                    if (target > now + period * 2)
+                        target = now + period;
+                    // Sleep to a little before, then yield: the system sleep overshoots by up to a millisecond or so.
+                    if (target - now > std::chrono::milliseconds(2))
+                        std::this_thread::sleep_until(target - std::chrono::milliseconds(2));
+                    while (PresentClock::now() < target && !isStopRequested())
+                        std::this_thread::yield();
+                    lockedPresent = target;
+                }
             }
             presentLog.frame(PresentClock::now(), swapInterval, vrr, eeScheduler().currentVSyncTick());
         }
@@ -3193,7 +3232,17 @@ void PS2Runtime::run()
             const bool imageChanged = sharedFrame.hashValid && (!hadHash || sharedFrame.contentHash != lastHash ||
                                       sharedFrame.width != lastHashWidth || sharedFrame.height != lastHashHeight);
             frameTimes << ',' << sharedFrame.hashValid << ',' << sharedFrame.contentHash << ','
-                       << (sharedFrame.hashValid ? static_cast<int>(imageChanged) : -1) << '\n';
+                       << (sharedFrame.hashValid ? static_cast<int>(imageChanged) : -1) << ','
+                       << [&]
+                       {
+                           // where in the game's field the picture was taken (0: its start; see lockToFields)
+                           const int64_t start = eeScheduler().fieldStartNanoseconds();
+                           const double period = std::chrono::duration<double, std::nano>(eeScheduler().vblankPeriod()).count();
+                           if (start == 0 || period <= 0.0)
+                               return -1.0;
+                           const auto taken = std::chrono::duration_cast<std::chrono::nanoseconds>(submitStart.time_since_epoch()).count();
+                           return static_cast<double>(taken - start) / period;
+                       }() << '\n';
             hadHash = sharedFrame.hashValid;
             lastHash = sharedFrame.contentHash;
             lastHashWidth = sharedFrame.width;

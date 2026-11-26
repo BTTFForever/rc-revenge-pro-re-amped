@@ -93,10 +93,31 @@ then `rc-launcher --version usa|eu`, level 5 demo (RC_BOOT_LEVEL and PS2X_PAD_LI
 screenshots correct, intro movie through the static FFmpeg, `quit` ends game and launcher (exit 0). Note: the launcher
 is a windowed program, so PowerShell's `&` does not wait for it; use `Start-Process -Wait` in scripts (two set-ups run
 at once overwrite each other's launcher.ini).
-Seen on the way, open: a hitch of 22-28 ms about every 6 s in races (PS2X_PRESENT_LOG longest gap; dev and release
-builds alike, Europe and USA; the first dev run did not show it), and 60-70 ms gaps at about 11 s and 41 s from a fresh
-profile (probably shader compiles: the GS shader cache still writes nothing). To investigate next (frame pacing on
-Windows: timer resolution, the present path at vsync off on a 120 Hz screen).
+Seen on the way: a hitch of 22-28 ms about every 6 s in races (PS2X_PRESENT_LOG longest gap). Not seen again in
+later runs (no present gap over 18 ms in races, same builds), so probably something else running on the PC then; 60-70
+ms gaps on level loads remain (the game's own fields stop, ~50 ms at field ~1818 of the RC_BOOT_LEVEL=5 run).
+
+## Frame pacing (presenting in step with the game)
+
+What the stutter really was: the window loop presented at its own fixed rate (raylib's SetTargetFPS, or the screen's
+V-Sync) while the game makes a field on its own clock (EeScheduler, 59.94 or the race rate). The picture is grabbed
+once per field (UploadFrame latches when the field number changes), so a grab just after a field starts, before the
+game has flipped to the new picture, shows the old one again, and the next grab skips one. With two clocks of nearly
+the same rate the grab drifts slowly through the field: bursts of repeat/skip pairs lasting 0.2-4 s every 10-20 s.
+Measured with PS2X_FRAME_TIMES + PS2X_FRAME_HASH=1 (image_changed 0 = a repeated picture; new column field_phase: where
+in the field the picture was grabbed): USA level 5, 60 fps, V-Sync off, 163 repeated pictures in 34 s of race.
+
+Now (ps2_runtime.cpp, lockToFields): unless variable refresh is on, the loop waits until a set part of the way into
+the current field (PS2X_PRESENT_PHASE, default 0.5; `off` restores the fixed-rate cap) and presents once per field.
+EeScheduler::fieldStartNanoseconds() gives the field's scheduled start (the steady grid, not when the game thread got
+to it). Sleep to 2 ms before, then yield. Results on this PC (Ryzen 7 3700X, RTX 2070 Super, 120 Hz screen), repeated
+pictures in the race:
+- 60 fps, V-Sync off: 163 -> 0 (USA level 5, and the playtest2 replay: 0 over fields 3400-5800); Europe the same.
+- 60 fps, V-Sync on: 0.
+- 120 fps, V-Sync on (the user's settings): 388 -> 171 in 26 s. The rest are fields the game finishes late at 120 (no
+  phase fixes those; the field grid itself jitters, ~119 fields/s). 0.85 instead of 0.5 was worse at 144 (396 vs 269).
+- 144 fps, V-Sync off: 422 -> 269, likewise limited by the game's own frame times.
+Europe's 50 Hz menus and movies now present 50 a second (before: 60, so one picture in five shown twice).
 
 ## Where to pick up (2026-11-26): first release, v0.1.0, published
 - Done 2026-11-26: repo made public; GitHub release v0.1.0 created with the AppImage and .sha256
